@@ -1,0 +1,17 @@
+[package]
+name = "quicr"
+version = "0.1.0"
+authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+
+[dependencies]
+rand = "0.4"
+slab = "0.4"
+bytes = "0.4.6"
+serde = "1"
+serde_derive = "1"
+byteorder = "1.1"
+rustls = "0.12"
+webpki = "0.18.0-alpha"
+
+[dev-dependencies]
+failure = "0.1"
