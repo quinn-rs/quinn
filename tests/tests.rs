@@ -12,7 +12,7 @@ use std::net::SocketAddrV6;
 
 use std::ops::Deref;
 use openssl::pkey::{PKey, PKeyRef, Private};
-use openssl::ec::EcKey;
+use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use slog::{Logger, Drain};
 
@@ -24,21 +24,17 @@ fn logger() -> Logger {
     Logger::root(drain, o!())
 }
 
-lazy_static! {
-    static ref PRIVATE_KEY: EcKey<Private> = {
-        EcKey::generate(
-            &openssl::ec::EcGroup::from_curve_name(
-                openssl::nid::Nid::SECP224R1).unwrap()
-        ).unwrap()
-    };
-    static ref CERT: X509 = {
-        let key = PKey::from_ec_key(PRIVATE_KEY.clone()).unwrap();
-        let mut cert = X509::builder().unwrap();
-        cert.set_pubkey(&key).unwrap();
-        cert.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
-        cert.build()
-    };
-}
+
+
+// lazy_static! {
+//     static ref PRIVATE_KEY: Rsa<Private> = {
+        
+//     };
+//     static ref CERT: X509 = {
+//         let key = PKey::from_rsa(PRIVATE_KEY.clone()).unwrap();
+        
+//     };
+// }
 
 
 struct Pair {
@@ -52,12 +48,17 @@ struct Pair {
 impl Pair {
     fn new(log: Logger) -> Self {
         let server_addr = "[::1]:42".parse().unwrap();
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut cert = X509::builder().unwrap();
+        cert.set_pubkey(&key).unwrap();
+        cert.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
+        let cert = cert.build();
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
             Config {
                 listen: Some(ListenConfig {
-                    private_key: PKey::from_ec_key(PRIVATE_KEY.clone()).unwrap(),
-                    cert: CERT.clone(),
+                    private_key: key,
+                    cert: cert,
                 }),
                 ..Config::default()
             }).unwrap();
@@ -98,6 +99,6 @@ fn connect() {
         panic!("{}", e);
     }
     pair.drive();
-    assert_matches!(pair.client.poll().unwrap(), Event::Connected(_));
     assert_matches!(pair.server.poll().unwrap(), Event::Connected(_));
+    assert_matches!(pair.client.poll().unwrap(), Event::Connected(_));
 }

@@ -66,7 +66,6 @@ impl Endpoint {
         let cookie_factory = Arc::new(CookieFactory::new(&mut rng));
 
         let mut tls = SslContext::builder(SslMethod::tls())?;
-        tls.set_cipher_list("TLS13-AES-128-GCM-SHA256:TLS13-AES-128-GCM-SHA256:TLS13-CHACHA20-POLY1305-SHA256")?;
         tls.set_options(
             SslOptions::NO_COMPRESSION | SslOptions::NO_SSLV2 | SslOptions::NO_SSLV3 | SslOptions::NO_TLSV1 |
             SslOptions::NO_TLSV1_1 | SslOptions::NO_TLSV1_2 | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS
@@ -83,8 +82,8 @@ impl Endpoint {
         tls.set_cookie_verify_cb(move |tls, cookie| cookie_factory.verify(tls, cookie));
 
         if let Some(ref listen) = config.listen {
-            tls.set_private_key(&listen.private_key);
-            tls.set_certificate(&listen.cert);
+            tls.set_private_key(&listen.private_key)?;
+            tls.set_certificate(&listen.cert)?;
             tls.check_private_key()?;
         }
 
@@ -137,7 +136,7 @@ impl Endpoint {
             Header::Long { ref id, .. } | Header::Short { id: Some(ref id), .. } | Header::VersionNegotiate { ref id } => self.connection_ids.get(id),
             _ => None
         } {
-            self.handle_connected(ConnectionHandle(i), packet);
+            self.handle_connected(ConnectionHandle(i), remote, packet);
             return;
         }
 
@@ -169,10 +168,10 @@ impl Endpoint {
             Err(e) => return Err(e.into()),
         };
         let conn = self.add_connection(tls);
+
         let mut buf = Vec::<u8>::new();
         buf.reserve_exact(MIN_INITIAL_SIZE);
         encode_long_header(&mut buf, packet::INITIAL, self.connections[conn.0].id, self.connections[conn.0].get_tx_number() as u32);
-        
         match self.connections[conn.0].state.as_mut().unwrap() {
             &mut State::Handshake(ref mut x) => frame::stream(&mut buf, 0, None, true, false, &x.tls.get_mut().take_outgoing()),
             _ => unreachable!()
@@ -223,7 +222,8 @@ impl Endpoint {
                     Ok(_) => unreachable!(),
                     Err(HandshakeError::WouldBlock(tls)) => {
                         trace!(self.log, "stateless handshake complete");
-                        self.add_connection(tls);
+                        let id = self.add_connection(tls);
+                        self.events.push_back(Event::Connected(id));
                     }
                     Err(e) => {
                         debug!(self.log, "accept failed"; "reason" => %e);
@@ -231,9 +231,10 @@ impl Endpoint {
                 }
             }
             Err(e) => {
+                trace!(self.log, "stateless handshake failed"; "reason" => %e);
                 let data = tls.get_mut().take_outgoing();
                 if data.len() != 0 {
-                    trace!(self.log, "responding statelessly to initial packet");
+                    trace!(self.log, "responding statelessly");
                     let mut buf = Vec::<u8>::new();
                     buf.reserve_exact(17 + data.len());
                     encode_long_header(&mut buf, packet::RETRY, id, packet_number);
@@ -246,22 +247,22 @@ impl Endpoint {
         }
     }
 
-    fn handle_connected(&mut self, handle: ConnectionHandle, packet: Packet) {
-        trace!(self.log, "connection got packet"; "id" => handle.0, "len" => packet.payload.len());
-        match self.connections[handle.0].state.take().unwrap() {
+    fn handle_connected(&mut self, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet) {
+        trace!(self.log, "connection got packet"; "id" => conn.0, "len" => packet.payload.len());
+        match self.connections[conn.0].state.take().unwrap() {
             State::Handshake(mut state) => {
                 match packet.header {
                     Header::Long { ty: packet::RETRY, .. } => {} // Proceed with handshake
                     Header::Long { .. } => { unimplemented!() }
                     Header::VersionNegotiate { .. } => {
                         // TODO: MUST ignore if supported version is listed
-                        self.connections.remove(handle.0);
-                        self.events.push_back(Event::ConnectionLost { connection: handle, reason: ConnectionError::VersionMismatch });
+                        self.connections.remove(conn.0);
+                        self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::VersionMismatch });
                         return;
                     }
                     // TODO: SHOULD buffer these.
                     Header::Short { .. } => {
-                        self.connections[handle.0].state = Some(State::Handshake(state));
+                        self.connections[conn.0].state = Some(State::Handshake(state));
                         return;
                     }
                 }
@@ -277,31 +278,35 @@ impl Endpoint {
                         } 
                     }
                 }
-                self.connections[handle.0].state = Some(match state.tls.handshake() {
+                self.connections[conn.0].state = Some(match state.tls.handshake() {
                     Ok(tls) => {
                         trace!(self.log, "handshake complete");
-                        self.events.push_back(Event::Connected(handle));
+                        self.events.push_back(Event::Connected(conn));
                         State::Established(state::Established { tls })
                     }
                     Err(HandshakeError::WouldBlock(mut tls)) => {
-                        {
-                            let data = tls.get_mut().take_outgoing();
-                            trace!(self.log, "handshake retry"; "data" => data.len());
-                            // TODO
+                        trace!(self.log, "handshake retry");
+                        let mut buf = Vec::<u8>::new();
+                        buf.reserve_exact(MIN_INITIAL_SIZE);
+                        encode_long_header(&mut buf, packet::INITIAL, self.connections[conn.0].id, self.connections[conn.0].get_tx_number() as u32);
+                        frame::stream(&mut buf, 0, None, true, false, &tls.get_mut().take_outgoing());
+                        if buf.len() < MIN_INITIAL_SIZE {
+                            buf.resize(MIN_INITIAL_SIZE, frame::tag::PADDING);
                         }
+                        self.transmit(remote, buf.into());
                         State::Handshake(state::Handshake { tls })
                     },
                     Err(e) => {
                         debug!(self.log, "handshake failed"; "reason" => %e);
-                        self.connections.remove(handle.0);
-                        self.events.push_back(Event::ConnectionLost { connection: handle, reason: ConnectionError::HandshakeFailed(e.into()) });
+                        self.connections.remove(conn.0);
+                        self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::HandshakeFailed(e.into()) });
                         return;
                     }
                 })
             }
             State::Established(state) => {
                 // TODO
-                self.connections[handle.0].state = Some(State::Established(state))
+                self.connections[conn.0].state = Some(State::Established(state))
             }
         }
     }

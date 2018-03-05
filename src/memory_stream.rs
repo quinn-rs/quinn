@@ -28,10 +28,7 @@ impl Read for MemoryStream {
             self.incoming.get_mut().clear();
         }
         if n == 0 {
-            eprintln!("read eof");
             return Err(io::Error::new(io::ErrorKind::WouldBlock, "no data available"));
-        } else {
-            eprintln!("read {} bytes", n);
         }
         Ok(n)
     }
@@ -39,7 +36,6 @@ impl Read for MemoryStream {
 
 impl Write for MemoryStream {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        eprintln!("write {} bytes", buf.len());
         self.outgoing.write(buf)
     }
 
