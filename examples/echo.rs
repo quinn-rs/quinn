@@ -1,16 +1,22 @@
 extern crate failure;
 extern crate quicr;
-extern crate rustls;
+#[macro_use]
+extern crate slog;
+extern crate slog_term;
 
 use std::sync::Arc;
 
 use failure::Error;
+use slog::Drain;
 
 fn main() {
     run().unwrap();
 }
 
 fn run() -> Result<(), Error> {
-    let endpoint = quicr::Endpoint::listen(Arc::new(rustls::ServerConfig::new(Arc::new(rustls::NoClientAuth))))?;
+    let decorator = slog_term::PlainSyncDecorator::new(std::io::stdout());
+    let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
+    let log = slog::Logger::root(drain, o!());
+    let endpoint = quicr::Endpoint::new(log, quicr::Config::default())?;
     Ok(())
 }

@@ -1,73 +1,57 @@
-use std::io::{self, Read, Write};
+use bytes::{Buf, BufMut};
 
-use byteorder::{ByteOrder, BigEndian, WriteBytesExt};
+use byteorder::{ByteOrder, BigEndian};
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Varint(u64);
-
-impl Varint {
-    pub fn new(x: u64) -> Option<Self> {
-        if x >= 2u64.pow(62) {
-            None
-        } else {
-            Some(Varint(x))
+pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
+    if !r.has_remaining() { return None; }
+    let mut buf = [0; 8];
+    buf[0] = r.get_u8();
+    let tag = buf[0] >> 6;
+    buf[0] &= 0b00111111;
+    Some(match tag {
+        0b00 => buf[0] as u64,
+        0b01 => {
+            if r.remaining() < 1 { return None; }
+            r.copy_to_slice(&mut buf[1..2]);
+            BigEndian::read_u16(&buf) as u64
         }
-    }
-
-    pub fn read<R: Read>(r: &mut R) -> io::Result<Self> {
-        let mut buf = [0; 8];
-        r.read_exact(&mut buf[0..1])?;
-        let tag = buf[0] >> 6;
-        buf[0] &= 0b00111111;
-        Ok(Varint(match tag {
-            0b00 => buf[0] as u64,
-            0b01 => {
-                r.read_exact(&mut buf[1..2])?;
-                BigEndian::read_u16(&buf) as u64
-            }
-            0b10 => {
-                r.read_exact(&mut buf[1..4])?;
-                BigEndian::read_u32(&buf) as u64
-            }
-            0b11 => {
-                r.read_exact(&mut buf[1..8])?;
-                BigEndian::read_u64(&buf) as u64
-            }
-            _ => unreachable!(),
-        }))
-    }
-
-    pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        if self.0 < 2u64.pow(6) {
-            w.write_u8(self.0 as u8)
-        } else if self.0 < 2u64.pow(14) {
-            w.write_u16::<BigEndian>(0b01 << 14 | self.0 as u16)
-        } else if self.0 < 2u64.pow(30) {
-            w.write_u32::<BigEndian>(0b10 << 30 | self.0 as u32)
-        } else if self.0 < 2u64.pow(62) {
-            w.write_u64::<BigEndian>(0b11 << 62 | self.0)
-        } else {
-            unreachable!()
+        0b10 => {
+            if r.remaining() < 3 { return None; }
+            r.copy_to_slice(&mut buf[1..4]);
+            BigEndian::read_u32(&buf) as u64
         }
+        0b11 => {
+            if r.remaining() < 7 { return None; }
+            r.copy_to_slice(&mut buf[1..8]);
+            BigEndian::read_u64(&buf) as u64
+        }
+        _ => unreachable!(),
+    })
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Fail)]
+pub enum WriteError {
+    #[fail(display = "insufficient space to encode value")]
+    InsufficientSpace,
+    #[fail(display = "value too large for varint encoding")]
+    OversizedValue,
+}
+
+pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
+    if x < 2u64.pow(6) {
+        if w.remaining_mut() < 1 { return Err(WriteError::InsufficientSpace); }
+        w.put_u8(x as u8);
+    } else if x < 2u64.pow(14) {
+        if w.remaining_mut() < 2 { return Err(WriteError::InsufficientSpace); }
+        w.put_u16::<BigEndian>(0b01 << 14 | x as u16);
+    } else if x < 2u64.pow(30) {
+        if w.remaining_mut() < 4 { return Err(WriteError::InsufficientSpace); }
+        w.put_u32::<BigEndian>(0b10 << 30 | x as u32);
+    } else if x < 2u64.pow(62) {
+        if w.remaining_mut() < 8 { return Err(WriteError::InsufficientSpace); }
+        w.put_u64::<BigEndian>(0b11 << 62 | x);
+    } else {
+       return Err(WriteError::OversizedValue);
     }
-}
-
-impl From<u32> for Varint {
-    fn from(x: u32) -> Self { Varint(x as u64) }
-}
-
-impl From<u16> for Varint {
-    fn from(x: u16) -> Self { Varint(x as u64) }
-}
-
-impl From<u8> for Varint {
-    fn from(x: u8) -> Self { Varint(x as u64) }
-}
-
-impl From<Varint> for u64 {
-    fn from(x: Varint) -> Self { x.0 }
-}
-
-impl AsRef<u64> for Varint {
-    fn as_ref(&self) -> &u64 { &self.0 }
+    Ok(())
 }

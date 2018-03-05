@@ -1,14 +1,30 @@
 extern crate bytes;
 extern crate byteorder;
 extern crate rand;
-extern crate rustls;
+extern crate openssl;
 extern crate slab;
-extern crate webpki;
+#[macro_use]
+extern crate failure;
+extern crate digest;
+extern crate blake2;
+extern crate constant_time_eq;
+extern crate bincode;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate slog;
 
 mod varint;
+mod memory_stream;
+
+mod frame;
+use frame::Frame;
+
+mod from_bytes;
+use from_bytes::{FromBytes, BytesExt};
+
 mod endpoint;
-
-pub use endpoint::Endpoint;
-
-use varint::Varint;
-
+pub use endpoint::{Endpoint, Config, ListenConfig, Event, Io};
