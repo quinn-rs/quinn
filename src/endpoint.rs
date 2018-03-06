@@ -2,14 +2,14 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
-use std::time::{SystemTime, Duration, UNIX_EPOCH};
+use std::time::Duration;
 
-use bytes::{BufMut, Bytes, BytesMut, ByteOrder, BigEndian};
-use rand::{distributions, OsRng, Rng};
+use bytes::{BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
+use rand::{distributions, OsRng, Rng, Rand};
 use rand::distributions::Sample;
 use slab::Slab;
-use openssl;
-use openssl::ssl::{SslContext, SslMethod, SslOptions, SslMode, Ssl, SslRef, SslStream, HandshakeError, MidHandshakeSslStream, SslStreamBuilder};
+use openssl::ex_data;
+use openssl::ssl::{self, SslContext, SslMethod, SslOptions, SslMode, Ssl, SslStream, HandshakeError, MidHandshakeSslStream, SslStreamBuilder, SslAlert};
 use openssl::pkey::{PKey, Private};
 use openssl::x509::X509;
 use failure::Error;
@@ -20,7 +20,8 @@ use bincode;
 use slog::Logger;
 
 use memory_stream::MemoryStream;
-use {frame, Frame, from_bytes, BytesExt};
+use transport_parameters::TransportParameters;
+use {frame, Frame, from_bytes, BytesExt, VERSION};
 
 type Result<T> = ::std::result::Result<T, Error>;
 
@@ -56,14 +57,50 @@ pub struct Endpoint {
     io: VecDeque<Io>,
 }
 
-const VERSION: u32 = 0xff000009;
 const MIN_INITIAL_SIZE: usize = 1200;
+
+fn gen_transport_params(key: &[u8], am_server: bool, info: &ConnectionInfo) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut params = TransportParameters::default();
+    if am_server {
+        let mut mac = Blake2b::new_keyed(key, 16);
+        {
+            let mut buf = [0; 8];
+            BigEndian::write_u64(&mut buf, info.id.0);
+            mac.process(&buf);
+        }
+        // TODO: Server ID??
+        let mut result = [0; 16];
+        mac.variable_result(&mut result).unwrap();
+        params.stateless_reset_token = Some(result);
+    } else {
+        params.omit_connection_id = true;
+    }
+    params.write(&mut buf);
+    buf
+}
+
+#[derive(Copy, Clone)]
+pub struct PersistentState {
+    pub cookie_key: [u8; 64],
+    pub reset_key: [u8; 64],
+}
+
+impl Rand for PersistentState {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let mut cookie_key = [0; 64];
+        let mut reset_key = [0; 64];
+        rng.fill_bytes(&mut cookie_key);
+        rng.fill_bytes(&mut reset_key);
+        Self { cookie_key, reset_key }
+    }
+}
 
 impl Endpoint {
     /// Create an endpoint for outgoing connections only
-    pub fn new(log: Logger, config: Config) -> Result<Self> {
-        let mut rng = OsRng::new()?;
-        let cookie_factory = Arc::new(CookieFactory::new(&mut rng));
+    pub fn new(log: Logger, config: Config, state: PersistentState) -> Result<Self> {
+        let rng = OsRng::new()?;
+        let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
 
         let mut tls = SslContext::builder(SslMethod::tls())?;
         tls.set_options(
@@ -77,9 +114,42 @@ impl Endpoint {
         tls.set_default_verify_paths()?;
         {
             let cookie_factory = cookie_factory.clone();
-            tls.set_cookie_generate_cb(move |tls, buf| Ok(cookie_factory.generate(tls, buf)));
+            tls.set_cookie_generate_cb(move |tls, buf| {
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                Ok(cookie_factory.generate(conn, buf))
+            });
         }
-        tls.set_cookie_verify_cb(move |tls, cookie| cookie_factory.verify(tls, cookie));
+        tls.set_cookie_verify_cb(move |tls, cookie| {
+            let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+            cookie_factory.verify(conn, cookie)
+        });
+        let reset_key = state.reset_key;
+        tls.add_custom_ext(
+            26, ssl::ExtensionContext::TLS1_3_ONLY | ssl::ExtensionContext::CLIENT_HELLO | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
+            move |tls, ctx, _| {
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
+                Ok(Some(gen_transport_params(&reset_key, am_server, conn).into()))
+            },
+            |tls, ctx, data, _| {
+                let am_server = ctx == ssl::ExtensionContext::CLIENT_HELLO;
+                match TransportParameters::read(am_server, &mut data.into_buf()) {
+                    Ok(params) => {
+                        tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
+                        Ok(())
+                    }
+                    Err(e) => {
+                        use transport_parameters::Error::*;
+                        tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Err(e));
+                        Err(match e {
+                            VersionNegotiation => SslAlert::ILLEGAL_PARAMETER,
+                            IllegalValue => SslAlert::ILLEGAL_PARAMETER,
+                            Malformed => SslAlert::DECODE_ERROR,
+                        })
+                    }
+                }
+            }
+        )?;
 
         if let Some(ref listen) = config.listen {
             tls.set_private_key(&listen.private_key)?;
@@ -161,23 +231,24 @@ impl Endpoint {
 
     pub fn connect(&mut self, local: SocketAddrV6, remote: SocketAddrV6) -> Result<ConnectionHandle> {
         let mut tls = Ssl::new(&self.tls)?;
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { remote });
+        let id = self.rng.gen();
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id, remote });
         let tls = match tls.connect(MemoryStream::new()) {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
             Err(e) => return Err(e.into()),
         };
-        let conn = self.add_connection(tls);
+        let conn = self.add_connection(id, tls);
 
         let mut buf = Vec::<u8>::new();
         buf.reserve_exact(MIN_INITIAL_SIZE);
-        encode_long_header(&mut buf, packet::INITIAL, self.connections[conn.0].id, self.connections[conn.0].get_tx_number() as u32);
+        encode_long_header(&mut buf, packet::INITIAL, id, self.connections[conn.0].get_tx_number() as u32);
         match self.connections[conn.0].state.as_mut().unwrap() {
             &mut State::Handshake(ref mut x) => frame::stream(&mut buf, 0, None, true, false, &x.tls.get_mut().take_outgoing()),
             _ => unreachable!()
         }
         if buf.len() < MIN_INITIAL_SIZE {
-            buf.resize(MIN_INITIAL_SIZE, frame::tag::PADDING);
+            buf.resize(MIN_INITIAL_SIZE, frame::Type::PADDING.into());
         }
         self.transmit(remote, buf.into());
         Ok(conn)
@@ -187,16 +258,15 @@ impl Endpoint {
         self.io.push_back(Io::Transmit { destination, packet });
     }
 
-    fn add_connection(&mut self, tls: MidHandshakeSslStream<MemoryStream>) -> ConnectionHandle {
+    fn add_connection(&mut self, id: ConnectionId, tls: MidHandshakeSslStream<MemoryStream>) -> ConnectionHandle {
         let mut streams = HashMap::with_capacity(1);
         streams.insert(0, Stream::new());
         let i = self.connections.insert(Connection {
+            id, streams,
             state: Some(State::Handshake(state::Handshake { tls })),
-            id: ConnectionId(self.rng.gen()),
             tx_packet_number: self.initial_packet_number.sample(&mut self.rng).into(),
-            streams,
         });
-        self.connection_ids.insert(self.connections[i].id, i);
+        self.connection_ids.insert(id, i);
         ConnectionHandle(i)
     }
 
@@ -214,16 +284,19 @@ impl Endpoint {
         }
 
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id, remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
         match tls.stateless() {
             Ok(()) => {
                 match tls.accept() {
                     Ok(_) => unreachable!(),
-                    Err(HandshakeError::WouldBlock(tls)) => {
-                        trace!(self.log, "stateless handshake complete");
-                        let id = self.add_connection(tls);
-                        self.events.push_back(Event::Connected(id));
+                    Err(HandshakeError::WouldBlock(mut tls)) => {
+                        {
+                            let data = tls.get_mut().take_outgoing();
+                            trace!(self.log, "stateless handshake complete"; "outgoing" => data.len());
+                        }
+                        let conn = self.add_connection(id, tls);
+                        self.events.push_back(Event::Connected(conn));
                     }
                     Err(e) => {
                         debug!(self.log, "accept failed"; "reason" => %e);
@@ -291,7 +364,7 @@ impl Endpoint {
                         encode_long_header(&mut buf, packet::INITIAL, self.connections[conn.0].id, self.connections[conn.0].get_tx_number() as u32);
                         frame::stream(&mut buf, 0, None, true, false, &tls.get_mut().take_outgoing());
                         if buf.len() < MIN_INITIAL_SIZE {
-                            buf.resize(MIN_INITIAL_SIZE, frame::tag::PADDING);
+                            buf.resize(MIN_INITIAL_SIZE, frame::Type::PADDING.into());
                         }
                         self.transmit(remote, buf.into());
                         State::Handshake(state::Handshake { tls })
@@ -321,6 +394,10 @@ fn encode_long_header(buf: &mut Vec<u8>, ty: u8, id: ConnectionId, packet: u32) 
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct ConnectionId(u64);
+
+impl Rand for ConnectionId {
+    fn rand<R: Rng>(rng: &mut R) -> Self { ConnectionId(rng.gen()) }
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct HandshakeId {
@@ -445,24 +522,15 @@ const COOKIE_MAC_BYTES: usize = 64;
 
 // remote ip and port are taken from the underlying transport
 #[derive(Serialize, Deserialize)]
-struct Cookie {
-    timestamp: u64,
-}
+struct Cookie {}
 
 impl CookieFactory {
-    fn new<R: Rng>(rng: &mut R) -> Self {
-        let mut mac_key = [0; 64];
-        rng.fill_bytes(&mut mac_key);
-        Self {
-            mac_key
-        }
+    fn new(mac_key: [u8; 64]) -> Self {
+        Self { mac_key }
     }
 
-    fn generate(&self, tls: &mut SslRef, out: &mut [u8]) -> usize {
-        let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-        let cookie = Cookie {
-            timestamp: duration_ms(SystemTime::now().duration_since(UNIX_EPOCH).unwrap()),
-        };
+    fn generate(&self, conn: &ConnectionInfo, out: &mut [u8]) -> usize {
+        let cookie = Cookie {};
         let cap = out.len();
         let (len, out) = {
             let mut cursor = io::Cursor::new(out);
@@ -488,14 +556,12 @@ impl CookieFactory {
         result
     }
 
-    fn verify(&self, tls: &mut SslRef, cookie_data: &[u8]) -> bool {
+    fn verify(&self, conn: &ConnectionInfo, cookie_data: &[u8]) -> bool {
         if cookie_data.len() < COOKIE_MAC_BYTES { return false; }
         let (cookie_data, mac) = cookie_data.split_at(cookie_data.len() - COOKIE_MAC_BYTES);
-        let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
         let expected = self.generate_mac(conn, cookie_data);
         if !constant_time_eq(&mac, &expected) { return false; }
-        let cookie = if let Ok(x) = bincode::deserialize::<Cookie>(cookie_data) { x } else { return false; };
-        // TODO: Finite lifetime
+        if let Err(_) = bincode::deserialize::<Cookie>(cookie_data) { return false; };
         true
     }
 }
@@ -505,11 +571,14 @@ fn duration_ms(d: Duration) -> u64 {
 }
 
 struct ConnectionInfo {
+    id: ConnectionId,
     remote: SocketAddrV6,
 }
 
 lazy_static! {
-    static ref CONNECTION_INFO_INDEX: openssl::ex_data::Index<Ssl, ConnectionInfo> = Ssl::new_ex_index().unwrap();
+    static ref CONNECTION_INFO_INDEX: ex_data::Index<Ssl, ConnectionInfo> = Ssl::new_ex_index().unwrap();
+    static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, ::std::result::Result<TransportParameters, ::transport_parameters::Error>>
+        = Ssl::new_ex_index().unwrap();
 }
 
 #[derive(Debug)]
@@ -541,3 +610,4 @@ mod packet {
     pub const INITIAL: u8 = 0x7F;
     pub const RETRY: u8 = 0x7E;
 }
+

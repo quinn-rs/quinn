@@ -1,5 +1,6 @@
 extern crate quicr;
 extern crate openssl;
+extern crate rand;
 #[macro_use]
 extern crate slog;
 extern crate slog_term;
@@ -61,9 +62,10 @@ impl Pair {
                     cert: cert,
                 }),
                 ..Config::default()
-            }).unwrap();
+            },
+            rand::random()).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default()).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default(), rand::random()).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }

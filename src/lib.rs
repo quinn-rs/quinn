@@ -19,6 +19,7 @@ extern crate slog;
 
 mod varint;
 mod memory_stream;
+mod transport_parameters;
 
 mod frame;
 use frame::Frame;
@@ -27,4 +28,10 @@ mod from_bytes;
 use from_bytes::{FromBytes, BytesExt};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, ListenConfig, Event, Io};
+pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, Event, Io};
+
+
+mod transport_error;
+pub use transport_error::Error as TransportError;
+
+pub const VERSION: u32 = 0xff000009;

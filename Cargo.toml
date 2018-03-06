@@ -20,7 +20,7 @@ slog = { version = "2.1", features = ["max_level_trace", "release_max_level_info
 
 [dependencies.openssl]
 git = "https://github.com/Ralith/rust-openssl.git"
-branch = "stateless-api"
+branch = "working"
 features = ["v111"]
 
 [dev-dependencies]
