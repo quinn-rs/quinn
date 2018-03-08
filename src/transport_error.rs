@@ -5,6 +5,8 @@ use frame;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Error(u16);
 
+impl From<u16> for Error { fn from(x: u16) -> Self { Error(x) } }
+
 macro_rules! errors {
     {$($name:ident($val:expr) $desc:expr;)*} => {
         impl Error {

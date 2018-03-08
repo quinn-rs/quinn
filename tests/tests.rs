@@ -6,13 +6,10 @@ extern crate slog;
 extern crate slog_term;
 #[macro_use]
 extern crate assert_matches;
-#[macro_use]
-extern crate lazy_static;
 
 use std::net::SocketAddrV6;
 
-use std::ops::Deref;
-use openssl::pkey::{PKey, PKeyRef, Private};
+use openssl::pkey::{PKey};
 use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use slog::{Logger, Drain};
@@ -24,19 +21,6 @@ fn logger() -> Logger {
     let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
     Logger::root(drain, o!())
 }
-
-
-
-// lazy_static! {
-//     static ref PRIVATE_KEY: Rsa<Private> = {
-        
-//     };
-//     static ref CERT: X509 = {
-//         let key = PKey::from_rsa(PRIVATE_KEY.clone()).unwrap();
-        
-//     };
-// }
-
 
 struct Pair {
     log: Logger,
@@ -79,15 +63,17 @@ impl Pair {
                 None => {}
                 Some(Io::Transmit { destination, packet }) => {
                     trace!(self.log, "server -> client");
-                    self.client.handle(self.server_addr, destination, Vec::from(packet).into());
+                    self.client.handle(0, self.server_addr, destination, Vec::from(packet).into());
                 }
+                Some(Io::TimerStart { .. }) | Some(Io::TimerStop { .. }) => {} // No time passes
             }
             match c {
                 None => {}
                 Some(Io::Transmit { destination, packet }) => {
                     trace!(self.log, "client -> server");
-                    self.server.handle(self.client_addr, destination, Vec::from(packet).into())
+                    self.server.handle(0, self.client_addr, destination, Vec::from(packet).into())
                 }
+                Some(Io::TimerStart { .. }) | Some(Io::TimerStop { .. }) => {} // No time passes
             }
         }
     }
@@ -101,6 +87,6 @@ fn connect() {
         panic!("{}", e);
     }
     pair.drive();
-    assert_matches!(pair.server.poll().unwrap(), Event::Connected(_));
-    assert_matches!(pair.client.poll().unwrap(), Event::Connected(_));
+    assert_matches!(pair.server.poll(), Some(Event::Connected(_)));
+    assert_matches!(pair.client.poll(), Some(Event::Connected(_)));
 }
