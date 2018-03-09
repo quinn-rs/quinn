@@ -193,7 +193,7 @@ mod test {
     use bytes::IntoBuf;
 
     #[test]
-    fn identity() {
+    fn encode_default() {
         let mut buf = Vec::new();
         let params = TransportParameters::default();
         params.write(&mut buf);

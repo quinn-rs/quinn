@@ -1,4 +1,5 @@
 use std::{mem, fmt, io};
+use std::collections::BTreeMap;
 
 use bytes::{Bytes, BufMut};
 
@@ -77,11 +78,27 @@ pub struct Ack {
 }
 
 #[derive(Debug, Clone)]
-pub struct Stream {
+pub struct Stream<T = Bytes> {
     pub id: StreamId,
     pub offset: u64,
     pub fin: bool,
-    pub data: Bytes,
+    pub data: T,
+}
+
+impl<T> Stream<T>
+    where T: AsRef<[u8]>
+{
+    pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
+        let mut ty = 0x10;
+        if self.offset != 0 { ty |= 0x04; }
+        if length { ty |= 0x02; }
+        if self.fin { ty |= 0x01; }
+        out.put_u8(ty);
+        varint::write(self.id.0, out).unwrap();
+        if self.offset != 0 { varint::write(self.offset, out).unwrap(); }
+        if length { varint::write(self.data.as_ref().len() as u64, out).unwrap(); }
+        out.put_slice(self.data.as_ref());
+    }
 }
 
 pub struct Iter(Bytes);
@@ -156,18 +173,6 @@ impl Iterator for Iter {
     }
 }
 
-pub fn stream(out: &mut Vec<u8>, id: StreamId, offset: Option<u64>, length: bool, fin: bool, data: &[u8]) {
-    let mut ty = 0x10;
-    if offset.is_some() { ty |= 0x04; }
-    if length { ty |= 0x02; }
-    if fin { ty |= 0x01; }
-    out.put_u8(ty);
-    varint::write(id.0, out).unwrap();
-    if let Some(o) = offset { varint::write(o, out).unwrap(); }
-    if length { varint::write(data.len() as u64, out).unwrap(); }
-    out.extend_from_slice(data);
-}
-
 #[derive(Debug, Clone)]
 pub struct AckIter {
     next: u64,
@@ -235,3 +240,70 @@ impl StreamId {
 }
 
 impl From<u64> for StreamId { fn from(x: u64) -> Self { StreamId(x) } }
+
+#[derive(Debug)]
+pub struct StreamAssembler {
+    offset: u64,
+    /// (offset, data)
+    segments: BTreeMap<u64, Bytes>,
+}
+
+impl StreamAssembler {
+    pub fn new() -> Self { Self::with_offset(0) }
+    pub fn with_offset(x: u64) -> Self { Self { offset: x, segments: BTreeMap::new() } }
+    pub fn is_empty(&self) -> bool { self.segments.is_empty() }
+    
+    pub fn next(&mut self) -> Option<Bytes> {
+        if let Some(data) = self.segments.remove(&self.offset) {
+            self.offset += data.len() as u64;
+            Some(data)
+        } else { None }
+    }
+
+    pub fn insert(&mut self, mut offset: u64, mut data: Bytes) {
+        let end_offset = if let Some((&prev_off, prev_data)) = self.segments.range(..offset).rev().next() {
+            prev_off + prev_data.len() as u64
+        } else {
+            self.offset
+        };
+        if let Some(relative) = end_offset.checked_sub(offset) {
+            if relative >= data.len() as u64 { return; }
+            offset += relative;
+            data.advance(relative as usize);
+        }
+        if let Some((&next_off, next_data)) = self.segments.range(offset..).next() {
+            if offset == next_off { return; }
+            data.truncate((next_off - offset) as usize);
+        }
+        self.segments.insert(offset, data);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn assemble_ordered() {
+        let mut x = StreamAssembler::new();
+        assert_matches!(x.next(), None);
+        x.insert(0, (&b"123"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        x.insert(3, (&b"456"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
+        x.insert(6, (&b"789"[..]).into());
+        x.insert(9, (&b"10"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"789");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"10");
+    }
+
+    #[test]
+    fn assemble_unordered() {
+        let mut x = StreamAssembler::new();
+        x.insert(3, (&b"456"[..]).into());
+        assert_matches!(x.next(), None);
+        x.insert(0, (&b"123"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
+    }
+}

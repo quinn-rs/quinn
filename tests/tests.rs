@@ -12,6 +12,7 @@ use std::net::SocketAddrV6;
 use openssl::pkey::{PKey};
 use openssl::rsa::Rsa;
 use openssl::x509::X509;
+use openssl::asn1::Asn1Time;
 use slog::{Logger, Drain};
 
 use quicr::*;
@@ -36,6 +37,8 @@ impl Pair {
         let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
         let mut cert = X509::builder().unwrap();
         cert.set_pubkey(&key).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap()).unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(u32::max_value()).unwrap()).unwrap();
         cert.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
         let cert = cert.build();
         let server = Endpoint::new(
@@ -83,7 +86,7 @@ impl Pair {
 fn connect() {
     let log = logger();
     let mut pair = Pair::new(log);
-    if let Err(e) = pair.client.connect(pair.client_addr, pair.server_addr) {
+    if let Err(e) = pair.client.connect(0, pair.client_addr, pair.server_addr) {
         panic!("{}", e);
     }
     pair.drive();

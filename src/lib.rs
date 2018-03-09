@@ -16,6 +16,10 @@ extern crate serde_derive;
 extern crate lazy_static;
 #[macro_use]
 extern crate slog;
+#[cfg(test)]
+#[macro_use]
+extern crate assert_matches;
+
 
 mod varint;
 mod memory_stream;

@@ -18,6 +18,8 @@ impl MemoryStream {
     }
 
     pub fn take_outgoing(&mut self) -> Outgoing { Outgoing(&mut self.outgoing) }
+
+    pub fn incoming_len(&self) -> usize { self.incoming.get_ref().len() - self.incoming.position() as usize }
 }
 
 impl Read for MemoryStream {
@@ -53,4 +55,8 @@ impl<'a> Drop for Outgoing<'a> {
 impl<'a> Deref for Outgoing<'a> {
     type Target = [u8];
     fn deref(&self) -> &[u8] { &self.0 }
+}
+
+impl<'a> AsRef<[u8]> for Outgoing<'a> {
+    fn as_ref(&self) -> &[u8] { &self.0 }
 }
