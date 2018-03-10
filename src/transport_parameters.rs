@@ -31,10 +31,13 @@ impl Default for TransportParameters {
     }}
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Fail)]
 pub enum Error {
+    #[fail(display = "version negotiation was tampered with")]
     VersionNegotiation,
+    #[fail(display = "parameter had illegal value")]
     IllegalValue,
+    #[fail(display = "parameters were malformed")]
     Malformed,
 }
 
