@@ -2,6 +2,20 @@ use bytes::{Buf, BufMut};
 
 use byteorder::{ByteOrder, BigEndian};
 
+pub fn size(x: u64) -> Option<usize> {
+    if x < 2u64.pow(6) {
+        Some(1)
+    } else if x < 2u64.pow(14) {
+        Some(2)
+    } else if x < 2u64.pow(30) {
+        Some(4)
+    } else if x < 2u64.pow(62) {
+        Some(8)
+    } else {
+        None
+    }
+}
+
 pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
     if !r.has_remaining() { return None; }
     let mut buf = [0; 8];

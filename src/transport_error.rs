@@ -6,6 +6,7 @@ use frame;
 pub struct Error(u16);
 
 impl From<u16> for Error { fn from(x: u16) -> Self { Error(x) } }
+impl From<Error> for u16 { fn from(x: Error) -> u16 { x.0 } }
 
 macro_rules! errors {
     {$($name:ident($val:expr) $desc:expr;)*} => {

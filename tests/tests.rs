@@ -6,10 +6,12 @@ extern crate slog;
 extern crate slog_term;
 #[macro_use]
 extern crate assert_matches;
+#[macro_use]
+extern crate lazy_static;
 
 use std::net::SocketAddrV6;
 
-use openssl::pkey::{PKey};
+use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use openssl::asn1::Asn1Time;
@@ -23,6 +25,18 @@ fn logger() -> Logger {
     Logger::root(drain, o!())
 }
 
+lazy_static! {
+    static ref KEY: PKey<Private> = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    static ref CERT: X509 = {
+        let mut cert = X509::builder().unwrap();
+        cert.set_pubkey(&KEY).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap()).unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(u32::max_value()).unwrap()).unwrap();
+        cert.sign(&KEY, openssl::hash::MessageDigest::sha256()).unwrap();
+        cert.build()
+    };
+}
+
 struct Pair {
     log: Logger,
     server: Endpoint,
@@ -34,25 +48,16 @@ struct Pair {
 impl Pair {
     fn new(log: Logger) -> Self {
         let server_addr = "[::1]:42".parse().unwrap();
-        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
-        let mut cert = X509::builder().unwrap();
-        cert.set_pubkey(&key).unwrap();
-        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap()).unwrap();
-        cert.set_not_after(&Asn1Time::days_from_now(u32::max_value()).unwrap()).unwrap();
-        cert.sign(&key, openssl::hash::MessageDigest::sha256()).unwrap();
-        let cert = cert.build();
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
-            Config {
-                listen: Some(ListenConfig {
-                    private_key: key,
-                    cert: cert,
-                }),
-                ..Config::default()
-            },
-            rand::random()).unwrap();
+            Config::default(),
+            rand::random(),
+            Some(ListenConfig {
+                private_key: &KEY,
+                cert: &CERT,
+            })).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default(), rand::random()).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default(), rand::random(), None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }

@@ -1,7 +1,7 @@
 use std::{mem, fmt, io};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BinaryHeap};
 
-use bytes::{Bytes, BufMut};
+use bytes::{Bytes, Buf, BufMut, BigEndian};
 
 use {varint, FromBytes, TransportError};
 
@@ -49,6 +49,7 @@ frame_types!{
     PADDING = 0x00,
     RST_STREAM = 0x01,
     CONNECTION_CLOSE = 0x02,
+    APPLICATION_CLOSE = 0x03,
     STOP_SENDING = 0x0c,
     ACK = 0x0d,
 }
@@ -61,20 +62,151 @@ pub enum Frame {
         app_error_code: u16,
         final_offset: u64,
     },
-    ConnectionClose {
-        error_code: TransportError,
-        reason: Bytes,
-    },
+    ConnectionClose(ConnectionClose),
+    ApplicationClose(ApplicationClose),
     Ack(Ack),
     Stream(Stream),
     Invalid,
 }
 
 #[derive(Debug, Clone)]
+pub struct ConnectionClose<T = Bytes> {
+    pub error_code: TransportError,
+    pub reason: T,
+}
+
+impl<T> fmt::Display for ConnectionClose<T>
+    where T: AsRef<[u8]>
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.error_code.fmt(f)?;
+        if !self.reason.as_ref().is_empty() {
+            f.write_str(": ")?;
+            f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
+        }
+        Ok(())
+    }
+}
+
+impl From<TransportError> for ConnectionClose {
+    fn from(x: TransportError) -> Self { ConnectionClose { error_code: x, reason: Bytes::new() } }
+}
+
+impl<T> ConnectionClose<T>
+    where T: AsRef<[u8]>
+{
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.put_u8(Type::CONNECTION_CLOSE.into());
+        out.put_u16::<BigEndian>(self.error_code.into());
+        varint::write(self.reason.as_ref().len() as u64, out).unwrap();
+        out.put_slice(self.reason.as_ref());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplicationClose<T = Bytes> {
+    pub error_code: u16,
+    pub reason: T,
+}
+
+impl<T> fmt::Display for ApplicationClose<T>
+    where T: AsRef<[u8]>
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.error_code.fmt(f)?;
+        if !self.reason.as_ref().is_empty() {
+            f.write_str(": ")?;
+            f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
+        }
+        Ok(())
+    }
+}
+
+impl<T> ApplicationClose<T>
+    where T: AsRef<[u8]>
+{
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.put_u8(Type::APPLICATION_CLOSE.into());
+        out.put_u16::<BigEndian>(self.error_code.into());
+        varint::write(self.reason.as_ref().len() as u64, out).unwrap();
+        out.put_slice(self.reason.as_ref());
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Ack {
-    pub delay: u64,
     pub largest: u64,
-    pub packets: AckIter
+    pub delay: u64,
+    pub additional: Bytes,
+}
+
+impl<'a> IntoIterator for &'a Ack {
+    type Item = u64;
+    type IntoIter = AckIter<'a>;
+
+    fn into_iter(self) -> AckIter<'a> {
+        AckIter::new(self.largest, &self.additional[..])
+    }
+}
+
+impl Ack {
+    pub fn new<T>(delay: u64, packets: T) -> Option<Self>
+        where T: IntoIterator<Item = u64>
+    {
+        let mut heap = packets.into_iter().collect::<BinaryHeap<u64>>();
+        let largest = heap.pop()?;
+        let mut buf = Vec::new();
+        Self::write_additional(largest, heap, &mut buf);
+        Some(Self { largest, delay, additional: buf.into() })
+    }
+
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.put_u8(Type::ACK.into());
+        varint::write(self.largest, buf).unwrap();
+        varint::write(self.delay, buf).unwrap();
+        let mut count = 0;
+        let mut cursor = io::Cursor::new(&self.additional[..]);
+        varint::read(&mut cursor).unwrap();
+        while cursor.has_remaining() {
+            varint::read(&mut cursor).unwrap();
+            varint::read(&mut cursor).unwrap();
+            count += 1;
+        }
+        varint::write(count, buf).unwrap();
+        buf.put_slice(&self.additional[..]);
+    }
+
+    pub fn direct_encode<W, T>(delay: u64, packets: T, buf: &mut W) -> bool
+        where W: BufMut, T: IntoIterator<Item = u64>
+    {
+        buf.put_u8(Type::ACK.into());
+        let mut heap = packets.into_iter().collect::<BinaryHeap<u64>>();
+        let largest = if let Some(x) = heap.pop() { x } else { return false; };
+        varint::write(largest, buf).unwrap();
+        varint::write(delay, buf).unwrap();
+        varint::write(heap.len() as u64, buf).unwrap();
+        Self::write_additional(largest, heap, buf);
+        true
+    }
+
+    fn write_additional<W: BufMut>(largest: u64, packets: BinaryHeap<u64>, buf: &mut W) {
+        let mut prev = largest;
+        let mut block_size = 0;
+        let packets = packets.into_sorted_vec();
+        for packet in packets.into_iter().rev() {
+            if prev - packet > 1 {
+                varint::write(block_size, buf).unwrap(); // block
+                varint::write(prev - packet - 1, buf).unwrap(); // gap
+                block_size = 0;
+            } else {
+                block_size += 1;
+            }
+            prev = packet;
+        }
+        varint::write(block_size, buf).unwrap(); // block
+    }
+
+    pub fn iter(&self) -> AckIter { self.into_iter() }
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +230,14 @@ impl<T> Stream<T>
         if self.offset != 0 { varint::write(self.offset, out).unwrap(); }
         if length { varint::write(self.data.as_ref().len() as u64, out).unwrap(); }
         out.put_slice(self.data.as_ref());
+    }
+
+    pub fn len(&self, length: bool) -> usize {
+        let mut result = varint::size(self.id.0).unwrap();
+        if self.offset != 0 { result += varint::size(self.offset).unwrap(); }
+        if length { result += varint::size(self.data.as_ref().len() as u64).unwrap(); }
+        result += self.data.as_ref().len();
+        result
     }
 }
 
@@ -133,16 +273,22 @@ impl Iter {
                 app_error_code: self.get()?,
                 final_offset: self.get_var()?,
             },
-            Type::CONNECTION_CLOSE => Frame::ConnectionClose {
+            Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
                 error_code: self.get::<u16>()?.into(),
                 reason: self.take_len()?,
-            },
+            }),
+            Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
+                error_code: self.get::<u16>()?,
+                reason: self.take_len()?,
+            }),
             Type::ACK => {
                 let largest = self.get_var()?;
                 let delay = self.get_var()?;
+                let extra_blocks = self.get_var()? as usize;
+                let len = scan_ack_blocks(&self.0[..], extra_blocks)?;
                 Frame::Ack(Ack {
                     delay, largest,
-                    packets: AckIter::new(largest, self)?,
+                    additional: self.0.split_to(len),
                 })
             }
             _ => match ty.stream() {
@@ -173,31 +319,32 @@ impl Iterator for Iter {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AckIter {
-    next: u64,
-    block_size: u64,
-    data: Bytes,
+fn scan_ack_blocks(packet: &[u8], n: usize) -> Option<usize> {
+    let mut buf = io::Cursor::new(packet);
+    let _first_block = varint::read(&mut buf)?;
+    for _ in 0..n {
+        varint::read(&mut buf)?; // gap
+        varint::read(&mut buf)?; // block
+    }
+    Some(buf.position() as usize)
 }
 
-impl AckIter {
-    fn new(largest: u64, packet: &mut Iter) -> Option<Self> {
-        let extra_blocks = packet.get_var()? + 1;
-        let first_block = packet.get_var()?;
-        let len = {
-            let mut buf = io::Cursor::new(&packet.0[..]);
-            for i in 0..extra_blocks {
-                varint::read(&mut buf)?; // gap
-                varint::read(&mut buf)?; // block
-            }
-            buf.position()
-        };
-        
-        Some(Self {
+#[derive(Debug, Clone)]
+pub struct AckIter<'a> {
+    next: u64,
+    block_size: u64,
+    data: io::Cursor<&'a [u8]>,
+}
+
+impl<'a> AckIter<'a> {
+    fn new(largest: u64, payload: &'a [u8]) -> Self {
+        let mut data = io::Cursor::new(payload);
+        let first_block = varint::read(&mut data).unwrap();
+        Self {
             next: largest,
             block_size: first_block + 1,
-            data: packet.0.slice(0, len as usize),
-        })
+            data,
+        }
     }
 
     pub fn peek(&self) -> Option<u64> {
@@ -205,21 +352,16 @@ impl AckIter {
     }
 }
 
-impl Iterator for AckIter {
+impl<'a> Iterator for AckIter<'a> {
     type Item = u64;
     fn next(&mut self) -> Option<u64> {
         if self.block_size == 0 { return None; }
         let result = self.next;
         self.next -= 1;
         self.block_size -= 1;
-        if self.block_size == 0 && !self.data.is_empty() {
-            let advance = {
-                let mut buf = io::Cursor::new(&self.data[..]);
-                self.next -= varint::read(&mut buf).unwrap() + 1;
-                self.block_size = varint::read(&mut buf).unwrap() + 1;
-                buf.position()
-            };
-            self.data.advance(advance as usize);
+        if self.block_size == 0 && self.data.has_remaining() {
+            self.next -= varint::read(&mut self.data).unwrap();
+            self.block_size = varint::read(&mut self.data).unwrap() + 1;
         }
         Some(result)
     }
@@ -378,5 +520,20 @@ mod test {
         x.insert(0, (&b"123456"[..]).into());
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn ack() {
+        let packets = [1, 2, 3, 5, 10, 11, 14];
+        let ack = Ack::new(42, packets.iter().cloned()).unwrap();
+        assert_eq!(&ack.additional[..], &[0, 2, 1, 4, 0, 1, 2]);
+        assert_eq!(&ack.iter().collect::<BinaryHeap<u64>>().into_sorted_vec(), &packets);
+        let mut buf = Vec::new();
+        ack.encode(&mut buf);
+        let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        assert_matches!(frames[0], Frame::Ack(ref x));
+        if let Frame::Ack(ref x) = frames[0] {
+            assert_eq!(x, &ack);
+        }
     }
 }
