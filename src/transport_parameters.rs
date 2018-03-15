@@ -138,44 +138,44 @@ impl TransportParameters {
             if r.remaining() < len as usize { return Err(Error::Malformed); }
             match id {
                 0x0000 => {
-                    if len != 4 { return Err(Error::Malformed); }
+                    if len != 4 || initial_max_stream_data { return Err(Error::Malformed); }
                     params.initial_max_stream_data = r.get_u32::<BigEndian>();
                     initial_max_stream_data = true;
                 }
                 0x0001 => {
-                    if len != 4 { return Err(Error::Malformed); }
+                    if len != 4 || initial_max_data { return Err(Error::Malformed); }
                     params.initial_max_data = r.get_u32::<BigEndian>();
                     initial_max_data = true;
                 }
                 0x0003 => {
-                    if len != 2 { return Err(Error::Malformed); }
+                    if len != 2 || idle_timeout { return Err(Error::Malformed); }
                     params.idle_timeout = r.get_u16::<BigEndian>();
                     idle_timeout = true;
                 }
                 0x0006 => {
-                    if len != 16 { return Err(Error::Malformed); }
+                    if len != 16 || params.stateless_reset_token.is_some() { return Err(Error::Malformed); }
                     let mut tok = [0; 16];
                     r.copy_to_slice(&mut tok);
                     params.stateless_reset_token = Some(tok);
                 }
                 0x0002 => {
-                    if len != 2 { return Err(Error::Malformed); }
+                    if len != 2 || params.initial_max_stream_id_bidi.is_some() { return Err(Error::Malformed); }
                     params.initial_max_stream_id_bidi = Some(r.get_u32::<BigEndian>());
                 }
                 0x0008 => {
-                    if len != 2 { return Err(Error::Malformed); }
+                    if len != 2 || params.initial_max_stream_id_uni.is_some() { return Err(Error::Malformed); }
                     params.initial_max_stream_id_uni = Some(r.get_u32::<BigEndian>());
                 }
                 0x0004 => {
-                    if len != 0 { return Err(Error::Malformed); }
+                    if len != 0 || params.omit_connection_id { return Err(Error::Malformed); }
                     params.omit_connection_id = true;
                 }
                 0x0005 => {
-                    if len != 2 { return Err(Error::Malformed); }
+                    if len != 2 || params.max_packet_size.is_some() { return Err(Error::Malformed); }
                     params.max_packet_size = Some(r.get_u16::<BigEndian>());
                 }
                 0x0007 => {
-                    if len != 1 { return Err(Error::Malformed); }
+                    if len != 1 || params.ack_delay_exponent.is_some() { return Err(Error::Malformed); }
                     params.ack_delay_exponent = Some(r.get_u8());
                 }
                 _ => r.advance(len as usize),
