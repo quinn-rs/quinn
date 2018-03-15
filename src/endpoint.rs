@@ -324,7 +324,7 @@ impl Endpoint {
         let conn = self.add_connection(id, remote, true);
         let packet = self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-            tls, clienthello_packet: Some(packet),
+            tls, params: None, clienthello_packet: Some(packet),
         }));
         Ok(conn)
     }
@@ -364,7 +364,7 @@ impl Endpoint {
                             self.connections[conn.0].stream0_data = frame::StreamAssembler::with_offset(incoming_len);
                             self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                                tls, clienthello_packet: None,
+                                tls, clienthello_packet: None, params: Some(params),
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
                         } else {
@@ -391,7 +391,7 @@ impl Endpoint {
                         });
                     }
                     Err(HandshakeError::SetupFailure(e)) => {
-                        debug!(self.log, "accept failed"; "reason" => %e);
+                        error!(self.log, "accept setup failed"; "reason" => %e);
                         let n = self.gen_initial_packet_num();
                         self.io.push_back(Io::Transmit {
                             destination: remote,
@@ -472,7 +472,7 @@ impl Endpoint {
                             self.connections[conn.0].client = true;
                             // Send updated ClientHello
                             let packet = self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
-                            State::Handshake(state::Handshake { tls, clienthello_packet: Some(packet) })
+                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: Some(packet) })
                         },
                         Ok(_) => {
                             debug!(self.log, "unexpectedly completed handshake in RETRY packet");
@@ -549,12 +549,25 @@ impl Endpoint {
                     }
                     match state.tls.handshake() {
                         Ok(mut tls) => {
+                            if self.connections[conn.0].client {
+                                if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
+                                    state.params = Some(params.expect("transport param errors should fail the handshake"));
+                                } else {
+                                    debug!(self.log, "server didn't send transport params");
+                                    self.events.push_back(Event::ConnectionLost {
+                                        connection: conn, reason: TransportError::TRANSPORT_PARAMETER_ERROR.into() });
+                                    return State::HandshakeFailed(state::HandshakeFailed {
+                                        reason: TransportError::TLS_HANDSHAKE_FAILED,
+                                        alert: Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                    })
+                                }
+                            }
                             trace!(self.log, "established"; "connection" => %id);
                             // FIXME: Use protected packet!
                             self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
                             self.events.push_back(Event::Connected(conn));
                             self.connections[conn.0].crypto = CryptoContext::established(tls.ssl(), self.connections[conn.0].client);
-                            State::Established(state::Established { tls, key_phase: false })
+                            State::Established(state::Established { tls, params: state.params.unwrap(), key_phase: false })
                         }
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "handshake ongoing"; "connection" => %id);
@@ -564,13 +577,20 @@ impl Endpoint {
                                     self.transmit_handshake(now, conn, remote, &response);
                                 }
                             }
-                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet })
+                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: state.clienthello_packet })
                         }
                         Err(HandshakeError::Failure(mut tls)) => {
                             debug!(self.log, "handshake failed"; "connection" => %id, "reason" => %tls.error());
-                            self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::TLS_HANDSHAKE_FAILED.into() });
+                            let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
+                                debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
+                                TransportError::TRANSPORT_PARAMETER_ERROR
+                            } else {
+                                debug!(self.log, "accept failed"; "reason" => %tls.error());
+                                TransportError::TLS_HANDSHAKE_FAILED
+                            };
+                            self.events.push_back(Event::ConnectionLost { connection: conn, reason: code.into() });
                             State::HandshakeFailed(state::HandshakeFailed {
-                                reason: TransportError::TLS_HANDSHAKE_FAILED,
+                                reason: code,
                                 alert: Some(tls.get_mut().take_outgoing().to_owned().into()),
                             })
                         }
@@ -1549,11 +1569,13 @@ mod state {
         /// The number of the packet that first contained the latest version of the TLS ClientHello. Present iff we're
         /// the client.
         pub clienthello_packet: Option<u32>,
+        pub params: Option<TransportParameters>,
     }
 
     pub struct Established {
         pub tls: SslStream<MemoryStream>,
         pub key_phase: bool,
+        pub params: TransportParameters,
     }
 
     pub struct HandshakeFailed { // Closed
