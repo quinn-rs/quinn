@@ -50,6 +50,7 @@ frame_types!{
     RST_STREAM = 0x01,
     CONNECTION_CLOSE = 0x02,
     APPLICATION_CLOSE = 0x03,
+    PING = 0x07,
     STOP_SENDING = 0x0c,
     ACK = 0x0d,
 }
@@ -531,7 +532,7 @@ mod test {
         let mut buf = Vec::new();
         ack.encode(&mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
-        assert_matches!(frames[0], Frame::Ack(ref x));
+        assert_matches!(frames[0], Frame::Ack(_));
         if let Frame::Ack(ref x) = frames[0] {
             assert_eq!(x, &ack);
         }

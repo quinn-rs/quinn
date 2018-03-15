@@ -19,20 +19,26 @@ extern crate slog;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
+#[cfg(test)]
+#[macro_use]
+extern crate hex_literal;
 
 
 mod varint;
 mod memory_stream;
 mod transport_parameters;
+mod coding;
+mod hkdf;
 
 mod frame;
 use frame::Frame;
+pub use frame::{ApplicationClose, ConnectionClose};
 
 mod from_bytes;
-use from_bytes::{FromBytes, BytesExt};
+use from_bytes::{FromBytes};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, Event, Io};
+pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer};
 
 
 mod transport_error;

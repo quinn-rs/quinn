@@ -178,7 +178,7 @@ impl TransportParameters {
                     if len != 1 { return Err(Error::Malformed); }
                     params.ack_delay_exponent = Some(r.get_u8());
                 }
-                x => r.advance(len as usize),
+                _ => r.advance(len as usize),
             }
         }
 

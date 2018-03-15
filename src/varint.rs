@@ -2,6 +2,8 @@ use bytes::{Buf, BufMut};
 
 use byteorder::{ByteOrder, BigEndian};
 
+use coding::{self, Value};
+
 pub fn size(x: u64) -> Option<usize> {
     if x < 2u64.pow(6) {
         Some(1)
@@ -68,4 +70,16 @@ pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
        return Err(WriteError::OversizedValue);
     }
     Ok(())
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Varint(pub u64);
+
+impl Value for Varint {
+    fn decode<B: Buf>(buf: &mut B) -> coding::Result<Varint> {
+        read(buf).map(Varint).ok_or(coding::UnexpectedEnd)
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        write(self.0, buf).unwrap()
+    }
 }
