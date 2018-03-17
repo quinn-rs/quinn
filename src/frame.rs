@@ -1,5 +1,5 @@
 use std::{mem, fmt, io};
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BTreeMap;
 
 use bytes::{Bytes, Buf, BufMut, BigEndian};
 
@@ -53,6 +53,8 @@ frame_types!{
     PING = 0x07,
     STOP_SENDING = 0x0c,
     ACK = 0x0d,
+    PATH_CHALLENGE = 0x0e,
+    PATH_RESPONSE = 0x0f,
 }
 
 #[derive(Debug)]
@@ -67,6 +69,8 @@ pub enum Frame {
     ApplicationClose(ApplicationClose),
     Ack(Ack),
     Stream(Stream),
+    PathChallenge(u64),
+    PathResponse(u64),
     Invalid,
 }
 
@@ -154,10 +158,15 @@ impl Ack {
     pub fn new<T>(delay: u64, packets: T) -> Option<Self>
         where T: IntoIterator<Item = u64>
     {
-        let mut heap = packets.into_iter().collect::<BinaryHeap<u64>>();
-        let largest = heap.pop()?;
+        let mut packets = packets.into_iter().collect::<Vec<u64>>();
+        packets.sort_unstable();
+        Self::from_sorted(delay, &packets)
+    }
+
+    pub fn from_sorted(delay: u64, packets: &[u64]) -> Option<Self> {
+        let (&largest, rest) = packets.split_last()?;
         let mut buf = Vec::new();
-        Self::write_additional(largest, heap, &mut buf);
+        Self::write_additional(largest, rest, &mut buf);
         Some(Self { largest, delay, additional: buf.into() })
     }
 
@@ -177,24 +186,10 @@ impl Ack {
         buf.put_slice(&self.additional[..]);
     }
 
-    pub fn direct_encode<W, T>(delay: u64, packets: T, buf: &mut W) -> bool
-        where W: BufMut, T: IntoIterator<Item = u64>
-    {
-        buf.put_u8(Type::ACK.into());
-        let mut heap = packets.into_iter().collect::<BinaryHeap<u64>>();
-        let largest = if let Some(x) = heap.pop() { x } else { return false; };
-        varint::write(largest, buf).unwrap();
-        varint::write(delay, buf).unwrap();
-        varint::write(heap.len() as u64, buf).unwrap();
-        Self::write_additional(largest, heap, buf);
-        true
-    }
-
-    fn write_additional<W: BufMut>(largest: u64, packets: BinaryHeap<u64>, buf: &mut W) {
+    fn write_additional<W: BufMut>(largest: u64, packets: &[u64], buf: &mut W) {
         let mut prev = largest;
         let mut block_size = 0;
-        let packets = packets.into_sorted_vec();
-        for packet in packets.into_iter().rev() {
+        for &packet in packets.into_iter().rev() {
             if prev - packet > 1 {
                 varint::write(block_size, buf).unwrap(); // block
                 varint::write(prev - packet - 1, buf).unwrap(); // gap
@@ -292,6 +287,8 @@ impl Iter {
                     additional: self.0.split_to(len),
                 })
             }
+            Type::PATH_CHALLENGE => Frame::PathChallenge(self.get::<u64>()?),
+            Type::PATH_RESPONSE => Frame::PathResponse(self.get::<u64>()?),
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
                     id: self.get_var()?.into(),
@@ -528,7 +525,9 @@ mod test {
         let packets = [1, 2, 3, 5, 10, 11, 14];
         let ack = Ack::new(42, packets.iter().cloned()).unwrap();
         assert_eq!(&ack.additional[..], &[0, 2, 1, 4, 0, 1, 2]);
-        assert_eq!(&ack.iter().collect::<BinaryHeap<u64>>().into_sorted_vec(), &packets);
+        let mut out = ack.iter().collect::<Vec<_>>();
+        out.sort_unstable();
+        assert_eq!(&out, &packets);
         let mut buf = Vec::new();
         ack.encode(&mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();

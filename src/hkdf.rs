@@ -45,6 +45,7 @@ pub fn qexpand(algo: MessageDigest, prk: &[u8], label: &[u8], length: u16) -> Bo
     info.put_u8(PREFIX.len() as u8 + label.len() as u8);
     info.put_slice(PREFIX);
     info.put_slice(label);
+    info.put_u8(0);             // Null terminator for label
     expand(algo, prk, &info, length as usize)
 }
 

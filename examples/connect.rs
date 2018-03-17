@@ -77,6 +77,11 @@ impl Context {
                 Io::TimerStop { timer: quicr::Timer::LossDetection, .. } => { self.loss_timer = None; }
                 Io::TimerStop { timer: quicr::Timer::Close, .. } => { self.close_timer = None; }
             }}
+            while let Some(e) = self.client.poll() { match e {
+                Event::Connected(_) => { return Ok(()); }
+                Event::ConnectionLost { reason, .. } => { return Err(reason.into()); }
+                Event::Recv(_) => {}
+            }}
             let mut buf = [0; 2048];
             let (timer, close) = if self.loss_timer.unwrap_or(u64::max_value()) < self.close_timer.unwrap_or(u64::max_value()) {
                 (self.loss_timer, false)
@@ -100,11 +105,6 @@ impl Context {
                 }
                 Err(e) => { return Err(e.into()); }
             }
-            while let Some(e) = self.client.poll() { match e {
-                Event::Connected(_) => { return Ok(()); }
-                Event::ConnectionLost { reason, .. } => { return Err(reason.into()); }
-                Event::Recv(_) => {}
-            }}
         }
     }
 }

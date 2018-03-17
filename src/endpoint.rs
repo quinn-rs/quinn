@@ -981,7 +981,7 @@ struct Connection {
     time_of_last_sent_packet: u64,
     /// The packet number of the most recently sent packet.
     largest_sent_packet: u64,
-    /// The largest packet number acknowledged in an ACK frame.
+    /// The largest packet number the remote peer acknowledged in an ACK frame.
     largest_acked_packet: u64,
     /// Transmitted but not acked
     sent_packets: BTreeMap<u64, SentPacket>,
