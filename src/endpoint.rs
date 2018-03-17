@@ -309,6 +309,8 @@ impl Endpoint {
             }
             buf.extend(&reset_token_for(&self.state.reset_key, id));
             self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+        } else {
+            trace!(self.log, "dropping unrecognized short packet without ID");
         }
     }
 
@@ -322,10 +324,11 @@ impl Endpoint {
             Err(e) => return Err(e.into()),
         };
         let conn = self.add_connection(id, remote, true);
-        let packet = self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
+        self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-            tls, params: None, clienthello_packet: Some(packet),
+            tls, params: None, clienthello_packet: None,
         }));
+        self.flush_pending(now, conn);
         Ok(conn)
     }
 
@@ -362,11 +365,12 @@ impl Endpoint {
                             let params = params.expect("transport parameter errors should have aborted the handshake");
                             let conn = self.add_connection(id, remote, false);
                             self.connections[conn.0].stream0_data = frame::StreamAssembler::with_offset(incoming_len);
-                            self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
+                            self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                                 tls, clienthello_packet: None, params: Some(params),
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
+                            self.flush_pending(now, conn);
                         } else {
                             debug!(self.log, "ClientHello missing transport params extension");
                             let n = self.gen_initial_packet_num();
@@ -471,8 +475,8 @@ impl Endpoint {
                             );
                             self.connections[conn.0].client = true;
                             // Send updated ClientHello
-                            let packet = self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
-                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: Some(packet) })
+                            self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: state.clienthello_packet })
                         },
                         Ok(_) => {
                             debug!(self.log, "unexpectedly completed handshake in RETRY packet");
@@ -506,7 +510,7 @@ impl Endpoint {
                         debug!(self.log, "failed to decrypt handshake packet");
                         return State::Handshake(state);
                     };
-                    self.connections[conn.0].on_packet_authenticated(number as u64);
+                    self.connections[conn.0].on_packet_authenticated(now, number as u64);
                     // Complete handshake (and ultimately send Finished)
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
@@ -515,7 +519,7 @@ impl Endpoint {
                                 self.connections[conn.0].stream0_data.insert(offset, data);
                             }
                             Frame::Stream(frame::Stream { .. }) => {
-                                debug!(self.log, "non-stream-0 frame in handshake");
+                                debug!(self.log, "non-stream-0 stream frame in handshake");
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                                 return State::HandshakeFailed(state::HandshakeFailed {
                                     reason: TransportError::PROTOCOL_VIOLATION,
@@ -533,8 +537,15 @@ impl Endpoint {
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ApplicationClosed { reason } });
                                 return State::Draining;
                             }
+                            Frame::PathChallenge(value) => {
+                                self.connections[conn.0].path_responses.push_back(value);
+                            }
                             _ => {
-                                debug!(self.log, "invalid frame type in handshake");
+                                if let Some(ty) = frame.ty() {
+                                    debug!(self.log, "unexpected frame type in handshake"; "type" => %ty);
+                                } else {
+                                    debug!(self.log, "unknown frame type in handshake");
+                                }
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                                 return State::HandshakeFailed(state::HandshakeFailed {
                                     reason: TransportError::PROTOCOL_VIOLATION,
@@ -546,6 +557,10 @@ impl Endpoint {
                     while let Some(segment) = self.connections[conn.0].stream0_data.next() {
                         self.connections[conn.0].stream0.rx_offset += segment.len() as u64;
                         state.tls.get_mut().extend_incoming(&segment);
+                    }
+                    if state.tls.get_ref().incoming_len() == 0 {
+                        trace!(self.log, "no handshake data");
+                        return State::Handshake(state);
                     }
                     match state.tls.handshake() {
                         Ok(mut tls) => {
@@ -563,8 +578,7 @@ impl Endpoint {
                                 }
                             }
                             trace!(self.log, "established"; "connection" => %id);
-                            // FIXME: Use protected packet!
-                            self.transmit_handshake(now, conn, remote, &tls.get_mut().take_outgoing());
+                            self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.events.push_back(Event::Connected(conn));
                             self.connections[conn.0].crypto = CryptoContext::established(tls.ssl(), self.connections[conn.0].client);
                             State::Established(state::Established { tls, params: state.params.unwrap(), key_phase: false })
@@ -574,13 +588,12 @@ impl Endpoint {
                             {
                                 let response = tls.get_mut().take_outgoing();
                                 if !response.is_empty() {
-                                    self.transmit_handshake(now, conn, remote, &response);
+                                    self.transmit_handshake(conn, &response);
                                 }
                             }
                             State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: state.clienthello_packet })
                         }
                         Err(HandshakeError::Failure(mut tls)) => {
-                            debug!(self.log, "handshake failed"; "connection" => %id, "reason" => %tls.error());
                             let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
                                 debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
                                 TransportError::TRANSPORT_PARAMETER_ERROR
@@ -635,6 +648,7 @@ impl Endpoint {
                 }
                 // TODO: SHOULD buffer these.
                 Header::Short { .. } => {
+                    trace!(self.log, "dropping short packet during handshake");
                     State::Handshake(state)
                 }
             }
@@ -666,7 +680,7 @@ impl Endpoint {
                 debug!(self.log, "failed to decrypt packet");
                 return State::Established(state);
             };
-            self.connections[conn.0].on_packet_authenticated(number);
+            self.connections[conn.0].on_packet_authenticated(now, number);
             for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
@@ -782,7 +796,25 @@ impl Endpoint {
         }
         self.connections[conn.0].state = Some(state);
 
-        // TODO: Send frames that were formerly blocked by congestion
+        self.flush_pending(now, conn);
+    }
+
+    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
+        let mut timer = None;
+        while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.config, now) {
+            timer = t.or(timer);
+            self.io.push_back(Io::Transmit {
+                destination: self.connections[conn.0].remote,
+                packet: packet.into(),
+            });
+        }
+        if let Some(time) = timer {
+            self.io.push_back(Io::TimerStart {
+                connection: conn,
+                timer: Timer::LossDetection,
+                time
+            });
+        }
     }
 
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
@@ -798,15 +830,14 @@ impl Endpoint {
                     debug_assert!(!self.connections[conn.0].sent_packets.is_empty());
                     // Retransmit all
                     trace!(self.log, "retransmitting handshake"; "connection" => %self.connections[conn.0].id);
-                    for packet in self.connections[conn.0].handshake_retransmit(&self.config, now) {
-                        self.io.push_back(Io::Transmit { destination: self.connections[conn.0].remote, packet });
+                    for (_, packet) in mem::replace(&mut self.connections[conn.0].sent_packets, BTreeMap::new()) {
+                        self.connections[conn.0].pending += packet.retransmits;
                     }
                     self.connections[conn.0].handshake_count += 1;
                 } else if self.connections[conn.0].loss_time != 0 {
                     // Early retransmit or Time Loss Detection
                     let largest = self.connections[conn.0].largest_acked_packet;
                     self.connections[conn.0].detect_lost_packets(&self.config, now, largest);
-                    self.retransmit(conn);
                 } else if self.connections[conn.0].tlp_count < self.config.max_tlps {
                     // Tail Loss Probe.
                     unimplemented!(); // TODO: Send one packet
@@ -827,85 +858,24 @@ impl Endpoint {
                         time: alarm,
                     });
                 }
+                self.flush_pending(now, conn);
             }
         }
     }
 
-    fn transmit_handshake(&mut self, now: u64, conn: ConnectionHandle, destination: SocketAddrV6, messages: &[u8]) -> u32 {
-        let mut first_packet_number = None;
-        debug_assert!(!messages.is_empty());
-        let mut cursor = 0;
-        while cursor != messages.len() {
-            let frame_header_size = if self.connections[conn.0].stream0.tx_offset < 2u64.pow(14) { 3 } else { 5 };
-            let overhead = LONG_HEADER_SIZE + frame_header_size + AEAD_TAG_SIZE; // packet header + frame header + aead tag
-            let bound = cmp::min(self.connections[conn.0].mtu as usize - overhead, messages.len() - cursor);
-            let segment = &messages[cursor..cursor+bound];
-            cursor += bound;
-            let mut buf = Vec::<u8>::new();
-            let packet_number = self.connections[conn.0].get_tx_number() as u32;
-            if first_packet_number.is_none() {
-                first_packet_number = Some(packet_number);
-            }
-            let tx_offset = {
-                let x = &mut self.connections[conn.0].stream0.tx_offset;
-                let initial = *x;
-                *x += segment.len() as u64;
-                initial
-            };
-            let ty = if self.connections[conn.0].client && tx_offset == 0 { packet::INITIAL } else { packet::HANDSHAKE };
-            encode_long_header(&mut buf, ty, self.connections[conn.0].id, packet_number);
-            let frame = frame::Stream {
-                id: StreamId(0),
-                offset: tx_offset,
-                fin: false,
-                data: Bytes::from(segment),
-            };
-            if ty == packet::INITIAL && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                frame.encode(true, &mut buf);
-                buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
-            } else {
-                // Only need length tag if we're adding padding
-                frame.encode(false, &mut buf);
-            }
-            let payload = self.connections[conn.0].crypto.encrypt(packet_number as u64, &buf[0..LONG_HEADER_SIZE], &buf[LONG_HEADER_SIZE..]);
-            debug_assert_eq!(payload.len(), buf.len() - LONG_HEADER_SIZE + AEAD_TAG_SIZE);
-            buf.truncate(LONG_HEADER_SIZE);
-            buf.extend_from_slice(&payload);
-
-            let bytes = buf.len() as u16;
-            self.io.push_back(Io::Transmit { destination, packet: buf.into() });
-            self.on_packet_sent(now, conn, true, packet_number as u64, SentPacket {
-                time: now,
-                bytes,
-                retransmits: Retransmits::from_stream(frame)
-            });
-        }
-        first_packet_number.unwrap()
-    }
-
-    fn on_packet_sent(&mut self, now: u64, conn: ConnectionHandle, in_handshake: bool, packet_number: u64, packet: SentPacket) {
-        if let Some(time) = self.connections[conn.0].on_packet_sent(&self.config, now, in_handshake, packet_number, packet) {
-            self.io.push_back(Io::TimerStart {
-                connection: conn,
-                timer: Timer::LossDetection,
-                time
-            });
-        }
+    fn transmit_handshake(&mut self, conn: ConnectionHandle, messages: &[u8]) {
+        let offset = self.connections[conn.0].stream0.tx_offset;
+        self.connections[conn.0].pending.stream.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
+        self.connections[conn.0].stream0.tx_offset += messages.len() as u64;
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, in_handshake: bool, ack: frame::Ack) {
         let time = self.connections[conn.0].on_ack_received(&self.config, now, in_handshake, ack);
-        self.retransmit(conn);  // Congestion window may have opened and/or new packets may have been deemed lost
         self.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::LossDetection,
             time,
         });
-    }
-
-    // Transmit as much lost data as the congestion window allows
-    fn retransmit(&mut self, conn: ConnectionHandle) {
-        unimplemented!()
     }
 }
 
@@ -937,10 +907,6 @@ struct Connection {
     stream0: Stream,
     stream0_data: frame::StreamAssembler,
     streams: HashMap<StreamId, Stream>,
-    /// Packets we haven't yet acknowledged
-    pending_acks: Vec<u64>,
-    /// Acks we've sent which haven't been acked in turn
-    unconfirmed_acks: HashMap<u64, Vec<u64>>,
     client: bool,
     /// Present iff we're the client and the handshake is complete
     reset_token: Option<[u8; 16]>,
@@ -1009,7 +975,9 @@ struct Connection {
     //
     // Transmit queue
     //
-    pending_retransmits: Retransmits,
+
+    pending: Retransmits,
+    path_responses: VecDeque<u64>,
 }
 
 /// Represents one or more packets subject to retransmission
@@ -1030,9 +998,9 @@ struct Retransmits {
     max_stream_data: bool,
     max_data: bool,
     max_stream_id: bool,
-    ack: bool,
     new_connection_id: Option<ConnectionId>,
     stream: VecDeque<frame::Stream>,
+    ack: Vec<u64>,
 }
 
 impl Default for Retransmits {
@@ -1040,9 +1008,9 @@ impl Default for Retransmits {
         max_stream_data: false,
         max_data: false,
         max_stream_id: false,
-        ack: false,
         new_connection_id: None,
         stream: VecDeque::new(),
+        ack: Vec::new(),
     }}
 }
 
@@ -1051,9 +1019,9 @@ impl ::std::ops::AddAssign for Retransmits {
         self.max_stream_data |= rhs.max_stream_data;
         self.max_data |= rhs.max_data;
         self.max_stream_id |= rhs.max_stream_id;
-        self.ack |= rhs.ack;
         self.new_connection_id = rhs.new_connection_id.or(self.new_connection_id);
         self.stream.extend(rhs.stream.into_iter());
+        self.ack.extend_from_slice(&rhs.ack);
     }
 }
 
@@ -1085,8 +1053,6 @@ impl Connection {
             stream0_data: frame::StreamAssembler::new(),
             streams: HashMap::new(),
             state: None,
-            pending_acks: Vec::new(),
-            unconfirmed_acks: HashMap::new(),
             reset_token: None,
             mtu: MIN_MTU,
             rx_packet: 0,
@@ -1101,7 +1067,7 @@ impl Connection {
             latest_rtt: 0,
             smoothed_rtt: 0,
             rttvar: 0,
-            min_rtt: 0,
+            min_rtt: u64::max_value(),
             max_ack_delay: 0,
             largest_sent_before_rto: 0,
             time_of_last_sent_packet: 0,
@@ -1115,7 +1081,8 @@ impl Connection {
             end_of_recovery: 0,
             ssthresh: u64::max_value(),
 
-            pending_retransmits: Retransmits::default(),
+            pending: Retransmits::default(),
+            path_responses: VecDeque::new(),
         }
     }
 
@@ -1143,7 +1110,7 @@ impl Connection {
 
     /// Returns new loss detection alarm time
     fn on_ack_received(&mut self, config: &Config, now: u64, in_handshake: bool, ack: frame::Ack) -> u64 {
-        self.largest_acked_packet = ack.largest;
+        self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
             self.update_rtt(ack.delay, info.ack_only());
@@ -1191,7 +1158,6 @@ impl Connection {
             }
             
             self.retransmittable_outstanding -= 1;
-            self.unconfirmed_acks.remove(&packet);
         }
 
         // Loss recovery
@@ -1205,7 +1171,7 @@ impl Connection {
         self.handshake_count = 0;
         self.tlp_count = 0;
         self.rto_count = 0;
-        self.sent_packets.remove(&packet);
+        self.sent_packets.remove(&packet).unwrap();
     }
 
     fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
@@ -1222,7 +1188,9 @@ impl Connection {
         } else {
             delay_until_lost = u64::max_value();
         }
-        for (&packet, info) in &self.sent_packets {
+        for (&packet, info) in self.sent_packets.iter()
+            .filter(|&(&packet, _)| packet < largest_acked)
+        {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
             if time_since_sent > delay_until_lost || delta > self.reordering_threshold as u64 {
@@ -1244,7 +1212,7 @@ impl Connection {
             for packet in lost_packets {
                 let info = self.sent_packets.remove(&packet).unwrap();
                 self.bytes_in_flight -= info.bytes as u64;
-                self.pending_retransmits += info.retransmits;
+                self.pending += info.retransmits;
             }
         }
     }
@@ -1287,49 +1255,11 @@ impl Connection {
         cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    fn handshake_retransmit(&mut self, config: &Config, now: u64) -> Vec<Box<[u8]>> {
-        let mut unacked = mem::replace(&mut self.sent_packets, BTreeMap::new()).into_iter()
-            .map(|(_, x)| x.retransmits).collect::<Retransmits>();
-        let mut packets = Vec::new();
-        // TODO: Retransmit ACKs
-        let mut data = Vec::new();
-        let start = unacked.stream.front().unwrap().offset;
-        let mut offset = start;
-        while let Some(segment) = unacked.stream.pop_front() {
-            data.extend_from_slice(&segment.data);
+    fn on_packet_authenticated(&mut self, now: u64, packet: u64) {
+        self.pending.ack.push(packet);
+        if packet > self.rx_packet {
+            self.rx_packet = packet;
         }
-        while offset - start < data.len() as u64 {
-            let mut buf = Vec::new();
-            buf.reserve_exact(self.mtu as usize);
-            let number = self.get_tx_number();
-            let ty = if offset == 0 { packet::INITIAL } else { packet::HANDSHAKE };
-            encode_long_header(&mut buf, ty, self.id, number as u32);
-            let start = (offset-start) as usize;
-            let len = cmp::min(data.len(), self.mtu as usize - buf.len() - 1 - 8); // conservative
-            let frame = frame::Stream {
-                id: StreamId(0), fin: false, offset, data: (&data[start..start+len]).into()
-            };
-            frame.encode(false, &mut buf);
-            if ty == packet::INITIAL && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
-            }
-            let payload = self.crypto.encrypt(number as u64, &buf[0..LONG_HEADER_SIZE], &buf[LONG_HEADER_SIZE..]);
-            debug_assert_eq!(payload.len(), buf.len() - LONG_HEADER_SIZE + AEAD_TAG_SIZE);
-            buf.truncate(LONG_HEADER_SIZE);
-            buf.extend_from_slice(&payload);
-            // We can ignore on_packet_sent's return value because we're called only from the loss detection timeout,
-            // which resets the timer explicitly afterwards.
-            self.on_packet_sent(config, now, true, number, SentPacket { time: now, bytes: buf.len() as u16,
-                                                                        retransmits: Retransmits::from_stream(frame) });
-            offset += len as u64;
-            packets.push(buf.into());
-        }
-        packets
-    }
-
-    fn on_packet_authenticated(&mut self, packet: u64) {
-        self.pending_acks.push(packet);
-        self.rx_packet = cmp::max(packet, self.rx_packet);
     }
 
     fn update_keys(&mut self, packet: u64) {
@@ -1345,6 +1275,110 @@ impl Connection {
             }
         }
         self.crypto.decrypt(packet, header, payload)
+    }
+
+    fn next_packet_inner(&mut self, config: &Config, now: u64) -> Option<(Vec<u8>, u64, u16, Option<u64>)> {
+        let in_handshake = match *self.state.as_ref().unwrap() { State::Handshake(_) => true, _ => false };
+        let max_size = if in_handshake { self.mtu } else { cmp::min(self.mtu as u64, self.congestion_window.saturating_sub(self.bytes_in_flight)) as u16 };
+        if max_size == 0 { return None; }
+        let number = self.get_tx_number();
+        let mut buf = Vec::with_capacity(max_size as usize);
+        let max_size = max_size.saturating_sub(AEAD_TAG_SIZE as u16);
+
+        let mut is_initial = false;
+        if in_handshake {
+            let ty = if self.client && self.stream0.rx_offset == 0 {
+                match *self.state.as_mut().unwrap() {
+                    State::Handshake(state::Handshake { ref mut clienthello_packet, .. }) if clienthello_packet.is_none() => {
+                        *clienthello_packet = Some(number as u32);
+                    },
+                    _ => {}
+                };
+                is_initial = true;
+                packet::INITIAL
+            } else {
+                packet::HANDSHAKE
+            };
+            encode_long_header(&mut buf, ty, self.id, number as u32);
+        } else {
+            Header::Short {
+                id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: false
+            }.encode(&mut buf);
+        }
+        let header_len = buf.len() as u16;
+
+        // ACK
+        self.pending.ack.sort_unstable();
+        let ack_delay = 0; // TODO
+        let mut acks = Vec::new();
+        let ack_count = if let Some((&largest, rest)) = self.pending.ack.split_last() {
+            let mut meter = frame::AckMeter::new(largest, ack_delay);
+            if buf.len() + meter.size() > max_size as usize { return None; }
+            let mut n = 1;
+            for &packet in rest.iter().rev() {
+                meter.push(packet);
+                if buf.len() + meter.size() > max_size as usize {
+                    break;
+                }
+                n += 1;
+            }
+            n
+        } else { 0 };
+        if ack_count != 0 {
+            acks.extend_from_slice(&self.pending.ack[self.pending.ack.len() - ack_count..]);
+            self.pending.ack.truncate(acks.len() - ack_count);
+            {
+                let frame = frame::Ack::from_sorted(ack_delay, &acks).unwrap();
+                frame.encode(&mut buf);
+            }
+        }
+
+        // PATH_RESPONSE
+        while max_size as usize > buf.len() + 9 {
+            let response = if let Some(x) = self.path_responses.pop_front() { x } else { break; };
+            buf.put_u8(frame::Type::PATH_RESPONSE.into());
+            buf.put_u64::<BigEndian>(response);
+        }
+
+        // STREAM
+        let mut streams = VecDeque::new();
+        while max_size as usize > buf.len() + 24 {
+            let mut stream = if let Some(x) = self.pending.stream.pop_front() { x } else { break; };
+            let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 24);
+            let data = stream.data.split_to(len);
+            let frame = frame::Stream {
+                id: stream.id,
+                offset: stream.offset,
+                fin: stream.fin && len == stream.data.len(),
+                data: data,
+            };
+            frame.encode(true, &mut buf);
+            streams.push_back(frame);
+            if !stream.data.is_empty() {
+                self.pending.stream.push_front(frame::Stream { offset: stream.offset + len as u64, ..stream });
+            }
+        }
+
+        if buf.len() == header_len as usize { return None; }
+
+        if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+            buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
+        }
+
+        let timer = self.on_packet_sent(config, now, in_handshake, number, SentPacket {
+            time: now, bytes: buf.len() as u16, retransmits: Retransmits { stream: streams, ack: acks, ..Retransmits::default() }
+        });
+
+        Some((buf, number, header_len, timer))
+    }
+
+    fn next_packet(&mut self, config: &Config, now: u64) -> Option<(Vec<u8>, Option<u64>)> {
+        let (mut buf, number, header_len, timer) = self.next_packet_inner(config, now)?;
+        let payload = self.crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]);
+        debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
+        buf.truncate(header_len as usize);
+        buf.extend_from_slice(&payload);
+        Some((buf, timer))
     }
 }
 
@@ -1460,10 +1494,10 @@ impl Header {
                 let ty = number.ty() | 0x10
                     | if key_phase { 0x20 } else { 0 };
                 if let Some(x) = id {
-                    w.put_u8(ty | 0x40);
+                    w.put_u8(ty);
                     w.put_u64::<BigEndian>(x.0);
                 } else {
-                    w.put_u8(ty);
+                    w.put_u8(ty | 0x40);
                 }
                 number.encode(w);
             }
@@ -1746,7 +1780,8 @@ fn handshake_close(crypto: &CryptoContext, id: ConnectionId, packet_number: u32,
     buf.into()
 }
 
-const HANDSHAKE_SALT: [u8; 20] = [0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f, 0xe0, 0x6d, 0x6c, 0x38];
+//const HANDSHAKE_SALT: [u8; 20] = [0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f, 0xe0, 0x6d, 0x6c, 0x38];
+const HANDSHAKE_SALT: [u8; 20] = [0xaf, 0xc8, 0x24, 0xec, 0x5f, 0xc7, 0x7e, 0xca, 0x1e, 0x9d, 0x36, 0xf3, 0x7f, 0xb2, 0xd4, 0x65, 0x18, 0xc3, 0x66, 0x39];
 
 pub struct CryptoState {
     secret: Box<[u8]>,
@@ -1862,7 +1897,7 @@ mod test {
     }
 
     #[test]
-    fn handshake_crypto() {
+    fn handshake_crypto_roundtrip() {
         let conn = rand::random();
         let client = CryptoContext::handshake(conn, true);
         let server = CryptoContext::handshake(conn, false);
@@ -1871,5 +1906,48 @@ mod test {
         let encrypted = client.encrypt(0, header, payload);
         let decrypted = server.decrypt(0, header, &encrypted).unwrap();
         assert_eq!(decrypted, payload);
+    }
+
+    #[test]
+    fn key_derivation() {
+        let id = ConnectionId(BigEndian::read_u64(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]));
+        let digest = MessageDigest::sha256();
+        let cipher = Cipher::aes_128_gcm();
+        let mut id_buf = [0; 8];
+        BigEndian::write_u64(&mut id_buf, id.0);
+        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id_buf);
+        assert_eq!(&hs_secret[..],
+                   [0x8f, 0x01, 0x00, 0x67, 0x9c, 0x96, 0x5a, 0xc5,
+                    0x9f, 0x28, 0x3a, 0x02, 0x52, 0x2a, 0x6e, 0x43,
+                    0xcf, 0xae, 0xf6, 0x3c, 0x45, 0x48, 0xb0, 0xa6,
+                    0x8f, 0x91, 0x91, 0x40, 0xee, 0x7d, 0x9a, 0x48]);
+        
+        let client_secret = hkdf::qexpand(digest, &hs_secret, b"client hs", digest.size() as u16);
+        assert_eq!(&client_secret[..],
+                   [0x8e, 0x28, 0x6a, 0x27, 0x38, 0xe6, 0x66, 0x50,
+                    0xb4, 0xf8, 0x8f, 0xac, 0x5d, 0xc5, 0xd0, 0xef,
+                    0x7d, 0x36, 0x9b, 0x07, 0xd4, 0x74, 0x42, 0x99,
+                    0x1a, 0x00, 0x0c, 0x55, 0xac, 0xc4, 0x0c, 0xf4]);
+        let client_state = CryptoState::new(digest, cipher, client_secret);
+        assert_eq!(&client_state.key[..],
+                   [0x6b, 0x6a, 0xbc, 0x50, 0xf7, 0xac, 0x46, 0xd1,
+                    0x10, 0x8c, 0x19, 0xcc, 0x63, 0x64, 0xbd, 0xe3]);
+        assert_eq!(&client_state.iv[..],
+                   [0xb1, 0xf9, 0xa7, 0xe2, 0x7c, 0xc2, 0x33, 0xbb,
+                    0x99, 0xe2, 0x03, 0x71]);
+
+        let server_secret = hkdf::qexpand(digest, &hs_secret, b"server hs", digest.size() as u16);
+        assert_eq!(&server_secret[..],
+                   [0xfa, 0xb5, 0xb7, 0xf5, 0x26, 0xec, 0xaf, 0xaf,
+                    0x74, 0x71, 0x52, 0xdd, 0xaa, 0x88, 0x28, 0x56,
+                    0xf9, 0xbe, 0xd7, 0x48, 0x81, 0x1e, 0x37, 0xff,
+                    0xe1, 0xcb, 0xb1, 0x55, 0xe1, 0xc9, 0x91, 0xad]);
+        let server_state = CryptoState::new(digest, cipher, server_secret);
+        assert_eq!(&server_state.key[..],
+                   [0x9e, 0xe7, 0xe8, 0x57, 0x72, 0x00, 0x59, 0xaf,
+                    0x30, 0x11, 0xfb, 0x26, 0xe1, 0x21, 0x42, 0xc9]);
+        assert_eq!(&server_state.iv[..],
+                   [0xd5, 0xee, 0xe8, 0xb5, 0x7c, 0x9e, 0xc7, 0xc4,
+                    0xbe, 0x98, 0x4a, 0xa5]);
     }
 }

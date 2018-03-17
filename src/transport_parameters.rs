@@ -21,7 +21,7 @@ impl Default for TransportParameters {
         // TODO: Sanity check all
         initial_max_stream_data: 64 * 1024,
         initial_max_data: 64 * 1024,
-        idle_timeout: 600,
+        idle_timeout: 10,
         stateless_reset_token: None,
         initial_max_stream_id_bidi: None,
         initial_max_stream_id_uni: None,

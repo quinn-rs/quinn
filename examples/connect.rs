@@ -15,14 +15,15 @@ use quicr::{Endpoint, Config, Io, Timer, Event};
 use slog::{Logger, Drain};
 
 fn main() {
-    if let Err(e) = {
+    let code = {
         let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
         let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
-        run(Logger::root(drain, o!()))
-    } {
-        eprintln!("ERROR: {}", e);
-        ::std::process::exit(1);
-    }
+        if let Err(e) = run(Logger::root(drain, o!())) {
+            eprintln!("ERROR: {}", e);
+            1
+        } else { 0 }
+    };
+    ::std::process::exit(code);
 }
 
 fn normalize(x: SocketAddr) -> SocketAddrV6 {

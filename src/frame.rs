@@ -25,12 +25,11 @@ macro_rules! frame_types {
 
         impl fmt::Display for Type {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let x = match self.0 {
-                    $($val => stringify!($name),)*
-                    x if x >= 0x10 && x <= 0x17 => "STREAM",
-                    _ => "<unknown>",
-                };
-                f.write_str(x)
+                match self.0 {
+                    $($val => f.write_str(stringify!($name)),)*
+                    x if x >= 0x10 && x <= 0x17 => f.write_str("STREAM"),
+                    _ => write!(f, "<unknown frame type {:x}>", self.0),
+                }
             }
         }
     }
@@ -72,6 +71,28 @@ pub enum Frame {
     PathChallenge(u64),
     PathResponse(u64),
     Invalid,
+}
+
+impl Frame {
+    pub fn ty(&self) -> Option<Type> {
+        use self::Frame::*;
+        Some(match *self {
+            Padding => Type::PADDING,
+            RstStream { .. } => Type::RST_STREAM,
+            ConnectionClose(_) => Type::CONNECTION_CLOSE,
+            ApplicationClose(_) => Type::APPLICATION_CLOSE,
+            Ack(_) => Type::ACK,
+            Stream(ref x) => {
+                let mut ty = 0x10;
+                if x.fin { ty |= 0x01; }
+                if x.offset != 0 { ty |= 0x04; }
+                Type(ty)
+            }
+            PathChallenge(_) => Type::PATH_CHALLENGE,
+            PathResponse(_) => Type::PATH_RESPONSE,
+            Invalid => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +224,39 @@ impl Ack {
     }
 
     pub fn iter(&self) -> AckIter { self.into_iter() }
+}
+
+pub struct AckMeter {
+    base_size: usize,
+    smallest: u64,
+    extra_blocks: usize,
+    current_block_len: usize,
+}
+
+impl AckMeter {
+    pub fn new(largest: u64, delay: u64) -> Self { Self {
+        smallest: largest,
+        base_size: 1 + varint::size(largest).unwrap() + varint::size(delay).unwrap(),
+        extra_blocks: 0,
+        current_block_len: 0,
+    }}
+
+    pub fn size(&self) -> usize {
+        self.base_size
+            + varint::size(self.extra_blocks as u64).unwrap()
+            + varint::size(self.current_block_len as u64).unwrap()
+    }
+
+    pub fn push(&mut self, packet: u64) {
+        assert!(packet < self.smallest);
+        if let Some(gap) = (self.smallest - 2).checked_sub(packet) {
+            self.base_size += varint::size(self.current_block_len as u64).unwrap() + varint::size(gap).unwrap();
+            self.current_block_len = 0;
+        } else {
+            self.current_block_len += 1;
+        }
+        self.smallest = packet;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -530,6 +584,9 @@ mod test {
         assert_eq!(&out, &packets);
         let mut buf = Vec::new();
         ack.encode(&mut buf);
+        let mut meter = AckMeter::new(14, 42);
+        for &packet in packets.iter().rev().skip(1) { meter.push(packet); }
+        assert_eq!(meter.size(), buf.len());
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
         assert_matches!(frames[0], Frame::Ack(_));
         if let Frame::Ack(ref x) = frames[0] {
