@@ -159,11 +159,11 @@ impl TransportParameters {
                     params.stateless_reset_token = Some(tok);
                 }
                 0x0002 => {
-                    if len != 2 || params.initial_max_stream_id_bidi.is_some() { return Err(Error::Malformed); }
+                    if len != 4 || params.initial_max_stream_id_bidi.is_some() { return Err(Error::Malformed); }
                     params.initial_max_stream_id_bidi = Some(r.get_u32::<BigEndian>());
                 }
                 0x0008 => {
-                    if len != 2 || params.initial_max_stream_id_uni.is_some() { return Err(Error::Malformed); }
+                    if len != 4 || params.initial_max_stream_id_uni.is_some() { return Err(Error::Malformed); }
                     params.initial_max_stream_id_uni = Some(r.get_u32::<BigEndian>());
                 }
                 0x0004 => {
