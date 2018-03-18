@@ -291,6 +291,7 @@ impl<T> Stream<T>
     }
 }
 
+#[derive(Clone)]
 pub struct Iter(Bytes);
 
 impl Iter {

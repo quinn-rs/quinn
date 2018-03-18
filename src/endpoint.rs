@@ -328,7 +328,7 @@ impl Endpoint {
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
             tls, params: None, clienthello_packet: None,
         }));
-        self.flush_pending(now, conn, false);
+        self.flush_pending(now, conn);
         Ok(conn)
     }
 
@@ -370,7 +370,7 @@ impl Endpoint {
                                 tls, clienthello_packet: None, params: Some(params),
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
-                            self.flush_pending(now, conn, false);
+                            self.flush_pending(now, conn);
                         } else {
                             debug!(self.log, "ClientHello missing transport params extension");
                             let n = self.gen_initial_packet_num();
@@ -684,7 +684,14 @@ impl Endpoint {
                 return State::Established(state);
             };
             self.connections[conn.0].on_packet_authenticated(now, number);
-            for frame in frame::Iter::new(payload.into()) {
+            let frames = frame::Iter::new(payload.into());
+            for frame in frames.clone() {
+                match frame {
+                    Frame::Ack(_) => {}
+                    _ => { self.connections[conn.0].permit_ack_only = true; }
+                }
+            }
+            for frame in frames {
                 match frame {
                     Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
                         self.connections[conn.0].stream0_data.insert(offset, data);
@@ -800,12 +807,12 @@ impl Endpoint {
         }
         self.connections[conn.0].state = Some(state);
 
-        self.flush_pending(now, conn, false); // TODO: Determine whether we got an ack-only packet
+        self.flush_pending(now, conn); // TODO: Determine whether we got an ack-only packet
     }
 
-    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle, allow_ack_only: bool) {
+    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
         let mut timer = None;
-        while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.config, now, allow_ack_only) {
+        while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.config, now) {
             timer = t.or(timer);
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
@@ -862,7 +869,7 @@ impl Endpoint {
                         time: alarm,
                     });
                 }
-                self.flush_pending(now, conn, false);
+                self.flush_pending(now, conn);
             }
         }
     }
@@ -992,6 +999,8 @@ struct Connection {
 
     pending: Retransmits,
     path_responses: VecDeque<u64>,
+    /// Set iff we have received a non-ack frame since the last ack-only packet we sent
+    permit_ack_only: bool,
 }
 
 /// Represents one or more packets subject to retransmission
@@ -1102,6 +1111,7 @@ impl Connection {
 
             pending: Retransmits::default(),
             path_responses: VecDeque::new(),
+            permit_ack_only: false,
         }
     }
 
@@ -1327,7 +1337,7 @@ impl Connection {
         });
     }
 
-    fn next_packet(&mut self, config: &Config, now: u64, allow_ack_only: bool) -> Option<(Vec<u8>, Option<u64>)> {
+    fn next_packet(&mut self, config: &Config, now: u64) -> Option<(Vec<u8>, Option<u64>)> {
         let in_handshake = match *self.state.as_ref().unwrap() { State::Handshake(_) => true, _ => !self.handshake_pending.is_empty() };
 
         let mut buf = Vec::new();
@@ -1388,7 +1398,7 @@ impl Connection {
         } else {
             let max_size = cmp::min(self.mtu as u64, self.congestion_window.saturating_sub(self.bytes_in_flight)) as u16;
             if max_size == 0
-                || ((!allow_ack_only || self.pending.ack.is_empty()) && self.path_responses.is_empty() && self.pending.stream.is_empty())
+                || ((!self.permit_ack_only || self.pending.ack.is_empty()) && self.path_responses.is_empty() && self.pending.stream.is_empty())
             {
                 return None;
             }
@@ -1469,6 +1479,8 @@ impl Connection {
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
             retransmits: Retransmits { stream: streams, ack: acks, ..Retransmits::default() }
         });
+
+        if ack_only { self.permit_ack_only = false; }
 
         Some((buf, timer))
     }
