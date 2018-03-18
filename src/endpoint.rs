@@ -510,7 +510,7 @@ impl Endpoint {
                         debug!(self.log, "failed to decrypt handshake packet");
                         return State::Handshake(state);
                     };
-                    self.connections[conn.0].on_packet_authenticated(number as u64);
+                    self.connections[conn.0].on_packet_authenticated(now, number as u64);
                     // Complete handshake (and ultimately send Finished)
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
@@ -683,7 +683,7 @@ impl Endpoint {
                 debug!(self.log, "failed to decrypt packet"; "number" => number);
                 return State::Established(state);
             };
-            self.connections[conn.0].on_packet_authenticated(number);
+            self.connections[conn.0].on_packet_authenticated(now, number);
             for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
@@ -917,6 +917,7 @@ struct Connection {
     reset_token: Option<[u8; 16]>,
     mtu: u16,
     rx_packet: u64,
+    rx_packet_time: u64,
     crypto: Option<CryptoContext>,
     prev_crypto: Option<(u64, CryptoContext)>,
 
@@ -1069,6 +1070,7 @@ impl Connection {
             reset_token: None,
             mtu: MIN_MTU,
             rx_packet: 0,
+            rx_packet_time: 0,
             crypto: None,
             prev_crypto: None,
 
@@ -1210,9 +1212,7 @@ impl Connection {
         } else {
             delay_until_lost = u64::max_value();
         }
-        for (&packet, info) in self.sent_packets.iter()
-            .filter(|&(&packet, _)| packet < largest_acked)
-        {
+        for (&packet, info) in self.sent_packets.range(0..largest_acked) {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
             if time_since_sent > delay_until_lost || delta > self.reordering_threshold as u64 {
@@ -1283,10 +1283,11 @@ impl Connection {
         cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    fn on_packet_authenticated(&mut self, packet: u64) {
+    fn on_packet_authenticated(&mut self, now: u64, packet: u64) {
         self.pending.ack.push(packet);
         if packet > self.rx_packet {
             self.rx_packet = packet;
+            self.rx_packet_time = now;
         }
     }
 
@@ -1402,8 +1403,9 @@ impl Connection {
 
             // ACK
             self.pending.ack.sort_unstable();
-            let ack_delay = 0; // TODO
+            let ack_delay = now.saturating_sub(self.rx_packet_time); // Saturate to defend against clock shenanigans
             let ack_count = if let Some((&largest, rest)) = self.pending.ack.split_last() {
+                debug_assert_eq!(largest, self.rx_packet);
                 let mut meter = frame::AckMeter::new(largest, ack_delay);
                 if buf.len() + meter.size() > max_size as usize { return None; }
                 let mut n = 1;
