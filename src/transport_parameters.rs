@@ -9,8 +9,8 @@ pub struct TransportParameters {
     pub idle_timeout: u16,
     /// Mandatory for servers
     pub stateless_reset_token: Option<[u8; 16]>,
-    pub initial_max_stream_id_bidi: Option<u32>,
-    pub initial_max_stream_id_uni: Option<u32>,
+    pub initial_max_streams_bidi: Option<u32>,
+    pub initial_max_streams_uni: Option<u32>,
     pub omit_connection_id: bool,
     pub max_packet_size: Option<u16>,
     pub ack_delay_exponent: Option<u8>,
@@ -23,8 +23,8 @@ impl Default for TransportParameters {
         initial_max_data: 64 * 1024,
         idle_timeout: 10,
         stateless_reset_token: None,
-        initial_max_stream_id_bidi: None,
-        initial_max_stream_id_uni: None,
+        initial_max_streams_bidi: None,
+        initial_max_streams_uni: None,
         omit_connection_id: false,
         max_packet_size: None,
         ack_delay_exponent: None,
@@ -72,13 +72,13 @@ impl TransportParameters {
             buf.put_slice(x);
         }
 
-        if let Some(x) = self.initial_max_stream_id_bidi {
+        if let Some(x) = self.initial_max_streams_bidi {
             buf.put_u16::<BigEndian>(0x0002);
             buf.put_u16::<BigEndian>(4);
             buf.put_u32::<BigEndian>(x);
         }
 
-        if let Some(x) = self.initial_max_stream_id_uni {
+        if let Some(x) = self.initial_max_streams_uni {
             buf.put_u16::<BigEndian>(0x0008);
             buf.put_u16::<BigEndian>(4);
             buf.put_u32::<BigEndian>(x);
@@ -159,12 +159,12 @@ impl TransportParameters {
                     params.stateless_reset_token = Some(tok);
                 }
                 0x0002 => {
-                    if len != 4 || params.initial_max_stream_id_bidi.is_some() { return Err(Error::Malformed); }
-                    params.initial_max_stream_id_bidi = Some(r.get_u32::<BigEndian>());
+                    if len != 4 || params.initial_max_streams_bidi.is_some() { return Err(Error::Malformed); }
+                    params.initial_max_streams_bidi = Some(r.get_u32::<BigEndian>());
                 }
                 0x0008 => {
-                    if len != 4 || params.initial_max_stream_id_uni.is_some() { return Err(Error::Malformed); }
-                    params.initial_max_stream_id_uni = Some(r.get_u32::<BigEndian>());
+                    if len != 4 || params.initial_max_streams_uni.is_some() { return Err(Error::Malformed); }
+                    params.initial_max_streams_uni = Some(r.get_u32::<BigEndian>());
                 }
                 0x0004 => {
                     if len != 0 || params.omit_connection_id { return Err(Error::Malformed); }

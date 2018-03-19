@@ -970,9 +970,11 @@ struct Connection {
     tlp_count: u32,
     /// The number of times an rto has been sent without receiving an ack.
     rto_count: u32,
-    /// The largest delta between the largest acked retransmittable packet and a packet containing retransmittable frames before it’s declared lost.
+    /// The largest packet number gap between the largest acked retransmittable packet and an unacknowledged
+    /// retransmittable packet before it is declared lost.
     reordering_threshold: u32,
-    /// The time at which the next packet will be considered lost based on early transmit or exceeding the reordering window in time.
+    /// The time at which the next packet will be considered lost based on early transmit or exceeding the reordering
+    /// window in time.
     loss_time: u64,
     /// The most recent RTT measurement made when receiving an ack for a previously unacked packet. μs
     latest_rtt: u64,
@@ -988,26 +990,24 @@ struct Connection {
     max_ack_delay: u64,
     /// The last packet number sent prior to the first retransmission timeout.
     largest_sent_before_rto: u64,
-    /// The time the most recently sent packet was sent.
-    time_of_last_sent_packet: u64,
+    /// The time the most recently sent retransmittable packet was sent.
+    time_of_last_sent_retransmittable_packet: u64,
     /// The packet number of the most recently sent packet.
     largest_sent_packet: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
     largest_acked_packet: u64,
     /// Transmitted but not acked
     sent_packets: BTreeMap<u64, SentPacket>,
-    /// Number of sent_packets that aren't ack-only
-    retransmittable_outstanding: u64,
 
     //
     // Congestion Control
     //
 
-    /// The sum of the size in bytes of all sent packets that contain at least one retransmittable or PADDING frame, and
-    /// have not been acked or declared lost.
+    /// The sum of the size in bytes of all sent packets that contain at least one retransmittable frame, and have not
+    /// been acked or declared lost.
     ///
     /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not count towards
-    /// byte_in_flight to ensure congestion control does not impede congestion feedback.
+    /// bytes_in_flight to ensure congestion control does not impede congestion feedback.
     bytes_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
     congestion_window: u64,
@@ -1120,11 +1120,10 @@ impl Connection {
             min_rtt: u64::max_value(),
             max_ack_delay: 0,
             largest_sent_before_rto: 0,
-            time_of_last_sent_packet: 0,
+            time_of_last_sent_retransmittable_packet: 0,
             largest_sent_packet: initial_packet_number.overflowing_sub(1).0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
-            retransmittable_outstanding: 0,
 
             bytes_in_flight: 0,
             congestion_window: config.initial_window,
@@ -1150,7 +1149,6 @@ impl Connection {
 
     /// Returns new loss detection alarm time, if applicable
     fn on_packet_sent(&mut self, config: &Config, now: u64, handshake: bool, packet_number: u64, packet: SentPacket) -> Option<u64> {
-        self.time_of_last_sent_packet = now;
         self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
         if handshake {
@@ -1159,8 +1157,8 @@ impl Connection {
             self.sent_packets.insert(packet_number, packet);
         }
         if bytes != 0 {
+            self.time_of_last_sent_retransmittable_packet = now;
             self.bytes_in_flight += bytes as u64;
-            self.retransmittable_outstanding += 1;
             Some(self.compute_loss_detection_alarm(config))
         } else {
             None
@@ -1216,8 +1214,6 @@ impl Connection {
                     self.congestion_window += config.default_mss * bytes as u64 / self.congestion_window;
                 }
             }
-            
-            self.retransmittable_outstanding -= 1;
         }
 
         // Loss recovery
@@ -1289,7 +1285,7 @@ impl Connection {
     fn in_recovery(&self, packet: u64) -> bool { packet <= self.end_of_recovery }
 
     fn compute_loss_detection_alarm(&self, config: &Config) -> u64 {
-        if self.retransmittable_outstanding == 0 {
+        if self.bytes_in_flight == 0 {
             return u64::max_value();
         }
 
@@ -1306,7 +1302,7 @@ impl Connection {
             alarm_duration = alarm_duration * 2u64.pow(self.handshake_count);
         } else if self.loss_time != 0 {
             // Early retransmit timer or time loss detection.
-            alarm_duration = self.loss_time - self.time_of_last_sent_packet;
+            alarm_duration = self.loss_time - self.time_of_last_sent_retransmittable_packet;
         } else {
             // TLP or RTO alarm
             alarm_duration = self.rto(config);
@@ -1317,7 +1313,7 @@ impl Connection {
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
         }
-        self.time_of_last_sent_packet + alarm_duration
+        self.time_of_last_sent_retransmittable_packet + alarm_duration
     }
 
     /// Retransmit time-out
