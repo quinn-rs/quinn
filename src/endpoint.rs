@@ -1302,13 +1302,15 @@ impl Connection {
         } else if self.loss_time != 0 {
             // Early retransmit timer or time loss detection.
             alarm_duration = self.loss_time - self.time_of_last_sent_packet;
-        } else if self.tlp_count != config.max_tlps {
-            // Tail Loss Probe
-            alarm_duration = cmp::max((3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
-                                      config.min_tlp_timeout);
         } else {
-            // RTO alarm
+            // TLP or RTO alarm
             alarm_duration = self.rto(config);
+            if self.tlp_count < config.max_tlps {
+                // Tail Loss Probe
+                let tlp_duration = cmp::max((3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
+                                            config.min_tlp_timeout);
+                alarm_duration = cmp::min(alarm_duration, tlp_duration);
+            }
         }
         self.time_of_last_sent_packet + alarm_duration
     }
