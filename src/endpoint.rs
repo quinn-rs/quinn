@@ -996,6 +996,8 @@ struct Connection {
     largest_sent_before_rto: u64,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_retransmittable_packet: u64,
+    /// The time the most recently sent handshake packet was sent.
+    time_of_last_sent_handshake_packet: u64,
     /// The packet number of the most recently sent packet.
     largest_sent_packet: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
@@ -1125,6 +1127,7 @@ impl Connection {
             max_ack_delay: 0,
             largest_sent_before_rto: 0,
             time_of_last_sent_retransmittable_packet: 0,
+            time_of_last_sent_handshake_packet: 0,
             largest_sent_packet: initial_packet_number.overflowing_sub(1).0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
@@ -1162,6 +1165,9 @@ impl Connection {
         }
         if bytes != 0 {
             self.time_of_last_sent_retransmittable_packet = now;
+            if handshake {
+                self.time_of_last_sent_handshake_packet = now;
+            }
             self.bytes_in_flight += bytes as u64;
             Some(self.compute_loss_detection_alarm(config))
         } else {
@@ -1304,7 +1310,10 @@ impl Connection {
             alarm_duration = cmp::max(alarm_duration + self.max_ack_delay,
                                       config.min_tlp_timeout);
             alarm_duration = alarm_duration * 2u64.pow(self.handshake_count);
-        } else if self.loss_time != 0 {
+            return self.time_of_last_sent_handshake_packet + alarm_duration;
+        }
+
+        if self.loss_time != 0 {
             // Early retransmit timer or time loss detection.
             alarm_duration = self.loss_time - self.time_of_last_sent_retransmittable_packet;
         } else {
@@ -1374,7 +1383,7 @@ impl Connection {
     }
 
     fn next_packet(&mut self, config: &Config, now: u64) -> Option<(Vec<u8>, Option<u64>)> {
-        let in_handshake = match *self.state.as_ref().unwrap() { State::Handshake(_) => true, _ => !self.handshake_pending.is_empty() };
+        let is_handshake = match *self.state.as_ref().unwrap() { State::Handshake(_) => true, _ => !self.handshake_pending.is_empty() };
 
         let mut buf = Vec::new();
         let mut acks = Vec::new();
@@ -1382,7 +1391,7 @@ impl Connection {
         let number;
         let mut ack_only = true;
 
-        if in_handshake {
+        if is_handshake {
             // Special case: (re)transmit handshake data in long-header packets
             if self.path_responses.is_empty() && self.handshake_pending.is_empty() { return None; }
             ack_only = false;
@@ -1512,7 +1521,7 @@ impl Connection {
             buf.extend_from_slice(&payload);
         }
 
-        let timer = self.on_packet_sent(config, now, in_handshake, number, SentPacket {
+        let timer = self.on_packet_sent(config, now, is_handshake, number, SentPacket {
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
             retransmits: Retransmits { stream: streams, ack: acks, ..Retransmits::default() }
         });
