@@ -102,6 +102,7 @@ pub struct Endpoint {
 
 const MIN_INITIAL_SIZE: usize = 1200;
 const MIN_MTU: u16 = 1232;
+const MIN_STATELESS_RESET_SIZE: usize = 281;
 
 fn reset_token_for(key: &[u8], id: ConnectionId) -> [u8; 16] {
     let mut mac = Blake2b::new_keyed(key, 16);
@@ -259,7 +260,9 @@ impl Endpoint {
                 self.handle_connected(now, conn, remote, packet);
                 return;
             }
-            if let Some(&conn) = self.connection_remotes.get(&remote) {
+        }
+        if let Some(&conn) = self.connection_remotes.get(&remote) {
+            if let Some(id) = conn_id {
                 if self.connections[conn.0].stream0.rx_offset == 0 {
                     // First packet from remote server resets our connection id
                     if self.connections[conn.0].id != id {
@@ -268,10 +271,13 @@ impl Endpoint {
                         self.connections[conn.0].id = id;
                         self.connection_ids.insert(id, conn);
                     }
-                    self.handle_connected(now, conn, remote, packet);
+                } else {
+                    debug!(self.log, "dropping late connection ID change");
                     return;
                 }
             }
+            self.handle_connected(now, conn, remote, packet);
+            return;
         }
 
         //
@@ -781,6 +787,16 @@ impl Endpoint {
 
         // State transitions
         let state = self.connections[conn.0].state.take().unwrap();
+        if let Some(token) = self.connections[conn.0].params.stateless_reset_token.clone() {
+            if packet.payload.len() >= MIN_STATELESS_RESET_SIZE {
+                if packet.payload[packet.payload.len() - 128..] == token {
+                    debug!(self.log, "got stateless reset"; "id" => %self.connections[conn.0].id);
+                    self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::Reset });
+                    self.forget(conn);
+                    return;
+                }
+            }
+        }
         let state = self.handle_connected_inner(now, conn, remote, packet, state);
 
         // Close timer
@@ -831,12 +847,16 @@ impl Endpoint {
         }
     }
 
+    fn forget(&mut self, conn: ConnectionHandle) {
+        self.connection_ids.remove(&self.connections[conn.0].id);
+        self.connection_remotes.remove(&self.connections[conn.0].remote);
+        self.connections.remove(conn.0);
+    }
+
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
-                self.connection_ids.remove(&self.connections[conn.0].id);
-                self.connection_remotes.remove(&self.connections[conn.0].remote);
-                self.connections.remove(conn.0);
+                self.forget(conn);
             }
             Timer::LossDetection => {
                 if !self.connections[conn.0].handshake_sent.is_empty() {
@@ -853,15 +873,22 @@ impl Endpoint {
                     self.connections[conn.0].detect_lost_packets(&self.config, now, largest);
                 } else if self.connections[conn.0].tlp_count < self.config.max_tlps {
                     // Tail Loss Probe.
-                    self.connections[conn.0].force_transmit(&self.config, now);
+                    self.io.push_back(Io::Transmit {
+                        destination: self.connections[conn.0].remote,
+                        packet: self.connections[conn.0].force_transmit(&self.config, now),
+                    });
                     self.connections[conn.0].tlp_count += 1;
                 } else {
                     // RTO
                     if self.connections[conn.0].rto_count == 0 {
                         self.connections[conn.0].largest_sent_before_rto = self.connections[conn.0].largest_sent_packet;
                     }
-                    self.connections[conn.0].force_transmit(&self.config, now);
-                    self.connections[conn.0].force_transmit(&self.config, now);
+                    for _ in 0..2 {
+                        self.io.push_back(Io::Transmit {
+                            destination: self.connections[conn.0].remote,
+                            packet: self.connections[conn.0].force_transmit(&self.config, now),
+                        });
+                    }
                     self.connections[conn.0].rto_count += 1;
                 }
                 let alarm = self.connections[conn.0].compute_loss_detection_alarm(&self.config);
@@ -1062,14 +1089,6 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
             result += packet;
         }
         result
-    }
-}
-
-impl Retransmits {
-    fn from_stream(frame: frame::Stream) -> Self {
-        let mut stream = VecDeque::new();
-        stream.push_back(frame);
-        Self { stream, ..Self::default() }
     }
 }
 
@@ -1417,7 +1436,8 @@ impl Connection {
             let max_size = max_size.saturating_sub(AEAD_TAG_SIZE as u16);
 
             Header::Short {
-                id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: self.key_phase
+                id: if self.params.omit_connection_id { None } else { Some(self.id) },
+                number: PacketNumber::U32(number as u32), key_phase: self.key_phase
             }.encode(&mut buf);
             let header_len = buf.len() as u16;
 
@@ -1496,13 +1516,16 @@ impl Connection {
     }
 
     // TLP/RTO transmit
-    fn force_transmit(&mut self, config: &Config, now: u64) {
+    fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: self.key_phase
+            id: if self.params.omit_connection_id { None } else { Some(self.id) },
+            number: PacketNumber::U32(number as u32), key_phase: self.key_phase
         }.encode(&mut buf);
-        
+        buf.push(frame::Type::PING.into());
+        self.on_packet_sent(config, now, false, number, SentPacket { time: now, bytes: buf.len() as u16, retransmits: Retransmits::default() });
+        buf.into()
     }
 }
 
@@ -1542,15 +1565,6 @@ impl Header {
             Header::Long { id, .. } => Some(id),
             Header::Short { id, .. } => id,
             VersionNegotiate { id, .. } => Some(id),
-        }
-    }
-
-    fn number(&self) -> Option<PacketNumber> {
-        use self::Header::*;
-        match *self {
-            Header::Long { number, .. } => Some(PacketNumber::U32(number)),
-            Header::Short { number, .. } => Some(number),
-            VersionNegotiate { .. } => None,
         }
     }
 }
@@ -1860,6 +1874,8 @@ pub enum ConnectionError {
     ConnectionClosed { reason: frame::ConnectionClose },
     #[fail(display = "closed by peer application: {}", reason)]
     ApplicationClosed { reason: frame::ApplicationClose },
+    #[fail(display = "reset by peer")]
+    Reset
 }
 
 impl From<TransportError> for ConnectionError {
