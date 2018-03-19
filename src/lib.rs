@@ -44,4 +44,4 @@ pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHa
 mod transport_error;
 pub use transport_error::Error as TransportError;
 
-pub const VERSION: u32 = 0xff000009;
+pub const VERSION: u32 = 0xff00000B;
