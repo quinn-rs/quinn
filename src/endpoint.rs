@@ -1248,7 +1248,9 @@ impl Connection {
         } else {
             delay_until_lost = u64::max_value();
         }
-        for (&packet, info) in self.sent_packets.range(0..largest_acked) {
+        for (&packet, info) in self.sent_packets.range(0..largest_acked)
+            .chain(self.handshake_sent.range(0..largest_acked))
+        {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
             if time_since_sent > delay_until_lost || delta > self.reordering_threshold as u64 {
@@ -1259,14 +1261,7 @@ impl Connection {
         }
 
         if let Some(largest_lost) = lost_packets.last().cloned() {
-            // Start a new recovery epoch if the lost packet is larger than the end of the previous recovery epoch.
-            if !self.in_recovery(largest_lost) {
-                self.end_of_recovery = self.largest_sent_packet;
-                // *= factor
-                self.congestion_window = (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
-                self.congestion_window = cmp::max(self.congestion_window, config.minimum_window);
-                self.ssthresh = self.congestion_window;
-            }
+            let old_bytes_in_flight = self.bytes_in_flight;
             for packet in lost_packets {
                 let info;
                 if let Some(mut i) = self.handshake_sent.remove(&packet) {
@@ -1277,6 +1272,16 @@ impl Connection {
                 }
                 self.bytes_in_flight -= info.bytes as u64;
                 self.pending += info.retransmits;
+            }
+            // Don't apply congestion penalty for lost ack-only packets
+            let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
+            // Start a new recovery epoch if the lost packet is larger than the end of the previous recovery epoch.
+            if lost_nonack && !self.in_recovery(largest_lost) {
+                self.end_of_recovery = self.largest_sent_packet;
+                // *= factor
+                self.congestion_window = (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
+                self.congestion_window = cmp::max(self.congestion_window, config.minimum_window);
+                self.ssthresh = self.congestion_window;
             }
         }
     }
