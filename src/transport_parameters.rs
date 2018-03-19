@@ -9,8 +9,8 @@ pub struct TransportParameters {
     pub idle_timeout: u16,
     /// Mandatory for servers
     pub stateless_reset_token: Option<[u8; 16]>,
-    pub initial_max_streams_bidi: Option<u32>,
-    pub initial_max_streams_uni: Option<u32>,
+    pub initial_max_streams_bidi: u16,
+    pub initial_max_streams_uni: u16,
     pub omit_connection_id: bool,
     pub max_packet_size: Option<u16>,
     pub ack_delay_exponent: Option<u8>,
@@ -23,8 +23,8 @@ impl Default for TransportParameters {
         initial_max_data: 64 * 1024,
         idle_timeout: 10,
         stateless_reset_token: None,
-        initial_max_streams_bidi: None,
-        initial_max_streams_uni: None,
+        initial_max_streams_bidi: 0,
+        initial_max_streams_uni: 0,
         omit_connection_id: false,
         max_packet_size: None,
         ack_delay_exponent: None,
@@ -72,16 +72,16 @@ impl TransportParameters {
             buf.put_slice(x);
         }
 
-        if let Some(x) = self.initial_max_streams_bidi {
+        if self.initial_max_streams_bidi != 0 {
             buf.put_u16::<BigEndian>(0x0002);
-            buf.put_u16::<BigEndian>(4);
-            buf.put_u32::<BigEndian>(x);
+            buf.put_u16::<BigEndian>(2);
+            buf.put_u16::<BigEndian>(self.initial_max_streams_bidi);
         }
 
-        if let Some(x) = self.initial_max_streams_uni {
+        if self.initial_max_streams_uni != 0 {
             buf.put_u16::<BigEndian>(0x0008);
-            buf.put_u16::<BigEndian>(4);
-            buf.put_u32::<BigEndian>(x);
+            buf.put_u16::<BigEndian>(2);
+            buf.put_u16::<BigEndian>(self.initial_max_streams_uni);
         }
 
         if self.omit_connection_id {
@@ -128,6 +128,8 @@ impl TransportParameters {
         let mut initial_max_stream_data = false;
         let mut initial_max_data = false;
         let mut idle_timeout = false;
+        let mut initial_max_streams_bidi = false;
+        let mut initial_max_streams_uni = false;
         let mut params = Self::default();
         let params_len = r.get_u16::<BigEndian>();
         if params_len as usize != r.remaining() { return Err(Error::Malformed); }
@@ -159,12 +161,14 @@ impl TransportParameters {
                     params.stateless_reset_token = Some(tok);
                 }
                 0x0002 => {
-                    if len != 4 || params.initial_max_streams_bidi.is_some() { return Err(Error::Malformed); }
-                    params.initial_max_streams_bidi = Some(r.get_u32::<BigEndian>());
+                    if len != 2 || initial_max_streams_bidi { return Err(Error::Malformed); }
+                    params.initial_max_streams_bidi = r.get_u16::<BigEndian>();
+                    initial_max_streams_bidi = true;
                 }
                 0x0008 => {
-                    if len != 4 || params.initial_max_streams_uni.is_some() { return Err(Error::Malformed); }
-                    params.initial_max_streams_uni = Some(r.get_u32::<BigEndian>());
+                    if len != 2 || initial_max_streams_uni { return Err(Error::Malformed); }
+                    params.initial_max_streams_uni = r.get_u16::<BigEndian>();
+                    initial_max_streams_uni = true;
                 }
                 0x0004 => {
                     if len != 0 || params.omit_connection_id { return Err(Error::Malformed); }
