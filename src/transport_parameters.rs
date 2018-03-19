@@ -186,7 +186,7 @@ impl TransportParameters {
             }
         }
 
-        if initial_max_stream_data && initial_max_data && idle_timeout && (am_server ^ params.stateless_reset_token.is_some()) {
+        if initial_max_stream_data && initial_max_data && idle_timeout && (params.stateless_reset_token.is_none() || !am_server) {
             Ok(params)
         } else {
             Err(Error::IllegalValue)
