@@ -232,7 +232,7 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, local: SocketAddrV6, data: Bytes) {
         let packet = match Packet::decode(data.clone()) {
             Ok(x) => x,
-            Err(HeaderError::UnsupportedVersion(id)) => {
+            Err(HeaderError::UnsupportedVersion(id)) if self.listen => {
                 trace!(self.log, "sending version negotiation");
                 // Negotiate versions
                 let mut buf = Vec::<u8>::new();
@@ -242,6 +242,10 @@ impl Endpoint {
                 buf.put_u32::<BigEndian>(0x0a1a2a3a); // reserved version
                 buf.put_u32::<BigEndian>(VERSION); // supported version
                 self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+                return;
+            }
+            Err(HeaderError::UnsupportedVersion(id)) => {
+                debug!(self.log, "dropping packet with unsupported version"; "version" => %id);
                 return;
             }
             Err(_) => {
