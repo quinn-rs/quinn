@@ -666,7 +666,7 @@ impl Endpoint {
                 }
             };
             let number = number.expand(self.connections[conn.0].rx_packet);
-            if key_phase != self.connections[conn.0].key_phase {
+            let payload = if key_phase != self.connections[conn.0].key_phase {
                 let id = self.connections[conn.0].id;
                 if number <= self.connections[conn.0].rx_packet {
                     warn!(self.log, "got illegal key update"; "connection" => %id);
@@ -676,11 +676,16 @@ impl Endpoint {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                     });
                 }
-                trace!(self.log, "updating keys"; "connection" => %id);
-                // FIXME: Validate before updating
-                self.connections[conn.0].update_keys(number);
-            }
-            let payload = if let Some(x) = self.connections[conn.0].decrypt(false, number, &packet.header_data, &packet.payload) { x } else {
+                if let Some(payload) = self.connections[conn.0].update_keys(number, &packet.header_data, &packet.payload) {
+                    trace!(self.log, "updated keys"; "connection" => %id);
+                    payload
+                } else {
+                    debug!(self.log, "rejected invalid key update"; "connection" => %id);
+                    return State::Established(state);
+                }
+            } else if let Some(x) = self.connections[conn.0].decrypt(false, number, &packet.header_data, &packet.payload) {
+                x
+            } else {
                 debug!(self.log, "failed to decrypt packet"; "number" => number);
                 return State::Established(state);
             };
@@ -1303,11 +1308,13 @@ impl Connection {
         }
     }
 
-    fn update_keys(&mut self, packet: u64) {
+    fn update_keys(&mut self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
         let new = self.crypto.as_mut().unwrap().update(self.client);
+        let data = new.decrypt(packet, header, payload)?;
         let old = mem::replace(self.crypto.as_mut().unwrap(), new);
         self.prev_crypto = Some((packet, old));
         self.key_phase = !self.key_phase;
+        Some(data)
     }
 
     fn decrypt(&self, handshake: bool, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
