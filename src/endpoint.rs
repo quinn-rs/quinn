@@ -326,7 +326,7 @@ impl Endpoint {
         let conn = self.add_connection(id, remote, true);
         self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-            tls, params: None, clienthello_packet: None,
+            tls, clienthello_packet: None,
         }));
         self.flush_pending(now, conn);
         Ok(conn)
@@ -367,9 +367,10 @@ impl Endpoint {
                             self.connections[conn.0].stream0_data = frame::StreamAssembler::with_offset(incoming_len);
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                                tls, clienthello_packet: None, params: Some(params),
+                                tls, clienthello_packet: None,
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
+                            self.connections[conn.0].params = params;
                             self.flush_pending(now, conn);
                         } else {
                             debug!(self.log, "ClientHello missing transport params extension");
@@ -476,7 +477,7 @@ impl Endpoint {
                             self.connections[conn.0].client = true;
                             // Send updated ClientHello
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: state.clienthello_packet })
+                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet })
                         },
                         Ok(_) => {
                             debug!(self.log, "unexpectedly completed handshake in RETRY packet");
@@ -565,7 +566,7 @@ impl Endpoint {
                         Ok(mut tls) => {
                             if self.connections[conn.0].client {
                                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                                    state.params = Some(params.expect("transport param errors should fail the handshake"));
+                                    self.connections[conn.0].params = params.expect("transport param errors should fail the handshake");
                                 } else {
                                     debug!(self.log, "server didn't send transport params");
                                     self.events.push_back(Event::ConnectionLost {
@@ -584,7 +585,7 @@ impl Endpoint {
                             }
                             self.events.push_back(Event::Connected(conn));
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].client));
-                            State::Established(state::Established { tls, params: state.params.unwrap(), key_phase: false })
+                            State::Established(state::Established { tls })
                         }
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "handshake ongoing"; "connection" => %id);
@@ -594,7 +595,7 @@ impl Endpoint {
                                     self.transmit_handshake(conn, &response);
                                 }
                             }
-                            State::Handshake(state::Handshake { tls, params: state.params, clienthello_packet: state.clienthello_packet })
+                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet })
                         }
                         Err(HandshakeError::Failure(mut tls)) => {
                             let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
@@ -665,7 +666,7 @@ impl Endpoint {
                 }
             };
             let number = number.expand(self.connections[conn.0].rx_packet);
-            if key_phase != state.key_phase {
+            if key_phase != self.connections[conn.0].key_phase {
                 let id = self.connections[conn.0].id;
                 if number <= self.connections[conn.0].rx_packet {
                     warn!(self.log, "got illegal key update"; "connection" => %id);
@@ -676,22 +677,19 @@ impl Endpoint {
                     });
                 }
                 trace!(self.log, "updating keys"; "connection" => %id);
+                // FIXME: Validate before updating
                 self.connections[conn.0].update_keys(number);
-                state.key_phase = key_phase;
             }
             let payload = if let Some(x) = self.connections[conn.0].decrypt(false, number, &packet.header_data, &packet.payload) { x } else {
                 debug!(self.log, "failed to decrypt packet"; "number" => number);
                 return State::Established(state);
             };
             self.connections[conn.0].on_packet_authenticated(now, number);
-            let frames = frame::Iter::new(payload.into());
-            for frame in frames.clone() {
+            for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Ack(_) => {}
                     _ => { self.connections[conn.0].permit_ack_only = true; }
                 }
-            }
-            for frame in frames {
                 match frame {
                     Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
                         self.connections[conn.0].stream0_data.insert(offset, data);
@@ -927,6 +925,8 @@ struct Connection {
     rx_packet_time: u64,
     crypto: Option<CryptoContext>,
     prev_crypto: Option<(u64, CryptoContext)>,
+    key_phase: bool,
+    params: TransportParameters,
 
     //
     // Loss Detection
@@ -1082,6 +1082,8 @@ impl Connection {
             rx_packet_time: 0,
             crypto: None,
             prev_crypto: None,
+            key_phase: false,
+            params: TransportParameters::default(),
 
             handshake_count: 0,
             tlp_count: 0,
@@ -1305,6 +1307,7 @@ impl Connection {
         let new = self.crypto.as_mut().unwrap().update(self.client);
         let old = mem::replace(self.crypto.as_mut().unwrap(), new);
         self.prev_crypto = Some((packet, old));
+        self.key_phase = !self.key_phase;
     }
 
     fn decrypt(&self, handshake: bool, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
@@ -1407,7 +1410,7 @@ impl Connection {
             let max_size = max_size.saturating_sub(AEAD_TAG_SIZE as u16);
 
             Header::Short {
-                id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: false
+                id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: self.key_phase
             }.encode(&mut buf);
             let header_len = buf.len() as u16;
 
@@ -1485,8 +1488,14 @@ impl Connection {
         Some((buf, timer))
     }
 
+    // TLP/RTO transmit
     fn force_transmit(&mut self, config: &Config, now: u64) {
-        unimplemented!()
+        let number = self.get_tx_number();
+        let mut buf = Vec::new();
+        Header::Short {
+            id: Some(self.id), number: PacketNumber::U32(number as u32), key_phase: self.key_phase
+        }.encode(&mut buf);
+        
     }
 }
 
@@ -1711,13 +1720,10 @@ mod state {
         /// The number of the packet that first contained the latest version of the TLS ClientHello. Present iff we're
         /// the client.
         pub clienthello_packet: Option<u32>,
-        pub params: Option<TransportParameters>,
     }
 
     pub struct Established {
         pub tls: SslStream<MemoryStream>,
-        pub key_phase: bool,
-        pub params: TransportParameters,
     }
 
     pub struct HandshakeFailed { // Closed

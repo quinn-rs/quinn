@@ -69,7 +69,7 @@ impl Context {
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
         let c = self.client.connect(0, self.local, self.remote)?;
-        let mut time;
+        let mut time = 0;
         loop {
             while let Some(io) = self.client.poll_io() { match io {
                 Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
@@ -87,10 +87,11 @@ impl Context {
             let (timer, close) = if self.loss_timer.unwrap_or(u64::max_value()) < self.close_timer.unwrap_or(u64::max_value()) {
                 (self.loss_timer, false)
             } else { (self.close_timer, true) };
-            if let Some(time) = timer {
-                trace!(self.log, "setting timeout"; "time" => time);
-                let seconds = time / (1000 * 1000);
-                self.socket.set_read_timeout(Some(Duration::new(seconds, (time - (seconds * 1000 * 1000)) as u32 * 1000)))?;
+            if let Some(alarm) = timer {
+                let dt = alarm - time;
+                trace!(self.log, "setting timeout"; "dt" => dt);
+                let seconds = dt / (1000 * 1000);
+                self.socket.set_read_timeout(Some(Duration::new(seconds, (dt - (seconds * 1000 * 1000)) as u32 * 1000)))?;
             } else {
                 self.socket.set_read_timeout(None)?;
             }
