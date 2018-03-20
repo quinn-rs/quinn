@@ -17,6 +17,7 @@ constant_time_eq = "0.1"
 bincode = "0.9"
 lazy_static = "1"
 slog = { version = "2.1", features = ["max_level_trace", "release_max_level_info"] }
+arrayvec = "0.4.7"
 
 [dependencies.openssl]
 git = "https://github.com/Ralith/rust-openssl.git"

@@ -22,7 +22,7 @@ extern crate assert_matches;
 #[cfg(test)]
 #[macro_use]
 extern crate hex_literal;
-
+extern crate arrayvec;
 
 mod varint;
 mod memory_stream;

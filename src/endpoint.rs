@@ -20,6 +20,7 @@ use digest::{Input, VariableOutput};
 use constant_time_eq::constant_time_eq;
 use bincode;
 use slog::Logger;
+use arrayvec::ArrayVec;
 
 use memory_stream::MemoryStream;
 use transport_parameters::TransportParameters;
@@ -102,22 +103,18 @@ pub struct Endpoint {
 
 const MIN_INITIAL_SIZE: usize = 1200;
 const MIN_MTU: u16 = 1232;
-const MIN_STATELESS_RESET_SIZE: usize = 281;
+const LOCAL_ID_LEN: usize = 8;
 
-fn reset_token_for(key: &[u8], id: ConnectionId) -> [u8; 16] {
+fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
     let mut mac = Blake2b::new_keyed(key, 16);
-    {
-        let mut buf = [0; 8];
-        BigEndian::write_u64(&mut buf, id.0);
-        mac.process(&buf);
-    }
+    mac.process(id);
     // TODO: Server ID??
     let mut result = [0; 16];
     mac.variable_result(&mut result).unwrap();
     result
 }
 
-fn gen_transport_params(key: &[u8], am_server: bool, id: ConnectionId) -> Vec<u8> {
+fn gen_transport_params(key: &[u8], am_server: bool, id: &ConnectionId) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut params = TransportParameters::default();
     if am_server {
@@ -179,7 +176,7 @@ impl Endpoint {
             move |tls, ctx, _| {
                 let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
                 let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
-                Ok(Some(gen_transport_params(&reset_key, am_server, conn.id)))
+                Ok(Some(gen_transport_params(&reset_key, am_server, &conn.id)))
             },
             |tls, ctx, data, _| {
                 let am_server = ctx == ssl::ExtensionContext::CLIENT_HELLO;
@@ -230,22 +227,20 @@ impl Endpoint {
     }
 
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, local: SocketAddrV6, data: Bytes) {
-        let packet = match Packet::decode(data.clone()) {
+        let packet = match Packet::decode(data.clone(), LOCAL_ID_LEN) {
             Ok(x) => x,
-            Err(HeaderError::UnsupportedVersion(id)) if self.listen => {
+            Err(HeaderError::UnsupportedVersion { source, destination }) => {
+                if !self.listen {
+                    debug!(self.log, "dropping packet with unsupported version");
+                    return;
+                }
                 trace!(self.log, "sending version negotiation");
                 // Negotiate versions
                 let mut buf = Vec::<u8>::new();
-                buf.reserve_exact(LONG_HEADER_SIZE + 4);
-                Header::VersionNegotiate { id }.encode(&mut buf);
-                buf[0] |= self.rng.gen::<u8>();
+                Header::VersionNegotiate { ty: self.rng.gen(), source_id: destination, destination_id: source }.encode(&mut buf);
                 buf.put_u32::<BigEndian>(0x0a1a2a3a); // reserved version
                 buf.put_u32::<BigEndian>(VERSION); // supported version
                 self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
-                return;
-            }
-            Err(HeaderError::UnsupportedVersion(id)) => {
-                debug!(self.log, "dropping packet with unsupported version"; "version" => %id);
                 return;
             }
             Err(_) => {
@@ -258,30 +253,20 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let conn_id = packet.header.id();
-        if let Some(id) = conn_id {
-            if let Some(&conn) = self.connection_ids.get(&id) {
-                self.handle_connected(now, conn, remote, packet);
-                return;
-            }
+        let dest_id = packet.header.destination_id().clone();
+        if let Some(&conn) = self.connection_ids.get(&dest_id) {
+            self.handle_connected(now, conn, remote, packet);
+            return;
         }
         if let Some(&conn) = self.connection_remotes.get(&remote) {
-            if let Some(id) = conn_id {
-                if self.connections[conn.0].stream0.rx_offset == 0 {
-                    // First packet from remote server resets our connection id
-                    if self.connections[conn.0].id != id {
-                        trace!(self.log, "server updated connection ID"; "old" => %self.connections[conn.0].id, "new" => %id);
-                        self.connection_ids.remove(&self.connections[conn.0].id);
-                        self.connections[conn.0].id = id;
-                        self.connection_ids.insert(id, conn);
-                    }
-                } else {
-                    debug!(self.log, "dropping late connection ID change");
+            if let Some(token) = self.connections[conn.0].reset_token {
+                if packet.payload.len() >= 16 && &packet.payload[packet.payload.len() - 16..] == token {
+                    debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
+                    self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::Reset });
+                    self.forget(conn);
                     return;
                 }
             }
-            self.handle_connected(now, conn, remote, packet);
-            return;
         }
 
         //
@@ -292,10 +277,10 @@ impl Endpoint {
             debug!(self.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
             return;
         }
-        if let Header::Long { ty, id, number } = packet.header {
+        if let Header::Long { ty, destination_id, source_id, number } = packet.header {
             // MAY buffer non-initial packets a little for better 0RTT behavior
             if ty == packet::INITIAL && data.len() >= MIN_INITIAL_SIZE {
-                self.handle_initial(now, remote, id, number, &packet.header_data, &packet.payload);
+                self.handle_initial(now, remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
                 return;
             }
         }
@@ -304,20 +289,21 @@ impl Endpoint {
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
         //
 
-        if let Some(id) = conn_id {
+        if !dest_id.is_empty() {
             debug!(self.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound reply size to mitigate spoofed source address amplification attacks
             let padding = self.rng.gen_range(0, cmp::max(16, packet.payload.len()) - 16);
             buf.reserve_exact(1 + 8 + 4 + padding + 16);
-            (Header::Short { id: conn_id, number: PacketNumber::U8(self.rng.gen()), key_phase: false })
-                .encode(&mut buf);
+            Header::Short {
+                id: ConnectionId::random(&mut self.rng, 18), number: PacketNumber::U8(self.rng.gen()), key_phase: false
+            }.encode(&mut buf);
             {
                 let start = buf.len();
                 buf.resize(start + padding, 0);
                 self.rng.fill_bytes(&mut buf[start..start+padding]);
             }
-            buf.extend(&reset_token_for(&self.state.reset_key, id));
+            buf.extend(&reset_token_for(&self.state.reset_key, &dest_id));
             self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
@@ -325,18 +311,19 @@ impl Endpoint {
     }
 
     pub fn connect(&mut self, now: u64, local: SocketAddrV6, remote: SocketAddrV6) -> Result<ConnectionHandle> {
+        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
+        let remote_id = ConnectionId::random(&mut self.rng, 18);
+        let conn = self.add_connection(local_id, remote_id, remote, true);
         let mut tls = Ssl::new(&self.tls)?;
-        let id = self.rng.gen();
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id, remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
         let mut tls = match tls.connect(MemoryStream::new()) {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
             Err(e) => return Err(e.into()),
         };
-        let conn = self.add_connection(id, remote, true);
         self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-            tls, clienthello_packet: None,
+            tls, clienthello_packet: None, remote_id_set: false
         }));
         self.flush_pending(now, conn);
         Ok(conn)
@@ -344,40 +331,44 @@ impl Endpoint {
 
     fn gen_initial_packet_num(&mut self) -> u32 { self.initial_packet_number.sample(&mut self.rng) as u32 }
 
-    fn add_connection(&mut self, id: ConnectionId, remote: SocketAddrV6, client: bool) -> ConnectionHandle {
+    fn add_connection(&mut self, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6, client: bool) -> ConnectionHandle {
+        debug_assert!(!local_id.is_empty());
         let packet_num = self.gen_initial_packet_num();
-        let i = self.connections.insert(Connection::new(id, remote, packet_num.into(), client, &self.config));
-        self.connection_ids.insert(id, ConnectionHandle(i));
+        let crypto = CryptoContext::handshake(if client { &remote_id } else { &local_id }, client);
+        let i = self.connections.insert(Connection::new(crypto, local_id.clone(), remote_id, remote, packet_num.into(), client, &self.config));
+        self.connection_ids.insert(local_id, ConnectionHandle(i));
         self.connection_remotes.insert(remote, ConnectionHandle(i));
         ConnectionHandle(i)
     }
 
-    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, id: ConnectionId, packet_number: u32, header: &[u8], payload: &[u8]) {
-        let crypto = CryptoContext::handshake(id, false);
+    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, dest_id: ConnectionId, source_id: ConnectionId,
+                      packet_number: u32, header: &[u8], payload: &[u8]) {
+        let crypto = CryptoContext::handshake(&dest_id, false);
         let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) { x.into() } else {
-            debug!(self.log, "failed to decrypt initial packet"; "connection" => %id);
+            debug!(self.log, "failed to decrypt initial packet");
             return;
         };
         let mut stream = MemoryStream::new();
         if !parse_initial(&mut stream, payload) { return; } // TODO: Send close?
         let incoming_len = stream.incoming_len() as u64;
         trace!(self.log, "got initial"; "len" => incoming_len);
+        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id, remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
         match tls.stateless() {
             Ok(()) => {
                 match tls.accept() {
                     Ok(_) => unreachable!(),
                     Err(HandshakeError::WouldBlock(mut tls)) => {
-                        trace!(self.log, "performing handshake"; "connection" => %id);
+                        trace!(self.log, "performing handshake"; "connection" => %local_id);
                         if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                             let params = params.expect("transport parameter errors should have aborted the handshake");
-                            let conn = self.add_connection(id, remote, false);
+                            let conn = self.add_connection(local_id, source_id, remote, false);
                             self.connections[conn.0].stream0_data = frame::StreamAssembler::with_offset(incoming_len);
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                                tls, clienthello_packet: None,
+                                tls, clienthello_packet: None, remote_id_set: true,
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
                             self.connections[conn.0].params = params;
@@ -387,13 +378,13 @@ impl Endpoint {
                             let n = self.gen_initial_packet_num();
                             self.io.push_back(Io::Transmit {
                                 destination: remote,
-                                packet: handshake_close(&crypto, id, n, TransportError::TRANSPORT_PARAMETER_ERROR, "missing transport parameters"),
+                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR, "missing transport parameters"),
                             });
                         }
                     }
                     Err(HandshakeError::Failure(tls)) => {
                         let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
-                            debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
+                            debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
                             TransportError::TRANSPORT_PARAMETER_ERROR
                         } else {
                             debug!(self.log, "accept failed"; "reason" => %tls.error());
@@ -402,7 +393,7 @@ impl Endpoint {
                         let n = self.gen_initial_packet_num();
                         self.io.push_back(Io::Transmit {
                             destination: remote,
-                            packet: handshake_close(&crypto, id, n, code, ""),
+                            packet: handshake_close(&crypto, &source_id, &local_id, n, code, ""),
                         });
                     }
                     Err(HandshakeError::SetupFailure(e)) => {
@@ -410,35 +401,39 @@ impl Endpoint {
                         let n = self.gen_initial_packet_num();
                         self.io.push_back(Io::Transmit {
                             destination: remote,
-                            packet: handshake_close(&crypto, id, n, TransportError::INTERNAL_ERROR, ""),
+                            packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR, ""),
                         });
                     }
                 }
             }
             Err(None) => {
-                trace!(self.log, "sending HelloRetryRequest"; "connection" => %id);
+                trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id);
                 let data = tls.get_mut().take_outgoing();
                 let mut buf = Vec::<u8>::new();
-                buf.reserve_exact(LONG_HEADER_SIZE + data.len());
-                encode_long_header(&mut buf, packet::RETRY, id, packet_number);
+                Header::Long {
+                    ty: packet::RETRY,
+                    number: packet_number,
+                    destination_id: source_id, source_id: local_id,
+                }.encode(&mut buf);
+                let header_len = buf.len();
                 frame::Stream {
                     id: StreamId(0),
                     offset: 0,
                     fin: false,
                     data: data,
                 }.encode(false, &mut buf);
-                let payload = crypto.encrypt(packet_number as u64, &buf[0..LONG_HEADER_SIZE], &buf[LONG_HEADER_SIZE..]);
-                debug_assert_eq!(payload.len(), buf.len() - LONG_HEADER_SIZE + AEAD_TAG_SIZE);
-                buf.truncate(LONG_HEADER_SIZE);
+                let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
+                debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
+                buf.truncate(header_len);
                 buf.extend_from_slice(&payload);
                 self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
             }
             Err(Some(e)) => {
-                debug!(self.log, "stateless handshake failed"; "connection" => %id, "reason" => %e);
+                debug!(self.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, id, n, TransportError::TLS_HANDSHAKE_FAILED, ""),
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, ""),
                 });
             }
         }
@@ -447,7 +442,7 @@ impl Endpoint {
     fn handle_connected_inner(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet, state: State) -> State { match state {
         State::Handshake(mut state) => {
             match packet.header {
-                Header::Long { ty: packet::RETRY, number, id: conn_id, .. } => {
+                Header::Long { ty: packet::RETRY, number, destination_id: conn_id, source_id: remote_id, .. } => {
                     if state.clienthello_packet.is_none() {
                         // Received Retry as a server
                         debug!(self.log, "received retry from client"; "connection" => %conn_id);
@@ -479,15 +474,16 @@ impl Endpoint {
                     } else { match state.tls.handshake() {
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "resending ClientHello");
-                            let id = self.connections[conn.0].id;
+                            let local_id = self.connections[conn.0].local_id.clone();
+                            let crypto = CryptoContext::handshake(&remote_id, true);
                             // Discard transport state
                             self.connections[conn.0] = Connection::new(
-                                id, remote, self.initial_packet_number.sample(&mut self.rng).into(), true, &self.config
+                                crypto, local_id, remote_id, remote, self.initial_packet_number.sample(&mut self.rng).into(), true, &self.config
                             );
                             self.connections[conn.0].client = true;
                             // Send updated ClientHello
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet })
+                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
                         },
                         Ok(_) => {
                             debug!(self.log, "unexpectedly completed handshake in RETRY packet");
@@ -516,7 +512,12 @@ impl Endpoint {
                     }
                     }
                 }
-                Header::Long { ty: packet::HANDSHAKE, id, number, .. } => {
+                Header::Long { ty: packet::HANDSHAKE, destination_id: id, source_id: remote_id, number, .. } => {
+                    if !state.remote_id_set {
+                        self.connections[conn.0].handshake_crypto = CryptoContext::handshake(&remote_id, true);
+                        self.connections[conn.0].remote_id = remote_id;
+                        state.remote_id_set = true;
+                    }
                     let payload = if let Some(x) = self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload) { x } else {
                         debug!(self.log, "failed to decrypt handshake packet");
                         return State::Handshake(state);
@@ -605,7 +606,7 @@ impl Endpoint {
                                     self.transmit_handshake(conn, &response);
                                 }
                             }
-                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet })
+                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
                         }
                         Err(HandshakeError::Failure(mut tls)) => {
                             let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
@@ -639,10 +640,10 @@ impl Endpoint {
                         alert: None,
                     })
                 }
-                Header::VersionNegotiate { id } => {
+                Header::VersionNegotiate { destination_id, .. } => {
                     let mut payload = io::Cursor::new(&packet.payload[..]);
                     if packet.payload.len() % 4 != 0 {
-                        debug!(self.log, "malformed version negotiation"; "connection" => %id);
+                        debug!(self.log, "malformed version negotiation"; "connection" => %destination_id);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                         return State::HandshakeFailed(state::HandshakeFailed {
                             reason: TransportError::PROTOCOL_VIOLATION,
@@ -677,7 +678,7 @@ impl Endpoint {
             };
             let number = number.expand(self.connections[conn.0].rx_packet);
             let payload = if key_phase != self.connections[conn.0].key_phase {
-                let id = self.connections[conn.0].id;
+                let id = self.connections[conn.0].local_id.clone();
                 if number <= self.connections[conn.0].rx_packet {
                     warn!(self.log, "got illegal key update"; "connection" => %id);
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
@@ -786,21 +787,11 @@ impl Endpoint {
     }}
 
     fn handle_connected(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet) {
-        trace!(self.log, "connection got packet"; "id" => %self.connections[conn.0].id, "len" => packet.payload.len());
+        trace!(self.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
         // State transitions
         let state = self.connections[conn.0].state.take().unwrap();
-        if let Some(token) = self.connections[conn.0].params.stateless_reset_token.clone() {
-            if packet.payload.len() >= MIN_STATELESS_RESET_SIZE {
-                if packet.payload[packet.payload.len() - 128..] == token {
-                    debug!(self.log, "got stateless reset"; "id" => %self.connections[conn.0].id);
-                    self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::Reset });
-                    self.forget(conn);
-                    return;
-                }
-            }
-        }
         let state = self.handle_connected_inner(now, conn, remote, packet, state);
 
         // Close timer
@@ -819,8 +810,9 @@ impl Endpoint {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(&self.connections[conn.0].handshake_crypto,
-                                            self.connections[conn.0].id, n as u32,
-                                            state.reason, ""),
+                                            &self.connections[conn.0].remote_id,
+                                            &self.connections[conn.0].local_id,
+                                            n as u32, state.reason, ""),
                 });
             }
             &State::Closed(_) => {
@@ -852,7 +844,7 @@ impl Endpoint {
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
-        self.connection_ids.remove(&self.connections[conn.0].id);
+        self.connection_ids.remove(&self.connections[conn.0].local_id);
         self.connection_remotes.remove(&self.connections[conn.0].remote);
         self.connections.remove(conn.0);
     }
@@ -865,7 +857,7 @@ impl Endpoint {
             Timer::LossDetection => {
                 if !self.connections[conn.0].handshake_sent.is_empty() {
                     // Retransmit all
-                    trace!(self.log, "retransmitting handshake"; "connection" => %self.connections[conn.0].id);
+                    trace!(self.log, "retransmitting handshake"; "connection" => %self.connections[conn.0].local_id);
                     for (_, mut packet) in mem::replace(&mut self.connections[conn.0].handshake_sent, BTreeMap::new()) {
                         self.connections[conn.0].handshake_pending.extend(packet.retransmits.stream.drain(..));
                         self.connections[conn.0].pending += packet.retransmits;
@@ -925,29 +917,41 @@ impl Endpoint {
     }
 }
 
-fn encode_long_header<W: BufMut>(buf: &mut W, ty: u8, id: ConnectionId, packet: u32) {
-    buf.put_u8(0b10000000 | ty);
-    buf.put_u64::<BigEndian>(id.0);
-    buf.put_u32::<BigEndian>(VERSION);
-    buf.put_u32::<BigEndian>(packet)
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct ConnectionId(ArrayVec<[u8; 18]>);
+
+impl ::std::ops::Deref for ConnectionId {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0 }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-struct ConnectionId(u64);
+impl ::std::ops::DerefMut for ConnectionId {
+    fn deref_mut(&mut self) -> &mut [u8] { &mut self.0 }
+}
 
-impl Rand for ConnectionId {
-    fn rand<R: Rng>(rng: &mut R) -> Self { ConnectionId(rng.gen()) }
+impl ConnectionId {
+    fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
+        debug_assert!(len <= 18);
+        let mut v = ArrayVec::from([0; 18]);
+        rng.fill_bytes(&mut v[0..len as usize]);
+        v.truncate(len as usize);
+        ConnectionId(v)
+    }
 }
 
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:016x}", self.0)
+        for byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 
 
 struct Connection {
-    id: ConnectionId,
+    local_id: ConnectionId,
+    remote_id: ConnectionId,
     remote: SocketAddrV6,
     state: Option<State>,
     stream0: Stream,
@@ -1080,7 +1084,7 @@ impl ::std::ops::AddAssign for Retransmits {
         self.max_stream_data |= rhs.max_stream_data;
         self.max_data |= rhs.max_data;
         self.max_stream_id |= rhs.max_stream_id;
-        self.new_connection_id = rhs.new_connection_id.or(self.new_connection_id);
+        if let Some(x) = rhs.new_connection_id { self.new_connection_id = Some(x); }
         self.stream.extend(rhs.stream.into_iter());
         self.ack.extend_from_slice(&rhs.ack);
     }
@@ -1099,9 +1103,11 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
 }
 
 impl Connection {
-    fn new(id: ConnectionId, remote: SocketAddrV6, initial_packet_number: u64, client: bool, config: &Config) -> Self {
+    fn new(handshake_crypto: CryptoContext, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6,
+           initial_packet_number: u64, client: bool, config: &Config) -> Self
+    {
         Self {
-            id, remote, client,
+            local_id, remote_id, remote, client,
             stream0: Stream::new(),
             stream0_data: frame::StreamAssembler::new(),
             streams: HashMap::new(),
@@ -1139,7 +1145,7 @@ impl Connection {
 
             handshake_sent: BTreeMap::new(),
             handshake_pending: VecDeque::new(),
-            handshake_crypto: CryptoContext::handshake(id, client),
+            handshake_crypto,
 
             pending: Retransmits::default(),
             path_responses: VecDeque::new(),
@@ -1410,8 +1416,10 @@ impl Connection {
             } else {
                 packet::HANDSHAKE
             };
-            encode_long_header(&mut buf, ty, self.id, number as u32);
-            let header_len = LONG_HEADER_SIZE as u16;
+            Header::Long {
+                ty, number: number as u32, source_id: self.local_id.clone(), destination_id: self.remote_id.clone()
+            }.encode(&mut buf);
+            let header_len = buf.len() as u16;
             let max_size = self.mtu - header_len - AEAD_TAG_SIZE as u16;
 
             while max_size as usize > buf.len() + 9 {
@@ -1452,7 +1460,7 @@ impl Connection {
             let max_size = max_size.saturating_sub(AEAD_TAG_SIZE as u16);
 
             Header::Short {
-                id: if self.params.omit_connection_id { None } else { Some(self.id) },
+                id: self.remote_id.clone(),
                 number: PacketNumber::U32(number as u32), key_phase: self.key_phase
             }.encode(&mut buf);
             let header_len = buf.len() as u16;
@@ -1536,7 +1544,7 @@ impl Connection {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: if self.params.omit_connection_id { None } else { Some(self.id) },
+            id: self.remote_id.clone(),
             number: PacketNumber::U32(number as u32), key_phase: self.key_phase
         }.encode(&mut buf);
         buf.push(frame::Type::PING.into());
@@ -1557,30 +1565,33 @@ impl Stream {
     }}
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum Header {
     Long {
         ty: u8,
-        id: ConnectionId,
+        source_id: ConnectionId,
+        destination_id: ConnectionId,
         number: u32,
     },
     Short {
-        id: Option<ConnectionId>,
+        id: ConnectionId,
         number: PacketNumber,
         key_phase: bool,
     },
     VersionNegotiate {
-        id: ConnectionId
+        ty: u8,
+        source_id: ConnectionId,
+        destination_id: ConnectionId,
     }
 }
 
 impl Header {
-    fn id(&self) -> Option<ConnectionId> {
+    fn destination_id(&self) -> &ConnectionId {
         use self::Header::*;
         match *self {
-            Header::Long { id, .. } => Some(id),
-            Header::Short { id, .. } => id,
-            VersionNegotiate { id, .. } => Some(id),
+            Header::Long { ref destination_id, .. } => destination_id,
+            Header::Short { ref id, .. } => id,
+            VersionNegotiate { ref destination_id, .. } => destination_id,
         }
     }
 }
@@ -1638,27 +1649,35 @@ impl Header {
     pub fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
         match *self {
-            Long { ty, id, number } => {
+            Long { ty, ref source_id, ref destination_id, number } => {
                 w.put_u8(0b10000000 | ty);
-                w.put_u64::<BigEndian>(id.0);
                 w.put_u32::<BigEndian>(VERSION);
+                let mut dcil = destination_id.len() as u8;
+                if dcil > 0 { dcil -= 3; }
+                let mut scil = source_id.len() as u8;
+                if scil > 0 { scil -= 3; }
+                w.put_u8(dcil << 4 | scil);
+                w.put_slice(destination_id);
+                w.put_slice(source_id);
                 w.put_u32::<BigEndian>(number)
             }
-            Short { id, number, key_phase } => {
-                let ty = number.ty() | 0x10
-                    | if key_phase { 0x20 } else { 0 };
-                if let Some(x) = id {
-                    w.put_u8(ty);
-                    w.put_u64::<BigEndian>(x.0);
-                } else {
-                    w.put_u8(ty | 0x40);
-                }
+            Short { ref id, number, key_phase } => {
+                let ty = number.ty() | 0x30
+                    | if key_phase { 0x40 } else { 0 };
+                w.put_u8(ty);
+                w.put_slice(id);
                 number.encode(w);
             }
-            VersionNegotiate { id } => {
-                w.put_u8(0x80);
-                w.put_u64::<BigEndian>(id.0);
+            VersionNegotiate { ty, ref source_id, ref destination_id } => {
+                w.put_u8(0x80 | ty);
                 w.put_u32::<BigEndian>(0);
+                let mut dcil = destination_id.len() as u8;
+                if dcil > 0 { dcil -= 3; }
+                let mut scil = source_id.len() as u8;
+                if scil > 0 { scil -= 3; }
+                w.put_u8(dcil << 4 | scil);
+                w.put_slice(destination_id);
+                w.put_slice(source_id);
             }
         }
     }
@@ -1670,10 +1689,10 @@ struct Packet {
     payload: Bytes,
 }
 
-#[derive(Copy, Clone, Debug, Fail)]
+#[derive(Debug, Fail)]
 enum HeaderError {
     #[fail(display = "unsupported version")]
-    UnsupportedVersion(ConnectionId),
+    UnsupportedVersion { source: ConnectionId, destination: ConnectionId },
     #[fail(display = "invalid header")]
     InvalidHeader,
 }
@@ -1683,20 +1702,32 @@ impl From<coding::UnexpectedEnd> for HeaderError {
 }
 
 impl Packet {
-    fn decode(packet: Bytes) -> ::std::result::Result<Self, HeaderError> {
+    fn decode(packet: Bytes, dest_id_len: usize) -> ::std::result::Result<Self, HeaderError> {
         let mut buf = io::Cursor::new(&packet[..]);
         let ty = buf.get::<u8>()?;
         let long = ty & 0x80 != 0;
         let ty = ty & !0x80;
+        let mut cid_stage = [0; 18];
         if long {
-            let id = ConnectionId(buf.get()?);
-            let version: u32 = buf.get()?;
+            let version = buf.get::<u32>()?;
+            let ci_lengths = buf.get::<u8>()?;
+            let mut dcil = ci_lengths >> 4;
+            if dcil > 0 { dcil += 3 };
+            let mut scil = ci_lengths & 0xF;
+            if scil > 0 { scil += 3 };
+            if buf.remaining() < (dcil + scil) as usize { return Err(HeaderError::InvalidHeader); }
+            buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
+            let mut destination_id = ConnectionId(cid_stage.into());
+            destination_id.0.truncate(dcil as usize);
+            buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
+            let mut source_id = ConnectionId(cid_stage.into());
+            source_id.0.truncate(scil as usize);
             Ok(match version {
                 0 => {
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, packet.len());
                     Packet {
-                        header: Header::VersionNegotiate { id },
+                        header: Header::VersionNegotiate { ty, source_id, destination_id },
                         header_data, payload,
                     }
                 }
@@ -1705,21 +1736,24 @@ impl Packet {
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, packet.len());
                     Packet {
-                        header: Header::Long { ty, id, number },
+                        header: Header::Long { ty, source_id, destination_id, number },
                         header_data, payload,
                     }
                 }
-                _ => return Err(HeaderError::UnsupportedVersion(id)),
+                _ => return Err(HeaderError::UnsupportedVersion { source: source_id, destination: destination_id }),
             })
         } else {
-            let id = if ty & 0x40 == 0 { Some(ConnectionId(buf.get()?)) } else { None };
+            if buf.remaining() < dest_id_len { return Err(HeaderError::InvalidHeader); }
+            buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
+            let mut id = ConnectionId(cid_stage.into());
+            id.0.truncate(dest_id_len);
+            let key_phase = ty & 0x40 != 0;
             let number = match ty & 0b0111 {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
                 0x2 => PacketNumber::U32(buf.get()?),
                 _ => { return Err(HeaderError::InvalidHeader); }
             };
-            let key_phase = ty & 0x20 != 0;
             let header_data = packet.slice(0, buf.position() as usize);
             let payload = packet.slice(buf.position() as usize, packet.len());
             Ok(Packet {
@@ -1757,6 +1791,7 @@ mod state {
         /// The number of the packet that first contained the latest version of the TLS ClientHello. Present iff we're
         /// the client.
         pub clienthello_packet: Option<u32>,
+        pub remote_id_set: bool,
     }
 
     pub struct Established {
@@ -1922,13 +1957,18 @@ fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
     true
 }
 
-fn handshake_close(crypto: &CryptoContext, id: ConnectionId, packet_number: u32, error_code: TransportError, reason: &str) -> Box<[u8]> {
+fn handshake_close(crypto: &CryptoContext,
+                   remote_id: &ConnectionId, local_id: &ConnectionId, packet_number: u32,
+                   error_code: TransportError, reason: &str) -> Box<[u8]> {
     let mut buf = Vec::<u8>::new();
-    encode_long_header(&mut buf, packet::HANDSHAKE, id, packet_number);
+    Header::Long {
+        ty: packet::HANDSHAKE, destination_id: remote_id.clone(), source_id: local_id.clone(), number: packet_number
+    }.encode(&mut buf);
+    let header_len = buf.len();
     frame::ConnectionClose { error_code, reason: reason.as_bytes() }.encode(&mut buf);
-    let payload = crypto.encrypt(packet_number as u64, &buf[0..LONG_HEADER_SIZE], &buf[LONG_HEADER_SIZE..]);
-    debug_assert_eq!(payload.len(), buf.len() - LONG_HEADER_SIZE + AEAD_TAG_SIZE);
-    buf.truncate(LONG_HEADER_SIZE);
+    let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
+    debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
+    buf.truncate(header_len);
     buf.extend_from_slice(&payload);
     buf.into()
 }
@@ -1964,12 +2004,10 @@ pub struct CryptoContext {
 }
 
 impl CryptoContext {
-    fn handshake(id: ConnectionId, client: bool) -> Self {
+    fn handshake(id: &ConnectionId, client: bool) -> Self {
         let digest = MessageDigest::sha256();
         let cipher = Cipher::aes_128_gcm();
-        let mut id_buf = [0; 8];
-        BigEndian::write_u64(&mut id_buf, id.0);
-        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id_buf);
+        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
         let (local_label, remote_label) = if client { (b"client hs", b"server hs") } else { (b"server hs", b"client hs") };
         let local = CryptoState::new(digest, cipher, hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16));
         let remote = CryptoState::new(digest, cipher, hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16));
@@ -2032,7 +2070,6 @@ impl CryptoContext {
     }
 }
 
-const LONG_HEADER_SIZE: usize = 17;
 const AEAD_TAG_SIZE: usize = 16;
 
 #[cfg(test)]
@@ -2054,9 +2091,9 @@ mod test {
 
     #[test]
     fn handshake_crypto_roundtrip() {
-        let conn = rand::random();
-        let client = CryptoContext::handshake(conn, true);
-        let server = CryptoContext::handshake(conn, false);
+        let conn = ConnectionId::random(&mut rand::thread_rng(), 18);
+        let client = CryptoContext::handshake(&conn, true);
+        let server = CryptoContext::handshake(&conn, false);
         let header = b"header";
         let payload = b"payload";
         let encrypted = client.encrypt(0, header, payload);
@@ -2066,12 +2103,10 @@ mod test {
 
     #[test]
     fn key_derivation() {
-        let id = ConnectionId(BigEndian::read_u64(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]));
+        let id = ConnectionId([0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08].iter().cloned().collect());
         let digest = MessageDigest::sha256();
         let cipher = Cipher::aes_128_gcm();
-        let mut id_buf = [0; 8];
-        BigEndian::write_u64(&mut id_buf, id.0);
-        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id_buf);
+        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
         assert_eq!(&hs_secret[..],
                    [165, 114, 176, 36, 90, 241, 237, 223, 92, 97, 198, 227, 247, 249, 48, 76, 166, 107, 251, 76, 170, 247, 101, 103, 213, 203, 141, 209, 220, 78, 130, 11]);
         
