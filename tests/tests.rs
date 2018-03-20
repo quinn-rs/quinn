@@ -8,6 +8,7 @@ extern crate slog_term;
 extern crate assert_matches;
 #[macro_use]
 extern crate lazy_static;
+extern crate bytes;
 
 use std::net::SocketAddrV6;
 
@@ -91,10 +92,17 @@ impl Pair {
 fn connect() {
     let log = logger();
     let mut pair = Pair::new(log);
-    if let Err(e) = pair.client.connect(0, pair.client_addr, pair.server_addr) {
-        panic!("{}", e);
-    }
+    let client_conn = pair.client.connect(0, pair.client_addr, pair.server_addr).unwrap();
+    info!(pair.log, "connecting");
     pair.drive();
     assert_matches!(pair.server.poll(), Some(Event::Connected(_)));
-    assert_matches!(pair.client.poll(), Some(Event::Connected(_)));
+    assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
+    const REASON: &[u8] = b"whee";
+    pair.client.close(0, client_conn, 42, REASON.into());
+    info!(pair.log, "closing");
+    pair.drive();
+    assert_matches!(pair.server.poll(), Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
+        reason: ApplicationClose { error_code: 42, ref reason }
+    }, .. }) if reason == REASON);
+    assert_matches!(pair.client.poll(), None);
 }

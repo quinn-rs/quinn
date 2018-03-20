@@ -38,7 +38,7 @@ mod from_bytes;
 use from_bytes::{FromBytes};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer};
+pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer, ConnectionError};
 
 
 mod transport_error;

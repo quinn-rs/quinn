@@ -310,6 +310,7 @@ impl Endpoint {
         }
     }
 
+    // TODO: Is this really fallible?
     pub fn connect(&mut self, now: u64, local: SocketAddrV6, remote: SocketAddrV6) -> Result<ConnectionHandle> {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, 18);
@@ -640,10 +641,10 @@ impl Endpoint {
                         alert: None,
                     })
                 }
-                Header::VersionNegotiate { destination_id, .. } => {
+                Header::VersionNegotiate { destination_id: id, .. } => {
                     let mut payload = io::Cursor::new(&packet.payload[..]);
                     if packet.payload.len() % 4 != 0 {
-                        debug!(self.log, "malformed version negotiation"; "connection" => %destination_id);
+                        debug!(self.log, "malformed version negotiation"; "connection" => %id);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                         return State::HandshakeFailed(state::HandshakeFailed {
                             reason: TransportError::PROTOCOL_VIOLATION,
@@ -683,7 +684,6 @@ impl Endpoint {
                     warn!(self.log, "got illegal key update"; "connection" => %id);
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                     return State::Closed(state::Closed {
-                        tls: state.tls,
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                     });
                 }
@@ -741,7 +741,6 @@ impl Endpoint {
                         debug!(self.log, "TLS error"; "error" => %e);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() });
                         return State::Closed(state::Closed {
-                            tls: state.tls,
                             reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
                         });
                     }
@@ -749,7 +748,6 @@ impl Endpoint {
                         debug!(self.log, "TLS session terminated unexpectedly");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                         return State::Closed(state::Closed {
-                            tls: state.tls,
                             reason: TransportError::PROTOCOL_VIOLATION.into(),
                         });
                     }
@@ -757,7 +755,6 @@ impl Endpoint {
                         error!(self.log, "unexpected TLS error"; "error" => %e);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::INTERNAL_ERROR.into() });
                         return State::Closed(state::Closed {
-                            tls: state.tls,
                             reason: TransportError::INTERNAL_ERROR.into(),
                         });
                     }
@@ -804,8 +801,8 @@ impl Endpoint {
         }
 
         // Transmit CONNECTION_CLOSE if necessary
-        match &state {
-            &State::HandshakeFailed(ref state) => {
+        match state {
+            State::HandshakeFailed(ref state) => {
                 let n = self.connections[conn.0].get_tx_number();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
@@ -815,14 +812,18 @@ impl Endpoint {
                                             n as u32, state.reason, ""),
                 });
             }
-            &State::Closed(_) => {
-                unimplemented!()
+            State::Closed(ref state) => {
+                trace!(self.log, "repeating close");
+                self.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: self.connections[conn.0].make_close(&state.reason),
+                });
             }
             _ => {}
         }
         self.connections[conn.0].state = Some(state);
 
-        self.flush_pending(now, conn); // TODO: Determine whether we got an ack-only packet
+        self.flush_pending(now, conn);
     }
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
@@ -914,6 +915,26 @@ impl Endpoint {
             timer: Timer::LossDetection,
             time,
         });
+    }
+
+    /// Returns bytes written
+    pub fn write(&mut self, now: u64, conn: ConnectionHandle, stream: StreamId, data: Bytes) -> usize {
+        unimplemented!()
+    }
+
+    pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
+        assert!(!self.connections[conn.0].state.as_ref().unwrap().is_closed());
+        self.io.push_back(Io::TimerStart {
+            connection: conn,
+            timer: Timer::Close,
+            time: now + 3 * self.connections[conn.0].rto(&self.config),
+        });
+        let reason = state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
+        self.io.push_back(Io::Transmit {
+            destination: self.connections[conn.0].remote,
+            packet: self.connections[conn.0].make_close(&reason),
+        });
+        self.connections[conn.0].state = Some(State::Closed(state::Closed { reason }));
     }
 }
 
@@ -1389,7 +1410,12 @@ impl Connection {
     }
 
     fn next_packet(&mut self, config: &Config, now: u64) -> Option<(Vec<u8>, Option<u64>)> {
-        let is_handshake = match *self.state.as_ref().unwrap() { State::Handshake(_) => true, _ => !self.handshake_pending.is_empty() };
+        let is_handshake;
+        match *self.state.as_ref().unwrap() {
+            ref x if x.is_closed() => { return None; }
+            State::Handshake(_) => { is_handshake = true; }
+            _ => is_handshake = !self.handshake_pending.is_empty()
+        };
 
         let mut buf = Vec::new();
         let mut acks = Vec::new();
@@ -1461,7 +1487,8 @@ impl Connection {
 
             Header::Short {
                 id: self.remote_id.clone(),
-                number: PacketNumber::U32(number as u32), key_phase: self.key_phase
+                number: PacketNumber::new(number, self.largest_acked_packet),
+                key_phase: self.key_phase
             }.encode(&mut buf);
             let header_len = buf.len() as u16;
 
@@ -1523,10 +1550,7 @@ impl Connection {
                 }
             }
 
-            let payload = self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]);
-            debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
-            buf.truncate(header_len as usize);
-            buf.extend_from_slice(&payload);
+            self.encrypt(number, &mut buf, header_len);
         }
 
         let timer = self.on_packet_sent(config, now, is_handshake, number, SentPacket {
@@ -1539,16 +1563,43 @@ impl Connection {
         Some((buf, timer))
     }
 
+    fn encrypt(&self, number: u64, buf: &mut Vec<u8>, header_len: u16) {
+        let payload = self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]);
+        debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
+        buf.truncate(header_len as usize);
+        buf.extend_from_slice(&payload);
+    }
+
     // TLP/RTO transmit
     fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
             id: self.remote_id.clone(),
-            number: PacketNumber::U32(number as u32), key_phase: self.key_phase
+            number: PacketNumber::new(number, self.largest_acked_packet),
+            key_phase: self.key_phase
         }.encode(&mut buf);
+        let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
+        self.encrypt(number, &mut buf, header_len);
         self.on_packet_sent(config, now, false, number, SentPacket { time: now, bytes: buf.len() as u16, retransmits: Retransmits::default() });
+        buf.into()
+    }
+
+    fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
+        let number = self.get_tx_number();
+        let mut buf = Vec::new();
+        Header::Short {
+            id: self.remote_id.clone(),
+            number: PacketNumber::new(number, self.largest_acked_packet),
+            key_phase: self.key_phase
+        }.encode(&mut buf);
+        let header_len = buf.len() as u16;
+        match *reason {
+            state::CloseReason::Application(ref x) => x.encode(&mut buf),
+            state::CloseReason::Connection(ref x) => x.encode(&mut buf),
+        }
+        self.encrypt(number, &mut buf, header_len);
         buf.into()
     }
 }
@@ -1605,6 +1656,19 @@ enum PacketNumber {
 }
 
 impl PacketNumber {
+    fn new(n: u64, largest_acked: u64) -> Self {
+        let range = (n - largest_acked) / 2;
+        if range < 1 << 8 {
+            PacketNumber::U8(n as u8)
+        } else if range < 1 << 16 {
+            PacketNumber::U16(n as u16)
+        } else if range < 1 << 32 {
+            PacketNumber::U32(n as u32)
+        } else {
+            panic!("packet number too large to encode")
+        }
+    }
+
     fn ty(&self) -> u8 {
         use self::PacketNumber::*;
         match *self {
@@ -1646,7 +1710,7 @@ impl PacketNumber {
 }
 
 impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) {
+    fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
         match *self {
             Long { ty, ref source_id, ref destination_id, number } => {
@@ -1773,7 +1837,7 @@ enum State {
 }
 
 impl State {
-    pub fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         match *self {
             State::HandshakeFailed(_) => true,
             State::Closed(_) => true,
@@ -1813,7 +1877,6 @@ mod state {
     impl From<frame::ApplicationClose> for CloseReason { fn from(x: frame::ApplicationClose) -> Self { CloseReason::Application(x) } }
 
     pub struct Closed {
-        pub tls: SslStream<MemoryStream>,
         pub reason: CloseReason,
     }
 }
