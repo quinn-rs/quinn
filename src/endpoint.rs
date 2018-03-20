@@ -726,7 +726,22 @@ impl Endpoint {
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ApplicationClosed { reason } });
                         return State::Draining;
                     }
-                    _ => unimplemented!(),
+                    Frame::Invalid => {
+                        debug!(self.log, "received malformed frame");
+                        self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::FRAME_FORMAT_ERROR.into() });
+                        return State::Closed(state::Closed {
+                            reason: TransportError::FRAME_FORMAT_ERROR.into(),
+                        });
+                    }
+                    Frame::PathChallenge(x) => {
+                        self.connections[conn.0].path_responses.push_back(x);
+                    }
+                    Frame::PathResponse(_) => {
+                        debug!(self.log, "ignoring unprompted PATH_RESPONSE");
+                    }
+                    Frame::RstStream { id, app_error_code, final_offset } => {
+                        unimplemented!();
+                    }
                 }
             }
             while let Some(segment) = self.connections[conn.0].stream0_data.next() {
