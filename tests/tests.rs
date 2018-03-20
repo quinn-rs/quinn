@@ -36,6 +36,7 @@ lazy_static! {
         cert.sign(&KEY, openssl::hash::MessageDigest::sha256()).unwrap();
         cert.build()
     };
+    static ref STATE: PersistentState = rand::random();
 }
 
 struct Pair {
@@ -52,13 +53,13 @@ impl Pair {
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
             Config::default(),
-            rand::random(),
+            *STATE,
             Some(ListenConfig {
                 private_key: &KEY,
                 cert: &CERT,
             })).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default(), rand::random(), None).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), Config::default(), *STATE, None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }
@@ -105,4 +106,26 @@ fn connect() {
         reason: ApplicationClose { error_code: 42, ref reason }
     }, .. }) if reason == REASON);
     assert_matches!(pair.client.poll(), None);
+}
+
+#[test]
+fn reset() {
+    let log = logger();
+    let mut pair = Pair::new(log);
+    let client_conn = pair.client.connect(0, pair.client_addr, pair.server_addr).unwrap();
+    info!(pair.log, "connecting");
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
+    pair.server = Endpoint::new(
+        pair.log.new(o!("peer" => "server")),
+        Config::default(),
+        *STATE,
+        Some(ListenConfig {
+            private_key: &KEY,
+            cert: &CERT,
+        })).unwrap();
+    assert!(pair.client.ping(0, client_conn));
+    info!(pair.log, "resetting");
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some(Event::ConnectionLost { reason: ConnectionError::Reset, connection }) if connection == client_conn);
 }

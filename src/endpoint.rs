@@ -259,7 +259,7 @@ impl Endpoint {
             return;
         }
         if let Some(&conn) = self.connection_remotes.get(&remote) {
-            if let Some(token) = self.connections[conn.0].reset_token {
+            if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
                 if packet.payload.len() >= 16 && &packet.payload[packet.payload.len() - 16..] == token {
                     debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::Reset });
@@ -717,7 +717,7 @@ impl Endpoint {
                     Frame::Ack(ack) => {
                         self.on_ack_received(now, conn, ack);
                     }
-                    Frame::Padding => {}
+                    Frame::Padding | Frame::Ping => {}
                     Frame::ConnectionClose(reason) => {
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ConnectionClosed { reason } });
                         return State::Draining;
@@ -793,6 +793,7 @@ impl Endpoint {
 
         // Close timer
         if !was_closed && state.is_closed() {
+            trace!(self.log, "connection closed");
             self.io.push_back(Io::TimerStart {
                 connection: conn,
                 timer: Timer::Close,
@@ -826,14 +827,17 @@ impl Endpoint {
         self.flush_pending(now, conn);
     }
 
-    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
+    /// Returns whether anything was sent
+    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) -> bool {
         let mut timer = None;
+        let mut sent = false;
         while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.config, now) {
             timer = t.or(timer);
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: packet.into(),
             });
+            sent = true;
         }
         if let Some(time) = timer {
             self.io.push_back(Io::TimerStart {
@@ -842,6 +846,7 @@ impl Endpoint {
                 time
             });
         }
+        sent
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
@@ -922,6 +927,13 @@ impl Endpoint {
         unimplemented!()
     }
 
+    /// Returns true iff a ping was transmitted
+    pub fn ping(&mut self, now: u64, conn: ConnectionHandle) -> bool {
+        self.connections[conn.0].pending.ping = true;
+        // Pings are maximum priority, so if anything got sent, this did.
+        self.flush_pending(now, conn)
+    }
+
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
         assert!(!self.connections[conn.0].state.as_ref().unwrap().is_closed());
         self.io.push_back(Io::TimerStart {
@@ -979,8 +991,6 @@ struct Connection {
     stream0_data: frame::StreamAssembler,
     streams: HashMap<StreamId, Stream>,
     client: bool,
-    /// Present iff we're the client and the handshake is complete
-    reset_token: Option<[u8; 16]>,
     mtu: u16,
     rx_packet: u64,
     rx_packet_time: u64,
@@ -1084,6 +1094,7 @@ struct Retransmits {
     max_stream_data: bool,
     max_data: bool,
     max_stream_id: bool,
+    ping: bool,
     new_connection_id: Option<ConnectionId>,
     stream: VecDeque<frame::Stream>,
     ack: Vec<u64>,
@@ -1094,6 +1105,7 @@ impl Default for Retransmits {
         max_stream_data: false,
         max_data: false,
         max_stream_id: false,
+        ping: false,
         new_connection_id: None,
         stream: VecDeque::new(),
         ack: Vec::new(),
@@ -1104,6 +1116,7 @@ impl ::std::ops::AddAssign for Retransmits {
     fn add_assign(&mut self, rhs: Self) {
         self.max_stream_data |= rhs.max_stream_data;
         self.max_data |= rhs.max_data;
+        self.ping |= rhs.ping;
         self.max_stream_id |= rhs.max_stream_id;
         if let Some(x) = rhs.new_connection_id { self.new_connection_id = Some(x); }
         self.stream.extend(rhs.stream.into_iter());
@@ -1133,7 +1146,6 @@ impl Connection {
             stream0_data: frame::StreamAssembler::new(),
             streams: HashMap::new(),
             state: None,
-            reset_token: None,
             mtu: MIN_MTU,
             rx_packet: 0,
             rx_packet_time: 0,
@@ -1420,6 +1432,7 @@ impl Connection {
         let mut buf = Vec::new();
         let mut acks = Vec::new();
         let mut streams = VecDeque::new();
+        let mut ping = false;
         let number;
         let mut ack_only = true;
 
@@ -1477,7 +1490,10 @@ impl Connection {
         } else {
             let max_size = cmp::min(self.mtu as u64, self.congestion_window.saturating_sub(self.bytes_in_flight)) as u16;
             if max_size == 0
-                || ((!self.permit_ack_only || self.pending.ack.is_empty()) && self.path_responses.is_empty() && self.pending.stream.is_empty())
+                || ((!self.permit_ack_only || self.pending.ack.is_empty())
+                    && self.path_responses.is_empty()
+                    && self.pending.stream.is_empty()
+                    && !self.pending.ping)
             {
                 return None;
             }
@@ -1491,6 +1507,14 @@ impl Connection {
                 key_phase: self.key_phase
             }.encode(&mut buf);
             let header_len = buf.len() as u16;
+
+            // PING
+            if self.pending.ping && max_size as usize > buf.len() + 1 {
+                self.pending.ping = false;
+                ping = true;
+                ack_only = false;
+                buf.put_u8(frame::Type::PING.into());
+            }
 
             // ACK
             self.pending.ack.sort_unstable();
@@ -1555,7 +1579,7 @@ impl Connection {
 
         let timer = self.on_packet_sent(config, now, is_handshake, number, SentPacket {
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
-            retransmits: Retransmits { stream: streams, ack: acks, ..Retransmits::default() }
+            retransmits: Retransmits { stream: streams, ack: acks, ping, ..Retransmits::default() }
         });
 
         if ack_only { self.permit_ack_only = false; }

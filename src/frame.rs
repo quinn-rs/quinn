@@ -66,6 +66,7 @@ pub enum Frame {
     },
     ConnectionClose(ConnectionClose),
     ApplicationClose(ApplicationClose),
+    Ping,
     Ack(Ack),
     Stream(Stream),
     PathChallenge(u64),
@@ -81,6 +82,7 @@ impl Frame {
             RstStream { .. } => Type::RST_STREAM,
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
             ApplicationClose(_) => Type::APPLICATION_CLOSE,
+            Ping => Type::PING,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
@@ -331,6 +333,7 @@ impl Iter {
                 error_code: self.get::<u16>()?,
                 reason: self.take_len()?,
             }),
+            Type::PING => Frame::Ping,
             Type::ACK => {
                 let largest = self.get_var()?;
                 let delay = self.get_var()?;
