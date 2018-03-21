@@ -737,7 +737,11 @@ impl Endpoint {
                         self.connections[conn.0].path_responses.push_back(x);
                     }
                     Frame::PathResponse(_) => {
-                        debug!(self.log, "ignoring unprompted PATH_RESPONSE");
+                        debug!(self.log, "unsolicited PATH_RESPONSE");
+                        self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::UNSOLICITED_PATH_RESPONSE.into() });
+                        return State::Closed(state::Closed {
+                            reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
+                        });
                     }
                     Frame::RstStream { id, app_error_code, final_offset } => {
                         unimplemented!();
