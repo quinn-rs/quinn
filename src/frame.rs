@@ -415,7 +415,7 @@ impl<'a> Iterator for AckIter<'a> {
         self.next -= 1;
         self.block_size -= 1;
         if self.block_size == 0 && self.data.has_remaining() {
-            self.next -= varint::read(&mut self.data).unwrap();
+            self.next -= varint::read(&mut self.data).unwrap() + 1;
             self.block_size = varint::read(&mut self.data).unwrap() + 1;
         }
         Some(result)
