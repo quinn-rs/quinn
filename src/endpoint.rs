@@ -161,12 +161,12 @@ impl Endpoint {
         tls.set_default_verify_paths()?;
         {
             let cookie_factory = cookie_factory.clone();
-            tls.set_cookie_generate_cb(move |tls, buf| {
+            tls.set_stateless_cookie_generate_cb(move |tls, buf| {
                 let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
                 Ok(cookie_factory.generate(conn, buf))
             });
         }
-        tls.set_cookie_verify_cb(move |tls, cookie| {
+        tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
             let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
             cookie_factory.verify(conn, cookie)
         });
@@ -358,7 +358,7 @@ impl Endpoint {
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
         match tls.stateless() {
-            Ok(()) => {
+            Ok(true) => {
                 match tls.accept() {
                     Ok(_) => unreachable!(),
                     Err(HandshakeError::WouldBlock(mut tls)) => {
@@ -407,7 +407,7 @@ impl Endpoint {
                     }
                 }
             }
-            Err(None) => {
+            Ok(false) => {
                 trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id);
                 let data = tls.get_mut().take_outgoing();
                 let mut buf = Vec::<u8>::new();
@@ -429,7 +429,7 @@ impl Endpoint {
                 buf.extend_from_slice(&payload);
                 self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
             }
-            Err(Some(e)) => {
+            Err(e) => {
                 debug!(self.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
@@ -662,7 +662,7 @@ impl Endpoint {
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::VersionMismatch });
                     State::Draining
                 }
-                // TODO: SHOULD buffer these.
+                // TODO: SHOULD buffer these to improve reordering tolerance.
                 Header::Short { .. } => {
                     trace!(self.log, "dropping short packet during handshake");
                     State::Handshake(state)
@@ -743,7 +743,7 @@ impl Endpoint {
                             reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
                         });
                     }
-                    Frame::RstStream { id, app_error_code, final_offset } => {
+                    Frame::RstStream { .. } => {
                         unimplemented!();
                     }
                 }

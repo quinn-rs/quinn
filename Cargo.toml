@@ -20,8 +20,7 @@ slog = { version = "2.1", features = ["max_level_trace", "release_max_level_info
 arrayvec = "0.4.7"
 
 [dependencies.openssl]
-git = "https://github.com/Ralith/rust-openssl.git"
-branch = "working"
+git = "https://github.com/sfackler/rust-openssl.git"
 features = ["v111"]
 
 [dev-dependencies]
