@@ -2,12 +2,12 @@ with import <nixpkgs> { };
 let
 openssl-pre = openssl_1_1_0.overrideAttrs (old: rec {
   name = "openssl-${version}";
-  version = "1.1.1-pre3";
+  version = "1.1.1-pre4";
   src = fetchFromGitHub {
     owner = "openssl";
     repo = "openssl";
-    rev = "OpenSSL_1_1_1-pre3";
-    sha256 = "154xqi3v75kzzggwcji74jjn0iy78f7v7m3059125vb3fwk1pfrn";
+    rev = "OpenSSL_1_1_1-pre4";
+    sha256 = "0zvf6sdhsifqbi8kxs8w0n5mc8vh9fad2gxx9s4fbs3azpq2zr61";
   };
   patches = [];
   # dontStrip = true;
@@ -44,7 +44,7 @@ openssl-pre = openssl_1_1_0.overrideAttrs (old: rec {
 });
 in stdenv.mkDerivation {
   name = "quicr";
-  buildInputs = with pkgs; [ rust-nightly pkgconfig openssl-pre ];
+  buildInputs = with pkgs; [ rustChannels.stable.rust pkgconfig openssl-pre ];
   shellHook = ''
     export CARGO_INCREMENTAL=1
   '';

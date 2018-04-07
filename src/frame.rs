@@ -1,9 +1,11 @@
 use std::{mem, fmt, io};
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use bytes::{Bytes, Buf, BufMut, BigEndian};
 
 use {varint, FromBytes, TransportError};
+use range_set::RangeSet;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Type(u8);
@@ -169,7 +171,7 @@ pub struct Ack {
 }
 
 impl<'a> IntoIterator for &'a Ack {
-    type Item = u64;
+    type Item = Range<u64>;
     type IntoIter = AckIter<'a>;
 
     fn into_iter(self) -> AckIter<'a> {
@@ -178,87 +180,28 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
-    pub fn new<T>(delay: u64, packets: T) -> Option<Self>
-        where T: IntoIterator<Item = u64>
-    {
-        let mut packets = packets.into_iter().collect::<Vec<u64>>();
-        packets.sort_unstable();
-        Self::from_sorted(delay, &packets)
-    }
+    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, buf: &mut W) {
+        debug_assert!(ranges.len() - 1 < 2usize.pow(14), "count too large to be encoded as a 2-byte varint");
 
-    pub fn from_sorted(delay: u64, packets: &[u64]) -> Option<Self> {
-        let (&largest, rest) = packets.split_last()?;
-        let mut buf = Vec::new();
-        Self::write_additional(largest, rest, &mut buf);
-        Some(Self { largest, delay, additional: buf.into() })
-    }
-
-    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        let mut rest = ranges.iter().rev();
+        let first = rest.next().unwrap();
+        let largest = first.end - 1;
+        let first_size = first.end - first.start;
         buf.put_u8(Type::ACK.into());
-        varint::write(self.largest, buf).unwrap();
-        varint::write(self.delay, buf).unwrap();
-        let mut count = 0;
-        let mut cursor = io::Cursor::new(&self.additional[..]);
-        varint::read(&mut cursor).unwrap();
-        while cursor.has_remaining() {
-            varint::read(&mut cursor).unwrap();
-            varint::read(&mut cursor).unwrap();
-            count += 1;
+        varint::write(largest, buf).unwrap();
+        varint::write(delay, buf).unwrap();
+        varint::write(ranges.len() as u64 - 1, buf).unwrap();
+        varint::write(first_size-1, buf).unwrap();
+        let mut prev = first.start;
+        for block in ranges.iter().rev().skip(1) {
+            let size = block.end - block.start;
+            varint::write(prev - block.end - 1, buf).unwrap();
+            varint::write(size - 1, buf).unwrap();
+            prev = block.start;
         }
-        varint::write(count, buf).unwrap();
-        buf.put_slice(&self.additional[..]);
-    }
-
-    fn write_additional<W: BufMut>(largest: u64, packets: &[u64], buf: &mut W) {
-        let mut prev = largest;
-        let mut block_size = 0;
-        for &packet in packets.into_iter().rev() {
-            if prev - packet > 1 {
-                varint::write(block_size, buf).unwrap(); // block
-                varint::write(prev - packet - 1, buf).unwrap(); // gap
-                block_size = 0;
-            } else {
-                block_size += 1;
-            }
-            prev = packet;
-        }
-        varint::write(block_size, buf).unwrap(); // block
     }
 
     pub fn iter(&self) -> AckIter { self.into_iter() }
-}
-
-pub struct AckMeter {
-    base_size: usize,
-    smallest: u64,
-    extra_blocks: usize,
-    current_block_len: usize,
-}
-
-impl AckMeter {
-    pub fn new(largest: u64, delay: u64) -> Self { Self {
-        smallest: largest,
-        base_size: 1 + varint::size(largest).unwrap() + varint::size(delay).unwrap(),
-        extra_blocks: 0,
-        current_block_len: 0,
-    }}
-
-    pub fn size(&self) -> usize {
-        self.base_size
-            + varint::size(self.extra_blocks as u64).unwrap()
-            + varint::size(self.current_block_len as u64).unwrap()
-    }
-
-    pub fn push(&mut self, packet: u64) {
-        assert!(packet < self.smallest);
-        if let Some(gap) = (self.smallest - 2).checked_sub(packet) {
-            self.base_size += varint::size(self.current_block_len as u64).unwrap() + varint::size(gap).unwrap();
-            self.current_block_len = 0;
-        } else {
-            self.current_block_len += 1;
-        }
-        self.smallest = packet;
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -338,7 +281,7 @@ impl Iter {
                 let largest = self.get_var()?;
                 let delay = self.get_var()?;
                 let extra_blocks = self.get_var()? as usize;
-                let len = scan_ack_blocks(&self.0[..], extra_blocks)?;
+                let len = scan_ack_blocks(&self.0[..], largest, extra_blocks)?;
                 Frame::Ack(Ack {
                     delay, largest,
                     additional: self.0.split_to(len),
@@ -374,51 +317,42 @@ impl Iterator for Iter {
     }
 }
 
-fn scan_ack_blocks(packet: &[u8], n: usize) -> Option<usize> {
+fn scan_ack_blocks(packet: &[u8], largest: u64, n: usize) -> Option<usize> {
     let mut buf = io::Cursor::new(packet);
-    let _first_block = varint::read(&mut buf)?;
+    let first_block = varint::read(&mut buf)?;
+    let mut smallest = largest.checked_sub(first_block)?;
     for _ in 0..n {
-        varint::read(&mut buf)?; // gap
-        varint::read(&mut buf)?; // block
+        let gap = varint::read(&mut buf)?;
+        smallest = smallest.checked_sub(gap + 2)?;
+        let block = varint::read(&mut buf)?;
+        smallest = smallest.checked_sub(block)?;
     }
     Some(buf.position() as usize)
 }
 
 #[derive(Debug, Clone)]
 pub struct AckIter<'a> {
-    next: u64,
-    block_size: u64,
+    largest: u64,
     data: io::Cursor<&'a [u8]>,
 }
 
 impl<'a> AckIter<'a> {
     fn new(largest: u64, payload: &'a [u8]) -> Self {
-        let mut data = io::Cursor::new(payload);
-        let first_block = varint::read(&mut data).unwrap();
-        Self {
-            next: largest,
-            block_size: first_block + 1,
-            data,
-        }
-    }
-
-    pub fn peek(&self) -> Option<u64> {
-        if self.block_size == 0 { None } else { Some(self.next) }
+        let data = io::Cursor::new(payload);
+        Self { largest, data }
     }
 }
 
 impl<'a> Iterator for AckIter<'a> {
-    type Item = u64;
-    fn next(&mut self) -> Option<u64> {
-        if self.block_size == 0 { return None; }
-        let result = self.next;
-        self.next -= 1;
-        self.block_size -= 1;
-        if self.block_size == 0 && self.data.has_remaining() {
-            self.next -= varint::read(&mut self.data).unwrap() + 1;
-            self.block_size = varint::read(&mut self.data).unwrap() + 1;
+    type Item = Range<u64>;
+    fn next(&mut self) -> Option<Range<u64>> {
+        if !self.data.has_remaining() { return None; }
+        let block = varint::read(&mut self.data).unwrap();
+        let largest = self.largest;
+        if let Some(gap) = varint::read(&mut self.data) {
+            self.largest -= block + gap + 2;
         }
-        Some(result)
+        Some(largest - block .. largest + 1)
     }
 }
 
@@ -578,22 +512,20 @@ mod test {
     }
 
     #[test]
-    fn ack() {
-        let packets = [1, 2, 3, 5, 10, 11, 14];
-        let ack = Ack::new(42, packets.iter().cloned()).unwrap();
-        assert_eq!(&ack.additional[..], &[0, 2, 1, 4, 0, 1, 2]);
-        let mut out = ack.iter().collect::<Vec<_>>();
-        out.sort_unstable();
-        assert_eq!(&out, &packets);
+    fn ack_coding() {
+        const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
+        let mut ranges = RangeSet::new();
+        for &packet in PACKETS { ranges.insert(packet..packet+1); }
         let mut buf = Vec::new();
-        ack.encode(&mut buf);
-        let mut meter = AckMeter::new(14, 42);
-        for &packet in packets.iter().rev().skip(1) { meter.push(packet); }
-        assert_eq!(meter.size(), buf.len());
+        Ack::encode(42, &ranges, &mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
-        assert_matches!(frames[0], Frame::Ack(_));
-        if let Frame::Ack(ref x) = frames[0] {
-            assert_eq!(x, &ack);
+        match frames[0] {
+            Frame::Ack(ref ack) => {
+                let mut packets = ack.iter().flat_map(|x| x).collect::<Vec<_>>();
+                packets.sort_unstable();
+                assert_eq!(&packets[..], PACKETS);
+            }
+            ref x => { panic!("incorrect frame {:?}", x) }
         }
     }
 }

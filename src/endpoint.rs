@@ -27,6 +27,7 @@ use transport_parameters::TransportParameters;
 use frame::StreamId;
 use coding::{self, BufExt};
 use {hkdf, frame, Frame, TransportError, VERSION};
+use range_set::RangeSet;
 
 type Result<T> = ::std::result::Result<T, Error>;
 
@@ -104,6 +105,8 @@ pub struct Endpoint {
 const MIN_INITIAL_SIZE: usize = 1200;
 const MIN_MTU: u16 = 1232;
 const LOCAL_ID_LEN: usize = 8;
+/// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
+const MAX_ACK_BLOCKS: usize = 64;
 
 fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
     let mut mac = Blake2b::new_keyed(key, 16);
@@ -143,7 +146,6 @@ impl Rand for PersistentState {
 }
 
 impl Endpoint {
-    /// Create an endpoint for outgoing connections only
     pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self> {
         let rng = OsRng::new()?;
         let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
@@ -551,7 +553,7 @@ impl Endpoint {
                                 return State::Draining;
                             }
                             Frame::PathChallenge(value) => {
-                                self.connections[conn.0].path_responses.push_back(value);
+                                self.connections[conn.0].handshake_pending.path_challenge(number as u64, value);
                             }
                             _ => {
                                 if let Some(ty) = frame.ty() {
@@ -734,7 +736,7 @@ impl Endpoint {
                         });
                     }
                     Frame::PathChallenge(x) => {
-                        self.connections[conn.0].path_responses.push_back(x);
+                        self.connections[conn.0].pending.path_challenge(number, x);
                     }
                     Frame::PathResponse(_) => {
                         debug!(self.log, "unsolicited PATH_RESPONSE");
@@ -880,12 +882,15 @@ impl Endpoint {
                 self.forget(conn);
             }
             Timer::LossDetection => {
-                if !self.connections[conn.0].handshake_sent.is_empty() {
-                    // Retransmit all
-                    trace!(self.log, "retransmitting handshake"; "connection" => %self.connections[conn.0].local_id);
-                    for (_, mut packet) in mem::replace(&mut self.connections[conn.0].handshake_sent, BTreeMap::new()) {
-                        self.connections[conn.0].handshake_pending.extend(packet.retransmits.stream.drain(..));
-                        self.connections[conn.0].pending += packet.retransmits;
+                if self.connections[conn.0].handshake_sent != 0 {
+                    trace!(self.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
+                    self.connections[conn.0].handshake_sent = 0;
+                    let packets = self.connections[conn.0].sent_packets.iter()
+                        .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
+                        .collect::<Vec<_>>();
+                    for number in packets {
+                        let mut info = self.connections[conn.0].sent_packets.remove(&number).unwrap();
+                        self.connections[conn.0].handshake_pending += info.retransmits;
                     }
                     self.connections[conn.0].handshake_count += 1;
                 } else if self.connections[conn.0].loss_time != 0 {
@@ -927,7 +932,7 @@ impl Endpoint {
 
     fn transmit_handshake(&mut self, conn: ConnectionHandle, messages: &[u8]) {
         let offset = self.connections[conn.0].stream0.tx_offset;
-        self.connections[conn.0].handshake_pending.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
+        self.connections[conn.0].handshake_pending.stream.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
         self.connections[conn.0].stream0.tx_offset += messages.len() as u64;
     }
 
@@ -1081,8 +1086,8 @@ struct Connection {
     // Handshake retransmit state
     //
 
-    handshake_sent: BTreeMap<u64, SentPacket>,
-    handshake_pending: VecDeque<frame::Stream>,
+    handshake_sent: u64,
+    handshake_pending: Retransmits,
     handshake_crypto: CryptoContext,
 
     //
@@ -1090,7 +1095,7 @@ struct Connection {
     //
 
     pending: Retransmits,
-    path_responses: VecDeque<u64>,
+    pending_acks: RangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
     permit_ack_only: bool,
 }
@@ -1101,6 +1106,8 @@ struct SentPacket {
     time: u64,
     /// 0 iff ack-only
     bytes: u16,
+    handshake: bool,
+    acks: RangeSet,
     retransmits: Retransmits
 }
 
@@ -1116,7 +1123,23 @@ struct Retransmits {
     ping: bool,
     new_connection_id: Option<ConnectionId>,
     stream: VecDeque<frame::Stream>,
-    ack: Vec<u64>,
+    /// packet number, token
+    path_response: Option<(u64, u64)>,
+}
+
+impl Retransmits {
+    fn is_empty(&self) -> bool {
+        !self.max_stream_data && !self.max_data && !self.max_stream_id && !self.ping && self.new_connection_id.is_none()
+            && self.stream.is_empty() && self.path_response.is_none()
+    }
+
+    fn path_challenge(&mut self, packet: u64, token: u64) {
+        match self.path_response {
+            None => { self.path_response = Some((packet, token)); }
+            Some((existing, _)) if packet > existing => { self.path_response = Some((packet, token)); }
+            Some(_) => {}
+        }
+    }
 }
 
 impl Default for Retransmits {
@@ -1127,7 +1150,7 @@ impl Default for Retransmits {
         ping: false,
         new_connection_id: None,
         stream: VecDeque::new(),
-        ack: Vec::new(),
+        path_response: None,
     }}
 }
 
@@ -1139,7 +1162,7 @@ impl ::std::ops::AddAssign for Retransmits {
         self.max_stream_id |= rhs.max_stream_id;
         if let Some(x) = rhs.new_connection_id { self.new_connection_id = Some(x); }
         self.stream.extend(rhs.stream.into_iter());
-        self.ack.extend_from_slice(&rhs.ack);
+        if let Some((packet, token)) = rhs.path_response { self.path_challenge(packet, token); }
     }
 }
 
@@ -1195,12 +1218,12 @@ impl Connection {
             end_of_recovery: 0,
             ssthresh: u64::max_value(),
 
-            handshake_sent: BTreeMap::new(),
-            handshake_pending: VecDeque::new(),
+            handshake_sent: 0,
+            handshake_pending: Retransmits::default(),
             handshake_crypto,
 
             pending: Retransmits::default(),
-            path_responses: VecDeque::new(),
+            pending_acks: RangeSet::new(),
             permit_ack_only: false,
         }
     }
@@ -1213,14 +1236,14 @@ impl Connection {
     }
 
     /// Returns new loss detection alarm time, if applicable
-    fn on_packet_sent(&mut self, config: &Config, now: u64, handshake: bool, packet_number: u64, packet: SentPacket) -> Option<u64> {
+    fn on_packet_sent(&mut self, config: &Config, now: u64, packet_number: u64, packet: SentPacket) -> Option<u64> {
         self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
+        let handshake = packet.handshake;
         if handshake {
-            self.handshake_sent.insert(packet_number, packet);
-        } else {
-            self.sent_packets.insert(packet_number, packet);
+            self.handshake_sent += 1;
         }
+        self.sent_packets.insert(packet_number, packet);
         if bytes != 0 {
             self.time_of_last_sent_retransmittable_packet = now;
             if handshake {
@@ -1240,9 +1263,13 @@ impl Connection {
             self.latest_rtt = now - info.time;
             self.update_rtt(ack.delay, info.ack_only());
         }
-        for packet in &ack {
-            if let Some(bytes) = self.sent_packets.get(&packet).map(|x| x.bytes) {
-                self.on_packet_acked(config, packet, bytes)
+        for range in &ack {
+            // Avoid DoS from unreasonably huge ack ranges
+            let packets = self.sent_packets.range(range).map(|(&n, _)| n).collect::<Vec<_>>();
+            for packet in packets {
+                if let Some(bytes) = self.sent_packets.get(&packet).map(|x| x.bytes) {
+                    self.on_packet_acked(config, packet, bytes)
+                }
             }
         }
         self.detect_lost_packets(config, now, ack.largest);
@@ -1268,7 +1295,6 @@ impl Connection {
     }
 
     fn on_packet_acked(&mut self, config: &Config, packet: u64, bytes: u16) {
-        self.handshake_sent.remove(&packet);
         if bytes != 0 {
             // Congestion control
             self.bytes_in_flight -= bytes as u64;
@@ -1295,7 +1321,11 @@ impl Connection {
         self.handshake_count = 0;
         self.tlp_count = 0;
         self.rto_count = 0;
-        self.sent_packets.remove(&packet).unwrap();
+        let info = self.sent_packets.remove(&packet).unwrap();
+        if info.handshake {
+            self.handshake_sent -= 1;
+        }
+        self.pending_acks.subtract(&info.acks);
     }
 
     fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
@@ -1312,9 +1342,7 @@ impl Connection {
         } else {
             delay_until_lost = u64::max_value();
         }
-        for (&packet, info) in self.sent_packets.range(0..largest_acked)
-            .chain(self.handshake_sent.range(0..largest_acked))
-        {
+        for (&packet, info) in self.sent_packets.range(0..largest_acked) {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
             if time_since_sent > delay_until_lost || delta > self.reordering_threshold as u64 {
@@ -1327,15 +1355,13 @@ impl Connection {
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.bytes_in_flight;
             for packet in lost_packets {
-                let info;
-                if let Some(mut i) = self.handshake_sent.remove(&packet) {
-                    self.handshake_pending.extend(i.retransmits.stream.drain(..));
-                    info = i;
+                let mut info = self.sent_packets.remove(&packet).unwrap();
+                if info.handshake {
+                    self.handshake_pending += info.retransmits;
                 } else {
-                    info = self.sent_packets.remove(&packet).unwrap();
+                    self.pending += info.retransmits;
                 }
                 self.bytes_in_flight -= info.bytes as u64;
-                self.pending += info.retransmits;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
@@ -1358,7 +1384,7 @@ impl Connection {
         }
 
         let mut alarm_duration: u64;
-        if !self.handshake_sent.is_empty() {
+        if self.handshake_sent != 0 {
             // Handshake retransmission alarm.
             if self.smoothed_rtt == 0 {
                 alarm_duration = 2 * config.default_initial_rtt;
@@ -1394,7 +1420,10 @@ impl Connection {
     }
 
     fn on_packet_authenticated(&mut self, now: u64, packet: u64) {
-        self.pending.ack.push(packet);
+        self.pending_acks.insert_one(packet);
+        if self.pending_acks.len() > MAX_ACK_BLOCKS {
+            self.pending_acks.pop_min();
+        }
         if packet > self.rx_packet {
             self.rx_packet = packet;
             self.rx_packet_time = now;
@@ -1449,130 +1478,86 @@ impl Connection {
         };
 
         let mut buf = Vec::new();
-        let mut acks = Vec::new();
+        let acks;
         let mut streams = VecDeque::new();
         let mut ping = false;
         let number;
-        let mut ack_only = true;
+        let ack_only;
+        let is_initial;
+        let header_len;
 
-        if is_handshake {
-            // Special case: (re)transmit handshake data in long-header packets
-            if self.path_responses.is_empty() && self.handshake_pending.is_empty() { return None; }
-            ack_only = false;
-            buf.reserve_exact(self.mtu as usize);
-            number = self.get_tx_number();
-            let ty = if self.client && self.handshake_pending.front().map_or(false, |x| x.offset == 0) {
-                match *self.state.as_mut().unwrap() {
-                    State::Handshake(ref mut state) => {
-                        if state.clienthello_packet.is_none() {
-                            state.clienthello_packet = Some(number as u32);
+        {
+            let pending;
+            if is_handshake {
+                // Special case: (re)transmit handshake data in long-header packets
+                if self.handshake_pending.is_empty() { return None; }
+                buf.reserve_exact(self.mtu as usize);
+                number = self.get_tx_number();
+                let ty = if self.client && self.handshake_pending.stream.front().map_or(false, |x| x.offset == 0) {
+                    match *self.state.as_mut().unwrap() {
+                        State::Handshake(ref mut state) => {
+                            if state.clienthello_packet.is_none() {
+                                state.clienthello_packet = Some(number as u32);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
-                }
-                packet::INITIAL
+                    is_initial = true;
+                    packet::INITIAL
+                } else {
+                    is_initial = false;
+                    packet::HANDSHAKE
+                };
+                Header::Long {
+                    ty, number: number as u32, source_id: self.local_id.clone(), destination_id: self.remote_id.clone()
+                }.encode(&mut buf);
+                pending = &mut self.handshake_pending;
             } else {
-                packet::HANDSHAKE
-            };
-            Header::Long {
-                ty, number: number as u32, source_id: self.local_id.clone(), destination_id: self.remote_id.clone()
-            }.encode(&mut buf);
-            let header_len = buf.len() as u16;
-            let max_size = self.mtu - header_len - AEAD_TAG_SIZE as u16;
-
-            while max_size as usize > buf.len() + 9 {
-                let response = if let Some(x) = self.path_responses.pop_front() { x } else { break; };
-                buf.put_u8(frame::Type::PATH_RESPONSE.into());
-                buf.put_u64::<BigEndian>(response);
-            }
-
-            while max_size as usize > buf.len() + 24 {
-                let mut stream = if let Some(x) = self.handshake_pending.pop_front() { x } else { break; };
-                let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 24);
-                let data = stream.data.split_to(len);
-                let frame = frame::Stream { id: StreamId(0), offset: stream.offset, fin: false, data: data };
-                frame.encode(true, &mut buf);
-                streams.push_back(frame);
-                if !stream.data.is_empty() {
-                    self.handshake_pending.push_front(frame::Stream { offset: stream.offset + len as u64, ..stream });
+                is_initial = false;
+                if self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
+                    || self.pending.is_empty() && (!self.permit_ack_only || self.pending_acks.is_empty())
+                {
+                    return None;
                 }
-            }
+                number = self.get_tx_number();
+                buf.reserve_exact(self.mtu as usize);
 
-            if ty == packet::INITIAL && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
+                Header::Short {
+                    id: self.remote_id.clone(),
+                    number: PacketNumber::new(number, self.largest_acked_packet),
+                    key_phase: self.key_phase
+                }.encode(&mut buf);
+                pending = &mut self.pending;
             }
-
-            let payload = self.handshake_crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]);
-            debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
-            buf.truncate(header_len as usize);
-            buf.extend_from_slice(&payload);
-        } else {
-            let max_size = cmp::min(self.mtu as u64, self.congestion_window.saturating_sub(self.bytes_in_flight)) as u16;
-            if max_size == 0
-                || ((!self.permit_ack_only || self.pending.ack.is_empty())
-                    && self.path_responses.is_empty()
-                    && self.pending.stream.is_empty()
-                    && !self.pending.ping)
-            {
-                return None;
-            }
-            number = self.get_tx_number();
-            buf.reserve_exact(max_size as usize);
-            let max_size = max_size.saturating_sub(AEAD_TAG_SIZE as u16);
-
-            Header::Short {
-                id: self.remote_id.clone(),
-                number: PacketNumber::new(number, self.largest_acked_packet),
-                key_phase: self.key_phase
-            }.encode(&mut buf);
-            let header_len = buf.len() as u16;
+            ack_only = pending.is_empty();
+            header_len = buf.len() as u16;
+            let max_size = self.mtu as usize - AEAD_TAG_SIZE;
 
             // PING
-            if self.pending.ping && max_size as usize > buf.len() + 1 {
-                self.pending.ping = false;
+            if pending.ping {
+                pending.ping = false;
                 ping = true;
-                ack_only = false;
                 buf.put_u8(frame::Type::PING.into());
             }
 
             // ACK
-            self.pending.ack.sort_unstable();
-            let ack_delay = now.saturating_sub(self.rx_packet_time); // Saturate to defend against clock shenanigans
-            let ack_count = if let Some((&largest, rest)) = self.pending.ack.split_last() {
-                debug_assert_eq!(largest, self.rx_packet);
-                let mut meter = frame::AckMeter::new(largest, ack_delay);
-                if buf.len() + meter.size() > max_size as usize { return None; }
-                let mut n = 1;
-                for &packet in rest.iter().rev() {
-                    meter.push(packet);
-                    if buf.len() + meter.size() > max_size as usize {
-                        break;
-                    }
-                    n += 1;
-                }
-                n
-            } else { 0 };
-            if ack_count != 0 {
-                acks.extend_from_slice(&self.pending.ack[self.pending.ack.len() - ack_count..]);
-                self.pending.ack.truncate(acks.len() - ack_count);
-                {
-                    let frame = frame::Ack::from_sorted(ack_delay, &acks).unwrap();
-                    frame.encode(&mut buf);
-                }
+            if !self.pending_acks.is_empty() {
+                frame::Ack::encode(0, &self.pending_acks, &mut buf);
             }
+            acks = self.pending_acks.clone();
 
             // PATH_RESPONSE
-            while max_size as usize > buf.len() + 9 {
-                let response = if let Some(x) = self.path_responses.pop_front() { x } else { break; };
-                ack_only = false;
-                buf.put_u8(frame::Type::PATH_RESPONSE.into());
-                buf.put_u64::<BigEndian>(response);
+            if buf.len() + 9 < max_size {
+                // No need to retransmit these, so we don't save the value after encoding it.
+                if let Some((_, x)) = pending.path_response.take() {
+                    buf.put_u8(frame::Type::PATH_RESPONSE.into());
+                    buf.put_u64::<BigEndian>(x);
+                }
             }
 
             // STREAM
-            while max_size as usize > buf.len() + 24 {
-                let mut stream = if let Some(x) = self.pending.stream.pop_front() { x } else { break; };
-                ack_only = false;
+            while buf.len() + 24 < max_size {
+                let mut stream = if let Some(x) = pending.stream.pop_front() { x } else { break; };
                 let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 24);
                 let data = stream.data.split_to(len);
                 let frame = frame::Stream {
@@ -1585,20 +1570,21 @@ impl Connection {
                 streams.push_back(frame);
                 if !stream.data.is_empty() {
                     let stream = frame::Stream { offset: stream.offset + len as u64, ..stream };
-                    if stream.id == StreamId(0) {
-                        self.handshake_pending.push_front(stream);
-                    } else {
-                        self.pending.stream.push_front(stream);
-                    }
+                    pending.stream.push_front(stream);
                 }
             }
-
-            self.encrypt(number, &mut buf, header_len);
         }
 
-        let timer = self.on_packet_sent(config, now, is_handshake, number, SentPacket {
+        if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+            buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
+        }
+        self.encrypt(is_handshake, number, &mut buf, header_len);
+
+        let timer = self.on_packet_sent(config, now, number, SentPacket {
+            acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
-            retransmits: Retransmits { stream: streams, ack: acks, ping, ..Retransmits::default() }
+            handshake: is_handshake,
+            retransmits: Retransmits { stream: streams, ping, ..Retransmits::default() }
         });
 
         if ack_only { self.permit_ack_only = false; }
@@ -1606,8 +1592,12 @@ impl Connection {
         Some((buf, timer))
     }
 
-    fn encrypt(&self, number: u64, buf: &mut Vec<u8>, header_len: u16) {
-        let payload = self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]);
+    fn encrypt(&self, handshake: bool, number: u64, buf: &mut Vec<u8>, header_len: u16) {
+        let payload = if handshake {
+            self.handshake_crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..])
+        } else {
+            self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..])
+        };
         debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
         buf.truncate(header_len as usize);
         buf.extend_from_slice(&payload);
@@ -1624,8 +1614,10 @@ impl Connection {
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
-        self.encrypt(number, &mut buf, header_len);
-        self.on_packet_sent(config, now, false, number, SentPacket { time: now, bytes: buf.len() as u16, retransmits: Retransmits::default() });
+        self.encrypt(false, number, &mut buf, header_len);
+        self.on_packet_sent(config, now, number, SentPacket {
+            time: now, bytes: buf.len() as u16, handshake: false, acks: RangeSet::new(), retransmits: Retransmits::default()
+        });
         buf.into()
     }
 
@@ -1642,7 +1634,7 @@ impl Connection {
             state::CloseReason::Application(ref x) => x.encode(&mut buf),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf),
         }
-        self.encrypt(number, &mut buf, header_len);
+        self.encrypt(false, number, &mut buf, header_len);
         buf.into()
     }
 }

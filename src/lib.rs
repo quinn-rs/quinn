@@ -29,6 +29,7 @@ mod memory_stream;
 mod transport_parameters;
 mod coding;
 mod hkdf;
+mod range_set;
 
 mod frame;
 use frame::Frame;
