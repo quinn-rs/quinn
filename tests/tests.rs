@@ -154,8 +154,12 @@ fn connect() {
     assert_matches!(pair.server.poll(), Some(Event::Connected(_)));
     assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
     const REASON: &[u8] = b"whee";
-    pair.client.close(0, client_conn, 42, REASON.into());
+
+    info!(pair.log, "transmitting");
+    //pair.client.write(
+
     info!(pair.log, "closing");
+    pair.client.close(0, client_conn, 42, REASON.into());
     pair.drive();
     assert_matches!(pair.server.poll(), Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
         reason: ApplicationClose { error_code: 42, ref reason }

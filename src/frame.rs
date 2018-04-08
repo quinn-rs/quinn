@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use bytes::{Bytes, Buf, BufMut, BigEndian};
 
-use {varint, FromBytes, TransportError};
+use {varint, FromBytes, TransportError, StreamId};
 use range_set::RangeSet;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -51,7 +51,11 @@ frame_types!{
     RST_STREAM = 0x01,
     CONNECTION_CLOSE = 0x02,
     APPLICATION_CLOSE = 0x03,
+    MAX_STREAM_ID = 0x06,
     PING = 0x07,
+    BLOCKED = 0x08,
+    STREAM_BLOCKED = 0x09,
+    STREAM_ID_BLOCKED = 0x0a,
     STOP_SENDING = 0x0c,
     ACK = 0x0d,
     PATH_CHALLENGE = 0x0e,
@@ -68,7 +72,18 @@ pub enum Frame {
     },
     ConnectionClose(ConnectionClose),
     ApplicationClose(ApplicationClose),
+    MaxStreamId(StreamId),
     Ping,
+    Blocked {
+        offset: u64,
+    },
+    StreamBlocked {
+        id: StreamId,
+        offset: u64,
+    },
+    StreamIdBlocked {
+        id: StreamId,
+    },
     Ack(Ack),
     Stream(Stream),
     PathChallenge(u64),
@@ -84,7 +99,11 @@ impl Frame {
             RstStream { .. } => Type::RST_STREAM,
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
             ApplicationClose(_) => Type::APPLICATION_CLOSE,
+            MaxStreamId(_) => Type::MAX_STREAM_ID,
             Ping => Type::PING,
+            Blocked { .. } => Type::BLOCKED,
+            StreamBlocked { .. } => Type::STREAM_BLOCKED,
+            StreamIdBlocked { .. } => Type::STREAM_ID_BLOCKED,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
@@ -276,7 +295,18 @@ impl Iter {
                 error_code: self.get::<u16>()?,
                 reason: self.take_len()?,
             }),
+            Type::MAX_STREAM_ID => Frame::MaxStreamId(StreamId(self.get_var()?)),
             Type::PING => Frame::Ping,
+            Type::BLOCKED => Frame::Blocked {
+                offset: self.get_var()?,
+            },
+            Type::STREAM_BLOCKED => Frame::StreamBlocked {
+                id: StreamId(self.get_var()?),
+                offset: self.get_var()?,
+            },
+            Type::STREAM_ID_BLOCKED => Frame::StreamIdBlocked {
+                id: StreamId(self.get_var()?),
+            },
             Type::ACK => {
                 let largest = self.get_var()?;
                 let delay = self.get_var()?;
@@ -355,36 +385,6 @@ impl<'a> Iterator for AckIter<'a> {
         Some(largest - block .. largest + 1)
     }
 }
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct StreamId(pub u64);
-
-impl fmt::Display for StreamId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let initiator = match self.initiator() { Side::Client => "client", Side::Server => "server" };
-        let directionality = match self.directionality() { Directionality::Uni => "uni", Directionality::Bi => "bi" };
-        write!(f, "{} {}directional stream {}", initiator, directionality, self.index())
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Side { Client, Server }
-
-impl ::std::ops::Not for Side {
-    type Output = Side;
-    fn not(self) -> Side { match self { Side::Client => Side::Server, Side::Server => Side::Client } }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Directionality { Uni, Bi }
-
-impl StreamId {
-    pub fn initiator(&self) -> Side { if self.0 & 0x1 == 0 { Side::Client } else { Side::Server } }
-    pub fn directionality(&self) -> Directionality { if self.0 & 0x2 == 0 { Directionality::Bi } else { Directionality::Uni } }
-    pub fn index(&self) -> u64 { self.0 >> 2 }
-}
-
-impl From<u64> for StreamId { fn from(x: u64) -> Self { StreamId(x) } }
 
 #[derive(Debug)]
 pub struct StreamAssembler {
