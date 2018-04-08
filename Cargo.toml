@@ -19,10 +19,7 @@ lazy_static = "1"
 slog = { version = "2.1", features = ["max_level_trace", "release_max_level_info"] }
 arrayvec = "0.4.7"
 fnv = "1.0.6"
-
-[dependencies.openssl]
-git = "https://github.com/sfackler/rust-openssl.git"
-features = ["v111"]
+openssl = { version = "0.10.6", features = ["v111"] }
 
 [dev-dependencies]
 slog-term = "2"
