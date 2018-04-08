@@ -359,8 +359,21 @@ impl<'a> Iterator for AckIter<'a> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct StreamId(pub u64);
 
+impl fmt::Display for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let initiator = match self.initiator() { Side::Client => "client", Side::Server => "server" };
+        let directionality = match self.directionality() { Directionality::Uni => "uni", Directionality::Bi => "bi" };
+        write!(f, "{} {}directional stream {}", initiator, directionality, self.index())
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Side { Client, Server }
+
+impl ::std::ops::Not for Side {
+    type Output = Side;
+    fn not(self) -> Side { match self { Side::Client => Side::Server, Side::Server => Side::Client } }
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Directionality { Uni, Bi }
@@ -368,6 +381,7 @@ pub enum Directionality { Uni, Bi }
 impl StreamId {
     pub fn initiator(&self) -> Side { if self.0 & 0x1 == 0 { Side::Client } else { Side::Server } }
     pub fn directionality(&self) -> Directionality { if self.0 & 0x2 == 0 { Directionality::Bi } else { Directionality::Uni } }
+    pub fn index(&self) -> u64 { self.0 >> 2 }
 }
 
 impl From<u64> for StreamId { fn from(x: u64) -> Self { StreamId(x) } }
