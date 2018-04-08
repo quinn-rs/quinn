@@ -107,6 +107,8 @@ const MIN_MTU: u16 = 1232;
 const LOCAL_ID_LEN: usize = 8;
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
+/// Value used in ACKs we transmit
+const ACK_DELAY_EXPONENT: u8 = 3;
 
 fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
     let mut mac = Blake2b::new_keyed(key, 16);
@@ -119,7 +121,10 @@ fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
 
 fn gen_transport_params(key: &[u8], am_server: bool, id: &ConnectionId) -> Vec<u8> {
     let mut buf = Vec::new();
-    let mut params = TransportParameters::default();
+    let mut params = TransportParameters {
+        ack_delay_exponent: ACK_DELAY_EXPONENT,
+        ..TransportParameters::default()
+    };
     if am_server {
         params.stateless_reset_token = Some(reset_token_for(key, id));
     } else {
@@ -1261,7 +1266,8 @@ impl Connection {
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
-            self.update_rtt(ack.delay, info.ack_only());
+            let delay = ack.delay << self.params.ack_delay_exponent;
+            self.update_rtt(delay, info.ack_only());
         }
         for range in &ack {
             // Avoid DoS from unreasonably huge ack ranges
@@ -1542,7 +1548,8 @@ impl Connection {
 
             // ACK
             if !self.pending_acks.is_empty() {
-                frame::Ack::encode(0, &self.pending_acks, &mut buf);
+                let delay = now - self.rx_packet_time;
+                frame::Ack::encode(delay >> ACK_DELAY_EXPONENT, &self.pending_acks, &mut buf);
             }
             acks = self.pending_acks.clone();
 

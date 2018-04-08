@@ -13,8 +13,10 @@ pub struct TransportParameters {
     pub initial_max_streams_uni: u16,
     pub omit_connection_id: bool,
     pub max_packet_size: Option<u16>,
-    pub ack_delay_exponent: Option<u8>,
+    pub ack_delay_exponent: u8,
 }
+
+const DEFAULT_ACK_DELAY_EXPONENT: u8 = 3;
 
 impl Default for TransportParameters {
     fn default() -> Self { Self {
@@ -27,7 +29,7 @@ impl Default for TransportParameters {
         initial_max_streams_uni: 0,
         omit_connection_id: false,
         max_packet_size: None,
-        ack_delay_exponent: None,
+        ack_delay_exponent: DEFAULT_ACK_DELAY_EXPONENT,
     }}
 }
 
@@ -95,10 +97,10 @@ impl TransportParameters {
             buf.put_u16::<BigEndian>(x);
         }
 
-        if let Some(x) = self.ack_delay_exponent {
+        if self.ack_delay_exponent != DEFAULT_ACK_DELAY_EXPONENT {
             buf.put_u16::<BigEndian>(0x0007);
             buf.put_u16::<BigEndian>(1);
-            buf.put_u8(x);
+            buf.put_u8(self.ack_delay_exponent);
         }
 
         w.put_u16::<BigEndian>(buf.len() as u16);
@@ -130,6 +132,7 @@ impl TransportParameters {
         let mut idle_timeout = false;
         let mut initial_max_streams_bidi = false;
         let mut initial_max_streams_uni = false;
+        let mut ack_delay_exponent = false;
         let mut params = Self::default();
         let params_len = r.get_u16::<BigEndian>();
         if params_len as usize != r.remaining() { return Err(Error::Malformed); }
@@ -179,8 +182,10 @@ impl TransportParameters {
                     params.max_packet_size = Some(r.get_u16::<BigEndian>());
                 }
                 0x0007 => {
-                    if len != 1 || params.ack_delay_exponent.is_some() { return Err(Error::Malformed); }
-                    params.ack_delay_exponent = Some(r.get_u8());
+                    if len != 1 || ack_delay_exponent { return Err(Error::Malformed); }
+                    params.ack_delay_exponent = r.get_u8();
+                    ack_delay_exponent = true;
+                    if params.ack_delay_exponent > 20 { return Err(Error::IllegalValue); }
                 }
                 _ => r.advance(len as usize),
             }
