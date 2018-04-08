@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque, BTreeMap};
+use std::collections::{VecDeque, BTreeMap};
 use std::{io, cmp, fmt, mem};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use constant_time_eq::constant_time_eq;
 use bincode;
 use slog::Logger;
 use arrayvec::ArrayVec;
+use fnv::FnvHashMap;
 
 use memory_stream::MemoryStream;
 use transport_parameters::TransportParameters;
@@ -92,8 +93,8 @@ pub struct Endpoint {
     rng: OsRng,
     initial_packet_number: distributions::Range<u64>,
     tls: SslContext,
-    connection_ids: HashMap<ConnectionId, ConnectionHandle>,
-    connection_remotes: HashMap<SocketAddrV6, ConnectionHandle>,
+    connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
+    connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
     config: Config,
     state: PersistentState,
@@ -216,8 +217,8 @@ impl Endpoint {
         Ok(Self {
             log, rng, config, state, tls,
             initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
-            connection_ids: HashMap::new(),
-            connection_remotes: HashMap::new(),
+            connection_ids: FnvHashMap::default(),
+            connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
             events: VecDeque::new(),
             io: VecDeque::new(),
@@ -1018,7 +1019,7 @@ struct Connection {
     state: Option<State>,
     stream0: Stream,
     stream0_data: frame::StreamAssembler,
-    streams: HashMap<StreamId, Stream>,
+    streams: FnvHashMap<StreamId, Stream>,
     client: bool,
     mtu: u16,
     rx_packet: u64,
@@ -1191,7 +1192,7 @@ impl Connection {
             local_id, remote_id, remote, client,
             stream0: Stream::new(),
             stream0_data: frame::StreamAssembler::new(),
-            streams: HashMap::new(),
+            streams: FnvHashMap::default(),
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
