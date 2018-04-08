@@ -3,7 +3,6 @@ extern crate openssl;
 extern crate rand;
 #[macro_use]
 extern crate slog;
-extern crate slog_term;
 #[macro_use]
 extern crate assert_matches;
 #[macro_use]
@@ -14,20 +13,43 @@ extern crate hex_literal;
 extern crate byteorder;
 
 use std::net::SocketAddrV6;
+use std::{fmt, str};
+use std::io::{self, Write};
 
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use openssl::asn1::Asn1Time;
-use slog::{Logger, Drain};
+use slog::{Logger, Drain, KV};
 use byteorder::{ByteOrder, BigEndian};
 
 use quicr::*;
 
+struct TestDrain;
+
+impl Drain for TestDrain {
+    type Ok = ();
+    type Err = io::Error;
+    fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<(), io::Error> {
+        let mut vals = Vec::new();
+        values.serialize(&record, &mut TestSerializer(&mut vals))?;
+        println!("{} {}{}", record.level(), record.msg(), str::from_utf8(&vals).unwrap());
+        Ok(())
+    }
+}
+
+struct TestSerializer<'a, W: 'a>(&'a mut W);
+impl<'a, W> slog::Serializer for TestSerializer<'a, W>
+    where W: Write + 'a
+{
+    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments) -> slog::Result {
+        write!(self.0, ", {}: {}", key, val).unwrap();
+        Ok(())
+    }
+}
+
 fn logger() -> Logger {
-    let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
-    Logger::root(drain, o!())
+    Logger::root(TestDrain.fuse(), o!())
 }
 
 lazy_static! {
