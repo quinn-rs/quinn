@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, BigEndian};
 
-use VERSION;
+use {VERSION, Side};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct TransportParameters {
@@ -11,7 +11,6 @@ pub struct TransportParameters {
     pub stateless_reset_token: Option<[u8; 16]>,
     pub initial_max_streams_bidi: u16,
     pub initial_max_streams_uni: u16,
-    pub omit_connection_id: bool,
     pub max_packet_size: Option<u16>,
     pub ack_delay_exponent: u8,
 }
@@ -27,7 +26,6 @@ impl Default for TransportParameters {
         stateless_reset_token: None,
         initial_max_streams_bidi: 0,
         initial_max_streams_uni: 0,
-        omit_connection_id: false,
         max_packet_size: None,
         ack_delay_exponent: DEFAULT_ACK_DELAY_EXPONENT,
     }}
@@ -86,11 +84,6 @@ impl TransportParameters {
             buf.put_u16::<BigEndian>(self.initial_max_streams_uni);
         }
 
-        if self.omit_connection_id {
-            buf.put_u16::<BigEndian>(0x0004);
-            buf.put_u16::<BigEndian>(0);
-        }
-
         if let Some(x) = self.max_packet_size {
             buf.put_u16::<BigEndian>(0x0005);
             buf.put_u16::<BigEndian>(2);
@@ -107,8 +100,8 @@ impl TransportParameters {
         w.put_slice(&buf);
     }
 
-    pub fn read<R: Buf>(am_server: bool, r: &mut R) -> Result<Self, Error> {
-        if am_server {
+    pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
+        if side == Side::Server {
             if r.remaining() < 26 { return Err(Error::Malformed); }
             // We only support one version, so there is no validation to do here.
             r.get_u32::<BigEndian>();
@@ -173,10 +166,6 @@ impl TransportParameters {
                     params.initial_max_streams_uni = r.get_u16::<BigEndian>();
                     initial_max_streams_uni = true;
                 }
-                0x0004 => {
-                    if len != 0 || params.omit_connection_id { return Err(Error::Malformed); }
-                    params.omit_connection_id = true;
-                }
                 0x0005 => {
                     if len != 2 || params.max_packet_size.is_some() { return Err(Error::Malformed); }
                     params.max_packet_size = Some(r.get_u16::<BigEndian>());
@@ -191,7 +180,7 @@ impl TransportParameters {
             }
         }
 
-        if initial_max_stream_data && initial_max_data && idle_timeout && (params.stateless_reset_token.is_none() || !am_server) {
+        if initial_max_stream_data && initial_max_data && idle_timeout && (params.stateless_reset_token.is_none() || side == Side::Client) {
             Ok(params)
         } else {
             Err(Error::IllegalValue)
@@ -205,10 +194,16 @@ mod test {
     use bytes::IntoBuf;
 
     #[test]
-    fn encode_default() {
+    fn coding() {
         let mut buf = Vec::new();
-        let params = TransportParameters::default();
+        let params = TransportParameters {
+            initial_max_streams_bidi: 16,
+            initial_max_streams_uni: 16,
+            ack_delay_exponent: 2,
+            max_packet_size: Some(1200),
+            ..TransportParameters::default()
+        };
         params.write(&mut buf);
-        assert_eq!(TransportParameters::read(true, &mut buf.into_buf()).unwrap(), params);
+        assert_eq!(TransportParameters::read(Side::Server, &mut buf.into_buf()).unwrap(), params);
     }
 }

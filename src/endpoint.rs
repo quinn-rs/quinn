@@ -76,8 +76,8 @@ pub struct ListenConfig<'a> {
 
 impl Default for Config {
     fn default() -> Self { Self {
-        max_remote_bi_streams: 16,
-        max_remote_uni_streams: 16,
+        max_remote_bi_streams: 0,
+        max_remote_uni_streams: 0,
 
         max_tlps: 2,
         reordering_threshold: 3,
@@ -187,16 +187,14 @@ impl Endpoint {
                   let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
                   if am_server {
                       params.stateless_reset_token = Some(reset_token_for(&reset_key, &conn.id));
-                  } else {
-                      params.omit_connection_id = true;
                   }
                   params.write(&mut buf);
                   Ok(Some(buf))
               }
             },
             |tls, ctx, data, _| {
-                let am_server = ctx == ssl::ExtensionContext::CLIENT_HELLO;
-                match TransportParameters::read(am_server, &mut data.into_buf()) {
+                let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO { Side::Server } else { Side::Client };
+                match TransportParameters::read(side, &mut data.into_buf()) {
                     Ok(params) => {
                         tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
                         Ok(())
