@@ -9,6 +9,9 @@ extern crate assert_matches;
 #[macro_use]
 extern crate lazy_static;
 extern crate bytes;
+#[macro_use]
+extern crate hex_literal;
+extern crate byteorder;
 
 use std::net::SocketAddrV6;
 
@@ -17,6 +20,7 @@ use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use openssl::asn1::Asn1Time;
 use slog::{Logger, Drain};
+use byteorder::{ByteOrder, BigEndian};
 
 use quicr::*;
 
@@ -87,6 +91,35 @@ impl Pair {
             }
         }
     }
+}
+
+#[test]
+fn version_negotiate() {
+    let log = logger();
+    let server_addr = "[::1]:42".parse().unwrap();
+    let client_addr = "[::2]:7890".parse().unwrap();
+    let mut server = Endpoint::new(
+        log.new(o!("peer" => "server")),
+        Config::default(),
+        *STATE,
+        Some(ListenConfig {
+            private_key: &KEY,
+            cert: &CERT,
+        })).unwrap();
+    server.handle(0, client_addr, server_addr,
+                  // Long-header packet with reserved version number
+                  hex!("80 0a1a2a3a
+                        11 00000000 00000000
+                        00")[..].into());
+    let io = server.poll_io();
+    assert_matches!(io, Some(Io::Transmit { .. }));
+    if let Some(Io::Transmit { packet, .. }) = io {
+        assert!(packet[0] | 0x80 != 0);
+        assert!(&packet[1..14] == hex!("00000000 11 00000000 00000000"));
+        assert!(packet[14..].chunks(4).any(|x| BigEndian::read_u32(x) == VERSION));
+    }
+    assert_matches!(server.poll_io(), None);
+    assert_matches!(server.poll(), None);
 }
 
 #[test]
