@@ -9,7 +9,7 @@ extern crate webpki_roots;
 
 use rand::{Rng, thread_rng};
 
-use self::proto::{Frame, Header, LongType, Packet, QuicCodec, StreamFrame};
+use self::proto::{BufLen, Frame, Header, LongType, Packet, PaddingFrame, QuicCodec, StreamFrame};
 
 use std::net::ToSocketAddrs;
 
@@ -26,7 +26,7 @@ pub fn connect(server: &str, port: u16) {
     let number: u32 = rng.gen();
 
     let handshake = client.get_handshake();
-    let packet = Packet {
+    let mut packet = Packet {
         header: Header::Long {
             ptype: LongType::Initial,
             conn_id,
@@ -43,6 +43,11 @@ pub fn connect(server: &str, port: u16) {
             }),
         ],
     };
+
+    let len = packet.buf_len();
+    if len < 1200 {
+        packet.payload.push(Frame::Padding(PaddingFrame(1200 - len)));
+    }
 
     let local = "0.0.0.0:0".parse().unwrap();
     let sock = UdpSocket::bind(&local).unwrap();

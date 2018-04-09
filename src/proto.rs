@@ -226,12 +226,14 @@ impl ShortType {
 }
 
 pub enum Frame {
+    Padding(PaddingFrame),
     Stream(StreamFrame),
 }
 
 impl BufLen for Frame {
     fn buf_len(&self) -> usize {
         match *self {
+            Frame::Padding(ref f) => f.buf_len(),
             Frame::Stream(ref f) => f.buf_len(),
         }
     }
@@ -240,6 +242,7 @@ impl BufLen for Frame {
 impl Codec for Frame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match *self {
+            Frame::Padding(ref f) => f.encode(buf),
             Frame::Stream(ref f) => f.encode(buf),
         }
     }
@@ -287,6 +290,21 @@ impl Codec for StreamFrame {
             VarLen::new(len).encode(buf);
         }
         buf.put_slice(&self.data);
+    }
+}
+
+pub struct PaddingFrame(pub usize);
+
+impl BufLen for PaddingFrame {
+    fn buf_len(&self) -> usize {
+        self.0
+    }
+}
+
+impl Codec for PaddingFrame {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        let padding = vec![0; self.0];
+        buf.put_slice(&padding);
     }
 }
 
@@ -371,7 +389,7 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
         (bytes[3] as u32))
 }
 
-trait BufLen {
+pub trait BufLen {
     fn buf_len(&self) -> usize;
 }
 
