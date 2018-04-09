@@ -282,7 +282,7 @@ impl Codec for StreamFrame {
         } else {
             0
         };
-        buf.put_u8(0x10 | has_offset | has_len);
+        buf.put_u8(0x10 | has_offset | has_len | is_fin);
         if let Some(offset) = self.offset {
             VarLen::new(offset).encode(buf);
         }
