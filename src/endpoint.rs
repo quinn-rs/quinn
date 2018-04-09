@@ -41,6 +41,10 @@ pub struct Config {
     pub max_remote_bi_streams: u16,
     /// Maximum number of unidirectional streams remote endpoints can initiate
     pub max_remote_uni_streams: u16,
+    /// Maximum duration of inactivity to accept before timing out the connection (s).
+    ///
+    /// Maximum value is 600 seconds. May be reduced for a given connection by the peer's transport parameters.
+    pub idle_timeout: u16,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -78,6 +82,7 @@ impl Default for Config {
     fn default() -> Self { Self {
         max_remote_bi_streams: 0,
         max_remote_uni_streams: 0,
+        idle_timeout: 10,
 
         max_tlps: 2,
         reordering_threshold: 3,
@@ -489,6 +494,7 @@ impl Endpoint {
                     } else { match state.tls.handshake() {
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "resending ClientHello");
+                            self.on_packet_authenticated(now, conn, number as u64);
                             let local_id = self.connections[conn.0].local_id.clone();
                             let crypto = CryptoContext::handshake(&remote_id, Side::Client);
                             // Discard transport state
@@ -535,7 +541,7 @@ impl Endpoint {
                         debug!(self.log, "failed to authenticate handshake packet");
                         return State::Handshake(state);
                     };
-                    self.connections[conn.0].on_packet_authenticated(now, number as u64);
+                    self.on_packet_authenticated(now, conn, number as u64);
                     // Complete handshake (and ultimately send Finished)
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
@@ -712,7 +718,7 @@ impl Endpoint {
                 debug!(self.log, "failed to authenticate packet"; "number" => number);
                 return State::Established(state);
             };
-            self.connections[conn.0].on_packet_authenticated(now, number);
+            self.on_packet_authenticated(now, conn, number);
             for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Ack(_) => {}
@@ -917,6 +923,11 @@ impl Endpoint {
         self.flush_pending(now, conn);
     }
 
+    /// μs
+    fn idle_timeout(&self, conn: ConnectionHandle) -> u64 {
+        cmp::min(self.config.idle_timeout, self.connections[conn.0].params.idle_timeout) as u64 * 1000000
+    }
+
     /// Returns whether anything was sent
     // FIXME: For improved bundling, and reduced indirection, do this as late as possible, i.e. directly in poll_io!
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) -> bool {
@@ -937,6 +948,10 @@ impl Endpoint {
                 time
             });
         }
+        if sent {
+            let time = now + self.idle_timeout(conn);
+            self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+        }
         sent
     }
 
@@ -950,6 +965,18 @@ impl Endpoint {
         match timer {
             Timer::Close => {
                 self.forget(conn);
+            }
+            Timer::Idle => {
+                self.connections[conn.0].state = Some(State::Draining);
+                self.io.push_back(Io::TimerStart {
+                    connection: conn,
+                    timer: Timer::Close,
+                    time: now + 3 * self.connections[conn.0].rto(&self.config)
+                });
+                self.events.push_back(Event::ConnectionLost {
+                    connection: conn,
+                    reason: ConnectionError::TimedOut,
+                });
             }
             Timer::LossDetection => {
                 if self.connections[conn.0].handshake_sent != 0 {
@@ -973,6 +1000,8 @@ impl Endpoint {
                         destination: self.connections[conn.0].remote,
                         packet: self.connections[conn.0].force_transmit(&self.config, now),
                     });
+                    let time = now + self.idle_timeout(conn);
+                    self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
                     self.connections[conn.0].tlp_count += 1;
                 } else {
                     // RTO
@@ -985,6 +1014,8 @@ impl Endpoint {
                             packet: self.connections[conn.0].force_transmit(&self.config, now),
                         });
                     }
+                    let time = now + self.idle_timeout(conn);
+                    self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
                     self.connections[conn.0].rto_count += 1;
                 }
                 let alarm = self.connections[conn.0].compute_loss_detection_alarm(&self.config);
@@ -1052,6 +1083,12 @@ impl Endpoint {
             packet: self.connections[conn.0].make_close(&reason),
         });
         self.connections[conn.0].state = Some(State::Closed(state::Closed { reason }));
+    }
+
+    fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
+        let time = now + self.idle_timeout(conn);
+        self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+        self.connections[conn.0].on_packet_authenticated(now, packet);
     }
 }
 
@@ -2136,10 +2173,11 @@ pub enum Io {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Timer {
     Close,
     LossDetection,
+    Idle,
 }
 
 #[derive(Debug, Clone, Fail)]
@@ -2153,7 +2191,9 @@ pub enum ConnectionError {
     #[fail(display = "closed by peer application: {}", reason)]
     ApplicationClosed { reason: frame::ApplicationClose },
     #[fail(display = "reset by peer")]
-    Reset
+    Reset,
+    #[fail(display = "timed out")]
+    TimedOut,
 }
 
 impl From<TransportError> for ConnectionError {

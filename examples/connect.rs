@@ -50,7 +50,8 @@ struct Context {
     local: SocketAddrV6,
     remote: SocketAddrV6,
     loss_timer: Option<u64>,
-    close_timer: Option<u64>
+    close_timer: Option<u64>,
+    idle_timer: Option<u64>,
 }
 
 impl Context {
@@ -63,6 +64,7 @@ impl Context {
             log, remote,
             loss_timer: None,
             close_timer: None,
+            idle_timer: None,
         })
     }
 
@@ -73,10 +75,12 @@ impl Context {
         loop {
             while let Some(io) = self.client.poll_io() { match io {
                 Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
-                Io::TimerStart { timer: quicr::Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
-                Io::TimerStart { timer: quicr::Timer::Close, time, .. } => { self.close_timer = Some(time); }
-                Io::TimerStop { timer: quicr::Timer::LossDetection, .. } => { self.loss_timer = None; }
-                Io::TimerStop { timer: quicr::Timer::Close, .. } => { self.close_timer = None; }
+                Io::TimerStart { timer: Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
+                Io::TimerStart { timer: Timer::Close, time, .. } => { self.close_timer = Some(time); }
+                Io::TimerStart { timer: Timer::Idle, time, .. } => { self.idle_timer = Some(time); }
+                Io::TimerStop { timer: Timer::LossDetection, .. } => { self.loss_timer = None; }
+                Io::TimerStop { timer: Timer::Close, .. } => { self.close_timer = None; }
+                Io::TimerStop { timer: Timer::Idle, .. } => { unreachable!() }
             }}
             while let Some(e) = self.client.poll() { match e {
                 Event::Connected(_) => { return Ok(()); }
@@ -84,11 +88,11 @@ impl Context {
                 Event::Recv(_) => {}
             }}
             let mut buf = [0; 2048];
-            let (timer, close) = if self.loss_timer.unwrap_or(u64::max_value()) < self.close_timer.unwrap_or(u64::max_value()) {
-                (self.loss_timer, false)
-            } else { (self.close_timer, true) };
-            if let Some(alarm) = timer {
-                let dt = alarm - time;
+            let (timeout, timer) = (self.loss_timer.unwrap_or(u64::max_value()), Timer::LossDetection)
+                .min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
+                .min((self.idle_timer.unwrap_or(u64::max_value()), Timer::Idle));
+            if timeout != u64::max_value() {
+                let dt = timeout - time;
                 trace!(self.log, "setting timeout"; "dt" => dt);
                 let seconds = dt / (1000 * 1000);
                 self.socket.set_read_timeout(Some(Duration::new(seconds, (dt - (seconds * 1000 * 1000)) as u32 * 1000)))?;
@@ -103,7 +107,12 @@ impl Context {
                     self.client.handle(time, normalize(addr), self.local, (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    self.client.timeout(time, c, if close { Timer::Close } else { Timer::LossDetection });
+                    self.client.timeout(time, c, timer);
+                    match timer {
+                        Timer::LossDetection => self.loss_timer = None,
+                        Timer::Close => self.close_timer = None,
+                        Timer::Idle => self.idle_timer = None,
+                    }
                 }
                 Err(e) => { return Err(e.into()); }
             }
