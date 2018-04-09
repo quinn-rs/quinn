@@ -33,6 +33,7 @@ impl Drain for TestDrain {
     fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<(), io::Error> {
         let mut vals = Vec::new();
         values.serialize(&record, &mut TestSerializer(&mut vals))?;
+        record.kv().serialize(&record, &mut TestSerializer(&mut vals))?;
         println!("{} {}{}", record.level(), record.msg(), str::from_utf8(&vals).unwrap());
         Ok(())
     }
