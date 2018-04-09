@@ -8,10 +8,10 @@ extern crate slog_term;
 
 use std::net::{UdpSocket, SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::time::{Instant, Duration};
-use std::io;
+use std::io::{self, Write};
 
 use failure::Error;
-use quicr::{Endpoint, Config, Io, Timer, Event};
+use quicr::{Endpoint, Config, Io, Timer, Event, Directionality};
 use slog::{Logger, Drain};
 
 fn main() {
@@ -73,6 +73,18 @@ impl Context {
         let c = self.client.connect(0, self.local, self.remote)?;
         let mut time = 0;
         loop {
+            while let Some(e) = self.client.poll() { match e {
+                Event::Connected(_) => {
+                    let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
+                    self.client.write(time, c, s, b"GET /index.html\r\n"[..].into());
+                    self.client.write(time, c, s, b""[..].into());
+                }
+                Event::ConnectionLost { reason, .. } => { return Err(reason.into()); }
+                Event::Recv(frame) => {
+                    io::stdout().write_all(&frame.data)?;
+                    io::stdout().flush()?;
+                }
+            }}
             while let Some(io) = self.client.poll_io() { match io {
                 Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
                 Io::TimerStart { timer: Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
@@ -81,11 +93,6 @@ impl Context {
                 Io::TimerStop { timer: Timer::LossDetection, .. } => { self.loss_timer = None; }
                 Io::TimerStop { timer: Timer::Close, .. } => { self.close_timer = None; }
                 Io::TimerStop { timer: Timer::Idle, .. } => { unreachable!() }
-            }}
-            while let Some(e) = self.client.poll() { match e {
-                Event::Connected(_) => { return Ok(()); }
-                Event::ConnectionLost { reason, .. } => { return Err(reason.into()); }
-                Event::Recv(_) => {}
             }}
             let mut buf = [0; 2048];
             let (timeout, timer) = (self.loss_timer.unwrap_or(u64::max_value()), Timer::LossDetection)

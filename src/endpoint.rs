@@ -534,6 +534,7 @@ impl Endpoint {
                 }
                 Header::Long { ty: packet::HANDSHAKE, destination_id: id, source_id: remote_id, number, .. } => {
                     if !state.remote_id_set {
+                        trace!(self.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
                         self.connections[conn.0].remote_id = remote_id;
                         state.remote_id_set = true;
                     }
@@ -573,9 +574,9 @@ impl Endpoint {
                             }
                             _ => {
                                 if let Some(ty) = frame.ty() {
-                                    debug!(self.log, "unexpected frame type in handshake"; "type" => %ty);
+                                    debug!(self.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %ty);
                                 } else {
-                                    debug!(self.log, "unknown frame type in handshake");
+                                    debug!(self.log, "unknown frame type in handshake"; "connection" => %id);
                                 }
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                                 return State::HandshakeFailed(state::HandshakeFailed {
@@ -720,6 +721,14 @@ impl Endpoint {
             };
             self.on_packet_authenticated(now, conn, number);
             for frame in frame::Iter::new(payload.into()) {
+                match frame {
+                    Frame::Padding => {}
+                    _ => {
+                        if let Some(ty) = frame.ty() {
+                            trace!(self.log, "got frame"; "connection" => %self.connections[conn.0].local_id, "type" => %ty);
+                        }
+                    }
+                }
                 match frame {
                     Frame::Ack(_) => {}
                     _ => { self.connections[conn.0].permit_ack_only = true; }
@@ -935,6 +944,7 @@ impl Endpoint {
         let mut sent = false;
         while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.config, now) {
             timer = t.or(timer);
+            trace!(self.log, "sent packet"; "len" => packet.len());
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: packet.into(),
@@ -1038,7 +1048,6 @@ impl Endpoint {
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
-        trace!(self.log, "got ack");
         let time = self.connections[conn.0].on_ack_received(&self.config, now, ack);
         self.io.push_back(Io::TimerStart {
             connection: conn,
@@ -1050,7 +1059,13 @@ impl Endpoint {
     /// Returns bytes written
     // TODO: Backpressure
     pub fn write(&mut self, now: u64, conn: ConnectionHandle, stream: StreamId, data: Bytes) {
-        let offset = self.connections[conn.0].streams.get(&stream).unwrap().tx_offset;
+        assert!(self.connections[conn.0].state.as_ref().unwrap().is_established());
+        let offset = {
+            let x = &mut self.connections[conn.0].streams.get_mut(&stream).unwrap().tx_offset;
+            let old = *x;
+            *x += data.len() as u64;
+            old
+        };
         self.connections[conn.0].pending.stream.push_back(frame::Stream { id: stream, fin: data.len() == 0, offset, data });
         self.flush_pending(now, conn);
     }
@@ -1726,7 +1741,10 @@ impl Connection {
             retransmits: Retransmits { stream: streams, ping, ..Retransmits::default() }
         });
 
-        if ack_only { self.permit_ack_only = false; }
+        // If we have any acks, we just sent them; don't immediately resend.  Setting this even if ack_only is false
+        // needlessly prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to
+        // avoid double-transmitting acks all the time.
+        self.permit_ack_only = false;
 
         Some((buf, timer))
     }
@@ -1791,17 +1809,20 @@ impl Connection {
     }
 
     fn open(&mut self, direction: Directionality) -> Option<StreamId> {
-        match direction {
+        let id = match direction {
             Directionality::Uni if self.next_uni_stream <= self.max_uni_stream => {
                 self.next_uni_stream += 1;
-                Some(StreamId::new(self.side, direction, self.next_uni_stream - 1))
+                StreamId::new(self.side, direction, self.next_uni_stream - 1)
             }
             Directionality::Bi if self.next_bi_stream <= self.max_bi_stream => {
                 self.next_bi_stream += 1;
-                Some(StreamId::new(self.side, direction, self.next_bi_stream - 1))
+                StreamId::new(self.side, direction, self.next_bi_stream - 1)
             }
-            _ => None
-        }
+            _ => { return None; }
+        };
+        let old = self.streams.insert(id, Stream::new());
+        assert!(old.is_none());
+        Some(id)
     }
 }
 
@@ -2012,7 +2033,7 @@ impl Packet {
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
             let mut id = ConnectionId(cid_stage.into());
             id.0.truncate(dest_id_len);
-            let key_phase = ty & 0x40 != 0;
+            let key_phase = ty & 0x20 != 0;
             let number = match ty & 0b0111 {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
@@ -2044,6 +2065,13 @@ impl State {
             State::Closed(_) => true,
             State::Draining => true,
             _ => false,
+        }
+    }
+
+    fn is_established(&self) -> bool {
+        match *self {
+            State::Established(_) => true,
+            _ => false
         }
     }
 }
