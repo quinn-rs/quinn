@@ -896,14 +896,8 @@ impl Endpoint {
         let state = self.connections[conn.0].state.take().unwrap();
         let state = self.handle_connected_inner(now, conn, remote, packet, state);
 
-        // Close timer
         if !was_closed && state.is_closed() {
-            trace!(self.log, "connection closed");
-            self.io.push_back(Io::TimerStart {
-                connection: conn,
-                timer: Timer::Close,
-                time: now + 3 * self.connections[conn.0].rto(&self.config),
-            });
+            self.close_common(now, conn);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -917,13 +911,17 @@ impl Endpoint {
                                             &self.connections[conn.0].local_id,
                                             n as u32, state.reason, ""),
                 });
+                self.reset_idle_timeout(now, conn);
             }
             State::Closed(ref state) => {
-                trace!(self.log, "repeating close");
+                if was_closed {
+                    trace!(self.log, "repeating close");
+                }
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: self.connections[conn.0].make_close(&state.reason),
                 });
+                self.reset_idle_timeout(now, conn);
             }
             _ => {}
         }
@@ -932,9 +930,9 @@ impl Endpoint {
         self.flush_pending(now, conn);
     }
 
-    /// μs
-    fn idle_timeout(&self, conn: ConnectionHandle) -> u64 {
-        cmp::min(self.config.idle_timeout, self.connections[conn.0].params.idle_timeout) as u64 * 1000000
+    fn reset_idle_timeout(&mut self, now: u64, conn: ConnectionHandle) {
+        let dt = cmp::min(self.config.idle_timeout, self.connections[conn.0].params.idle_timeout) as u64 * 1000000;
+        self.io.push_back(Io::TimerStart { time: now + dt, connection: conn, timer: Timer::Idle });
     }
 
     /// Returns whether anything was sent
@@ -959,8 +957,7 @@ impl Endpoint {
             });
         }
         if sent {
-            let time = now + self.idle_timeout(conn);
-            self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+            self.reset_idle_timeout(now, conn);
         }
         sent
     }
@@ -977,12 +974,8 @@ impl Endpoint {
                 self.forget(conn);
             }
             Timer::Idle => {
+                self.close_common(now, conn);
                 self.connections[conn.0].state = Some(State::Draining);
-                self.io.push_back(Io::TimerStart {
-                    connection: conn,
-                    timer: Timer::Close,
-                    time: now + 3 * self.connections[conn.0].rto(&self.config)
-                });
                 self.events.push_back(Event::ConnectionLost {
                     connection: conn,
                     reason: ConnectionError::TimedOut,
@@ -1010,8 +1003,7 @@ impl Endpoint {
                         destination: self.connections[conn.0].remote,
                         packet: self.connections[conn.0].force_transmit(&self.config, now),
                     });
-                    let time = now + self.idle_timeout(conn);
-                    self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+                    self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].tlp_count += 1;
                 } else {
                     // RTO
@@ -1024,8 +1016,7 @@ impl Endpoint {
                             packet: self.connections[conn.0].force_transmit(&self.config, now),
                         });
                     }
-                    let time = now + self.idle_timeout(conn);
-                    self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+                    self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].rto_count += 1;
                 }
                 let alarm = self.connections[conn.0].compute_loss_detection_alarm(&self.config);
@@ -1085,24 +1076,30 @@ impl Endpoint {
         self.flush_pending(now, conn)
     }
 
-    pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        assert!(!self.connections[conn.0].state.as_ref().unwrap().is_closed());
+    fn close_common(&mut self, now: u64, conn: ConnectionHandle) {
+        trace!(self.log, "connection closed");
+        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
         self.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::Close,
             time: now + 3 * self.connections[conn.0].rto(&self.config),
         });
+    }
+
+    pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
+        assert!(!self.connections[conn.0].state.as_ref().unwrap().is_closed());
+        self.close_common(now, conn);
         let reason = state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         self.io.push_back(Io::Transmit {
             destination: self.connections[conn.0].remote,
             packet: self.connections[conn.0].make_close(&reason),
         });
         self.connections[conn.0].state = Some(State::Closed(state::Closed { reason }));
+        self.reset_idle_timeout(now, conn);
     }
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
-        let time = now + self.idle_timeout(conn);
-        self.io.push_back(Io::TimerStart { time, connection: conn, timer: Timer::Idle });
+        self.reset_idle_timeout(now, conn);
         self.connections[conn.0].on_packet_authenticated(now, packet);
     }
 }
@@ -1931,6 +1928,8 @@ impl PacketNumber {
     }
 }
 
+const KEY_PHASE_BIT: u8 = 0x40; // FIXME: or 0x20??
+
 impl Header {
     fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
@@ -1949,7 +1948,7 @@ impl Header {
             }
             Short { ref id, number, key_phase } => {
                 let ty = number.ty() | 0x30
-                    | if key_phase { 0x40 } else { 0 };
+                    | if key_phase { KEY_PHASE_BIT } else { 0 };
                 w.put_u8(ty);
                 w.put_slice(id);
                 number.encode(w);
@@ -2033,7 +2032,7 @@ impl Packet {
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
             let mut id = ConnectionId(cid_stage.into());
             id.0.truncate(dest_id_len);
-            let key_phase = ty & 0x20 != 0;
+            let key_phase = ty & KEY_PHASE_BIT != 0;
             let number = match ty & 0b0111 {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
