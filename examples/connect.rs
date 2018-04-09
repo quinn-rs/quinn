@@ -75,14 +75,21 @@ impl Context {
         loop {
             while let Some(e) = self.client.poll() { match e {
                 Event::Connected(_) => {
+                    info!(self.log, "connected, submitting request");
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
                     self.client.write(time, c, s, b"GET /index.html\r\n"[..].into());
                     self.client.write(time, c, s, b""[..].into());
                 }
-                Event::ConnectionLost { reason, .. } => { return Err(reason.into()); }
+                Event::ConnectionLost { reason, .. } => {
+                    error!(self.log, "connection lost"; "reason" => %reason);
+                }
                 Event::Recv(frame) => {
                     io::stdout().write_all(&frame.data)?;
-                    io::stdout().flush()?;
+                    if frame.fin {
+                        io::stdout().flush()?;
+                        info!(self.log, "done, closing");
+                        self.client.close(time, c, 0, b"finished"[..].into());
+                    }
                 }
             }}
             while let Some(io) = self.client.poll_io() { match io {
@@ -100,7 +107,7 @@ impl Context {
                 .min((self.idle_timer.unwrap_or(u64::max_value()), Timer::Idle));
             if timeout != u64::max_value() {
                 let dt = timeout - time;
-                trace!(self.log, "setting timeout"; "dt" => dt);
+                trace!(self.log, "setting timeout"; "type" => ?timer, "dt" => dt);
                 let seconds = dt / (1000 * 1000);
                 self.socket.set_read_timeout(Some(Duration::new(seconds, (dt - (seconds * 1000 * 1000)) as u32 * 1000)))?;
             } else {
@@ -114,11 +121,12 @@ impl Context {
                     self.client.handle(time, normalize(addr), self.local, (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    trace!(self.log, "timeout"; "type" => ?timer);
                     self.client.timeout(time, c, timer);
                     match timer {
                         Timer::LossDetection => self.loss_timer = None,
-                        Timer::Close => self.close_timer = None,
                         Timer::Idle => self.idle_timer = None,
+                        Timer::Close => { self.close_timer = None; return Ok(()); }
                     }
                 }
                 Err(e) => { return Err(e.into()); }
