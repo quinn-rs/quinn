@@ -31,8 +31,9 @@ pub fn connect(server: &str) {
         payload: vec![
             Frame::Stream(StreamFrame {
                 id: 0,
+                fin: false,
                 offset: None,
-                length: Some(handshake.len() as u64),
+                len: Some(handshake.len() as u64),
                 data: handshake,
             }),
         ],
