@@ -402,7 +402,7 @@ impl<T> BufLen for Option<T> where T: BufLen {
     }
 }
 
-trait Codec {
+pub trait Codec {
     fn encode<T: BufMut>(&self, buf: &mut T);
 }
 

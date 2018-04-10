@@ -7,13 +7,16 @@ extern crate tokio_io;
 extern crate webpki;
 extern crate webpki_roots;
 
+use futures::Future;
+
 use rand::{Rng, thread_rng};
 
-use self::proto::{BufLen, Frame, Header, LongType, Packet, PaddingFrame, QuicCodec, StreamFrame};
+use self::proto::{BufLen, Codec, Frame, Header, LongType, Packet, PaddingFrame};
+use self::proto::StreamFrame;
 
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 
-use tokio::net::{UdpFramed, UdpSocket};
+use tokio::net::UdpSocket;
 
 mod proto;
 mod tls;
@@ -53,6 +56,12 @@ pub fn connect(server: &str, port: u16) {
     let sock = UdpSocket::bind(&local).unwrap();
     let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
     println!("{:?} -> {:?}", local, remote);
-    sock.connect(&remote).unwrap();
-    let framed = UdpFramed::new(sock, QuicCodec {});
+
+    let mut buf = Vec::with_capacity(1200);
+    packet.encode(&mut buf);
+    let (mut sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)
+        .and_then(|(sock, buf)| sock.recv_dgram(buf))
+        .wait()
+        .unwrap();
+    println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
 }
