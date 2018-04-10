@@ -11,7 +11,7 @@ use futures::Future;
 
 use rand::{Rng, thread_rng};
 
-use self::proto::{BufLen, Codec, Frame, Header, LongType, Packet, PaddingFrame};
+use self::proto::{BufLen, Codec, DRAFT_10, Frame, Header, LongType, Packet, PaddingFrame};
 use self::proto::StreamFrame;
 
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -33,7 +33,7 @@ pub fn connect(server: &str, port: u16) {
         header: Header::Long {
             ptype: LongType::Initial,
             conn_id,
-            version: 1,
+            version: DRAFT_10,
         },
         number,
         payload: vec![

@@ -406,6 +406,8 @@ pub trait Codec {
     fn encode<T: BufMut>(&self, buf: &mut T);
 }
 
+pub const DRAFT_10: u32 = 0xff00000a;
+
 #[cfg(test)]
 mod tests {
     use super::{Codec, VarLen};
