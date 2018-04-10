@@ -36,6 +36,7 @@ pub struct StreamFrame {
 impl BufLen for StreamFrame {
     fn buf_len(&self) -> usize {
         1 +
+            VarLen::new(self.id).buf_len() +
             self.offset.map(VarLen::new).buf_len() +
             self.len.map(VarLen::new).buf_len() +
             self.data.len()
