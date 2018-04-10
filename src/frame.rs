@@ -1,6 +1,6 @@
 use bytes::BufMut;
 
-use proto::{BufLen, Codec, VarLen};
+use codec::{BufLen, Codec, VarLen};
 
 pub enum Frame {
     Padding(PaddingFrame),

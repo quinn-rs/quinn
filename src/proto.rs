@@ -1,77 +1,7 @@
-use bytes::{BigEndian, BufMut, BytesMut};
+use bytes::{BigEndian, BufMut};
 
+use codec::{BufLen, Codec, VarLen};
 use frame::Frame;
-
-use std::io;
-
-use tokio_io::codec::{Decoder, Encoder};
-
-pub struct QuicCodec {}
-
-impl Decoder for QuicCodec {
-    type Item = Packet;
-    type Error = io::Error;
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, io::Error> {
-        let first = buf[0];
-        let (header, number, offset) = if first & 128 == 128 {
-
-            let h = Header::Long {
-                ptype: LongType::from_byte(first ^ 128),
-                conn_id: bytes_to_u64(&buf[1..9]),
-                version: bytes_to_u32(&buf[9..13]),
-            };
-            let number = bytes_to_u32(&buf[13..17]);
-            (h, number, 17)
-
-        } else {
-
-            let ptype = ShortType::from_byte(first & 7);
-            let conn_id = if first & 0x40 == 0x40 {
-                Some(bytes_to_u64(&buf[1..9]))
-            } else {
-                None
-            };
-            let h = Header::Short {
-                ptype,
-                conn_id,
-                key_phase: first & 0x20 == 0x20,
-            };
-
-            let offset = if conn_id.is_some() { 9 } else { 1 };
-            let size = match h {
-                Header::Short { ref ptype, .. } => ptype.buf_len(),
-                _ => panic!("must be a short header"),
-            };
-            let number = if size == 1 {
-                buf[offset] as u32
-            } else if size == 2 {
-                (buf[offset] as u32) << 8 | (buf[offset + 1] as u32)
-            } else {
-                bytes_to_u32(&buf[offset..offset + 4])
-            };
-            (h, number, offset + size)
-
-        };
-        Ok(Some(Packet {
-            header,
-            number,
-            payload: Vec::new(),
-        }))
-    }
-}
-
-impl Encoder for QuicCodec {
-    type Item = Packet;
-    type Error = io::Error;
-    fn encode(&mut self, msg: Self::Item, dst: &mut BytesMut) -> Result<(), io::Error> {
-        let required = msg.buf_len();
-        let cur_size = dst.remaining_mut();
-        if cur_size < required {
-            dst.reserve(required - cur_size);
-        }
-        Ok(())
-    }
-}
 
 pub struct Packet {
     pub header: Header,
@@ -166,7 +96,7 @@ pub enum LongType {
 impl Copy for LongType {}
 
 impl LongType {
-    fn to_byte(&self) -> u8 {
+    pub fn to_byte(&self) -> u8 {
         use self::LongType::*;
         match *self {
             Initial => 0x7f,
@@ -175,7 +105,7 @@ impl LongType {
             Protected => 0x7c,
         }
     }
-    fn from_byte(v: u8) -> Self {
+    pub fn from_byte(v: u8) -> Self {
         use self::LongType::*;
         match v {
             0x7f => Initial,
@@ -208,7 +138,7 @@ impl BufLen for ShortType {
 }
 
 impl ShortType {
-    fn to_byte(&self) -> u8 {
+    pub fn to_byte(&self) -> u8 {
         use self::ShortType::*;
         match *self {
             One => 1,
@@ -216,7 +146,7 @@ impl ShortType {
             Four => 4,
         }
     }
-    fn from_byte(v: u8) -> Self {
+    pub fn from_byte(v: u8) -> Self {
         use self::ShortType::*;
         match v {
             0 => One,
@@ -227,112 +157,4 @@ impl ShortType {
     }
 }
 
-pub struct VarLen {
-    val: u64,
-}
-
-impl VarLen {
-    pub fn new(val: u64) -> VarLen {
-        VarLen { val }
-    }
-}
-
-impl BufLen for VarLen {
-    fn buf_len(&self) -> usize {
-        match self.val {
-            v if v <= 63 => 1,
-            v if v <= 16_383 => 2,
-            v if v <= 1_073_741_823 => 4,
-            v if v <= 4_611_686_018_427_387_903 => 8,
-            v => panic!("too large for variable-length encoding: {}", v),
-        }
-    }
-}
-
-impl Codec for VarLen {
-    fn encode<T: BufMut>(&self, buf: &mut T) {
-        match self.buf_len() {
-            1 => buf.put_u8(self.val as u8),
-            2 => buf.put_u16::<BigEndian>(self.val as u16 | 16384),
-            4 => buf.put_u32::<BigEndian>(self.val as u32 | 2_147_483_648),
-            8 => buf.put_u64::<BigEndian>(self.val | 13_835_058_055_282_163_712),
-            _ => panic!("impossible variable-length encoding"),
-        }
-    }
-}
-
-fn bytes_to_u64(bytes: &[u8]) -> u64 {
-    debug_assert_eq!(bytes.len(), 8);
-    ((bytes[0] as u64) << 56 |
-        (bytes[1] as u64) << 48 |
-        (bytes[2] as u64) << 40 |
-        (bytes[3] as u64) << 32 |
-        (bytes[4] as u64) << 24 |
-        (bytes[5] as u64) << 16 |
-        (bytes[6] as u64) << 8 |
-        (bytes[7] as u64))
-}
-
-fn bytes_to_u32(bytes: &[u8]) -> u32 {
-    debug_assert_eq!(bytes.len(), 4);
-    ((bytes[0] as u32) << 24 |
-        (bytes[1] as u32) << 16 |
-        (bytes[2] as u32) << 8 |
-        (bytes[3] as u32))
-}
-
-pub trait BufLen {
-    fn buf_len(&self) -> usize;
-}
-
-impl<T> BufLen for Option<T> where T: BufLen {
-    fn buf_len(&self) -> usize {
-        match *self {
-            Some(ref v) => v.buf_len(),
-            None => 0,
-        }
-    }
-}
-
-pub trait Codec {
-    fn encode<T: BufMut>(&self, buf: &mut T);
-}
-
 pub const DRAFT_10: u32 = 0xff00000a;
-
-#[cfg(test)]
-mod tests {
-    use super::{Codec, VarLen};
-    #[test]
-    fn test_var_len_encoding_8() {
-        let num = 151_288_809_941_952_652;
-        let bytes = b"\xc2\x19\x7c\x5e\xff\x14\xe8\x8c";
-        let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
-        assert_eq!(bytes[..], *buf);
-    }
-    #[test]
-    fn test_var_len_encoding_4() {
-        let num = 494_878_333;
-        let bytes = b"\x9d\x7f\x3e\x7d";
-        let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
-        assert_eq!(bytes[..], *buf);
-    }
-    #[test]
-    fn test_var_len_encoding_2() {
-        let num = 15_293;
-        let bytes = b"\x7b\xbd";
-        let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
-        assert_eq!(bytes[..], *buf);
-    }
-    #[test]
-    fn test_var_len_encoding_1_short() {
-        let num = 37;
-        let bytes = b"\x25";
-        let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
-        assert_eq!(bytes[..], *buf);
-    }
-}

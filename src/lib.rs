@@ -11,13 +11,15 @@ use futures::Future;
 
 use rand::{Rng, thread_rng};
 
+use self::codec::{BufLen, Codec};
 use self::frame::{Frame, PaddingFrame, StreamFrame};
-use self::proto::{BufLen, Codec, DRAFT_10, Header, LongType, Packet};
+use self::proto::{DRAFT_10, Header, LongType, Packet};
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use tokio::net::UdpSocket;
 
+mod codec;
 mod frame;
 mod proto;
 mod tls;
