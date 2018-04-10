@@ -52,7 +52,7 @@ impl BufLen for Header {
                     0
                 } + ptype.buf_len()
             },
-            Header::Long { .. } => 17,
+            Header::Long { .. } => 13,
         }
     }
 }
