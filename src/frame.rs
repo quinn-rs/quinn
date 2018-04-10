@@ -85,7 +85,7 @@ impl Codec for PaddingFrame {
     }
 }
 
-pub enum FrameType {
+enum FrameType {
     Padding = 0x0,
     ResetStream = 0x1,
     ConnectionClose = 0x2,

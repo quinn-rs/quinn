@@ -6,14 +6,14 @@ use std::io;
 
 use tokio_io::codec::{Decoder, Encoder};
 
-pub struct QuicCodec {}
+struct QuicCodec {}
 
 impl Decoder for QuicCodec {
     type Item = Packet;
     type Error = io::Error;
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, io::Error> {
         let first = buf[0];
-        let (header, number, offset) = if first & 128 == 128 {
+        let (header, number, _) = if first & 128 == 128 {
 
             let h = Header::Long {
                 ptype: LongType::from_byte(first ^ 128),

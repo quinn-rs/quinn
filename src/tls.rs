@@ -45,7 +45,7 @@ impl Client {
 
     pub fn get_handshake(&mut self) -> Vec<u8> {
         let mut buf = Vec::new();
-        self.session.write_tls(&mut buf);
+        self.session.write_tls(&mut buf).unwrap();
         buf
     }
 }

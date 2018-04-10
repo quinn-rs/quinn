@@ -15,7 +15,7 @@ use self::codec::{BufLen, Codec};
 use self::frame::{Frame, PaddingFrame, StreamFrame};
 use self::proto::{DRAFT_10, Header, LongType, Packet};
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{ToSocketAddrs};
 
 use tokio::net::UdpSocket;
 
@@ -62,7 +62,7 @@ pub fn connect(server: &str, port: u16) {
 
     let mut buf = Vec::with_capacity(1200);
     packet.encode(&mut buf);
-    let (mut sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)
+    let (sock, buf, len, remote) = sock.send_dgram(buf, &remote)
         .and_then(|(sock, buf)| sock.recv_dgram(buf))
         .wait()
         .unwrap();
