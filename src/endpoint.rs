@@ -333,6 +333,7 @@ impl Endpoint {
     pub fn connect(&mut self, now: u64, local: SocketAddrV6, remote: SocketAddrV6) -> Result<ConnectionHandle> {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, 18);
+        trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls)?;
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
@@ -474,7 +475,7 @@ impl Endpoint {
                     } else if state.clienthello_packet.unwrap() > number {
                         // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                         State::Handshake(state)
-                    } else if self.connections[conn.0].stream0.rx_offset != 0 {
+                    } else if self.connections[conn.0].stream0_rx.offset != 0 {
                         // Received current Retry after Handshake
                         debug!(self.log, "received seemingly-valid retry following handshake packets");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
@@ -493,7 +494,7 @@ impl Endpoint {
                         })
                     } else { match state.tls.handshake() {
                         Err(HandshakeError::WouldBlock(mut tls)) => {
-                            trace!(self.log, "resending ClientHello");
+                            trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
                             self.on_packet_authenticated(now, conn, number as u64);
                             let local_id = self.connections[conn.0].local_id.clone();
                             let crypto = CryptoContext::handshake(&remote_id, Side::Client);
@@ -587,7 +588,7 @@ impl Endpoint {
                         }
                     }
                     while let Some(segment) = self.connections[conn.0].stream0_data.next() {
-                        self.connections[conn.0].stream0.rx_offset += segment.len() as u64;
+                        self.connections[conn.0].stream0_rx.offset += segment.len() as u64;
                         state.tls.get_mut().extend_incoming(&segment);
                     }
                     if state.tls.get_ref().incoming_len() == 0 {
@@ -612,7 +613,7 @@ impl Endpoint {
                             if self.connections[conn.0].side == Side::Client {
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             } else {
-                                self.connections[conn.0].transmit(StreamId(0), &tls.get_mut().take_outgoing(), false);
+                                self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into(), false);
                             }
                             self.events.push_back(Event::Connected(conn));
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
@@ -835,7 +836,7 @@ impl Endpoint {
                 }
             }
             while let Some(segment) = self.connections[conn.0].stream0_data.next() {
-                self.connections[conn.0].stream0.rx_offset += segment.len() as u64;
+                self.connections[conn.0].stream0_rx.offset += segment.len() as u64;
                 state.tls.get_mut().extend_incoming(&segment);
             }
             if state.tls.get_ref().incoming_len() != 0 {
@@ -1033,9 +1034,9 @@ impl Endpoint {
     }
 
     fn transmit_handshake(&mut self, conn: ConnectionHandle, messages: &[u8]) {
-        let offset = self.connections[conn.0].stream0.tx_offset;
+        let offset = self.connections[conn.0].stream0_tx.offset;
         self.connections[conn.0].handshake_pending.stream.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
-        self.connections[conn.0].stream0.tx_offset += messages.len() as u64;
+        self.connections[conn.0].stream0_tx.offset += messages.len() as u64;
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
@@ -1051,13 +1052,9 @@ impl Endpoint {
     // TODO: Backpressure
     pub fn write(&mut self, now: u64, conn: ConnectionHandle, stream: StreamId, data: Bytes) {
         assert!(self.connections[conn.0].state.as_ref().unwrap().is_established());
-        let offset = {
-            let x = &mut self.connections[conn.0].streams.get_mut(&stream).unwrap().tx_offset;
-            let old = *x;
-            *x += data.len() as u64;
-            old
-        };
-        self.connections[conn.0].pending.stream.push_back(frame::Stream { id: stream, fin: data.len() == 0, offset, data });
+        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
+        let fin = data.is_empty();
+        self.connections[conn.0].transmit(stream, data, fin);
         self.flush_pending(now, conn);
     }
 
@@ -1141,7 +1138,8 @@ struct Connection {
     remote_id: ConnectionId,
     remote: SocketAddrV6,
     state: Option<State>,
-    stream0: Stream,
+    stream0_tx: SendStream,
+    stream0_rx: RecvStream,
     stream0_data: frame::StreamAssembler,
     side: Side,
     mtu: u16,
@@ -1326,7 +1324,8 @@ impl Connection {
     {
         Self {
             local_id, remote_id, remote, side,
-            stream0: Stream::new(),
+            stream0_tx: SendStream::new(),
+            stream0_rx: RecvStream::new(),
             stream0_data: frame::StreamAssembler::new(),
             state: None,
             mtu: MIN_MTU,
@@ -1602,20 +1601,20 @@ impl Connection {
         }
     }
 
-    fn transmit(&mut self, stream: StreamId, data: &[u8], fin: bool) {
+    fn transmit(&mut self, stream: StreamId, data: Bytes, fin: bool) {
         let offset = if stream == StreamId(0) {
-            let old = self.stream0.tx_offset;
-            self.stream0.tx_offset += data.len() as u64;
+            let old = self.stream0_tx.offset;
+            self.stream0_tx.offset += data.len() as u64;
             old
         } else {
-            let old = self.streams.get(&stream).unwrap().tx_offset;
-            self.streams.get_mut(&stream).unwrap().tx_offset += data.len() as u64;
+            let s = self.streams.get_mut(&stream).unwrap().send_mut().unwrap();
+            let old = s.offset;
+            s.offset += data.len() as u64;
             old
         };
         self.pending.stream.push_back(frame::Stream {
-            offset, fin,
+            offset, fin, data,
             id: stream,
-            data: data.into()
         });
     }
 
@@ -1806,34 +1805,87 @@ impl Connection {
     }
 
     fn open(&mut self, direction: Directionality) -> Option<StreamId> {
-        let id = match direction {
+        let (id, stream) = match direction {
             Directionality::Uni if self.next_uni_stream <= self.max_uni_stream => {
                 self.next_uni_stream += 1;
-                StreamId::new(self.side, direction, self.next_uni_stream - 1)
+                (StreamId::new(self.side, direction, self.next_uni_stream - 1), SendStream::new().into())
             }
             Directionality::Bi if self.next_bi_stream <= self.max_bi_stream => {
                 self.next_bi_stream += 1;
-                StreamId::new(self.side, direction, self.next_bi_stream - 1)
+                (StreamId::new(self.side, direction, self.next_bi_stream - 1), Stream::new_bi())
             }
             _ => { return None; }
         };
-        let old = self.streams.insert(id, Stream::new());
+        let old = self.streams.insert(id, stream);
         assert!(old.is_none());
         Some(id)
     }
 }
 
-struct Stream {
-    tx_offset: u64,
-    rx_offset: u64,
+struct SendStream {
+    offset: u64
+}
+
+impl SendStream {
+    fn new() -> Self { Self { offset: 0 } }
+}
+
+struct RecvStream {
+    offset: u64,
+    length: Option<u64>,
+}
+
+impl RecvStream {
+    fn new() -> Self { Self {
+        offset: 0,
+        length: None,
+    }}
+}
+
+enum Stream {
+    Send(SendStream),
+    Recv(RecvStream),
+    Both(SendStream, RecvStream),
 }
 
 impl Stream {
-    fn new() -> Self { Self {
-        tx_offset: 0,
-        rx_offset: 0,
-    }}
+    fn new_bi() -> Self { Stream::Both(SendStream::new(), RecvStream::new()) }
+
+    fn send(&self) -> Option<&SendStream> {
+        match *self {
+            Stream::Send(ref x) => Some(x),
+            Stream::Both(ref x, _) => Some(x),
+            _ => None
+        }
+    }
+
+    fn recv(&self) -> Option<&RecvStream> {
+        match *self {
+            Stream::Recv(ref x) => Some(x),
+            Stream::Both(_, ref x) => Some(x),
+            _ => None
+        }
+    }
+
+    fn send_mut(&mut self) -> Option<&mut SendStream> {
+        match *self {
+            Stream::Send(ref mut x) => Some(x),
+            Stream::Both(ref mut x, _) => Some(x),
+            _ => None
+        }
+    }
+
+    fn recv_mut(&mut self) -> Option<&mut RecvStream> {
+        match *self {
+            Stream::Recv(ref mut x) => Some(x),
+            Stream::Both(_, ref mut x) => Some(x),
+            _ => None
+        }
+    }
 }
+
+impl From<SendStream> for Stream { fn from(x: SendStream) -> Stream { Stream::Send(x) } }
+impl From<RecvStream> for Stream { fn from(x: RecvStream) -> Stream { Stream::Recv(x) } }
 
 #[derive(Debug, Clone)]
 enum Header {

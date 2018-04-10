@@ -149,8 +149,8 @@ fn version_negotiate() {
 fn connect() {
     let log = logger();
     let mut pair = Pair::new(log);
-    let client_conn = pair.client.connect(0, pair.client_addr, pair.server_addr).unwrap();
     info!(pair.log, "connecting");
+    let client_conn = pair.client.connect(0, pair.client_addr, pair.server_addr).unwrap();
     pair.drive();
     assert_matches!(pair.server.poll(), Some(Event::Connected(_)));
     assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
