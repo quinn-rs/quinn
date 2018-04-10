@@ -1,5 +1,8 @@
 extern crate quinn;
 
+use std::env;
+
 fn main() {
-    quinn::connect("mozquic.ducksong.com", 4433);
+    let server = env::args().nth(1).unwrap();
+    quinn::connect(&server, 4433);
 }
