@@ -6,6 +6,7 @@ use bytes::{Bytes, Buf, BufMut, BigEndian};
 
 use {varint, FromBytes, TransportError, StreamId};
 use range_set::RangeSet;
+use coding::{self, BufExt};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Type(u8);
@@ -16,6 +17,15 @@ impl From<Type> for u8 { fn from(x: Type) -> Self { x.0 } }
 impl Type {
     fn stream(&self) -> Option<StreamInfo> {
         if self.0 >= 0x10 && self.0 <= 0x17 { Some(StreamInfo(self.0)) } else { None }
+    }
+}
+
+impl coding::Value for Type {
+    fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
+        Ok(Type(buf.get()?))
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        self.0.encode(buf);
     }
 }
 
@@ -51,11 +61,14 @@ frame_types!{
     RST_STREAM = 0x01,
     CONNECTION_CLOSE = 0x02,
     APPLICATION_CLOSE = 0x03,
+    MAX_DATA = 0x04,
+    MAX_STREAM_DATA = 0x05,
     MAX_STREAM_ID = 0x06,
     PING = 0x07,
     BLOCKED = 0x08,
     STREAM_BLOCKED = 0x09,
     STREAM_ID_BLOCKED = 0x0a,
+    NEW_CONNECTION_ID = 0x0b,
     STOP_SENDING = 0x0c,
     ACK = 0x0d,
     PATH_CHALLENGE = 0x0e,
@@ -65,13 +78,14 @@ frame_types!{
 #[derive(Debug)]
 pub enum Frame {
     Padding,
-    RstStream {
-        id: StreamId,
-        app_error_code: u16,
-        final_offset: u64,
-    },
+    RstStream(RstStream),
     ConnectionClose(ConnectionClose),
     ApplicationClose(ApplicationClose),
+    MaxData(u64),
+    MaxStreamData {
+        id: StreamId,
+        offset: u64,
+    },
     MaxStreamId(StreamId),
     Ping,
     Blocked {
@@ -83,6 +97,10 @@ pub enum Frame {
     },
     StreamIdBlocked {
         id: StreamId,
+    },
+    StopSending {
+        id: StreamId,
+        error_code: u16,
     },
     Ack(Ack),
     Stream(Stream),
@@ -96,14 +114,17 @@ impl Frame {
         use self::Frame::*;
         Some(match *self {
             Padding => Type::PADDING,
-            RstStream { .. } => Type::RST_STREAM,
+            RstStream(_) => Type::RST_STREAM,
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
             ApplicationClose(_) => Type::APPLICATION_CLOSE,
+            MaxData(_) => Type::MAX_DATA,
+            MaxStreamData { .. } => Type::MAX_STREAM_ID,
             MaxStreamId(_) => Type::MAX_STREAM_ID,
             Ping => Type::PING,
             Blocked { .. } => Type::BLOCKED,
             StreamBlocked { .. } => Type::STREAM_BLOCKED,
             StreamIdBlocked { .. } => Type::STREAM_ID_BLOCKED,
+            StopSending { .. } => Type::STOP_SENDING,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
@@ -282,11 +303,11 @@ impl Iter {
         self.0.advance(1);
         Some(match ty {
             Type::PADDING => Frame::Padding,
-            Type::RST_STREAM => Frame::RstStream {
-                id: self.get_var()?.into(),
-                app_error_code: self.get()?,
+            Type::RST_STREAM => Frame::RstStream(RstStream {
+                id: StreamId(self.get_var()?),
+                error_code: self.get()?,
                 final_offset: self.get_var()?,
-            },
+            }),
             Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
                 error_code: self.get::<u16>()?.into(),
                 reason: self.take_len()?,
@@ -295,6 +316,11 @@ impl Iter {
                 error_code: self.get::<u16>()?,
                 reason: self.take_len()?,
             }),
+            Type::MAX_DATA => Frame::MaxData(self.get_var()?),
+            Type::MAX_STREAM_DATA => Frame::MaxStreamData {
+                id: StreamId(self.get_var()?),
+                offset: self.get_var()?,
+            },
             Type::MAX_STREAM_ID => Frame::MaxStreamId(StreamId(self.get_var()?)),
             Type::PING => Frame::Ping,
             Type::BLOCKED => Frame::Blocked {
@@ -306,6 +332,10 @@ impl Iter {
             },
             Type::STREAM_ID_BLOCKED => Frame::StreamIdBlocked {
                 id: StreamId(self.get_var()?),
+            },
+            Type::STOP_SENDING => Frame::StopSending {
+                id: StreamId(self.get_var()?),
+                error_code: self.get::<u16>()?,
             },
             Type::ACK => {
                 let largest = self.get_var()?;
@@ -321,7 +351,7 @@ impl Iter {
             Type::PATH_RESPONSE => Frame::PathResponse(self.get::<u64>()?),
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
-                    id: self.get_var()?.into(),
+                    id: StreamId(self.get_var()?),
                     offset: if s.off() { self.get_var()? } else { 0 },
                     fin: s.fin(),
                     data: if s.len() { self.take_len()? } else { mem::replace(&mut self.0, Bytes::new()) }
@@ -397,7 +427,8 @@ impl StreamAssembler {
     pub fn new() -> Self { Self::with_offset(0) }
     pub fn with_offset(x: u64) -> Self { Self { offset: x, segments: BTreeMap::new() } }
     pub fn is_empty(&self) -> bool { self.segments.is_empty() }
-    
+    pub fn offset(&self) -> u64 { self.offset }
+
     pub fn next(&mut self) -> Option<Bytes> {
         if let Some(data) = self.segments.remove(&self.offset) {
             self.offset += data.len() as u64;
@@ -444,6 +475,22 @@ impl StreamAssembler {
         }
         for x in to_drop { self.segments.remove(&x); }
         self.segments.insert(offset, data);
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct RstStream {
+    pub id: StreamId,
+    pub error_code: u16,
+    pub final_offset: u64,
+}
+
+impl RstStream {
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.put_u8(Type::RST_STREAM.into());
+        varint::write(self.id.0, out).unwrap();
+        out.put_u16::<BigEndian>(self.error_code);
+        varint::write(self.final_offset, out).unwrap();
     }
 }
 

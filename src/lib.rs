@@ -33,6 +33,7 @@ mod transport_parameters;
 mod coding;
 mod hkdf;
 mod range_set;
+mod stream;
 
 mod frame;
 use frame::Frame;
@@ -42,8 +43,7 @@ mod from_bytes;
 use from_bytes::{FromBytes};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer, ConnectionError};
-
+pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError};
 
 mod transport_error;
 pub use transport_error::Error as TransportError;

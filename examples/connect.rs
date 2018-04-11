@@ -11,7 +11,7 @@ use std::time::{Instant, Duration};
 use std::io::{self, Write};
 
 use failure::Error;
-use quicr::{Endpoint, Config, Io, Timer, Event, Directionality};
+use quicr::{Endpoint, Config, Io, Timer, Event, Directionality, ReadError};
 use slog::{Logger, Drain};
 
 fn main() {
@@ -47,7 +47,6 @@ struct Context {
     log: Logger,
     socket: UdpSocket,
     client: Endpoint,
-    local: SocketAddrV6,
     remote: SocketAddrV6,
     loss_timer: Option<u64>,
     close_timer: Option<u64>,
@@ -57,9 +56,8 @@ struct Context {
 impl Context {
     fn new(log: Logger, remote: SocketAddrV6) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
-        let local = normalize(socket.local_addr()?);
         Ok(Self {
-            socket, local,
+            socket,
             client: Endpoint::new(log.clone(), Config::default(), rand::random(), None)?,
             log, remote,
             loss_timer: None,
@@ -70,29 +68,46 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(0, self.local, self.remote)?;
+        let c = self.client.connect(self.remote)?;
         let mut time = 0;
+        let mut buf = Vec::new();
         loop {
             while let Some(e) = self.client.poll() { match e {
                 Event::Connected(_) => {
                     info!(self.log, "connected, submitting request");
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
-                    self.client.write(time, c, s, b"GET /index.html\r\n"[..].into());
-                    self.client.write(time, c, s, b""[..].into());
+                    self.client.write(c, s, b"GET /index.html\r\n"[..].into());
+                    self.client.finish(c, s);
                 }
                 Event::ConnectionLost { reason, .. } => {
-                    error!(self.log, "connection lost"; "reason" => %reason);
+                    bail!("connection lost: {}", reason);
                 }
-                Event::Recv(frame) => {
-                    io::stdout().write_all(&frame.data)?;
-                    if frame.fin {
-                        io::stdout().flush()?;
-                        info!(self.log, "done, closing");
-                        self.client.close(time, c, 0, b"finished"[..].into());
-                    }
+                Event::StreamReadable { connection, stream } => {
+                    assert_eq!(c, connection);
+                    loop { match self.client.read_unordered(connection, stream) {
+                        Ok((data, offset)) => {
+                            let len = buf.len().max(offset as usize + data.len());
+                            buf.resize(len, 0);
+                            buf[offset as usize..offset as usize+data.len()].copy_from_slice(&data);
+                        }
+                        Err(ReadError::Finished) => {
+                            info!(self.log, "done, closing");
+                            io::stdout().write_all(&buf)?;
+                            io::stdout().flush()?;
+                            self.client.close(time, c, 0, b"finished"[..].into());
+                            break;
+                        }
+                        Err(ReadError::Blocked) => { break; }
+                        Err(e) => {
+                            error!(self.log, "read error"; "error" => %e);
+                            self.client.close(time, c, 1, b"unexpected error"[..].into());
+                        }
+                    }}
                 }
+                Event::StreamWritable { .. } => {}
+                Event::ConnectionWritable(_) => {}
             }}
-            while let Some(io) = self.client.poll_io() { match io {
+            while let Some(io) = self.client.poll_io(time) { match io {
                 Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
                 Io::TimerStart { timer: Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
                 Io::TimerStart { timer: Timer::Close, time, .. } => { self.close_timer = Some(time); }
@@ -118,7 +133,7 @@ impl Context {
             time = dt.subsec_nanos() as u64 / 1000 + dt.as_secs() * 1000 * 1000;
             match r {
                 Ok((n, addr)) => {
-                    self.client.handle(time, normalize(addr), self.local, (&buf[0..n]).into());
+                    self.client.handle(time, normalize(addr), (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     trace!(self.log, "timeout"; "type" => ?timer);

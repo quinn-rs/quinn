@@ -52,3 +52,13 @@ impl<T: Buf> BufExt for T {
         U::decode(self)
     }
 }
+
+pub trait BufMutExt {
+    fn write<T: Value>(&mut self, x: T);
+}
+
+impl<T: BufMut> BufMutExt for T {
+    fn write<U: Value>(&mut self, x: U) {
+        x.encode(self);
+    }
+}
