@@ -22,6 +22,7 @@ impl Client {
         let mut config = ClientConfig::new();
         config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         config.versions = vec![ProtocolVersion::TLSv1_3];
+        config.alpn_protocols = vec!["hq-10".into()];
         let tls_config = Arc::new(config);
 
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
