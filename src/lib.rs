@@ -68,3 +68,12 @@ pub fn connect(server: &str, port: u16) {
         .unwrap();
     println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
 }
+
+pub fn bind(iface: &str, port: u16) {
+    let addr = (iface, port).to_socket_addrs().unwrap().next().unwrap();
+    println!("bind: {:?}", addr);
+    let sock = UdpSocket::bind(&addr).unwrap();
+    let mut buf = vec![0u8; 1600];
+    let (sock, buf, len, remote) = sock.recv_dgram(buf).wait().unwrap();
+    println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
+}
