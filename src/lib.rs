@@ -75,6 +75,12 @@ pub fn bind(iface: &str, port: u16) {
     println!("bind: {:?}", addr);
     let sock = UdpSocket::bind(&addr).unwrap();
     let mut buf = vec![0u8; 1600];
-    let (sock, buf, len, remote) = sock.recv_dgram(buf).wait().unwrap();
-    println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
+    let mut rsp_buf = vec![20u8, 2, 19, 83, 2, 1, 20, 16, 13, 6, 19, 81];
+    let (sock, buf) = sock.recv_dgram(buf)
+        .and_then(|(sock, buf, len, remote)| {
+            println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
+            sock.send_dgram(rsp_buf, &remote)
+        })
+        .wait()
+        .unwrap();
 }
