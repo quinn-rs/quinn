@@ -62,10 +62,11 @@ pub fn connect(server: &str, port: u16) {
 
     let mut buf = Vec::with_capacity(1200);
     packet.encode(&mut buf);
-    let (sock, buf, len, remote) = sock.send_dgram(buf, &remote)
+    let (sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)
         .and_then(|(sock, buf)| sock.recv_dgram(buf))
         .wait()
         .unwrap();
+    buf.truncate(len);
     println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
 }
 
