@@ -76,7 +76,7 @@ impl Context {
                 Event::Connected(_) => {
                     info!(self.log, "connected, submitting request");
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
-                    self.client.write(c, s, b"GET /index.html\r\n"[..].into());
+                    self.client.write(c, s, b"GET /index.html\r\n"[..].into()).unwrap();
                     self.client.finish(c, s);
                 }
                 Event::ConnectionLost { reason, .. } => {
