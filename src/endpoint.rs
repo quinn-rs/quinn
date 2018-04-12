@@ -856,12 +856,13 @@ impl Endpoint {
                         });
                     }
                     Frame::MaxData(bytes) => {
-                        if bytes > self.connections[conn.0].max_data {
-                            if self.connections[conn.0].data_sent == self.connections[conn.0].max_data {
-                                self.events.push_back(Event::ConnectionWritable(conn));
+                        let was_blocked = self.connections[conn.0].blocked();
+                        self.connections[conn.0].max_data = cmp::max(bytes, self.connections[conn.0].max_data);
+                        if was_blocked && !self.connections[conn.0].blocked() {
+                            for stream in self.connections[conn.0].blocked_streams.drain() {
+                                self.events.push_back(Event::StreamWritable { connection: conn, stream });
                             }
-                            self.connections[conn.0].max_data = bytes;
-                        }    
+                        }
                     }
                     Frame::MaxStreamData { id, offset } => {
                         if id.initiator() != self.connections[conn.0].side && id.directionality() == Directionality::Uni {
@@ -1151,16 +1152,17 @@ impl Endpoint {
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
-        let was_blocked = self.connections[conn.0].congestion_blocked();
+        let was_blocked = self.connections[conn.0].blocked();
         let time = self.connections[conn.0].on_ack_received(&self.config, now, ack);
         self.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::LossDetection,
             time,
         });
-        if was_blocked && !self.connections[conn.0].congestion_blocked() {
-            // Should we only send this if a write was actually rejected?
-            self.events.push_back(Event::ConnectionWritable(conn));
+        if was_blocked && !self.connections[conn.0].blocked() {
+            for stream in self.connections[conn.0].blocked_streams.drain() {
+                self.events.push_back(Event::StreamWritable { connection: conn, stream });
+            }
         }
     }
 
@@ -1174,7 +1176,7 @@ impl Endpoint {
     pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> StdResult<(), (Bytes, WriteError)> {
         assert!(self.connections[conn.0].state.as_ref().unwrap().is_established());
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
-        if self.connections[conn.0].congestion_blocked() { return Err((data, WriteError::ConnectionBlocked)); }
+        if self.connections[conn.0].blocked() { return Err((data, WriteError::Blocked)); }
         let stream_budget = {
             let ss = self.connections[conn.0].streams.get(&stream).expect("unknown stream").send().unwrap();
             if let Some(error_code) = ss.stop_reason { return Err((data, WriteError::Stopped { error_code })); }
@@ -1182,9 +1184,10 @@ impl Endpoint {
         };
         let conn_budget = self.connections[conn.0].max_data - self.connections[conn.0].data_sent;
         let result = if conn_budget < data.len() as u64 {
-            Err((data.split_off(conn_budget as usize), WriteError::ConnectionBlocked))
+            self.connections[conn.0].blocked_streams.insert(stream);
+            Err((data.split_off(conn_budget as usize), WriteError::Blocked))
         } else if stream_budget < data.len() as u64 {
-            Err((data.split_off(stream_budget as usize), WriteError::StreamBlocked))
+            Err((data.split_off(stream_budget as usize), WriteError::Blocked))
         } else { Ok(()) };
         self.connections[conn.0].transmit(stream, data);
         self.dirty_conns.insert(conn);
@@ -1351,7 +1354,10 @@ struct Connection {
     prev_crypto: Option<(u64, CryptoContext)>,
     key_phase: bool,
     params: TransportParameters,
+    /// Streams with data buffered for reading by the application
     readable_streams: FnvHashSet<StreamId>,
+    /// Streams blocked on *connection-level* flow or congestion control
+    blocked_streams: FnvHashSet<StreamId>,
     max_data: u64,
     data_sent: u64,
     // Sum of end offsets of all streams. Includes gaps.
@@ -1553,6 +1559,7 @@ impl Connection {
             key_phase: false,
             params: TransportParameters::default(),
             readable_streams: FnvHashSet::default(),
+            blocked_streams: FnvHashSet::default(),
             max_data: 0,
             data_sent: 0,
             data_recvd: 0,
@@ -2155,6 +2162,10 @@ impl Connection {
     fn congestion_blocked(&self) -> bool {
         self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
     }
+
+    fn blocked(&self) -> bool {
+        self.data_sent >= self.max_data || self.congestion_blocked()
+    }
 }
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -2169,10 +2180,8 @@ pub enum ReadError {
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
-    #[fail(display = "blocked by stream-level flow control")]
-    StreamBlocked,
-    #[fail(display = "blocked by connection-level flow control")]
-    ConnectionBlocked,
+    #[fail(display = "unable to accept further writes")]
+    Blocked,
     #[fail(display = "stopped by peer: error {}", error_code)]
     Stopped { error_code: u16 },
 }
@@ -2531,7 +2540,6 @@ pub enum Event {
         connection: ConnectionHandle,
         stream: StreamId,
     },
-    ConnectionWritable(ConnectionHandle)
 }
 
 #[derive(Debug)]
