@@ -109,6 +109,7 @@ impl Default for Config {
     }}
 }
 
+/// The main entry point to the library
 pub struct Endpoint {
     log: Logger,
     rng: OsRng,
@@ -143,9 +144,20 @@ fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
     result
 }
 
+/// Information that should be preserved between restarts
+///
+/// Keeping this around allows better behavior by clients that communicated with a previous instance of the same
+/// endpoint.
 #[derive(Copy, Clone)]
 pub struct PersistentState {
+    /// Cryptographic key used to ensure integrity of data included in handshake cookies.
+    ///
+    /// Initialize with random bytes.
     pub cookie_key: [u8; 64],
+    /// Cryptographic key used to send authenticated connection resets to clients who were communicating with a previous
+    /// instance of tihs endpoint.
+    ///
+    /// Initialize with random bytes.
     pub reset_key: [u8; 64],
 }
 

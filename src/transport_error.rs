@@ -11,7 +11,7 @@ impl From<Error> for u16 { fn from(x: Error) -> u16 { x.0 } }
 macro_rules! errors {
     {$($name:ident($val:expr) $desc:expr;)*} => {
         impl Error {
-            $(pub const $name: Self = Error($val);)*
+            $(#[doc = $desc] pub const $name: Self = Error($val);)*
         }
         impl fmt::Display for Error {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
