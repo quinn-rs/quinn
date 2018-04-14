@@ -328,8 +328,11 @@ impl Endpoint {
             if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
                 if packet.payload.len() >= 16 && &packet.payload[packet.payload.len() - 16..] == token {
                     debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
+                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
+                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Close });
+                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::Reset });
-                    self.forget(conn);
+                    self.connections[conn.0].state = Some(State::Drained);
                     return;
                 }
             }
@@ -448,7 +451,7 @@ impl Endpoint {
                             let n = self.gen_initial_packet_num();
                             self.io.push_back(Io::Transmit {
                                 destination: remote,
-                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR, "missing transport parameters"),
+                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR),
                             });
                         }
                     }
@@ -463,7 +466,7 @@ impl Endpoint {
                         let n = self.gen_initial_packet_num();
                         self.io.push_back(Io::Transmit {
                             destination: remote,
-                            packet: handshake_close(&crypto, &source_id, &local_id, n, code, ""),
+                            packet: handshake_close(&crypto, &source_id, &local_id, n, code),
                         });
                     }
                     Err(HandshakeError::SetupFailure(e)) => {
@@ -471,7 +474,7 @@ impl Endpoint {
                         let n = self.gen_initial_packet_num();
                         self.io.push_back(Io::Transmit {
                             destination: remote,
-                            packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR, ""),
+                            packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR),
                         });
                     }
                 }
@@ -506,7 +509,7 @@ impl Endpoint {
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, ""),
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED),
                 });
             }
         }
@@ -520,10 +523,7 @@ impl Endpoint {
                         // Received Retry as a server
                         debug!(self.log, "received retry from client"; "connection" => %conn_id);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                        State::HandshakeFailed(state::HandshakeFailed {
-                            reason: TransportError::PROTOCOL_VIOLATION,
-                            alert: None,
-                        })
+                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                     } else if state.clienthello_packet.unwrap() > number {
                         // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                         State::Handshake(state)
@@ -531,19 +531,13 @@ impl Endpoint {
                         // Received current Retry after Handshake
                         debug!(self.log, "received seemingly-valid retry following handshake packets");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                        State::HandshakeFailed(state::HandshakeFailed {
-                            reason: TransportError::PROTOCOL_VIOLATION,
-                            alert: None,
-                        })
+                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION,None)
                     } else if !self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload)
                         .map_or(false, |x| parse_initial(state.tls.get_mut(), x.into()))
                     {
                         debug!(self.log, "invalid retry payload");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                        State::HandshakeFailed(state::HandshakeFailed {
-                            reason: TransportError::PROTOCOL_VIOLATION,
-                            alert: None,
-                        })
+                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                     } else { match state.tls.handshake() {
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
@@ -561,26 +555,17 @@ impl Endpoint {
                         Ok(_) => {
                             debug!(self.log, "unexpectedly completed handshake in RETRY packet");
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            State::HandshakeFailed(state::HandshakeFailed {
-                                reason: TransportError::PROTOCOL_VIOLATION,
-                                alert: None,
-                            })
+                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                         }
                         Err(HandshakeError::Failure(mut tls)) => {
                             debug!(self.log, "handshake failed"; "reason" => %tls.error());
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::TLS_HANDSHAKE_FAILED.into() });
-                            State::HandshakeFailed(state::HandshakeFailed {
-                                reason: TransportError::TLS_HANDSHAKE_FAILED,
-                                alert: Some(tls.get_mut().take_outgoing().to_owned().into()),
-                            })
+                            State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, Some(tls.get_mut().take_outgoing().to_owned().into()))
                         }
                         Err(HandshakeError::SetupFailure(e)) => {
                             error!(self.log, "handshake setup failed"; "reason" => %e);
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::INTERNAL_ERROR.into() });
-                            State::HandshakeFailed(state::HandshakeFailed {
-                                reason: TransportError::INTERNAL_ERROR,
-                                alert: None,
-                            })
+                            State::handshake_failed(TransportError::INTERNAL_ERROR, None)
                         }
                     }
                     }
@@ -606,21 +591,18 @@ impl Endpoint {
                             Frame::Stream(frame::Stream { .. }) => {
                                 debug!(self.log, "non-stream-0 stream frame in handshake");
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                                return State::HandshakeFailed(state::HandshakeFailed {
-                                    reason: TransportError::PROTOCOL_VIOLATION,
-                                    alert: None,
-                                });
+                                return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
                             }
                             Frame::Ack(ack) => {
                                 self.on_ack_received(now, conn, ack);
                             }
                             Frame::ConnectionClose(reason) => {
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ConnectionClosed { reason } });
-                                return State::Draining;
+                                return State::Draining(state.into());
                             }
                             Frame::ApplicationClose(reason) => {
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ApplicationClosed { reason } });
-                                return State::Draining;
+                                return State::Draining(state.into());
                             }
                             Frame::PathChallenge(value) => {
                                 self.connections[conn.0].handshake_pending.path_challenge(number as u64, value);
@@ -632,10 +614,7 @@ impl Endpoint {
                                     debug!(self.log, "unknown frame type in handshake"; "connection" => %id);
                                 }
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                                return State::HandshakeFailed(state::HandshakeFailed {
-                                    reason: TransportError::PROTOCOL_VIOLATION,
-                                    alert: None,
-                                });
+                                return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
                             }
                         }
                     }
@@ -654,10 +633,8 @@ impl Endpoint {
                                     debug!(self.log, "server didn't send transport params");
                                     self.events.push_back(Event::ConnectionLost {
                                         connection: conn, reason: TransportError::TRANSPORT_PARAMETER_ERROR.into() });
-                                    return State::HandshakeFailed(state::HandshakeFailed {
-                                        reason: TransportError::TLS_HANDSHAKE_FAILED,
-                                        alert: Some(tls.get_mut().take_outgoing().to_owned().into()),
-                                    })
+                                    return State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED,
+                                                                   Some(tls.get_mut().take_outgoing().to_owned().into()));
                                 }
                             }
                             trace!(self.log, "established"; "connection" => %id);
@@ -689,38 +666,26 @@ impl Endpoint {
                                 TransportError::TLS_HANDSHAKE_FAILED
                             };
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: code.into() });
-                            State::HandshakeFailed(state::HandshakeFailed {
-                                reason: code,
-                                alert: Some(tls.get_mut().take_outgoing().to_owned().into()),
-                            })
+                            State::handshake_failed(code, Some(tls.get_mut().take_outgoing().to_owned().into()))
                         }
                         Err(HandshakeError::SetupFailure(e)) => {
                             error!(self.log, "handshake failed"; "connection" => %id, "reason" => %e);
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::INTERNAL_ERROR.into() });
-                            State::HandshakeFailed(state::HandshakeFailed {
-                                reason: TransportError::INTERNAL_ERROR,
-                                alert: None,
-                            })
+                            State::handshake_failed(TransportError::INTERNAL_ERROR, None)
                         }
                     }
                 }
                 Header::Long { ty, .. } => {
                     debug!(self.log, "unexpected packet type"; "type" => ty);
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                    State::HandshakeFailed(state::HandshakeFailed {
-                        reason: TransportError::PROTOCOL_VIOLATION,
-                        alert: None,
-                    })
+                    State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                 }
                 Header::VersionNegotiate { destination_id: id, .. } => {
                     let mut payload = io::Cursor::new(&packet.payload[..]);
                     if packet.payload.len() % 4 != 0 {
                         debug!(self.log, "malformed version negotiation"; "connection" => %id);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                        return State::HandshakeFailed(state::HandshakeFailed {
-                            reason: TransportError::PROTOCOL_VIOLATION,
-                            alert: None,
-                        });
+                        return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
                     }
                     while payload.has_remaining() {
                         let version = payload.get_u32::<BigEndian>();
@@ -731,7 +696,7 @@ impl Endpoint {
                     }
                     debug!(self.log, "remote doesn't support our version");
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::VersionMismatch });
-                    State::Draining
+                    State::Draining(state.into())
                 }
                 // TODO: SHOULD buffer these to improve reordering tolerance.
                 Header::Short { .. } => {
@@ -754,9 +719,7 @@ impl Endpoint {
                 if number <= self.connections[conn.0].rx_packet {
                     warn!(self.log, "got illegal key update"; "connection" => %id);
                     self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                    return State::Closed(state::Closed {
-                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                    });
+                    return State::closed(TransportError::PROTOCOL_VIOLATION);
                 }
                 if let Some(payload) = self.connections[conn.0].update_keys(number, &packet.header_data, &packet.payload) {
                     trace!(self.log, "updated keys"; "connection" => %id);
@@ -790,9 +753,7 @@ impl Endpoint {
                         if fin {
                             debug!(self.log, "got fin on stream 0"; "connection" => %id);
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::Closed(state::Closed {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            });
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
                         self.connections[conn.0].stream0_data.insert(offset, data);
                     }
@@ -801,9 +762,7 @@ impl Endpoint {
                             Err(e) => {
                                 debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: e.into() });
-                                return State::Closed(state::Closed {
-                                    reason: e.into(),
-                                });
+                                return State::closed(e);
                             }
                             Ok(stream) => {
                                 let end = frame.offset + frame.data.len() as u64;
@@ -835,18 +794,16 @@ impl Endpoint {
                     Frame::Padding | Frame::Ping => {}
                     Frame::ConnectionClose(reason) => {
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ConnectionClosed { reason } });
-                        return State::Draining;
+                        return State::Draining(state.into());
                     }
                     Frame::ApplicationClose(reason) => {
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: ConnectionError::ApplicationClosed { reason } });
-                        return State::Draining;
+                        return State::Draining(state.into());
                     }
                     Frame::Invalid => {
                         debug!(self.log, "received malformed frame");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::FRAME_FORMAT_ERROR.into() });
-                        return State::Closed(state::Closed {
-                            reason: TransportError::FRAME_FORMAT_ERROR.into(),
-                        });
+                        return State::closed(TransportError::FRAME_FORMAT_ERROR);
                     }
                     Frame::PathChallenge(x) => {
                         self.connections[conn.0].pending.path_challenge(number, x);
@@ -854,9 +811,7 @@ impl Endpoint {
                     Frame::PathResponse(_) => {
                         debug!(self.log, "unsolicited PATH_RESPONSE");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::UNSOLICITED_PATH_RESPONSE.into() });
-                        return State::Closed(state::Closed {
-                            reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
-                        });
+                        return State::closed(TransportError::UNSOLICITED_PATH_RESPONSE);
                     }
                     Frame::MaxData(bytes) => {
                         let was_blocked = self.connections[conn.0].blocked();
@@ -871,9 +826,7 @@ impl Endpoint {
                         if id.initiator() != self.connections[conn.0].side && id.directionality() == Directionality::Uni {
                             debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::Closed(state::Closed {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            });
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
                         if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
                             let ss = stream.send_mut().unwrap();
@@ -886,9 +839,7 @@ impl Endpoint {
                         } else {
                             debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::Closed(state::Closed {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            });
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
                     }
                     Frame::MaxStreamId(id) => {
@@ -901,17 +852,13 @@ impl Endpoint {
                         if id == StreamId(0) {
                             debug!(self.log, "got RST_STREAM on stream 0");
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::Closed(state::Closed {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            });
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
                         let offset = match self.connections[conn.0].ensure_recv_stream(id) {
                             Err(e) => {
                                 debug!(self.log, "received illegal RST_STREAM");
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: e.into() });
-                                return State::Closed(state::Closed {
-                                    reason: e.into(),
-                                });
+                                return State::closed(e);
                             }
                             Ok(stream) => {
                                 let rs = stream.recv_mut().unwrap();
@@ -938,9 +885,7 @@ impl Endpoint {
                         if self.connections[conn.0].streams.get(&id).map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0)) {
                             debug!(self.log, "got STOP_SENDING on invalid stream");
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::Closed(state::Closed {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            });
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
                         self.reset(conn, id, 0);
                         self.connections[conn.0].streams.get_mut(&id).unwrap().send_mut().unwrap().stop_reason = Some(error_code);
@@ -957,23 +902,17 @@ impl Endpoint {
                     Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
                         debug!(self.log, "TLS error"; "error" => %e);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() });
-                        return State::Closed(state::Closed {
-                            reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
-                        });
+                        return State::closed(TransportError::TLS_FATAL_ALERT_RECEIVED);
                     }
                     Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
                         debug!(self.log, "TLS session terminated unexpectedly");
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                        return State::Closed(state::Closed {
-                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                        });
+                        return State::closed(TransportError::PROTOCOL_VIOLATION);
                     }
                     Err(e) => {
                         error!(self.log, "unexpected TLS error"; "error" => %e);
                         self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::INTERNAL_ERROR.into() });
-                        return State::Closed(state::Closed {
-                            reason: TransportError::INTERNAL_ERROR.into(),
-                        });
+                        return State::closed(TransportError::INTERNAL_ERROR);
                     }
                 }
             }
@@ -982,7 +921,7 @@ impl Endpoint {
         State::HandshakeFailed(state) => {
             for frame in frame::Iter::new(packet.payload) {
                 match frame {
-                    Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => { return State::Draining; }
+                    Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => { return State::Draining(state.into()); }
                     _ => {}
                 }
             }
@@ -991,13 +930,14 @@ impl Endpoint {
         State::Closed(state) => {
             for frame in frame::Iter::new(packet.payload) {
                 match frame {
-                    Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => { return State::Draining; }
+                    Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => { return State::Draining(state.into()); }
                     _ => {}
                 }
             }
             State::Closed(state)
         }
-        State::Draining => State::Draining,
+        State::Draining(x) => State::Draining(x),
+        State::Drained => State::Drained,
     }}
 
     fn handle_connected(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet) {
@@ -1021,7 +961,7 @@ impl Endpoint {
                     packet: handshake_close(&self.connections[conn.0].handshake_crypto,
                                             &self.connections[conn.0].remote_id,
                                             &self.connections[conn.0].local_id,
-                                            n as u32, state.reason, ""),
+                                            n as u32, state.reason.clone()),
                 });
                 self.reset_idle_timeout(now, conn);
             }
@@ -1083,11 +1023,23 @@ impl Endpoint {
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
-                self.forget(conn);
+                if self.connections[conn.0].state.as_ref().unwrap().is_app_closed() {
+                    self.forget(conn);
+                } else {
+                    self.connections[conn.0].state = Some(State::Drained);
+                }
             }
             Timer::Idle => {
                 self.close_common(now, conn);
-                self.connections[conn.0].state = Some(State::Draining);
+                let state = State::Draining(match self.connections[conn.0].state.take().unwrap() {
+                    State::Handshake(x) => x.into(),
+                    State::HandshakeFailed(x) => x.into(),
+                    State::Established(x) => x.into(),
+                    State::Closed(x) => x.into(),
+                    State::Draining(x) => x.into(),
+                    State::Drained => unreachable!(),
+                });
+                self.connections[conn.0].state = Some(state);
                 self.events.push_back(Event::ConnectionLost {
                     connection: conn,
                     reason: ConnectionError::TimedOut,
@@ -1179,7 +1131,7 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> StdResult<(), (Bytes, WriteError)> {
-        assert!(self.connections[conn.0].state.as_ref().unwrap().is_established());
+        if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err((data, WriteError::Blocked)); }
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
         if self.connections[conn.0].blocked() { return Err((data, WriteError::Blocked)); }
         let stream_budget = {
@@ -1296,15 +1248,29 @@ impl Endpoint {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
     /// all communications of interest have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        assert!(!self.connections[conn.0].state.as_ref().unwrap().is_closed());
-        self.close_common(now, conn);
+        if let &State::Drained = self.connections[conn.0].state.as_ref().unwrap() {
+            self.forget(conn);
+            return;
+        }
+
+        let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
         let reason = state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
-        self.io.push_back(Io::Transmit {
-            destination: self.connections[conn.0].remote,
-            packet: self.connections[conn.0].make_close(&reason),
+        if !was_closed {
+            self.close_common(now, conn);
+            self.io.push_back(Io::Transmit {
+                destination: self.connections[conn.0].remote,
+                packet: self.connections[conn.0].make_close(&reason),
+            });
+            self.reset_idle_timeout(now, conn);
+        }
+        self.connections[conn.0].state = Some(match self.connections[conn.0].state.take().unwrap() {
+            State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed { reason, alert: None, app_closed: true }),
+            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed { app_closed: true, ..x }),
+            State::Established(_) => State::Closed(state::Closed { reason, app_closed: true }),
+            State::Closed(x) => State::Closed(state::Closed { app_closed: true, ..x}),
+            State::Draining(x) => State::Draining(state::Draining { app_closed: true, ..x}),
+            State::Drained => unreachable!(),
         });
-        self.connections[conn.0].state = Some(State::Closed(state::Closed { reason }));
-        self.reset_idle_timeout(now, conn);
     }
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
@@ -2415,15 +2381,30 @@ enum State {
     Established(state::Established),
     HandshakeFailed(state::HandshakeFailed),
     Closed(state::Closed),
-    Draining,
+    Draining(state::Draining),
+    /// Waiting for application to call close so we can dispose of the resources
+    Drained,
 }
 
 impl State {
+    fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
+        State::Closed(state::Closed {
+            reason: reason.into(), app_closed: false,
+        })
+    }
+
+    fn handshake_failed<R: Into<state::CloseReason>>(reason: R, alert: Option<Box<[u8]>>) -> Self {
+        State::HandshakeFailed(state::HandshakeFailed {
+            reason: reason.into(), alert, app_closed: false,
+        })
+    }
+
     fn is_closed(&self) -> bool {
         match *self {
             State::HandshakeFailed(_) => true,
             State::Closed(_) => true,
-            State::Draining => true,
+            State::Draining(_) => true,
+            State::Drained => true,
             _ => false,
         }
     }
@@ -2432,6 +2413,15 @@ impl State {
         match *self {
             State::Established(_) => true,
             _ => false
+        }
+    }
+
+    fn is_app_closed(&self) -> bool {
+        match *self {
+            State::HandshakeFailed(ref x) => x.app_closed,
+            State::Closed(ref x) => x.app_closed,
+            State::Draining(ref x) => x.app_closed,
+            _ => false,
         }
     }
 }
@@ -2452,10 +2442,12 @@ mod state {
     }
 
     pub struct HandshakeFailed { // Closed
-        pub reason: TransportError,
+        pub reason: CloseReason,
         pub alert: Option<Box<[u8]>>,
+        pub app_closed: bool,
     }
 
+    #[derive(Clone)]
     pub enum CloseReason {
         Connection(frame::ConnectionClose),
         Application(frame::ApplicationClose),
@@ -2467,6 +2459,27 @@ mod state {
 
     pub struct Closed {
         pub reason: CloseReason,
+        pub app_closed: bool,
+    }
+
+    pub struct Draining {
+        pub app_closed: bool,
+    }
+
+    impl From<Handshake> for Draining {
+        fn from(_: Handshake) -> Self { Draining { app_closed: false } }
+    }
+
+    impl From<HandshakeFailed> for Draining {
+        fn from(x: HandshakeFailed) -> Self { Draining { app_closed: x.app_closed } }
+    }
+
+    impl From<Established> for Draining {
+        fn from(_: Established) -> Self { Draining { app_closed: false } }
+    }
+
+    impl From<Closed> for Draining {
+        fn from(x: Closed) -> Self { Draining { app_closed: x.app_closed } }
     }
 }
 
@@ -2633,15 +2646,20 @@ fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
     true
 }
 
-fn handshake_close(crypto: &CryptoContext,
-                   remote_id: &ConnectionId, local_id: &ConnectionId, packet_number: u32,
-                   error_code: TransportError, reason: &str) -> Box<[u8]> {
+fn handshake_close<R>(crypto: &CryptoContext,
+                      remote_id: &ConnectionId, local_id: &ConnectionId, packet_number: u32,
+                      reason: R) -> Box<[u8]>
+    where R: Into<state::CloseReason>
+{
     let mut buf = Vec::<u8>::new();
     Header::Long {
         ty: packet::HANDSHAKE, destination_id: remote_id.clone(), source_id: local_id.clone(), number: packet_number
     }.encode(&mut buf);
     let header_len = buf.len();
-    frame::ConnectionClose { error_code, reason: reason.as_bytes() }.encode(&mut buf);
+    match reason.into() {
+        state::CloseReason::Application(ref x) => x.encode(&mut buf),
+        state::CloseReason::Connection(ref x) => x.encode(&mut buf),
+    }
     let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
     debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
     buf.truncate(header_len);
