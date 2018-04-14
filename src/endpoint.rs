@@ -291,30 +291,37 @@ impl Endpoint {
         }
     }
 
-    /// Process an incoming packet
-    pub fn handle(&mut self, now: u64, remote: SocketAddrV6, data: Bytes) {
-        let packet = match Packet::decode(data.clone(), LOCAL_ID_LEN) {
-            Ok(x) => x,
-            Err(HeaderError::UnsupportedVersion { source, destination }) => {
-                if !self.listen {
-                    debug!(self.log, "dropping packet with unsupported version");
+    /// Process an incoming UDP datagram
+    pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: Bytes) {
+        let datagram_len = data.len();
+        while !data.is_empty() {
+            let (packet, rest) = match Packet::decode(&data, LOCAL_ID_LEN) {
+                Ok(x) => x,
+                Err(HeaderError::UnsupportedVersion { source, destination }) => {
+                    if !self.listen {
+                        debug!(self.log, "dropping packet with unsupported version");
+                        return;
+                    }
+                    trace!(self.log, "sending version negotiation");
+                    // Negotiate versions
+                    let mut buf = Vec::<u8>::new();
+                    Header::VersionNegotiate { ty: self.rng.gen(), source_id: destination, destination_id: source }.encode(&mut buf);
+                    buf.put_u32::<BigEndian>(0x0a1a2a3a); // reserved version
+                    buf.put_u32::<BigEndian>(VERSION); // supported version
+                    self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
                     return;
                 }
-                trace!(self.log, "sending version negotiation");
-                // Negotiate versions
-                let mut buf = Vec::<u8>::new();
-                Header::VersionNegotiate { ty: self.rng.gen(), source_id: destination, destination_id: source }.encode(&mut buf);
-                buf.put_u32::<BigEndian>(0x0a1a2a3a); // reserved version
-                buf.put_u32::<BigEndian>(VERSION); // supported version
-                self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
-                return;
-            }
-            Err(e) => {
-                trace!(self.log, "unable to process packet"; "reason" => %e);
-                return;
-            }
-        };
+                Err(e) => {
+                    trace!(self.log, "unable to process packet"; "reason" => %e);
+                    return;
+                }
+            };
+            self.handle_packet(now, remote, packet, datagram_len);
+            data = rest;
+        }
+    }
 
+    fn handle_packet(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, datagram_len: usize) {
         //
         // Handle packet on existing connection, if any
         //
@@ -348,7 +355,7 @@ impl Endpoint {
         }
         if let Header::Long { ty, destination_id, source_id, number } = packet.header {
             // MAY buffer non-initial packets a little for better 0RTT behavior
-            if ty == packet::INITIAL && data.len() >= MIN_INITIAL_SIZE {
+            if ty == packet::INITIAL && datagram_len >= MIN_INITIAL_SIZE {
                 self.handle_initial(remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
                 return;
             }
@@ -498,6 +505,7 @@ impl Endpoint {
                     fin: false,
                     data: data,
                 }.encode(false, &mut buf);
+                set_payload_length(&mut buf, header_len);
                 let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
                 debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
                 buf.truncate(header_len);
@@ -1968,7 +1976,11 @@ impl Connection {
         if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
             buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
         }
+        if is_handshake {
+            set_payload_length(&mut buf, header_len as usize);
+        }
         self.encrypt(is_handshake, number, &mut buf, header_len);
+        eprintln!("encoded payload len: {}", buf.len() - header_len as usize);
 
         let timer = self.on_packet_sent(config, now, number, SentPacket {
             acks,
@@ -2271,7 +2283,8 @@ impl Header {
                 w.put_u8(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
-                w.put_u32::<BigEndian>(number)
+                w.put_u32::<BigEndian>(number);
+                w.put_u16::<BigEndian>(0); // Placeholder for payload length; see `set_payload_length`
             }
             Short { ref id, number, key_phase } => {
                 let ty = number.ty() | 0x30
@@ -2314,7 +2327,7 @@ impl From<coding::UnexpectedEnd> for HeaderError {
 }
 
 impl Packet {
-    fn decode(packet: Bytes, dest_id_len: usize) -> StdResult<Self, HeaderError> {
+    fn decode(packet: &Bytes, dest_id_len: usize) -> StdResult<(Self, Bytes), HeaderError> {
         let mut buf = io::Cursor::new(&packet[..]);
         let ty = buf.get::<u8>()?;
         let long = ty & 0x80 != 0;
@@ -2338,19 +2351,20 @@ impl Packet {
                 0 => {
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, packet.len());
-                    Packet {
+                    (Packet {
                         header: Header::VersionNegotiate { ty, source_id, destination_id },
                         header_data, payload,
-                    }
+                    }, Bytes::new())
                 }
                 VERSION => {
                     let number = buf.get()?;
+                    let len = varint::read(&mut buf).ok_or(coding::UnexpectedEnd)?;
                     let header_data = packet.slice(0, buf.position() as usize);
-                    let payload = packet.slice(buf.position() as usize, packet.len());
-                    Packet {
+                    let payload = packet.slice(buf.position() as usize, (buf.position() + len) as usize);
+                    (Packet {
                         header: Header::Long { ty, source_id, destination_id, number },
                         header_data, payload,
-                    }
+                    }, packet.slice((buf.position() + len) as usize, packet.len()))
                 }
                 _ => return Err(HeaderError::UnsupportedVersion { source: source_id, destination: destination_id }),
             })
@@ -2368,10 +2382,10 @@ impl Packet {
             };
             let header_data = packet.slice(0, buf.position() as usize);
             let payload = packet.slice(buf.position() as usize, packet.len());
-            Ok(Packet {
+            Ok((Packet {
                 header: Header::Short { id, number, key_phase },
                 header_data, payload,
-            })
+            }, Bytes::new()))
         }
     }
 }
@@ -2406,13 +2420,6 @@ impl State {
             State::Draining(_) => true,
             State::Drained => true,
             _ => false,
-        }
-    }
-
-    fn is_established(&self) -> bool {
-        match *self {
-            State::Established(_) => true,
-            _ => false
         }
     }
 
@@ -2660,11 +2667,18 @@ fn handshake_close<R>(crypto: &CryptoContext,
         state::CloseReason::Application(ref x) => x.encode(&mut buf),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf),
     }
+    set_payload_length(&mut buf, header_len);
     let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
     debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
     buf.truncate(header_len);
     buf.extend_from_slice(&payload);
     buf.into()
+}
+
+fn set_payload_length(packet: &mut [u8], header_len: usize) {
+    let len = packet.len() - header_len + AEAD_TAG_SIZE;
+    assert!(len < 2usize.pow(14)); // Fits in reserved space
+    BigEndian::write_u16(&mut packet[header_len-2..], len as u16 | 0b01 << 14);
 }
 
 const HANDSHAKE_SALT: [u8; 20] = [0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f, 0xe0, 0x6d, 0x6c, 0x38];
