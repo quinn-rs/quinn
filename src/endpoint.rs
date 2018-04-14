@@ -110,6 +110,9 @@ impl Default for Config {
 }
 
 /// The main entry point to the library
+///
+/// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a backend to perform
+/// via `poll_io`, and consumes incoming packets and timer expirations via `handle` and `timeout`.
 pub struct Endpoint {
     log: Logger,
     rng: OsRng,
@@ -1356,7 +1359,7 @@ struct Connection {
     params: TransportParameters,
     /// Streams with data buffered for reading by the application
     readable_streams: FnvHashSet<StreamId>,
-    /// Streams blocked on *connection-level* flow or congestion control
+    /// Streams on which writing was blocked on *connection-level* flow or congestion control
     blocked_streams: FnvHashSet<StreamId>,
     max_data: u64,
     data_sent: u64,
@@ -2170,18 +2173,23 @@ impl Connection {
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
+    /// No more data is currently available on this stream.
     #[fail(display = "blocked")]
     Blocked,
+    /// The peer abandoned transmitting data on this stream.
     #[fail(display = "reset by peer: error {}", error_code)]
     Reset { error_code: u16 },
+    /// The data on this stream has been fully delivered and no more will be transmitted.
     #[fail(display = "finished")]
     Finished,
 }
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
+    /// The peer is not able to accept additional data, or the connection is congested.
     #[fail(display = "unable to accept further writes")]
     Blocked,
+    /// The peer is no longer accepting data on this stream.
     #[fail(display = "stopped by peer: error {}", error_code)]
     Stopped { error_code: u16 },
 }
@@ -2523,31 +2531,36 @@ lazy_static! {
         = Ssl::new_ex_index().unwrap();
 }
 
+/// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
-    /// A connection was successfully established
+    /// A connection was successfully established.
     Connected(ConnectionHandle),
-    /// The connection was lost
+    /// A connection was lost.
     ConnectionLost {
         connection: ConnectionHandle,
         reason: ConnectionError
     },
+    /// A stream has data waiting to be read
     StreamReadable {
         connection: ConnectionHandle,
         stream: StreamId,
     },
+    /// A formerly write-blocked stream might now accept a write
     StreamWritable {
         connection: ConnectionHandle,
         stream: StreamId,
     },
 }
 
+/// I/O operations to be immediately executed the backend.
 #[derive(Debug)]
 pub enum Io {
     Transmit {
         destination: SocketAddrV6,
         packet: Box<[u8]>,
     },
+    /// Start or reset a timer
     TimerStart {
         connection: ConnectionHandle,
         timer: Timer,
@@ -2567,18 +2580,25 @@ pub enum Timer {
     Idle,
 }
 
+/// Reasons why a connection might be lost.
 #[derive(Debug, Clone, Fail)]
 pub enum ConnectionError {
+    /// The peer doesn't implement any supported version.
     #[fail(display = "peer doesn't implement any supported version")]
     VersionMismatch,
+    /// The peer violated the QUIC specification as understood by this implementation.
     #[fail(display = "{}", error_code)]
     TransportError { error_code: TransportError },
+    /// The peer closed the connection automatically.
     #[fail(display = "closed by peer: {}", reason)]
     ConnectionClosed { reason: frame::ConnectionClose },
+    /// The peer closed the connection at the peer application's request.
     #[fail(display = "closed by peer application: {}", reason)]
     ApplicationClosed { reason: frame::ApplicationClose },
+    /// The peer is unable to continue processing this connection, usually due to having restarted.
     #[fail(display = "reset by peer")]
     Reset,
+    /// The peer has become unreachable.
     #[fail(display = "timed out")]
     TimedOut,
 }

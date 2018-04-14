@@ -49,20 +49,34 @@ mod transport_error;
 pub use transport_error::Error as TransportError;
 
 
+/// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00000B;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Side { Client = 0, Server = 1 }
+/// Whether an endpoint was the initiator of a connection
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Side {
+    /// The initiator of a connection
+    Client = 0,
+    /// The acceptor of a connection
+    Server = 1,
+}
 
 impl ::std::ops::Not for Side {
     type Output = Side;
     fn not(self) -> Side { match self { Side::Client => Side::Server, Side::Server => Side::Client } }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Directionality { Bi = 0, Uni = 1 }
+/// Whether a stream communicates data in both directions or only from the initiator
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Directionality {
+    /// Data flows in both directions
+    Bi = 0,
+    /// Data flows only from the stream's initiator
+    Uni = 1,
+}
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+/// Identifier for a stream within a particular connection
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StreamId(pub(crate) u64);
 
 impl fmt::Display for StreamId {
@@ -77,9 +91,10 @@ impl StreamId {
     pub(crate) fn new(initiator: Side, directionality: Directionality, index: u64) -> Self {
         StreamId(index << 2 | (directionality as u64) << 1 | initiator as u64)
     }
+    /// Which side of a connection initiated the stream
     pub fn initiator(&self) -> Side { if self.0 & 0x1 == 0 { Side::Client } else { Side::Server } }
+    /// Which directions data flows in
     pub fn directionality(&self) -> Directionality { if self.0 & 0x2 == 0 { Directionality::Bi } else { Directionality::Uni } }
+    /// Distinguishes streams of the same initiator and directionality
     pub fn index(&self) -> u64 { self.0 >> 2 }
 }
-
-impl From<u64> for StreamId { fn from(x: u64) -> Self { StreamId(x) } }
