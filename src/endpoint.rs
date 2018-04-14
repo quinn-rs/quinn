@@ -1074,6 +1074,8 @@ impl Endpoint {
     fn forget(&mut self, conn: ConnectionHandle) {
         self.connection_ids.remove(&self.connections[conn.0].local_id);
         self.connection_remotes.remove(&self.connections[conn.0].remote);
+        self.dirty_conns.remove(&conn);
+        self.readable_conns.remove(&conn);
         self.connections.remove(conn.0);
     }
 
