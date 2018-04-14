@@ -105,7 +105,6 @@ impl Context {
                     }}
                 }
                 Event::StreamWritable { .. } => {}
-                Event::ConnectionWritable(_) => {}
             }}
             while let Some(io) = self.client.poll_io(time) { match io {
                 Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
