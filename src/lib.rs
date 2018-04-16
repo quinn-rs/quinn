@@ -1,4 +1,5 @@
 extern crate bytes;
+#[macro_use]
 extern crate futures;
 extern crate rand;
 extern crate rustls;
@@ -7,7 +8,7 @@ extern crate tokio_io;
 extern crate webpki;
 extern crate webpki_roots;
 
-use futures::Future;
+use futures::{Future, Poll};
 
 use rand::{Rng, thread_rng};
 
@@ -15,6 +16,7 @@ use self::codec::{BufLen, Codec};
 use self::frame::{Frame, PaddingFrame, StreamFrame};
 use self::proto::{DRAFT_10, Header, LongType, Packet};
 
+use std::io;
 use std::net::{ToSocketAddrs};
 
 use tokio::net::UdpSocket;
@@ -70,17 +72,37 @@ pub fn connect(server: &str, port: u16) {
     println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
 }
 
+struct Server {
+    socket: UdpSocket,
+    in_buf: Vec<u8>,
+    out_buf: Vec<u8>,
+}
+
+impl Future for Server {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<(), io::Error> {
+        loop {
+            let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
+            println!("remote {:?} ({}): {:?}", addr, size, &self.in_buf[..size]);
+            let msg = &self.out_buf[..self.out_buf.len()];
+            let sent = try_ready!(self.socket.poll_send_to(msg, &addr));
+            println!("responded with {} bytes", sent);
+        }
+    }
+}
+
 pub fn bind(iface: &str, port: u16) {
     let addr = (iface, port).to_socket_addrs().unwrap().next().unwrap();
     println!("bind: {:?}", addr);
     let sock = UdpSocket::bind(&addr).unwrap();
-    let mut buf = vec![0u8; 1600];
-    let mut rsp_buf = vec![20u8, 2, 19, 83, 2, 1, 20, 16, 13, 6, 19, 81];
-    let (sock, buf) = sock.recv_dgram(buf)
-        .and_then(|(sock, buf, len, remote)| {
-            println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
-            sock.send_dgram(rsp_buf, &remote)
-        })
-        .wait()
-        .unwrap();
+    let in_buf = vec![0u8; 1600];
+    let out_buf = vec![20u8, 2, 19, 83, 2, 1, 20, 16, 13, 6, 19, 81];
+    let server = Server {
+        socket: sock,
+        in_buf,
+        out_buf,
+    };
+    server.wait().unwrap();
 }
