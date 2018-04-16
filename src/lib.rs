@@ -72,10 +72,25 @@ pub fn connect(server: &str, port: u16) {
     println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
 }
 
-struct Server {
+pub struct Server {
     socket: UdpSocket,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
+}
+
+impl Server {
+    pub fn new(ip: &str, port: u16) -> Self {
+        let addr = (ip, port).to_socket_addrs().unwrap().next().unwrap();
+        Server {
+            socket: UdpSocket::bind(&addr).unwrap(),
+            in_buf: vec![0u8; 1600],
+            out_buf: vec![20u8, 2, 19, 83, 2, 1, 20, 16, 13, 6, 19, 81],
+        }
+    }
+
+    pub fn run(&mut self) {
+        self.wait().unwrap();
+    }
 }
 
 impl Future for Server {
@@ -91,18 +106,4 @@ impl Future for Server {
             println!("responded with {} bytes", sent);
         }
     }
-}
-
-pub fn bind(iface: &str, port: u16) {
-    let addr = (iface, port).to_socket_addrs().unwrap().next().unwrap();
-    println!("bind: {:?}", addr);
-    let sock = UdpSocket::bind(&addr).unwrap();
-    let in_buf = vec![0u8; 1600];
-    let out_buf = vec![20u8, 2, 19, 83, 2, 1, 20, 16, 13, 6, 19, 81];
-    let server = Server {
-        socket: sock,
-        in_buf,
-        out_buf,
-    };
-    server.wait().unwrap();
 }
