@@ -13,15 +13,15 @@ impl Decoder for QuicCodec {
     type Error = io::Error;
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, io::Error> {
         let first = buf[0];
-        let (header, number, _) = if first & 128 == 128 {
+        let (header, _) = if first & 128 == 128 {
 
             let h = Header::Long {
                 ptype: LongType::from_byte(first ^ 128),
                 conn_id: bytes_to_u64(&buf[1..9]),
                 version: bytes_to_u32(&buf[9..13]),
+                number: bytes_to_u32(&buf[13..17]),
             };
-            let number = bytes_to_u32(&buf[13..17]);
-            (h, number, 17)
+            (h, 17)
 
         } else {
 
@@ -31,17 +31,9 @@ impl Decoder for QuicCodec {
             } else {
                 None
             };
-            let h = Header::Short {
-                ptype,
-                conn_id,
-                key_phase: first & 0x20 == 0x20,
-            };
 
             let offset = if conn_id.is_some() { 9 } else { 1 };
-            let size = match h {
-                Header::Short { ref ptype, .. } => ptype.buf_len(),
-                _ => panic!("must be a short header"),
-            };
+            let size = ptype.buf_len();
             let number = if size == 1 {
                 buf[offset] as u32
             } else if size == 2 {
@@ -49,12 +41,17 @@ impl Decoder for QuicCodec {
             } else {
                 bytes_to_u32(&buf[offset..offset + 4])
             };
-            (h, number, offset + size)
+            let h = Header::Short {
+                ptype,
+                conn_id,
+                key_phase: first & 0x20 == 0x20,
+                number,
+            };
+            (h, offset + size)
 
         };
         Ok(Some(Packet {
             header,
-            number,
             payload: Vec::new(),
         }))
     }

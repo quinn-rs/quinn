@@ -37,8 +37,8 @@ pub fn connect(server: &str, port: u16) {
             ptype: LongType::Initial,
             conn_id,
             version: DRAFT_10,
+            number,
         },
-        number,
         payload: vec![
             Frame::Stream(StreamFrame {
                 id: 0,

@@ -5,24 +5,19 @@ use frame::Frame;
 
 pub struct Packet {
     pub header: Header,
-    pub number: u32,
     pub payload: Vec<Frame>,
 }
 
 impl BufLen for Packet {
     fn buf_len(&self) -> usize {
         let payload_len: usize = self.payload.iter().map(|f| f.buf_len()).sum();
-        self.header.buf_len() + 4 + payload_len
+        self.header.buf_len() + payload_len
     }
 }
 
 impl Codec for Packet {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         self.header.encode(buf);
-        match self.header {
-            Header::Long { .. } => buf.put_u32::<BigEndian>(self.number),
-            Header::Short { .. } => VarLen::new(self.number as u64).encode(buf),
-        }
         for frame in self.payload.iter() {
             frame.encode(buf);
         }
@@ -34,25 +29,27 @@ pub enum Header {
         ptype: ShortType,
         conn_id: Option<u64>,
         key_phase: bool,
+        number: u32,
     },
     Long {
         ptype: LongType,
         conn_id: u64,
         version: u32,
+        number: u32,
     },
 }
 
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match *self {
-            Header::Short { ref ptype, ref conn_id, .. } => {
+            Header::Short { ref ptype, ref conn_id, number, .. } => {
                 1 + if conn_id.is_some() {
                     8
                 } else {
                     0
-                } + ptype.buf_len()
+                } + ptype.buf_len() + VarLen::new(number as u64).buf_len()
             },
-            Header::Long { .. } => 13,
+            Header::Long { .. } => 17,
         }
     }
 }
@@ -60,12 +57,13 @@ impl BufLen for Header {
 impl Codec for Header {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match *self {
-            Header::Long { ptype, conn_id, version } => {
+            Header::Long { ptype, conn_id, version, number } => {
                 buf.put_u8(128 | ptype.to_byte());
                 buf.put_u64::<BigEndian>(conn_id);
                 buf.put_u32::<BigEndian>(version);
+                buf.put_u32::<BigEndian>(number);
             },
-            Header::Short { ptype, conn_id, key_phase } => {
+            Header::Short { ptype, conn_id, key_phase, number } => {
                 let omit_conn_id = if conn_id.is_some() {
                     0x40
                 } else {
@@ -80,6 +78,7 @@ impl Codec for Header {
                 if let Some(cid) = conn_id {
                     buf.put_u64::<BigEndian>(cid);
                 }
+                VarLen::new(number as u64).encode(buf);
             },
         }
     }
