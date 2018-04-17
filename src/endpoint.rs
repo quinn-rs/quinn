@@ -121,7 +121,7 @@ pub struct Endpoint {
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
-    config: Config,
+    config: Arc<Config>,
     state: PersistentState,
     events: VecDeque<Event>,
     io: VecDeque<Io>,
@@ -177,6 +177,7 @@ impl Rand for PersistentState {
 impl Endpoint {
     pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self> {
         let rng = OsRng::new()?;
+        let config = Arc::new(config);
         let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
 
         let mut tls = SslContext::builder(SslMethod::tls())?;
@@ -204,17 +205,15 @@ impl Endpoint {
         let reset_key = state.reset_key;
         tls.add_custom_ext(
             26, ssl::ExtensionContext::TLS1_3_ONLY | ssl::ExtensionContext::CLIENT_HELLO | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
-            { let uni = config.max_remote_uni_streams;
-              let bi = config.max_remote_bi_streams;
-              let initial_max_data = config.receive_window;
-              let initial_max_stream_data = config.stream_receive_window;
+            { let config = config.clone();
               move |tls, ctx, _| {
                   let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
                   let mut buf = Vec::new();
                   let mut params = TransportParameters {
-                      initial_max_streams_bidi: bi,
-                      initial_max_streams_uni: uni,
-                      initial_max_data, initial_max_stream_data,
+                      initial_max_streams_bidi: config.max_remote_bi_streams,
+                      initial_max_streams_uni: config.max_remote_uni_streams,
+                      initial_max_data: config.receive_window,
+                      initial_max_stream_data: config.stream_receive_window,
                       ack_delay_exponent: ACK_DELAY_EXPONENT,
                       ..TransportParameters::default()
                   };
@@ -2283,8 +2282,8 @@ impl Header {
                 w.put_u8(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
-                w.put_u32::<BigEndian>(number);
                 w.put_u16::<BigEndian>(0); // Placeholder for payload length; see `set_payload_length`
+                w.put_u32::<BigEndian>(number);
             }
             Short { ref id, number, key_phase } => {
                 let ty = number.ty() | 0x30
@@ -2357,8 +2356,8 @@ impl Packet {
                     }, Bytes::new())
                 }
                 VERSION => {
-                    let number = buf.get()?;
                     let len = varint::read(&mut buf).ok_or(coding::UnexpectedEnd)?;
+                    let number = buf.get()?;
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, (buf.position() + len) as usize);
                     (Packet {
@@ -2678,7 +2677,7 @@ fn handshake_close<R>(crypto: &CryptoContext,
 fn set_payload_length(packet: &mut [u8], header_len: usize) {
     let len = packet.len() - header_len + AEAD_TAG_SIZE;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
-    BigEndian::write_u16(&mut packet[header_len-2..], len as u16 | 0b01 << 14);
+    BigEndian::write_u16(&mut packet[header_len-6..], len as u16 | 0b01 << 14);
 }
 
 const HANDSHAKE_SALT: [u8; 20] = [0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f, 0xe0, 0x6d, 0x6c, 0x38];
