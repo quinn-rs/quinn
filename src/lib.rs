@@ -2,6 +2,7 @@ extern crate bytes;
 #[macro_use]
 extern crate futures;
 extern crate rand;
+extern crate ring;
 extern crate rustls;
 extern crate tokio;
 extern crate tokio_io;
@@ -23,6 +24,7 @@ use tokio::net::UdpSocket;
 
 mod codec;
 mod frame;
+mod hkdf;
 mod proto;
 mod tls;
 mod types;
