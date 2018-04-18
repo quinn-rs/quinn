@@ -7,12 +7,38 @@ use ring::{
     hmac::SigningKey,
 };
 
-pub fn client_handshake_input(conn_id: u64) -> AeadInput {
-    let shared_key = SigningKey::new(&SHA256, &client_handshake_secret(conn_id));
-    let mut input = AeadInput::new(&AES_128_GCM);
-    qhkdf_expand(&shared_key, b"key", input.key_mut());
-    qhkdf_expand(&shared_key, b"iv", input.nonce_mut());
-    input
+pub struct PacketKey {
+    alg: &'static aead::Algorithm,
+    data: Vec<u8>,
+    split: usize,
+}
+
+impl PacketKey {
+    fn new(alg: &'static aead::Algorithm) -> Self {
+        Self {
+            alg,
+            data: vec![0; alg.key_len() + alg.nonce_len()],
+            split: alg.key_len(),
+        }
+    }
+
+    pub fn for_client_handshake(conn_id: u64) -> Self {
+        let shared_key = SigningKey::new(&SHA256, &client_handshake_secret(conn_id));
+        let mut res = PacketKey::new(&AES_128_GCM);
+        qhkdf_expand(&shared_key, b"key", &mut res.data[..res.split]);
+        qhkdf_expand(&shared_key, b"iv", &mut res.data[res.split..]);
+        res
+    }
+
+    pub fn algorithm(&self) -> &aead::Algorithm {
+        self.alg
+    }
+
+    pub fn encrypt(&self, ad: &[u8], in_out: &mut [u8], out_suffix_capacity: usize) -> usize {
+        let key = SealingKey::new(self.alg, &self.data[..self.split]).unwrap();
+        let nonce = &self.data[self.split..];
+        aead::seal_in_place(&key, nonce, ad, in_out, out_suffix_capacity).unwrap()
+    }
 }
 
 fn client_handshake_secret(conn_id: u64) -> Vec<u8> {
@@ -38,47 +64,6 @@ fn handshake_secret(conn_id: u64) -> SigningKey {
     hkdf::extract(&key, &buf)
 }
 
-pub struct AeadInput {
-    alg: &'static aead::Algorithm,
-    input: Vec<u8>,
-    split: usize,
-}
-
-impl AeadInput {
-    pub fn new(alg: &'static aead::Algorithm) -> AeadInput {
-        AeadInput {
-            alg,
-            input: vec![0; alg.key_len() + alg.nonce_len()],
-            split: alg.key_len(),
-        }
-    }
-
-    pub fn algorithm(&self) -> &aead::Algorithm {
-        self.alg
-    }
-
-    pub fn key(&self) -> &[u8] {
-        &self.input[..self.split]
-    }
-
-    pub fn key_mut(&mut self) -> &mut [u8] {
-        &mut self.input[..self.split]
-    }
-
-    pub fn nonce(&self) -> &[u8] {
-        &self.input[self.split..]
-    }
-
-    pub fn nonce_mut(&mut self) -> &mut [u8] {
-        &mut self.input[self.split..]
-    }
-
-    pub fn encrypt(&self, ad: &[u8], in_out: &mut [u8], out_suffix_capacity: usize) -> usize {
-        let key = SealingKey::new(self.alg, &self.input[..self.split]).unwrap();
-        aead::seal_in_place(&key, &self.input[self.split..], ad, in_out, out_suffix_capacity).unwrap()
-    }
-}
-
 const HANDSHAKE_SALT: &[u8; 20] =
     b"\x9c\x10\x8f\x98\x52\x0a\x5c\x5c\x32\x96\x8e\x95\x0e\x8a\x2c\x5f\xe0\x6d\x6c\x38";
 
@@ -91,8 +76,14 @@ mod tests {
         let expected = b"\x83\x55\xf2\x1a\x3d\x8f\x83\xec\xb3\xd0\xf9\x71\x08\xd3\xf9\x5e\
                          \x0f\x65\xb4\xd8\xae\x88\xa0\x61\x1e\xe4\x9d\xb0\xb5\x23\x59\x1d";
         assert_eq!(&client_handshake_secret, expected);
-        let input = super::client_handshake_input(conn_id);
-        assert_eq!(input.key(), b"\x3a\xd0\x54\x2c\x4a\x85\x84\x74\x00\x63\x04\x9e\x3b\x3c\xaa\xb2");
-        assert_eq!(input.nonce(), b"\xd1\xfd\x26\x05\x42\x75\x3a\xba\x38\x58\x9b\xad");
+        let input = super::PacketKey::for_client_handshake(conn_id);
+        assert_eq!(
+            &input.data[..input.split],
+            b"\x3a\xd0\x54\x2c\x4a\x85\x84\x74\x00\x63\x04\x9e\x3b\x3c\xaa\xb2"
+        );
+        assert_eq!(
+            &input.data[input.split..],
+            b"\xd1\xfd\x26\x05\x42\x75\x3a\xba\x38\x58\x9b\xad"
+        );
     }
 }

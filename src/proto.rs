@@ -2,7 +2,7 @@ use bytes::{BigEndian, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 use frame::{Frame, PaddingFrame};
-use crypto::AeadInput;
+use crypto::PacketKey;
 
 use std::io::Cursor;
 
@@ -12,7 +12,7 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn encode(&self, key: &AeadInput, buf: &mut Vec<u8>) {
+    pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
         let unpadded_len = self.buf_len() + key.algorithm().tag_len();
         let len = if unpadded_len < 1200 {
             1200
