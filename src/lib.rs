@@ -13,8 +13,7 @@ use futures::{Future, Poll};
 
 use rand::{Rng, thread_rng};
 
-use self::codec::{BufLen, Codec};
-use self::frame::{Frame, PaddingFrame, StreamFrame};
+use self::frame::{Frame, StreamFrame};
 use self::proto::{DRAFT_10, Header, LongType, Packet};
 
 use std::io;
@@ -36,7 +35,7 @@ pub fn connect(server: &str, port: u16) {
     let number: u32 = rng.gen();
 
     let handshake = client.get_handshake();
-    let mut packet = Packet {
+    let packet = Packet {
         header: Header::Long {
             ptype: LongType::Initial,
             conn_id,
@@ -54,18 +53,14 @@ pub fn connect(server: &str, port: u16) {
         ],
     };
 
-    let len = packet.buf_len();
-    if len < 1200 {
-        packet.payload.push(Frame::Padding(PaddingFrame(1200 - len)));
-    }
-
     let local = "0.0.0.0:0".parse().unwrap();
     let sock = UdpSocket::bind(&local).unwrap();
     let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
     println!("{:?} -> {:?}", local, remote);
 
-    let mut buf = Vec::with_capacity(1200);
-    packet.encode(&mut buf);
+    let handshake_key = hkdf::client_handshake_input(conn_id);
+    let mut buf = Vec::new();
+    packet.encode(&handshake_key, &mut buf);
     let (sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)
         .and_then(|(sock, buf)| sock.recv_dgram(buf))
         .wait()

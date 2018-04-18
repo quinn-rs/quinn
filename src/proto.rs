@@ -1,26 +1,64 @@
 use bytes::{BigEndian, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
-use frame::Frame;
+use frame::{Frame, PaddingFrame};
+use hkdf::AeadInput;
+
+use std::io::Cursor;
 
 pub struct Packet {
     pub header: Header,
     pub payload: Vec<Frame>,
 }
 
+impl Packet {
+    pub fn encode(&self, key: &AeadInput, buf: &mut Vec<u8>) {
+        let unpadded_len = self.buf_len() + key.algorithm().tag_len();
+        let len = if unpadded_len < 1200 {
+            1200
+        } else {
+            unpadded_len
+        };
+
+        if len > buf.capacity() {
+            let diff = len - buf.capacity();
+            buf.reserve(diff);
+        }
+
+        buf.resize(len, 0);
+        let (payload_start, buf) = {
+            let mut write = Cursor::new(buf);
+            self.header.encode(&mut write);
+            let payload_start = write.position() as usize;
+            debug_assert_eq!(payload_start, self.header.buf_len());
+
+            let mut expected = payload_start;
+            for frame in self.payload.iter() {
+                frame.encode(&mut write);
+                expected += frame.buf_len();
+            }
+            debug_assert_eq!(expected, write.position() as usize);
+
+            if unpadded_len < len {
+                let padding = Frame::Padding(PaddingFrame(len - unpadded_len));
+                padding.encode(&mut write);
+            }
+            (payload_start, write.into_inner())
+        };
+
+        let out_len = {
+            let suffix_capacity = key.algorithm().tag_len();
+            let (header, mut payload) = buf.split_at_mut(payload_start);
+            key.encrypt(&header, &mut payload, suffix_capacity)
+        };
+        buf.truncate(payload_start + out_len);
+    }
+}
+
 impl BufLen for Packet {
     fn buf_len(&self) -> usize {
         let payload_len: usize = self.payload.iter().map(|f| f.buf_len()).sum();
         self.header.buf_len() + payload_len
-    }
-}
-
-impl Codec for Packet {
-    fn encode<T: BufMut>(&self, buf: &mut T) {
-        self.header.encode(buf);
-        for frame in self.payload.iter() {
-            frame.encode(buf);
-        }
     }
 }
 

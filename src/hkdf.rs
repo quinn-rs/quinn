@@ -1,7 +1,7 @@
 use bytes::{BigEndian, BufMut};
 
 use ring::{
-    aead::{self, AES_128_GCM},
+    aead::{self, AES_128_GCM, SealingKey},
     digest::SHA256,
     hkdf,
     hmac::SigningKey,
@@ -71,6 +71,11 @@ impl AeadInput {
 
     pub fn nonce_mut(&mut self) -> &mut [u8] {
         &mut self.input[self.split..]
+    }
+
+    pub fn encrypt(&self, ad: &[u8], in_out: &mut [u8], out_suffix_capacity: usize) -> usize {
+        let key = SealingKey::new(self.alg, &self.input[..self.split]).unwrap();
+        aead::seal_in_place(&key, &self.input[self.split..], ad, in_out, out_suffix_capacity).unwrap()
     }
 }
 
