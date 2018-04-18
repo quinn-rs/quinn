@@ -348,6 +348,7 @@ impl Endpoint {
             debug!(self.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
             return;
         }
+        let key_phase = packet.header.key_phase();
         if let Header::Long { ty, destination_id, source_id, number } = packet.header {
             // MAY buffer non-initial packets a little for better 0RTT behavior
             if ty == packet::INITIAL && datagram_len >= MIN_INITIAL_SIZE {
@@ -367,7 +368,7 @@ impl Endpoint {
             let padding = self.rng.gen_range(0, cmp::max(16, packet.payload.len()) - 16);
             buf.reserve_exact(1 + 8 + 4 + padding + 16);
             Header::Short {
-                id: ConnectionId::random(&mut self.rng, 18), number: PacketNumber::U8(self.rng.gen()), key_phase: false
+                id: ConnectionId::random(&mut self.rng, 18), number: PacketNumber::U8(self.rng.gen()), key_phase
             }.encode(&mut buf);
             {
                 let start = buf.len();
@@ -2247,9 +2248,16 @@ impl Header {
     fn destination_id(&self) -> &ConnectionId {
         use self::Header::*;
         match *self {
-            Header::Long { ref destination_id, .. } => destination_id,
-            Header::Short { ref id, .. } => id,
+            Long { ref destination_id, .. } => destination_id,
+            Short { ref id, .. } => id,
             VersionNegotiate { ref destination_id, .. } => destination_id,
+        }
+    }
+
+    fn key_phase(&self) -> bool {
+        match *self {
+            Header::Short { key_phase, .. } => key_phase,
+            _ => false,
         }
     }
 }
