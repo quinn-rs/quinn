@@ -621,6 +621,9 @@ impl Endpoint {
                         }
                     }
                     while let Some(segment) = self.connections[conn.0].stream0_data.next() {
+                        self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
+                            .recv_mut().unwrap().max_data += segment.len() as u64;
+                        self.connections[conn.0].local_max_data += segment.len() as u64;
                         state.tls.get_mut().extend_incoming(&segment);
                     }
                     if state.tls.get_ref().incoming_len() == 0 {
@@ -647,6 +650,8 @@ impl Endpoint {
                             }
                             self.events.push_back(Event::Connected(conn));
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
+                            self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+                            self.connections[conn.0].pending.max_data = true;
                             State::Established(state::Established { tls })
                         }
                         Err(HandshakeError::WouldBlock(mut tls)) => {
@@ -751,16 +756,10 @@ impl Endpoint {
                     _ => { self.connections[conn.0].permit_ack_only = true; }
                 }
                 match frame {
-                    Frame::Stream(frame::Stream { id: StreamId(0), offset, data, fin }) => {
-                        if fin {
-                            debug!(self.log, "got fin on stream 0"; "connection" => %id);
-                            self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                        self.connections[conn.0].stream0_data.insert(offset, data);
-                    }
                     Frame::Stream(frame) => {
-                        let bytes = match self.connections[conn.0].ensure_recv_stream(frame.id) {
+                        let mut stream0_data = None;
+                        // TODO: Ignore STREAM on closed streams
+                        let bytes = match self.connections[conn.0].ensure_recv_stream(&self.config, frame.id) {
                             Err(e) => {
                                 debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: e.into() });
@@ -777,7 +776,16 @@ impl Endpoint {
                                 }
                                 let prev_end = rs.recvd.max().unwrap_or(0);
                                 rs.recvd.insert(frame.offset..end);
-                                rs.buffered.push_back((frame.data, frame.offset));
+                                if frame.id == StreamId(0) {
+                                    if frame.fin {
+                                        debug!(self.log, "got fin on stream 0"; "connection" => %id);
+                                        self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
+                                        return State::closed(TransportError::PROTOCOL_VIOLATION);
+                                    }
+                                    stream0_data = Some((frame.offset, frame.data));
+                                } else {
+                                    rs.buffer(frame.data, frame.offset);
+                                }
                                 if let stream::RecvState::Recv { size: Some(size) } = rs.state {
                                     if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
                                         rs.state = stream::RecvState::DataRecvd;
@@ -786,9 +794,15 @@ impl Endpoint {
                                 end - prev_end
                             }
                         };
-                        self.connections[conn.0].readable_streams.insert(frame.id);
+                        if let Some((offset, data)) = stream0_data {
+                            self.connections[conn.0].stream0_data.insert(offset, data);
+                            self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+                            self.connections[conn.0].pending.max_data = true;
+                        } else {
+                            self.connections[conn.0].readable_streams.insert(frame.id);
+                            self.readable_conns.insert(conn);
+                        }
                         self.connections[conn.0].data_recvd += bytes;
-                        self.readable_conns.insert(conn);
                     }
                     Frame::Ack(ack) => {
                         self.on_ack_received(now, conn, ack);
@@ -856,7 +870,8 @@ impl Endpoint {
                             self.events.push_back(Event::ConnectionLost { connection: conn, reason: TransportError::PROTOCOL_VIOLATION.into() });
                             return State::closed(TransportError::PROTOCOL_VIOLATION);
                         }
-                        let offset = match self.connections[conn.0].ensure_recv_stream(id) {
+                        // TODO: Ignore RST_STREAM on closed streams
+                        let offset = match self.connections[conn.0].ensure_recv_stream(&self.config, id) {
                             Err(e) => {
                                 debug!(self.log, "received illegal RST_STREAM");
                                 self.events.push_back(Event::ConnectionLost { connection: conn, reason: e.into() });
@@ -895,6 +910,9 @@ impl Endpoint {
                 }
             }
             while let Some(segment) = self.connections[conn.0].stream0_data.next() {
+                self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
+                    .recv_mut().unwrap().max_data += segment.len() as u64;
+                self.connections[conn.0].local_max_data += segment.len() as u64;
                 state.tls.get_mut().extend_incoming(&segment);
             }
             if state.tls.get_ref().incoming_len() != 0 {
@@ -1064,6 +1082,7 @@ impl Endpoint {
                     let largest = self.connections[conn.0].largest_acked_packet;
                     self.connections[conn.0].detect_lost_packets(&self.config, now, largest);
                 } else if self.connections[conn.0].tlp_count < self.config.max_tlps {
+                    trace!(self.log, "sending TLP");
                     // Tail Loss Probe.
                     self.io.push_back(Io::Transmit {
                         destination: self.connections[conn.0].remote,
@@ -1072,6 +1091,7 @@ impl Endpoint {
                     self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].tlp_count += 1;
                 } else {
+                    trace!(self.log, "RTO fired, retransmitting");
                     // RTO
                     if self.connections[conn.0].rto_count == 0 {
                         self.connections[conn.0].largest_sent_before_rto = self.connections[conn.0].largest_sent_packet;
@@ -1206,6 +1226,7 @@ impl Endpoint {
         {
             let stream = self.connections[conn.0].streams.get_mut(&stream).unwrap().send_mut().unwrap();
             if stream.state == stream::SendState::DataRecvd { return; } // Nothing to do
+            assert_ne!(stream.state, stream::SendState::ResetSent, "stream already reset");
             stream.state = stream::SendState::ResetSent;
         }
         self.connections[conn.0].pending.rst_stream.push((stream, error_code));
@@ -1224,7 +1245,7 @@ impl Endpoint {
     ///
     /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint are already open.
     pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[conn.0].open(direction)
+        self.connections[conn.0].open(&self.config, direction)
     }
 
     /// Ping the remote endpoint
@@ -1331,10 +1352,13 @@ struct Connection {
     readable_streams: FnvHashSet<StreamId>,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
     blocked_streams: FnvHashSet<StreamId>,
+    /// Limit on outgoing data, dictated by peer
     max_data: u64,
     data_sent: u64,
-    // Sum of end offsets of all streams. Includes gaps.
+    /// Sum of end offsets of all streams. Includes gaps, so it's an upper bound.
     data_recvd: u64,
+    /// Limit on incoming data
+    local_max_data: u64,
 
     //
     // Loss Detection
@@ -1443,7 +1467,6 @@ impl SentPacket {
 
 #[derive(Debug, Clone)]
 struct Retransmits {
-    max_stream_data: bool,
     max_data: bool,
     max_uni_stream_id: bool,
     max_bi_stream_id: bool,
@@ -1454,13 +1477,14 @@ struct Retransmits {
     path_response: Option<(u64, u64)>,
     rst_stream: Vec<(StreamId, u16)>,
     stop_sending: Vec<(StreamId, u16)>,
-}
+    max_stream_data: FnvHashSet<StreamId>,
+ }
 
 impl Retransmits {
     fn is_empty(&self) -> bool {
-        !self.max_stream_data && !self.max_data && !self.max_uni_stream_id && !self.max_bi_stream_id && !self.ping
+        !self.max_data && !self.max_uni_stream_id && !self.max_bi_stream_id && !self.ping
             && self.new_connection_id.is_none() && self.stream.is_empty() && self.path_response.is_none()
-            && self.rst_stream.is_empty() && self.stop_sending.is_empty()
+            && self.rst_stream.is_empty() && self.stop_sending.is_empty() && self.max_stream_data.is_empty()
     }
 
     fn path_challenge(&mut self, packet: u64, token: u64) {
@@ -1474,7 +1498,6 @@ impl Retransmits {
 
 impl Default for Retransmits {
     fn default() -> Self { Self {
-        max_stream_data: false,
         max_data: false,
         max_uni_stream_id: false,
         max_bi_stream_id: false,
@@ -1484,12 +1507,12 @@ impl Default for Retransmits {
         path_response: None,
         rst_stream: Vec::new(),
         stop_sending: Vec::new(),
+        max_stream_data: FnvHashSet::default(),
     }}
 }
 
 impl ::std::ops::AddAssign for Retransmits {
     fn add_assign(&mut self, rhs: Self) {
-        self.max_stream_data |= rhs.max_stream_data;
         self.max_data |= rhs.max_data;
         self.ping |= rhs.ping;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
@@ -1499,6 +1522,7 @@ impl ::std::ops::AddAssign for Retransmits {
         if let Some((packet, token)) = rhs.path_response { self.path_challenge(packet, token); }
         self.rst_stream.extend_from_slice(&rhs.rst_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
+        self.max_stream_data.extend(&rhs.max_stream_data);
     }
 }
 
@@ -1519,7 +1543,7 @@ impl Connection {
            initial_packet_number: u64, side: Side, config: &Config) -> Self
     {
         let mut streams = FnvHashMap::default();
-        streams.insert(StreamId(0), Stream::new_bi());
+        streams.insert(StreamId(0), Stream::new_bi(config.stream_receive_window as u64));
         Self {
             local_id, remote_id, remote, side,
             stream0_data: frame::StreamAssembler::new(),
@@ -1536,6 +1560,7 @@ impl Connection {
             max_data: 0,
             data_sent: 0,
             data_recvd: 0,
+            local_max_data: config.receive_window as u64,
 
             handshake_count: 0,
             tlp_count: 0,
@@ -1844,10 +1869,12 @@ impl Connection {
         let acks;
         let mut streams = VecDeque::new();
         let mut ping = false;
+        let mut max_data = false;
         let number;
         let ack_only;
         let is_initial;
         let header_len;
+        let mut max_stream_data = FnvHashSet::default();
 
         {
             let pending;
@@ -1926,6 +1953,7 @@ impl Connection {
             while buf.len() + 19 < max_size {
                 let (id, error_code) = if let Some(x) = pending.rst_stream.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x } else { continue; };
+                // TODO: Retransmit
                 trace!(log, "rst_stream");
                 frame::RstStream {
                     id, error_code,
@@ -1937,10 +1965,33 @@ impl Connection {
             while buf.len() + 11 < max_size {
                 let (id, error_code) = if let Some(x) = pending.stop_sending.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
-                if stream.is_closed() { continue; }
+                if stream.is_finished() { continue; }
+                // TODO: Retransmit
                 buf.write(frame::Type::STOP_SENDING);
                 varint::write(id.0, &mut buf).unwrap();
                 buf.write(error_code);
+            }
+
+            // MAX_DATA
+            if pending.max_data && buf.len() + 9 < max_size {
+                trace!(log, "MAX_DATA"; "value" => self.local_max_data);
+                pending.max_data = false;
+                max_data = true;
+                buf.write(frame::Type::MAX_DATA);
+                varint::write(self.local_max_data, &mut buf).unwrap();
+            }
+
+            // MAX_STREAM_DATA
+            while buf.len() + 17 < max_size {
+                let id = if let Some(x) = pending.max_stream_data.iter().next() { *x } else { break; };
+                pending.max_stream_data.remove(&id);
+                let rs = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
+                if rs.is_finished() { continue; }
+                max_stream_data.insert(id);
+                trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
+                buf.write(frame::Type::MAX_STREAM_DATA);
+                buf.write(id);
+                varint::write(rs.max_data, &mut buf).unwrap();
             }
 
             // STREAM
@@ -1949,13 +2000,13 @@ impl Connection {
                 if stream.id != StreamId(0) && self.streams.get(&stream.id).map_or(true, |s| s.send().unwrap().state.was_reset()) {
                     continue;
                 }
-                let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 24);
-                trace!(log, "stream"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => stream.fin);
+                let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
+                trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => stream.fin);
                 let data = stream.data.split_to(len);
                 let frame = frame::Stream {
                     id: stream.id,
                     offset: stream.offset,
-                    fin: stream.fin && len == stream.data.len(),
+                    fin: stream.fin && stream.data.is_empty(),
                     data: data,
                 };
                 frame.encode(true, &mut buf);
@@ -1974,13 +2025,12 @@ impl Connection {
             set_payload_length(&mut buf, header_len as usize);
         }
         self.encrypt(is_handshake, number, &mut buf, header_len);
-        eprintln!("encoded payload len: {}", buf.len() - header_len as usize);
 
         let timer = self.on_packet_sent(config, now, number, SentPacket {
             acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
             handshake: is_handshake,
-            retransmits: Retransmits { stream: streams, ping, ..Retransmits::default() }
+            retransmits: Retransmits { stream: streams, ping, max_data, max_stream_data, ..Retransmits::default() }
         });
 
         // If we have any acks, we just sent them; don't immediately resend.  Setting this even if ack_only is false
@@ -2044,7 +2094,7 @@ impl Connection {
         self.params = params;
     }
 
-    fn open(&mut self, direction: Directionality) -> Option<StreamId> {
+    fn open(&mut self, config: &Config, direction: Directionality) -> Option<StreamId> {
         let (id, mut stream) = match direction {
             Directionality::Uni if self.next_uni_stream <= self.max_uni_stream => {
                 self.next_uni_stream += 1;
@@ -2052,7 +2102,7 @@ impl Connection {
             }
             Directionality::Bi if self.next_bi_stream <= self.max_bi_stream => {
                 self.next_bi_stream += 1;
-                (StreamId::new(self.side, direction, self.next_bi_stream - 1), Stream::new_bi())
+                (StreamId::new(self.side, direction, self.next_bi_stream - 1), Stream::new_bi(config.stream_receive_window as u64))
             }
             _ => { return None; } // TODO: Queue STREAM_ID_BLOCKED
         };
@@ -2062,7 +2112,7 @@ impl Connection {
         Some(id)
     }
 
-    fn ensure_recv_stream(&mut self, id: StreamId) -> Result<&mut Stream, TransportError> {
+    fn ensure_recv_stream(&mut self, config: &Config, id: StreamId) -> Result<&mut Stream, TransportError> {
         if self.side == id.initiator() {
             match id.directionality() {
                 Directionality::Uni => { return Err(TransportError::STREAM_STATE_ERROR); }
@@ -2079,7 +2129,7 @@ impl Connection {
             }
         }
         let side = self.side;
-        Ok(self.streams.entry(id).or_insert_with(|| Stream::new(id, side)))
+        Ok(self.streams.entry(id).or_insert_with(|| Stream::new(id, side, config.stream_receive_window as u64)))
     }
 
     /// Discard state for a stream if it's fully closed.
@@ -2122,6 +2172,11 @@ impl Connection {
             stream::RecvState::Recv { .. } | stream::RecvState::DataRecvd => {}
         }
         if let Some(x) = rs.buffered.pop_front() {
+            rs.max_data += x.0.len() as u64;
+            self.local_max_data += x.0.len() as u64;
+            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
+            self.pending.max_stream_data.insert(id);
+            self.pending.max_data = true;
             Ok(x)
         } else if rs.state == stream::RecvState::DataRecvd {
             rs.state = stream::RecvState::Closed;

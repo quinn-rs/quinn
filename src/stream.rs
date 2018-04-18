@@ -14,16 +14,16 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn new(id: StreamId, side: Side) -> Self {
+    pub fn new(id: StreamId, side: Side, window: u64) -> Self {
         use Directionality::*;
         match (id.directionality(), id.initiator(), side) {
-            (Bi, _, _) => Stream::Both(Send::new(), Recv::new()),
+            (Bi, _, _) => Stream::Both(Send::new(), Recv::new(window)),
             (Uni, x, y) if x == y => Send::new().into(),
-            (Uni, _, _) => Recv::new().into()
+            (Uni, _, _) => Recv::new(window).into()
         }
     }
 
-    pub fn new_bi() -> Self { Stream::Both(Send::new(), Recv::new()) }
+    pub fn new_bi(window: u64) -> Self { Stream::Both(Send::new(), Recv::new(window)) }
 
     pub fn send(&self) -> Option<&Send> {
         match *self {
@@ -57,6 +57,7 @@ impl Stream {
         }
     }
 
+    /// Safe to free
     pub fn is_closed(&self) -> bool {
         self.send().map_or(true, |x| x.is_closed())
             && self.recv().map_or(true, |x| x.is_closed())
@@ -85,6 +86,7 @@ impl Send {
         stop_reason: None,
     }}
 
+    /// All data acknowledged
     pub fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
@@ -99,17 +101,34 @@ pub struct Recv {
     pub state: RecvState,
     pub recvd: RangeSet,
     pub buffered: VecDeque<(Bytes, u64)>,
+    /// Current limit, which may or may not have been sent
+    pub max_data: u64,
 }
 
 impl Recv {
-    pub fn new() -> Self { Self {
+    pub fn new(max_data: u64) -> Self { Self {
         state: RecvState::Recv { size: None },
         recvd: RangeSet::new(),
         buffered: VecDeque::new(),
+        max_data,
     }}
 
+    /// No more data expected from peer
+    pub fn is_finished(&self) -> bool {
+        match self.state {
+            RecvState::Recv { .. } => false,
+            _ => true,
+        }
+    }
+
+    /// All data read by application
     pub fn is_closed(&self) -> bool {
         self.state == self::RecvState::Closed
+    }
+
+    pub fn buffer(&mut self, data: Bytes, offset: u64) {
+        // TODO: Dedup
+        self.buffered.push_back((data, offset));
     }
 }
 

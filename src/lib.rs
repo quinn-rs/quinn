@@ -94,3 +94,12 @@ impl StreamId {
     /// Distinguishes streams of the same initiator and directionality
     pub fn index(&self) -> u64 { self.0 >> 2 }
 }
+
+impl coding::Value for StreamId {
+    fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<StreamId> {
+        varint::read(buf).map(StreamId).ok_or(coding::UnexpectedEnd)
+    }
+    fn encode<B: bytes::BufMut>(&self, buf: &mut B) {
+        varint::write(self.0, buf).unwrap()
+    }
+}

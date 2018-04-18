@@ -80,6 +80,7 @@ impl Context {
                     self.client.finish(c, s);
                 }
                 Event::ConnectionLost { reason, .. } => {
+                    self.client.close(time, c, 0, b""[..].into());
                     bail!("connection lost: {}", reason);
                 }
                 Event::StreamReadable { connection, stream } => {
@@ -120,8 +121,8 @@ impl Context {
                 .min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
                 .min((self.idle_timer.unwrap_or(u64::max_value()), Timer::Idle));
             if timeout != u64::max_value() {
+                trace!(self.log, "setting timeout"; "type" => ?timer, "time" => time);
                 let dt = timeout - time;
-                trace!(self.log, "setting timeout"; "type" => ?timer, "dt" => dt);
                 let seconds = dt / (1000 * 1000);
                 self.socket.set_read_timeout(Some(Duration::new(seconds, (dt - (seconds * 1000 * 1000)) as u32 * 1000)))?;
             } else {
