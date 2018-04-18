@@ -8,10 +8,6 @@ extern crate failure;
 extern crate digest;
 extern crate blake2;
 extern crate constant_time_eq;
-extern crate bincode;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]

@@ -14,11 +14,10 @@ use openssl::pkey::{PKeyRef, Private};
 use openssl::x509::X509Ref;
 use openssl::hash::MessageDigest;
 use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
-use failure::Error;
+use failure;
 use blake2::Blake2b;
 use digest::{Input, VariableOutput};
 use constant_time_eq::constant_time_eq;
-use bincode;
 use slog::Logger;
 use arrayvec::ArrayVec;
 use fnv::{FnvHashMap, FnvHashSet};
@@ -30,9 +29,6 @@ use {hkdf, frame, Frame, TransportError, StreamId, Side, Directionality, VERSION
 use range_set::RangeSet;
 use stream::{self, Stream};
 use varint;
-
-type StdResult<T, E> = ::std::result::Result<T, E>;
-type Result<T> = StdResult<T, Error>;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(usize);
@@ -175,7 +171,7 @@ impl Rand for PersistentState {
 }
 
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self> {
+    pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self, failure::Error> {
         let rng = OsRng::new()?;
         let config = Arc::new(config);
         let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
@@ -385,26 +381,25 @@ impl Endpoint {
         }
     }
 
-    // TODO: Is this really fallible?
     /// Initiate a connection
-    pub fn connect(&mut self, remote: SocketAddrV6) -> Result<ConnectionHandle> {
+    pub fn connect(&mut self, remote: SocketAddrV6) -> ConnectionHandle {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, 18);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
-        let mut tls = Ssl::new(&self.tls)?;
+        let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
         let mut tls = match tls.connect(MemoryStream::new()) {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
-            Err(e) => return Err(e.into()),
+            Err(e) => panic!("unexpected TLS error: {}", e),
         };
         self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
             tls, clienthello_packet: None, remote_id_set: false
         }));
         self.dirty_conns.insert(conn);
-        Ok(conn)
+        conn
     }
 
     fn gen_initial_packet_num(&mut self) -> u32 { self.initial_packet_number.sample(&mut self.rng) as u32 }
@@ -1137,7 +1132,7 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
-    pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> StdResult<(), (Bytes, WriteError)> {
+    pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> Result<(), (Bytes, WriteError)> {
         if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err((data, WriteError::Blocked)); }
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
         if self.connections[conn.0].blocked() { return Err((data, WriteError::Blocked)); }
@@ -1176,7 +1171,7 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
-    pub fn read(&mut self, _conn: ConnectionHandle, _stream: StreamId) -> StdResult<Bytes, ReadError> {
+    pub fn read(&mut self, _conn: ConnectionHandle, _stream: StreamId) -> Result<Bytes, ReadError> {
         unimplemented!()
     }
 
@@ -1191,7 +1186,7 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
-    pub fn read_unordered(&mut self, conn: ConnectionHandle, stream: StreamId) -> StdResult<(Bytes, u64), ReadError> {
+    pub fn read_unordered(&mut self, conn: ConnectionHandle, stream: StreamId) -> Result<(Bytes, u64), ReadError> {
         match self.connections[conn.0].read(stream) {
             x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -2067,7 +2062,7 @@ impl Connection {
         Some(id)
     }
 
-    fn ensure_recv_stream(&mut self, id: StreamId) -> StdResult<&mut Stream, TransportError> {
+    fn ensure_recv_stream(&mut self, id: StreamId) -> Result<&mut Stream, TransportError> {
         if self.side == id.initiator() {
             match id.directionality() {
                 Directionality::Uni => { return Err(TransportError::STREAM_STATE_ERROR); }
@@ -2114,7 +2109,7 @@ impl Connection {
         self.pending.stream.push_back(frame::Stream { id, data: Bytes::new(), offset: ss.offset, fin: true });
     }
 
-    fn read(&mut self, id: StreamId) -> StdResult<(Bytes, u64), ReadError> {
+    fn read(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
         match rs.state {
             stream::RecvState::ResetRecvd { error_code } => {
@@ -2266,7 +2261,7 @@ impl PacketNumber {
     }
 }
 
-const KEY_PHASE_BIT: u8 = 0x40; // FIXME: or 0x20??
+const KEY_PHASE_BIT: u8 = 0x40;
 
 impl Header {
     fn encode<W: BufMut>(&self, w: &mut W) {
@@ -2326,7 +2321,7 @@ impl From<coding::UnexpectedEnd> for HeaderError {
 }
 
 impl Packet {
-    fn decode(packet: &Bytes, dest_id_len: usize) -> StdResult<(Self, Bytes), HeaderError> {
+    fn decode(packet: &Bytes, dest_id_len: usize) -> Result<(Self, Bytes), HeaderError> {
         let mut buf = io::Cursor::new(&packet[..]);
         let ty = buf.get::<u8>()?;
         let long = ty & 0x80 != 0;
@@ -2495,29 +2490,18 @@ struct CookieFactory {
 
 const COOKIE_MAC_BYTES: usize = 64;
 
-// remote ip and port are taken from the underlying transport
-#[derive(Serialize, Deserialize)]
-struct Cookie {}
-
 impl CookieFactory {
     fn new(mac_key: [u8; 64]) -> Self {
         Self { mac_key }
     }
 
     fn generate(&self, conn: &ConnectionInfo, out: &mut [u8]) -> usize {
-        let cookie = Cookie {};
-        let cap = out.len();
-        let (len, out) = {
-            let mut cursor = io::Cursor::new(out);
-            bincode::serialize_into(&mut cursor, &cookie, bincode::Bounded((cap - COOKIE_MAC_BYTES) as u64)).unwrap();
-            (cursor.position() as usize, cursor.into_inner())
-        };
-        let mac = self.generate_mac(conn, &out[0..len]);
-        out[len..len+COOKIE_MAC_BYTES].copy_from_slice(&mac);
-        len + COOKIE_MAC_BYTES
+        let mac = self.generate_mac(conn);
+        out[0..COOKIE_MAC_BYTES].copy_from_slice(&mac);
+        COOKIE_MAC_BYTES
     }
 
-    fn generate_mac(&self, conn: &ConnectionInfo, data: &[u8]) -> [u8; COOKIE_MAC_BYTES] {
+    fn generate_mac(&self, conn: &ConnectionInfo) -> [u8; COOKIE_MAC_BYTES] {
         let mut mac = Blake2b::new_keyed(&self.mac_key, COOKIE_MAC_BYTES);
         mac.process(&conn.remote.ip().octets());
         {
@@ -2525,18 +2509,14 @@ impl CookieFactory {
             BigEndian::write_u16(&mut buf, conn.remote.port());
             mac.process(&buf);
         }
-        mac.process(data);
         let mut result = [0; COOKIE_MAC_BYTES];
         mac.variable_result(&mut result).unwrap();
         result
     }
 
     fn verify(&self, conn: &ConnectionInfo, cookie_data: &[u8]) -> bool {
-        if cookie_data.len() < COOKIE_MAC_BYTES { return false; }
-        let (cookie_data, mac) = cookie_data.split_at(cookie_data.len() - COOKIE_MAC_BYTES);
-        let expected = self.generate_mac(conn, cookie_data);
-        if !constant_time_eq(&mac, &expected) { return false; }
-        if let Err(_) = bincode::deserialize::<Cookie>(cookie_data) { return false; };
+        let expected = self.generate_mac(conn);
+        if !constant_time_eq(cookie_data, &expected) { return false; }
         true
     }
 }
@@ -2548,7 +2528,7 @@ struct ConnectionInfo {
 
 lazy_static! {
     static ref CONNECTION_INFO_INDEX: ex_data::Index<Ssl, ConnectionInfo> = Ssl::new_ex_index().unwrap();
-    static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, ::std::result::Result<TransportParameters, ::transport_parameters::Error>>
+    static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, Result<TransportParameters, ::transport_parameters::Error>>
         = Ssl::new_ex_index().unwrap();
 }
 
