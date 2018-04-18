@@ -22,8 +22,8 @@ use std::net::{ToSocketAddrs};
 use tokio::net::UdpSocket;
 
 mod codec;
+mod crypto;
 mod frame;
-mod hkdf;
 mod proto;
 mod tls;
 mod types;
@@ -58,7 +58,7 @@ pub fn connect(server: &str, port: u16) {
     let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
     println!("{:?} -> {:?}", local, remote);
 
-    let handshake_key = hkdf::client_handshake_input(conn_id);
+    let handshake_key = crypto::client_handshake_input(conn_id);
     let mut buf = Vec::new();
     packet.encode(&handshake_key, &mut buf);
     let (sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)

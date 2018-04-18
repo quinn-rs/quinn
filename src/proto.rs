@@ -2,7 +2,7 @@ use bytes::{BigEndian, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 use frame::{Frame, PaddingFrame};
-use hkdf::AeadInput;
+use crypto::AeadInput;
 
 use std::io::Cursor;
 
