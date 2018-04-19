@@ -62,6 +62,7 @@ impl BufLen for Packet {
     }
 }
 
+#[derive(Debug)]
 pub enum Header {
     Short {
         ptype: ShortType,
@@ -122,7 +123,7 @@ impl Codec for Header {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum LongType {
     Initial = 0x7f,
     Retry = 0x7e,
@@ -154,7 +155,7 @@ impl LongType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ShortType {
     One = 0x0,
     Two = 0x1,
