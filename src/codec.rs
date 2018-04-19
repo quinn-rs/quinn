@@ -1,74 +1,4 @@
-use bytes::{BigEndian, Buf, BufMut, BytesMut};
-
-use proto::{Header, LongType, Packet, ShortType};
-
-use std::io;
-
-use tokio_io::codec::{Decoder, Encoder};
-
-struct QuicCodec {}
-
-impl Decoder for QuicCodec {
-    type Item = Packet;
-    type Error = io::Error;
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, io::Error> {
-        let first = buf[0];
-        let (header, _) = if first & 128 == 128 {
-
-            let h = Header::Long {
-                ptype: LongType::from_byte(first ^ 128),
-                conn_id: bytes_to_u64(&buf[1..9]),
-                version: bytes_to_u32(&buf[9..13]),
-                number: bytes_to_u32(&buf[13..17]),
-            };
-            (h, 17)
-
-        } else {
-
-            let ptype = ShortType::from_byte(first & 7);
-            let conn_id = if first & 0x40 == 0x40 {
-                Some(bytes_to_u64(&buf[1..9]))
-            } else {
-                None
-            };
-
-            let offset = if conn_id.is_some() { 9 } else { 1 };
-            let size = ptype.buf_len();
-            let number = if size == 1 {
-                buf[offset] as u32
-            } else if size == 2 {
-                (buf[offset] as u32) << 8 | (buf[offset + 1] as u32)
-            } else {
-                bytes_to_u32(&buf[offset..offset + 4])
-            };
-            let h = Header::Short {
-                ptype,
-                conn_id,
-                key_phase: first & 0x20 == 0x20,
-                number,
-            };
-            (h, offset + size)
-
-        };
-        Ok(Some(Packet {
-            header,
-            payload: Vec::new(),
-        }))
-    }
-}
-
-impl Encoder for QuicCodec {
-    type Item = Packet;
-    type Error = io::Error;
-    fn encode(&mut self, msg: Self::Item, dst: &mut BytesMut) -> Result<(), io::Error> {
-        let required = msg.buf_len();
-        let cur_size = dst.remaining_mut();
-        if cur_size < required {
-            dst.reserve(required - cur_size);
-        }
-        Ok(())
-    }
-}
+use bytes::{BigEndian, Buf, BufMut};
 
 pub struct VarLen {
     pub val: u64,
@@ -124,26 +54,6 @@ impl Codec for VarLen {
         };
         VarLen { val }
     }
-}
-
-fn bytes_to_u64(bytes: &[u8]) -> u64 {
-    debug_assert_eq!(bytes.len(), 8);
-    ((bytes[0] as u64) << 56 |
-        (bytes[1] as u64) << 48 |
-        (bytes[2] as u64) << 40 |
-        (bytes[3] as u64) << 32 |
-        (bytes[4] as u64) << 24 |
-        (bytes[5] as u64) << 16 |
-        (bytes[6] as u64) << 8 |
-        (bytes[7] as u64))
-}
-
-fn bytes_to_u32(bytes: &[u8]) -> u32 {
-    debug_assert_eq!(bytes.len(), 4);
-    ((bytes[0] as u32) << 24 |
-        (bytes[1] as u32) << 16 |
-        (bytes[2] as u32) << 8 |
-        (bytes[3] as u32))
 }
 
 pub trait BufLen {
