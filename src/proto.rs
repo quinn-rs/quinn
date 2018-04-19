@@ -111,6 +111,13 @@ impl Header {
             Header::Long { conn_id, .. } => Some(conn_id),
         }
     }
+
+    fn number(&self) -> u32 {
+        match *self {
+            Header::Short { number, .. } => number,
+            Header::Long { number, .. } => number,
+        }
+    }
 }
 
 impl BufLen for Header {
