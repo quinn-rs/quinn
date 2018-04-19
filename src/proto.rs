@@ -124,7 +124,7 @@ impl BufLen for Header {
                     8
                 } else {
                     0
-                } + ptype.buf_len() + VarLen::new(number as u64).buf_len()
+                } + ptype.buf_len() + VarLen(number as u64).buf_len()
             },
             Header::Long { .. } => 17,
         }
@@ -155,7 +155,7 @@ impl Codec for Header {
                 if let Some(cid) = conn_id {
                     buf.put_u64::<BigEndian>(cid);
                 }
-                VarLen::new(number as u64).encode(buf);
+                VarLen(number as u64).encode(buf);
             },
         }
     }

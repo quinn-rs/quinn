@@ -1,18 +1,10 @@
 use bytes::{BigEndian, Buf, BufMut};
 
-pub struct VarLen {
-    pub val: u64,
-}
-
-impl VarLen {
-    pub fn new(val: u64) -> VarLen {
-        VarLen { val }
-    }
-}
+pub struct VarLen(pub u64);
 
 impl BufLen for VarLen {
     fn buf_len(&self) -> usize {
-        match self.val {
+        match self.0 {
             v if v <= 63 => 1,
             v if v <= 16_383 => 2,
             v if v <= 1_073_741_823 => 4,
@@ -25,10 +17,10 @@ impl BufLen for VarLen {
 impl Codec for VarLen {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match self.buf_len() {
-            1 => buf.put_u8(self.val as u8),
-            2 => buf.put_u16::<BigEndian>(self.val as u16 | 16384),
-            4 => buf.put_u32::<BigEndian>(self.val as u32 | 2_147_483_648),
-            8 => buf.put_u64::<BigEndian>(self.val | 13_835_058_055_282_163_712),
+            1 => buf.put_u8(self.0 as u8),
+            2 => buf.put_u16::<BigEndian>(self.0 as u16 | 16384),
+            4 => buf.put_u32::<BigEndian>(self.0 as u32 | 2_147_483_648),
+            8 => buf.put_u64::<BigEndian>(self.0 | 13_835_058_055_282_163_712),
             _ => panic!("impossible variable-length encoding"),
         }
     }
@@ -52,7 +44,7 @@ impl Codec for VarLen {
             },
             v => panic!("impossible variable length encoding: {}", v),
         };
-        VarLen { val }
+        VarLen(val)
     }
 }
 
@@ -84,11 +76,11 @@ mod tests {
         let bytes = b"\xc2\x19\x7c\x5e\xff\x14\xe8\x8c";
 
         let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
+        VarLen(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).val, num);
+        assert_eq!(VarLen::decode(&mut read).0, num);
     }
     #[test]
     fn test_var_len_encoding_4() {
@@ -96,11 +88,11 @@ mod tests {
         let bytes = b"\x9d\x7f\x3e\x7d";
 
         let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
+        VarLen(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).val, num);
+        assert_eq!(VarLen::decode(&mut read).0, num);
     }
     #[test]
     fn test_var_len_encoding_2() {
@@ -108,11 +100,11 @@ mod tests {
         let bytes = b"\x7b\xbd";
 
         let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
+        VarLen(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).val, num);
+        assert_eq!(VarLen::decode(&mut read).0, num);
     }
     #[test]
     fn test_var_len_encoding_1_short() {
@@ -120,10 +112,10 @@ mod tests {
         let bytes = b"\x25";
 
         let mut buf = Vec::new();
-        VarLen::new(num).encode(&mut buf);
+        VarLen(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).val, num);
+        assert_eq!(VarLen::decode(&mut read).0, num);
     }
 }
