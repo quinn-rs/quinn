@@ -1,4 +1,4 @@
-use bytes::{BigEndian, BufMut, BytesMut};
+use bytes::{BigEndian, Buf, BufMut, BytesMut};
 
 use proto::{Header, LongType, Packet, ShortType};
 
@@ -102,6 +102,28 @@ impl Codec for VarLen {
             _ => panic!("impossible variable-length encoding"),
         }
     }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let first = buf.get_u8();
+        let be_val = first & 0x3f;
+        let val = match first >> 6 {
+            0 => be_val as u64,
+            1 => (be_val as u64) << 8 | (buf.get_u8() as u64),
+            2 => {
+                (be_val as u64) << 24 |
+                (buf.get_u8() as u64) << 16 |
+                (buf.get_u16::<BigEndian>() as u64)
+            },
+            3 => {
+                (be_val as u64) << 56 |
+                (buf.get_u8() as u64) << 48 |
+                (buf.get_u16::<BigEndian>() as u64) << 32 |
+                (buf.get_u32::<BigEndian>() as u64)
+            },
+            v => panic!("impossible variable length encoding: {}", v),
+        };
+        VarLen { val }
+    }
 }
 
 fn bytes_to_u64(bytes: &[u8]) -> u64 {
@@ -139,6 +161,7 @@ impl<T> BufLen for Option<T> where T: BufLen {
 
 pub trait Codec {
     fn encode<T: BufMut>(&self, buf: &mut T);
+    fn decode<T: Buf>(buf: &mut T) -> Self;
 }
 
 #[cfg(test)]

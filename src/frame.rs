@@ -1,4 +1,4 @@
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 
@@ -22,6 +22,14 @@ impl Codec for Frame {
         match *self {
             Frame::Padding(ref f) => f.encode(buf),
             Frame::Stream(ref f) => f.encode(buf),
+        }
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        match buf.bytes()[0] {
+            v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)),
+            0 => Frame::Padding(PaddingFrame::decode(buf)),
+            v => panic!("unimplemented decoding for frame type {}", v),
         }
     }
 }
@@ -76,6 +84,36 @@ impl Codec for StreamFrame {
         }
         buf.put_slice(&self.data);
     }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let first = buf.get_u8();
+        let id = VarLen::decode(buf).val;
+        let offset = if first & 0x04 > 0 {
+            VarLen::decode(buf).val
+        } else {
+            0
+        };
+
+        let len = if first & 0x02 > 0 {
+            VarLen::decode(buf).val
+        } else {
+            buf.remaining() as u64
+        };
+        let mut data = vec![0u8; len as usize];
+        buf.copy_to_slice(&mut data);
+
+        StreamFrame {
+            id: id,
+            fin: first & 0x01 > 0,
+            offset,
+            len: if first & 0x02 > 0 {
+                Some(len)
+            } else {
+                None
+            },
+            data,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -91,6 +129,12 @@ impl Codec for PaddingFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         let padding = vec![0; self.0];
         buf.put_slice(&padding);
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let size = buf.remaining();
+        buf.advance(size);
+        PaddingFrame(size)
     }
 }
 

@@ -1,4 +1,4 @@
-use bytes::{BigEndian, BufMut};
+use bytes::{BigEndian, Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 use frame::{Frame, PaddingFrame};
@@ -53,6 +53,34 @@ impl Packet {
             key.encrypt(&header, &mut payload, suffix_capacity)
         };
         buf.truncate(payload_start + out_len);
+    }
+
+    pub fn decode(buf: &mut Vec<u8>) -> Self {
+        let (header, header_len) = {
+            let mut read = Cursor::new(&buf);
+            let header = Header::decode(&mut read);
+            (header, read.position())
+        };
+
+        let payload_len = {
+            let (header_buf, mut payload) = buf.split_at_mut(header_len as usize);
+            let key = PacketKey::for_client_handshake(header.conn_id().unwrap());
+            let payload = key.decrypt(&header_buf, &mut payload);
+            payload.len() as u64
+        };
+        buf.truncate((header_len + payload_len) as usize);
+
+        let mut payload = Vec::new();
+        let mut read = Cursor::new(&buf[header_len as usize..]);
+        while read.has_remaining() {
+            let frame = Frame::decode(&mut read);
+            payload.push(frame);
+        }
+
+        Packet {
+            header,
+            payload,
+        }
     }
 }
 
@@ -129,6 +157,41 @@ impl Codec for Header {
                 }
                 VarLen::new(number as u64).encode(buf);
             },
+        }
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let first = buf.get_u8();
+        if first & 128 == 128 {
+            Header::Long {
+                ptype: LongType::from_byte(first ^ 128),
+                conn_id: buf.get_u64::<BigEndian>(),
+                version: buf.get_u32::<BigEndian>(),
+                number: buf.get_u32::<BigEndian>(),
+            }
+        } else {
+            let ptype = ShortType::from_byte(first & 7);
+            let conn_id = if first & 0x40 == 0x40 {
+                Some(buf.get_u64::<BigEndian>())
+            } else {
+                None
+            };
+
+            let size = ptype.buf_len();
+            let number = if size == 1 {
+                buf.get_u8() as u32
+            } else if size == 2 {
+                buf.get_u16::<BigEndian>() as u32
+            } else {
+                buf.get_u32::<BigEndian>()
+            };
+
+            Header::Short {
+                ptype,
+                conn_id,
+                key_phase: first & 0x20 == 0x20,
+                number,
+            }
         }
     }
 }
