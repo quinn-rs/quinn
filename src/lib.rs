@@ -97,7 +97,9 @@ impl Future for Server {
     fn poll(&mut self) -> Poll<(), io::Error> {
         loop {
             let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
-            println!("remote {:?} ({}): {:?}", addr, size, &self.in_buf[..size]);
+            self.in_buf.truncate(size);
+            let packet = Packet::decode(&mut self.in_buf);
+            println!("remote {:?} ({}): {:?}", addr, size, packet);
             let msg = &self.out_buf[..self.out_buf.len()];
             let sent = try_ready!(self.socket.poll_send_to(msg, &addr));
             println!("responded with {} bytes", sent);
