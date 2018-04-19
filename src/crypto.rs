@@ -1,4 +1,6 @@
-use bytes::{BigEndian, BufMut};
+use bytes::{BigEndian, Buf, BufMut};
+
+use std::io::Cursor;
 
 use ring::{hkdf, aead::{self, AES_128_GCM, OpeningKey, SealingKey}, digest::SHA256,
            hmac::SigningKey};
@@ -30,16 +32,41 @@ impl PacketKey {
         self.alg
     }
 
-    pub fn encrypt(&self, ad: &[u8], in_out: &mut [u8], out_suffix_capacity: usize) -> usize {
-        let key = SealingKey::new(self.alg, &self.data[..self.split]).unwrap();
-        let nonce = &self.data[self.split..];
-        aead::seal_in_place(&key, nonce, ad, in_out, out_suffix_capacity).unwrap()
+    pub fn write_nonce(&self, number: u32, out: &mut [u8]) {
+        debug_assert_eq!(out.len(), self.alg.nonce_len());
+        let out = {
+            let mut write = Cursor::new(out);
+            write.put_u32::<BigEndian>(0);
+            write.put_u64::<BigEndian>(number as u64);
+            debug_assert_eq!(write.remaining(), 0);
+            write.into_inner()
+        };
+        let iv = &self.data[self.split..];
+        for i in 0..self.alg.nonce_len() {
+            out[i] ^= iv[i];
+        }
     }
 
-    pub fn decrypt<'a>(&self, ad: &[u8], input: &'a mut [u8]) -> &'a [u8] {
+    pub fn encrypt(
+        &self,
+        number: u32,
+        ad: &[u8],
+        in_out: &mut [u8],
+        out_suffix_capacity: usize,
+    ) -> usize {
+        let key = SealingKey::new(self.alg, &self.data[..self.split]).unwrap();
+        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let nonce = &mut nonce_buf[..self.alg.nonce_len()];
+        self.write_nonce(number, nonce);
+        aead::seal_in_place(&key, &*nonce, ad, in_out, out_suffix_capacity).unwrap()
+    }
+
+    pub fn decrypt<'a>(&self, number: u32, ad: &[u8], input: &'a mut [u8]) -> &'a [u8] {
         let key = OpeningKey::new(self.alg, &self.data[..self.split]).unwrap();
-        let nonce = &self.data[self.split..];
-        aead::open_in_place(&key, nonce, ad, 0, input).unwrap()
+        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let nonce = &mut nonce_buf[..self.alg.nonce_len()];
+        self.write_nonce(number, nonce);
+        aead::open_in_place(&key, &*nonce, ad, 0, input).unwrap()
     }
 }
 

@@ -49,8 +49,13 @@ impl Packet {
 
         let out_len = {
             let suffix_capacity = key.algorithm().tag_len();
-            let (header, mut payload) = buf.split_at_mut(payload_start);
-            key.encrypt(&header, &mut payload, suffix_capacity)
+            let (header_buf, mut payload) = buf.split_at_mut(payload_start);
+            key.encrypt(
+                self.header.number(),
+                &header_buf,
+                &mut payload,
+                suffix_capacity,
+            )
         };
         buf.truncate(payload_start + out_len);
     }
@@ -65,7 +70,7 @@ impl Packet {
         let payload_len = {
             let (header_buf, mut payload) = buf.split_at_mut(header_len as usize);
             let key = PacketKey::for_client_handshake(header.conn_id().unwrap());
-            let payload = key.decrypt(&header_buf, &mut payload);
+            let payload = key.decrypt(header.number(), &header_buf, &mut payload);
             payload.len() as u64
         };
         buf.truncate((header_len + payload_len) as usize);
