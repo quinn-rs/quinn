@@ -40,7 +40,7 @@ macro_rules! frame_types {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x10 && x <= 0x17 => f.write_str("STREAM"),
-                    _ => write!(f, "<unknown frame type {:x}>", self.0),
+                    _ => write!(f, "<unknown {:02x}>", self.0),
                 }
             }
         }
@@ -106,13 +106,13 @@ pub enum Frame {
     Stream(Stream),
     PathChallenge(u64),
     PathResponse(u64),
-    Invalid,
+    Invalid(Type),
 }
 
 impl Frame {
-    pub fn ty(&self) -> Option<Type> {
+    pub fn ty(&self) -> Type {
         use self::Frame::*;
-        Some(match *self {
+        match *self {
             Padding => Type::PADDING,
             RstStream(_) => Type::RST_STREAM,
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
@@ -134,8 +134,8 @@ impl Frame {
             }
             PathChallenge(_) => Type::PATH_CHALLENGE,
             PathResponse(_) => Type::PATH_RESPONSE,
-            Invalid => return None,
-        })
+            Invalid(ty) => ty,
+        }
     }
 }
 
@@ -221,8 +221,6 @@ impl<'a> IntoIterator for &'a Ack {
 
 impl Ack {
     pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, buf: &mut W) {
-        debug_assert!(ranges.len() - 1 < 2usize.pow(14), "count too large to be encoded as a 2-byte varint");
-
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
@@ -233,7 +231,7 @@ impl Ack {
         varint::write(ranges.len() as u64 - 1, buf).unwrap();
         varint::write(first_size-1, buf).unwrap();
         let mut prev = first.start;
-        for block in ranges.iter().rev().skip(1) {
+        for block in rest {
             let size = block.end - block.start;
             varint::write(prev - block.end - 1, buf).unwrap();
             varint::write(size - 1, buf).unwrap();
@@ -276,31 +274,35 @@ impl<T> Stream<T>
     }
 }
 
-pub struct Iter(Bytes);
+pub struct Iter {
+    bytes: Bytes,
+    last_ty: Option<Type>,
+}
 
 impl Iter {
-    pub fn new(payload: Bytes) -> Self { Iter(payload) }
+    pub fn new(payload: Bytes) -> Self { Iter { bytes: payload, last_ty: None } }
 
     fn get_var(&mut self) -> Option<u64> {
         let (x, advance) = {
-            let mut buf = io::Cursor::new(&self.0[..]);
+            let mut buf = io::Cursor::new(&self.bytes[..]);
             (varint::read(&mut buf)?, buf.position())
         };
-        self.0.advance(advance as usize);
+        self.bytes.advance(advance as usize);
         Some(x)
     }
 
     fn take_len(&mut self) -> Option<Bytes> {
         let len = self.get_var()?;
-        if len > self.0.len() as u64 { return None; }
-        Some(self.0.split_to(len as usize))
+        if len > self.bytes.len() as u64 { return None; }
+        Some(self.bytes.split_to(len as usize))
     }
 
-    fn get<T: FromBytes>(&mut self) -> Option<T> { T::from(&mut self.0) }
+    fn get<T: FromBytes>(&mut self) -> Option<T> { T::from(&mut self.bytes) }
 
     fn try_next(&mut self) -> Option<Frame> {
-        let ty = Type(self.0[0]);
-        self.0.advance(1);
+        let ty = Type(self.bytes[0]);
+        self.last_ty = Some(ty);
+        self.bytes.advance(1);
         Some(match ty {
             Type::PADDING => Frame::Padding,
             Type::RST_STREAM => Frame::RstStream(RstStream {
@@ -341,10 +343,10 @@ impl Iter {
                 let largest = self.get_var()?;
                 let delay = self.get_var()?;
                 let extra_blocks = self.get_var()? as usize;
-                let len = scan_ack_blocks(&self.0[..], largest, extra_blocks)?;
+                let len = scan_ack_blocks(&self.bytes[..], largest, extra_blocks)?;
                 Frame::Ack(Ack {
                     delay, largest,
-                    additional: self.0.split_to(len),
+                    additional: self.bytes.split_to(len),
                 })
             }
             Type::PATH_CHALLENGE => Frame::PathChallenge(self.get::<u64>()?),
@@ -354,7 +356,7 @@ impl Iter {
                     id: StreamId(self.get_var()?),
                     offset: if s.off() { self.get_var()? } else { 0 },
                     fin: s.fin(),
-                    data: if s.len() { self.take_len()? } else { mem::replace(&mut self.0, Bytes::new()) }
+                    data: if s.len() { self.take_len()? } else { mem::replace(&mut self.bytes, Bytes::new()) }
                 }),
                 None => return None,
             }
@@ -365,13 +367,13 @@ impl Iter {
 impl Iterator for Iter {
     type Item = Frame;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.0.is_empty() { return None; }
+        if self.bytes.is_empty() { return None; }
         match self.try_next() {
             x@Some(_) => x,
             None => {
                 // Corrupt frame, skip it and everything that follows
-                self.0 = Bytes::new();
-                Some(Frame::Invalid)
+                self.bytes = Bytes::new();
+                Some(Frame::Invalid(self.last_ty.unwrap()))
             }
         }
     }

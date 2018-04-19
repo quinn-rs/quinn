@@ -56,9 +56,14 @@ struct Context {
 impl Context {
     fn new(log: Logger, remote: SocketAddrV6) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
+        let config = Config {
+            //receive_window: 256,
+            //stream_receive_window: 256,
+            ..Config::default()
+        };
         Ok(Self {
             socket,
-            client: Endpoint::new(log.clone(), Config::default(), rand::random(), None)?,
+            client: Endpoint::new(log.clone(), config, rand::random(), None)?,
             log, remote,
             loss_timer: None,
             close_timer: None,
@@ -71,12 +76,14 @@ impl Context {
         let c = self.client.connect(self.remote);
         let mut time = 0;
         let mut buf = Vec::new();
+        let mut sent = 0;
+        let mut recvd = 0;
         loop {
             while let Some(e) = self.client.poll() { match e {
                 Event::Connected(_) => {
                     info!(self.log, "connected, submitting request");
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
-                    self.client.write(c, s, b"GET /index.html\r\n"[..].into()).unwrap();
+                    self.client.write(c, s, b"GET /doc-10000.html\r\n"[..].into()).unwrap();
                     self.client.finish(c, s);
                 }
                 Event::ConnectionLost { reason, .. } => {
@@ -106,9 +113,10 @@ impl Context {
                     }}
                 }
                 Event::StreamWritable { .. } => {}
+                Event::StreamAvailable { .. } => {}
             }}
             while let Some(io) = self.client.poll_io(time) { match io {
-                Io::Transmit { destination, packet } => { self.socket.send_to(&packet, destination)?; }
+                Io::Transmit { destination, packet } => { sent += 1; self.socket.send_to(&packet, destination)?; }
                 Io::TimerStart { timer: Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
                 Io::TimerStart { timer: Timer::Close, time, .. } => { self.close_timer = Some(time); }
                 Io::TimerStart { timer: Timer::Idle, time, .. } => { self.idle_timer = Some(time); }
@@ -133,6 +141,7 @@ impl Context {
             time = dt.subsec_nanos() as u64 / 1000 + dt.as_secs() * 1000 * 1000;
             match r {
                 Ok((n, addr)) => {
+                    recvd += 1;
                     self.client.handle(time, normalize(addr), (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -141,7 +150,11 @@ impl Context {
                     match timer {
                         Timer::LossDetection => self.loss_timer = None,
                         Timer::Idle => self.idle_timer = None,
-                        Timer::Close => { self.close_timer = None; return Ok(()); }
+                        Timer::Close => {
+                            self.close_timer = None;
+                            info!(self.log, "done"; "sent packets" => sent, "received packets" => recvd);
+                            return Ok(());
+                        }
                     }
                 }
                 Err(e) => { return Err(e.into()); }

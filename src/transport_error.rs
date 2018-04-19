@@ -5,6 +5,10 @@ use frame;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Error(u16);
 
+impl Error {
+    pub fn frame(ty: frame::Type) -> Self { Error(0x100 | u8::from(ty) as u16) }
+}
+
 impl From<u16> for Error { fn from(x: u16) -> Self { Error(x) } }
 impl From<Error> for u16 { fn from(x: Error) -> u16 { x.0 } }
 
@@ -16,7 +20,7 @@ macro_rules! errors {
         impl fmt::Display for Error {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 if self.0 >= 0x100 && self.0 <= 0x1ff {
-                    return write!(f, "error in {} frame", frame::Type::from(self.0 as u8));
+                    return write!(f, "invalid {} frame", frame::Type::from(self.0 as u8));
                 }
                 let x = match self.0 {
                     $($val => $desc,)*

@@ -74,7 +74,6 @@ pub struct Send {
     pub state: SendState,
     /// Number of bytes sent but unacked
     pub bytes_in_flight: u64,
-    pub stop_reason: Option<u16>,
 }
 
 impl Send {
@@ -83,14 +82,13 @@ impl Send {
         max_data: 0,
         state: SendState::Ready,
         bytes_in_flight: 0,
-        stop_reason: None,
     }}
 
-    /// All data acknowledged
+    /// All data acknowledged and STOP_SENDING error code, if any, processed by application
     pub fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
-            DataRecvd | ResetRecvd => true,
+            DataRecvd | ResetRecvd { stop_reason: None } => true,
             _ => false,
         }
     }
@@ -130,18 +128,30 @@ impl Recv {
         // TODO: Dedup
         self.buffered.push_back((data, offset));
     }
+
+    /// Offset after the largest byte received
+    pub fn limit(&self) -> u64 { self.recvd.max().map_or(0, |x| x+1) }
+
+    pub fn final_offset(&self) -> Option<u64> {
+        match self.state {
+            RecvState::Recv { size } => size,
+            RecvState::ResetRecvd { size, .. } => Some(size),
+            RecvState::DataRecvd { size } => Some(size),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SendState {
-    Ready, DataSent, ResetSent, DataRecvd, ResetRecvd
+    Ready, DataSent, ResetSent { stop_reason: Option<u16> }, DataRecvd, ResetRecvd { stop_reason: Option<u16> },
 }
 
 impl SendState {
     pub fn was_reset(&self) -> bool {
         use self::SendState::*;
         match *self {
-            ResetSent | ResetRecvd => true,
+            ResetSent { .. } | ResetRecvd { .. } => true,
             _ => false,
         }
     }
@@ -150,6 +160,6 @@ impl SendState {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RecvState {
     Recv { size: Option<u64> },
-    DataRecvd, ResetRecvd { error_code: u16 },
+    DataRecvd { size: u64 }, ResetRecvd { size: u64, error_code: u16 },
     Closed,
 }

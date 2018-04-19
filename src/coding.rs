@@ -1,5 +1,7 @@
 use bytes::{Buf, BufMut, BigEndian};
 
+use varint;
+
 #[derive(Fail, Debug, Copy, Clone, Eq, PartialEq)]
 #[fail(display = "unexpected end of buffer")]
 pub struct UnexpectedEnd;
@@ -45,20 +47,30 @@ impl Value for u64 {
 
 pub trait BufExt {
     fn get<T: Value>(&mut self) -> Result<T>;
+    fn get_var(&mut self) -> Result<u64>;
 }
 
 impl<T: Buf> BufExt for T {
     fn get<U: Value>(&mut self) -> Result<U> {
         U::decode(self)
     }
+
+    fn get_var(&mut self) -> Result<u64> {
+        varint::read(self).ok_or(UnexpectedEnd)
+    }
 }
 
 pub trait BufMutExt {
     fn write<T: Value>(&mut self, x: T);
+    fn write_var(&mut self, x: u64);
 }
 
 impl<T: BufMut> BufMutExt for T {
     fn write<U: Value>(&mut self, x: U) {
         x.encode(self);
+    }
+
+    fn write_var(&mut self, x: u64) {
+        varint::write(x, self).unwrap()
     }
 }
