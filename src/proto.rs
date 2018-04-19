@@ -6,6 +6,7 @@ use crypto::PacketKey;
 
 use std::io::Cursor;
 
+#[derive(Debug)]
 pub struct Packet {
     pub header: Header,
     pub payload: Vec<Frame>,
