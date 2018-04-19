@@ -71,7 +71,7 @@ impl Encoder for QuicCodec {
 }
 
 pub struct VarLen {
-    val: u64,
+    pub val: u64,
 }
 
 impl VarLen {
