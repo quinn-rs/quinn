@@ -77,10 +77,7 @@ impl Packet {
             payload.push(frame);
         }
 
-        Packet {
-            header,
-            payload,
-        }
+        Packet { header, payload }
     }
 }
 
@@ -119,13 +116,15 @@ impl Header {
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match *self {
-            Header::Short { ref ptype, ref conn_id, number, .. } => {
-                1 + if conn_id.is_some() {
-                    8
-                } else {
-                    0
-                } + ptype.buf_len() + VarLen(number as u64).buf_len()
-            },
+            Header::Short {
+                ref ptype,
+                ref conn_id,
+                number,
+                ..
+            } => {
+                1 + if conn_id.is_some() { 8 } else { 0 } + ptype.buf_len()
+                    + VarLen(number as u64).buf_len()
+            }
             Header::Long { .. } => 17,
         }
     }
@@ -134,29 +133,31 @@ impl BufLen for Header {
 impl Codec for Header {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match *self {
-            Header::Long { ptype, conn_id, version, number } => {
+            Header::Long {
+                ptype,
+                conn_id,
+                version,
+                number,
+            } => {
                 buf.put_u8(128 | ptype.to_byte());
                 buf.put_u64::<BigEndian>(conn_id);
                 buf.put_u32::<BigEndian>(version);
                 buf.put_u32::<BigEndian>(number);
-            },
-            Header::Short { ptype, conn_id, key_phase, number } => {
-                let omit_conn_id = if conn_id.is_some() {
-                    0x40
-                } else {
-                    0
-                };
-                let key_phase_bit = if key_phase {
-                    0x20
-                } else {
-                    0
-                };
+            }
+            Header::Short {
+                ptype,
+                conn_id,
+                key_phase,
+                number,
+            } => {
+                let omit_conn_id = if conn_id.is_some() { 0x40 } else { 0 };
+                let key_phase_bit = if key_phase { 0x20 } else { 0 };
                 buf.put_u8(omit_conn_id | key_phase_bit | 0x10 | ptype.to_byte());
                 if let Some(cid) = conn_id {
                     buf.put_u64::<BigEndian>(cid);
                 }
                 VarLen(number as u64).encode(buf);
-            },
+            }
         }
     }
 

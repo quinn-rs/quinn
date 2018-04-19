@@ -11,13 +11,13 @@ extern crate webpki_roots;
 
 use futures::{Future, Poll};
 
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
 use self::frame::{Frame, StreamFrame};
 use self::proto::{DRAFT_10, Header, LongType, Packet};
 
 use std::io;
-use std::net::{ToSocketAddrs};
+use std::net::ToSocketAddrs;
 
 use tokio::net::UdpSocket;
 

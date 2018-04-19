@@ -1,11 +1,7 @@
 use bytes::{BigEndian, BufMut};
 
-use ring::{
-    aead::{self, AES_128_GCM, OpeningKey, SealingKey},
-    digest::SHA256,
-    hkdf,
-    hmac::SigningKey,
-};
+use ring::{hkdf, aead::{self, AES_128_GCM, OpeningKey, SealingKey}, digest::SHA256,
+           hmac::SigningKey};
 
 pub struct PacketKey {
     alg: &'static aead::Algorithm,

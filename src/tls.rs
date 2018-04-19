@@ -1,9 +1,5 @@
-use rustls::internal::msgs::{
-    base::PayloadU16,
-    codec::Codec,
-    handshake::ClientExtension,
-    quic::{ClientTransportParameters, Parameter},
-};
+use rustls::internal::msgs::{base::PayloadU16, codec::Codec, handshake::ClientExtension,
+                             quic::{ClientTransportParameters, Parameter}};
 use rustls::{ClientConfig, ClientSession, ProtocolVersion, Session};
 
 use std::sync::Arc;
@@ -20,7 +16,9 @@ pub struct Client {
 impl Client {
     pub fn new(hostname: &str) -> Client {
         let mut config = ClientConfig::new();
-        config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         config.versions = vec![ProtocolVersion::TLSv1_3];
         config.alpn_protocols = vec!["hq-10".into()];
         let tls_config = Arc::new(config);
@@ -30,16 +28,16 @@ impl Client {
             session: ClientSession::with_handshake_exts(
                 &tls_config,
                 pki_server_name,
-                vec![ClientExtension::TransportParameters(
-                    ClientTransportParameters {
+                vec![
+                    ClientExtension::TransportParameters(ClientTransportParameters {
                         initial_version: 1,
                         parameters: encode_transport_parameters(&vec![
                             TransportParameter::InitialMaxStreamData(131072),
                             TransportParameter::InitialMaxData(1048576),
                             TransportParameter::IdleTimeout(300),
                         ]),
-                    },
-                )],
+                    }),
+                ],
             ),
         }
     }
@@ -57,22 +55,22 @@ fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> 
     for param in params {
         let mut bytes = Vec::new();
         match *param {
-            InitialMaxStreamData(v) |
-            InitialMaxData(v) |
-            InitialMaxStreamIdBidi(v) |
-            InitialMaxStreamIdUni(v) => {
+            InitialMaxStreamData(v)
+            | InitialMaxData(v)
+            | InitialMaxStreamIdBidi(v)
+            | InitialMaxStreamIdUni(v) => {
                 v.encode(&mut bytes);
-            },
+            }
             IdleTimeout(v) | MaxPacketSize(v) => {
                 v.encode(&mut bytes);
-            },
-            OmitConnectionId => {},
+            }
+            OmitConnectionId => {}
             StatelessResetToken(ref v) => {
                 bytes.extend_from_slice(&v);
-            },
+            }
             AckDelayExponent(v) => {
                 v.encode(&mut bytes);
-            },
+            }
         }
         ret.push((tag(param), PayloadU16::new(bytes)));
     }

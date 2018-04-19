@@ -45,35 +45,19 @@ pub struct StreamFrame {
 
 impl BufLen for StreamFrame {
     fn buf_len(&self) -> usize {
-        1 +
-            VarLen(self.id).buf_len() +
-            if self.offset > 0 {
-                VarLen(self.offset).buf_len()
-            } else {
-                0
-            } +
-            self.len.map(VarLen).buf_len() +
-            self.data.len()
+        1 + VarLen(self.id).buf_len() + if self.offset > 0 {
+            VarLen(self.offset).buf_len()
+        } else {
+            0
+        } + self.len.map(VarLen).buf_len() + self.data.len()
     }
 }
 
 impl Codec for StreamFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
-        let has_offset = if self.offset > 0 {
-            0x04
-        } else {
-            0
-        };
-        let has_len = if self.len.is_some() {
-            0x02
-        } else {
-            0
-        };
-        let is_fin = if self.fin {
-            0x01
-        } else {
-            0
-        };
+        let has_offset = if self.offset > 0 { 0x04 } else { 0 };
+        let has_len = if self.len.is_some() { 0x02 } else { 0 };
+        let is_fin = if self.fin { 0x01 } else { 0 };
         buf.put_u8(0x10 | has_offset | has_len | is_fin);
         VarLen(self.id).encode(buf);
         if self.offset > 0 {
@@ -106,11 +90,7 @@ impl Codec for StreamFrame {
             id: id,
             fin: first & 0x01 > 0,
             offset,
-            len: if first & 0x02 > 0 {
-                Some(len)
-            } else {
-                None
-            },
+            len: if first & 0x02 > 0 { Some(len) } else { None },
             data,
         }
     }
@@ -124,7 +104,6 @@ impl BufLen for PaddingFrame {
         self.0
     }
 }
-
 
 impl Codec for PaddingFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
