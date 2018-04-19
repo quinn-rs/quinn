@@ -1,7 +1,7 @@
 use bytes::{BigEndian, BufMut};
 
 use ring::{
-    aead::{self, AES_128_GCM, SealingKey},
+    aead::{self, AES_128_GCM, OpeningKey, SealingKey},
     digest::SHA256,
     hkdf,
     hmac::SigningKey,
@@ -38,6 +38,12 @@ impl PacketKey {
         let key = SealingKey::new(self.alg, &self.data[..self.split]).unwrap();
         let nonce = &self.data[self.split..];
         aead::seal_in_place(&key, nonce, ad, in_out, out_suffix_capacity).unwrap()
+    }
+
+    pub fn decrypt<'a>(&self, ad: &[u8], input: &'a mut [u8]) -> &'a [u8] {
+        let key = OpeningKey::new(self.alg, &self.data[..self.split]).unwrap();
+        let nonce = &self.data[self.split..];
+        aead::open_in_place(&key, nonce, ad, 0, input).unwrap()
     }
 }
 
