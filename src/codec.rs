@@ -167,36 +167,53 @@ pub trait Codec {
 #[cfg(test)]
 mod tests {
     use super::{Codec, VarLen};
+    use std::io::Cursor;
     #[test]
     fn test_var_len_encoding_8() {
         let num = 151_288_809_941_952_652;
         let bytes = b"\xc2\x19\x7c\x5e\xff\x14\xe8\x8c";
+
         let mut buf = Vec::new();
         VarLen::new(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
+
+        let mut read = Cursor::new(bytes);
+        assert_eq!(VarLen::decode(&mut read).val, num);
     }
     #[test]
     fn test_var_len_encoding_4() {
         let num = 494_878_333;
         let bytes = b"\x9d\x7f\x3e\x7d";
+
         let mut buf = Vec::new();
         VarLen::new(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
+
+        let mut read = Cursor::new(bytes);
+        assert_eq!(VarLen::decode(&mut read).val, num);
     }
     #[test]
     fn test_var_len_encoding_2() {
         let num = 15_293;
         let bytes = b"\x7b\xbd";
+
         let mut buf = Vec::new();
         VarLen::new(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
+
+        let mut read = Cursor::new(bytes);
+        assert_eq!(VarLen::decode(&mut read).val, num);
     }
     #[test]
     fn test_var_len_encoding_1_short() {
         let num = 37;
         let bytes = b"\x25";
+
         let mut buf = Vec::new();
         VarLen::new(num).encode(&mut buf);
         assert_eq!(bytes[..], *buf);
+
+        let mut read = Cursor::new(bytes);
+        assert_eq!(VarLen::decode(&mut read).val, num);
     }
 }
