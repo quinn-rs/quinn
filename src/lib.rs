@@ -52,6 +52,7 @@ pub fn connect(server: &str, port: u16) {
             }),
         ],
     };
+    println!("PACKET {:?}", packet);
 
     let local = "0.0.0.0:0".parse().unwrap();
     let sock = UdpSocket::bind(&local).unwrap();
