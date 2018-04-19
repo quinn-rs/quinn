@@ -28,7 +28,6 @@ use coding::{self, BufExt, BufMutExt};
 use {hkdf, frame, Frame, TransportError, StreamId, Side, Directionality, VERSION};
 use range_set::RangeSet;
 use stream::{self, Stream};
-use varint;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(usize);
@@ -301,8 +300,8 @@ impl Endpoint {
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate { ty: self.rng.gen(), source_id: destination, destination_id: source }.encode(&mut buf);
-                    buf.put_u32::<BigEndian>(0x0a1a2a3a); // reserved version
-                    buf.put_u32::<BigEndian>(VERSION); // supported version
+                    buf.write::<u32>(0x0a1a2a3a); // reserved version
+                    buf.write(VERSION); // supported version
                     self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
                     return;
                 }
@@ -691,7 +690,7 @@ impl Endpoint {
                         return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
                     }
                     while payload.has_remaining() {
-                        let version = payload.get_u32::<BigEndian>();
+                        let version = payload.get::<u32>().unwrap();
                         if version == VERSION {
                             // Our version is supported, so this packet is spurious
                             return State::Handshake(state);
@@ -1963,7 +1962,7 @@ impl Connection {
                 trace!(log, "ping");
                 pending.ping = false;
                 sent.ping = true;
-                buf.put_u8(frame::Type::PING.into());
+                buf.write(frame::Type::PING);
             }
 
             // ACK
@@ -1978,8 +1977,8 @@ impl Connection {
             if buf.len() + 9 < max_size {
                 // No need to retransmit these, so we don't save the value after encoding it.
                 if let Some((_, x)) = pending.path_response.take() {
-                    buf.put_u8(frame::Type::PATH_RESPONSE.into());
-                    buf.put_u64::<BigEndian>(x);
+                    buf.write(frame::Type::PATH_RESPONSE);
+                    buf.write(x);
                 }
             }
 
@@ -2001,7 +2000,7 @@ impl Connection {
                 if stream.is_finished() { continue; }
                 sent.stop_sending.push((id, error_code));
                 buf.write(frame::Type::STOP_SENDING);
-                varint::write(id.0, &mut buf).unwrap();
+                buf.write(id);
                 buf.write(error_code);
             }
 
@@ -2011,7 +2010,7 @@ impl Connection {
                 pending.max_data = false;
                 sent.max_data = true;
                 buf.write(frame::Type::MAX_DATA);
-                varint::write(self.local_max_data, &mut buf).unwrap();
+                buf.write_var(self.local_max_data);
             }
 
             // MAX_STREAM_DATA
@@ -2024,7 +2023,7 @@ impl Connection {
                 trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
                 buf.write(frame::Type::MAX_STREAM_DATA);
                 buf.write(id);
-                varint::write(rs.max_data, &mut buf).unwrap();
+                buf.write_var(rs.max_data);
             }
 
             // STREAM
@@ -2354,9 +2353,9 @@ impl PacketNumber {
     fn encode<W: BufMut>(&self, w: &mut W) {
         use self::PacketNumber::*;
         match *self {
-            U8(x) => w.put_u8(x),
-            U16(x) => w.put_u16::<BigEndian>(x),
-            U32(x) => w.put_u32::<BigEndian>(x),
+            U8(x) => w.write(x),
+            U16(x) => w.write(x),
+            U32(x) => w.write(x),
         }
     }
 
@@ -2389,33 +2388,33 @@ impl Header {
         use self::Header::*;
         match *self {
             Long { ty, ref source_id, ref destination_id, number } => {
-                w.put_u8(0b10000000 | ty);
-                w.put_u32::<BigEndian>(VERSION);
+                w.write(0b10000000 | ty);
+                w.write(VERSION);
                 let mut dcil = destination_id.len() as u8;
                 if dcil > 0 { dcil -= 3; }
                 let mut scil = source_id.len() as u8;
                 if scil > 0 { scil -= 3; }
-                w.put_u8(dcil << 4 | scil);
+                w.write(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
-                w.put_u16::<BigEndian>(0); // Placeholder for payload length; see `set_payload_length`
-                w.put_u32::<BigEndian>(number);
+                w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
+                w.write(number);
             }
             Short { ref id, number, key_phase } => {
                 let ty = number.ty() | 0x30
                     | if key_phase { KEY_PHASE_BIT } else { 0 };
-                w.put_u8(ty);
+                w.write(ty);
                 w.put_slice(id);
                 number.encode(w);
             }
             VersionNegotiate { ty, ref source_id, ref destination_id } => {
-                w.put_u8(0x80 | ty);
-                w.put_u32::<BigEndian>(0);
+                w.write(0x80 | ty);
+                w.write::<u32>(0);
                 let mut dcil = destination_id.len() as u8;
                 if dcil > 0 { dcil -= 3; }
                 let mut scil = source_id.len() as u8;
                 if scil > 0 { scil -= 3; }
-                w.put_u8(dcil << 4 | scil);
+                w.write(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
             }
@@ -2472,7 +2471,7 @@ impl Packet {
                     }, Bytes::new())
                 }
                 VERSION => {
-                    let len = varint::read(&mut buf).ok_or(coding::UnexpectedEnd)?;
+                    let len = buf.get_var()?;
                     let number = buf.get()?;
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, (buf.position() + len) as usize);

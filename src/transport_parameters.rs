@@ -1,5 +1,6 @@
 use bytes::{Buf, BufMut, BigEndian};
 
+use coding::{BufExt, BufMutExt};
 use {VERSION, Side};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -44,59 +45,59 @@ pub enum Error {
 impl TransportParameters {
     pub fn write<W: BufMut>(&self, w: &mut W) {
         if self.stateless_reset_token.is_some() { // We're the server
-            w.put_u32::<BigEndian>(VERSION); // Negotiated version
-            w.put_u8(8);                     // Bytes of supported versions
-            w.put_u32::<BigEndian>(0x0a1a2a3a); // Reserved version
-            w.put_u32::<BigEndian>(VERSION); // Real supported version
+            w.write::<u32>(VERSION); // Negotiated version
+            w.write::<u8>(8);                     // Bytes of supported versions
+            w.write::<u32>(0x0a1a2a3a); // Reserved version
+            w.write::<u32>(VERSION); // Real supported version
         } else {
-            w.put_u32::<BigEndian>(VERSION); // Initially requested version
+            w.write::<u32>(VERSION); // Initially requested version
         }
         
         let mut buf = Vec::with_capacity(22);
 
-        buf.put_u16::<BigEndian>(0x0000);
-        buf.put_u16::<BigEndian>(4);
-        buf.put_u32::<BigEndian>(self.initial_max_stream_data);
+        buf.write::<u16>(0x0000);
+        buf.write::<u16>(4);
+        buf.write::<u32>(self.initial_max_stream_data);
 
-        buf.put_u16::<BigEndian>(0x0001);
-        buf.put_u16::<BigEndian>(4);
-        buf.put_u32::<BigEndian>(self.initial_max_data);
+        buf.write::<u16>(0x0001);
+        buf.write::<u16>(4);
+        buf.write::<u32>(self.initial_max_data);
 
-        buf.put_u16::<BigEndian>(0x0003);
-        buf.put_u16::<BigEndian>(2);
-        buf.put_u16::<BigEndian>(self.idle_timeout);
+        buf.write::<u16>(0x0003);
+        buf.write::<u16>(2);
+        buf.write::<u16>(self.idle_timeout);
 
         if let Some(ref x) = self.stateless_reset_token {
-            buf.put_u16::<BigEndian>(0x0006);
-            buf.put_u16::<BigEndian>(16);
+            buf.write::<u16>(0x0006);
+            buf.write::<u16>(16);
             buf.put_slice(x);
         }
 
         if self.initial_max_streams_bidi != 0 {
-            buf.put_u16::<BigEndian>(0x0002);
-            buf.put_u16::<BigEndian>(2);
-            buf.put_u16::<BigEndian>(self.initial_max_streams_bidi);
+            buf.write::<u16>(0x0002);
+            buf.write::<u16>(2);
+            buf.write::<u16>(self.initial_max_streams_bidi);
         }
 
         if self.initial_max_streams_uni != 0 {
-            buf.put_u16::<BigEndian>(0x0008);
-            buf.put_u16::<BigEndian>(2);
-            buf.put_u16::<BigEndian>(self.initial_max_streams_uni);
+            buf.write::<u16>(0x0008);
+            buf.write::<u16>(2);
+            buf.write::<u16>(self.initial_max_streams_uni);
         }
 
         if let Some(x) = self.max_packet_size {
-            buf.put_u16::<BigEndian>(0x0005);
-            buf.put_u16::<BigEndian>(2);
-            buf.put_u16::<BigEndian>(x);
+            buf.write::<u16>(0x0005);
+            buf.write::<u16>(2);
+            buf.write::<u16>(x);
         }
 
         if self.ack_delay_exponent != DEFAULT_ACK_DELAY_EXPONENT {
-            buf.put_u16::<BigEndian>(0x0007);
-            buf.put_u16::<BigEndian>(1);
-            buf.put_u8(self.ack_delay_exponent);
+            buf.write::<u16>(0x0007);
+            buf.write::<u16>(1);
+            buf.write::<u8>(self.ack_delay_exponent);
         }
 
-        w.put_u16::<BigEndian>(buf.len() as u16);
+        w.write::<u16>(buf.len() as u16);
         w.put_slice(&buf);
     }
 
@@ -104,18 +105,18 @@ impl TransportParameters {
         if side == Side::Server {
             if r.remaining() < 26 { return Err(Error::Malformed); }
             // We only support one version, so there is no validation to do here.
-            r.get_u32::<BigEndian>();
+            r.get::<u32>().unwrap();
         } else {
             if r.remaining() < 31 { return Err(Error::Malformed); }
             let negotiated = r.get_u32::<BigEndian>();
             if negotiated != VERSION { return Err(Error::VersionNegotiation); }
-            let supported_bytes = r.get_u8();
+            let supported_bytes = r.get::<u8>().unwrap();
             if supported_bytes < 4 || supported_bytes > 252 || supported_bytes % 4 != 0 {
                 return Err(Error::Malformed);
             }
             let mut found = false;
             for _ in 0..(supported_bytes / 4) {
-                found |= r.get_u32::<BigEndian>() == negotiated;
+                found |= r.get::<u32>().unwrap() == negotiated;
             }
             if !found { return Err(Error::VersionNegotiation); }
         }
@@ -127,27 +128,27 @@ impl TransportParameters {
         let mut initial_max_streams_uni = false;
         let mut ack_delay_exponent = false;
         let mut params = Self::default();
-        let params_len = r.get_u16::<BigEndian>();
+        let params_len = r.get::<u16>().unwrap();
         if params_len as usize != r.remaining() { return Err(Error::Malformed); }
         while r.has_remaining() {
             if r.remaining() < 4 { return Err(Error::Malformed); }
-            let id = r.get_u16::<BigEndian>();
-            let len = r.get_u16::<BigEndian>();
+            let id = r.get::<u16>().unwrap();
+            let len = r.get::<u16>().unwrap();
             if r.remaining() < len as usize { return Err(Error::Malformed); }
             match id {
                 0x0000 => {
                     if len != 4 || initial_max_stream_data { return Err(Error::Malformed); }
-                    params.initial_max_stream_data = r.get_u32::<BigEndian>();
+                    params.initial_max_stream_data = r.get::<u32>().unwrap();
                     initial_max_stream_data = true;
                 }
                 0x0001 => {
                     if len != 4 || initial_max_data { return Err(Error::Malformed); }
-                    params.initial_max_data = r.get_u32::<BigEndian>();
+                    params.initial_max_data = r.get::<u32>().unwrap();
                     initial_max_data = true;
                 }
                 0x0003 => {
                     if len != 2 || idle_timeout { return Err(Error::Malformed); }
-                    params.idle_timeout = r.get_u16::<BigEndian>();
+                    params.idle_timeout = r.get::<u16>().unwrap();
                     idle_timeout = true;
                 }
                 0x0006 => {
@@ -158,21 +159,21 @@ impl TransportParameters {
                 }
                 0x0002 => {
                     if len != 2 || initial_max_streams_bidi { return Err(Error::Malformed); }
-                    params.initial_max_streams_bidi = r.get_u16::<BigEndian>();
+                    params.initial_max_streams_bidi = r.get::<u16>().unwrap();
                     initial_max_streams_bidi = true;
                 }
                 0x0008 => {
                     if len != 2 || initial_max_streams_uni { return Err(Error::Malformed); }
-                    params.initial_max_streams_uni = r.get_u16::<BigEndian>();
+                    params.initial_max_streams_uni = r.get::<u16>().unwrap();
                     initial_max_streams_uni = true;
                 }
                 0x0005 => {
                     if len != 2 || params.max_packet_size.is_some() { return Err(Error::Malformed); }
-                    params.max_packet_size = Some(r.get_u16::<BigEndian>());
+                    params.max_packet_size = Some(r.get::<u16>().unwrap());
                 }
                 0x0007 => {
                     if len != 1 || ack_delay_exponent { return Err(Error::Malformed); }
-                    params.ack_delay_exponent = r.get_u8();
+                    params.ack_delay_exponent = r.get::<u8>().unwrap();
                     ack_delay_exponent = true;
                     if params.ack_delay_exponent > 20 { return Err(Error::IllegalValue); }
                 }
