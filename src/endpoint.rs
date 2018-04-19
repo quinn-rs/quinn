@@ -1903,15 +1903,12 @@ impl Connection {
         };
 
         let mut buf = Vec::new();
+        let mut sent = Retransmits::default();
         let acks;
-        let mut streams = VecDeque::new();
-        let mut ping = false;
-        let mut max_data = false;
         let number;
         let ack_only;
         let is_initial;
         let header_len;
-        let mut max_stream_data = FnvHashSet::default();
 
         {
             let pending;
@@ -1965,7 +1962,7 @@ impl Connection {
             if pending.ping {
                 trace!(log, "ping");
                 pending.ping = false;
-                ping = true;
+                sent.ping = true;
                 buf.put_u8(frame::Type::PING.into());
             }
 
@@ -1990,8 +1987,7 @@ impl Connection {
             while buf.len() + 19 < max_size {
                 let (id, error_code) = if let Some(x) = pending.rst_stream.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x } else { continue; };
-                // TODO: Retransmit
-                trace!(log, "rst_stream");
+                sent.rst_stream.push((id, error_code));
                 frame::RstStream {
                     id, error_code,
                     final_offset: stream.send().unwrap().offset,
@@ -2003,7 +1999,7 @@ impl Connection {
                 let (id, error_code) = if let Some(x) = pending.stop_sending.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
                 if stream.is_finished() { continue; }
-                // TODO: Retransmit
+                sent.stop_sending.push((id, error_code));
                 buf.write(frame::Type::STOP_SENDING);
                 varint::write(id.0, &mut buf).unwrap();
                 buf.write(error_code);
@@ -2013,7 +2009,7 @@ impl Connection {
             if pending.max_data && buf.len() + 9 < max_size {
                 trace!(log, "MAX_DATA"; "value" => self.local_max_data);
                 pending.max_data = false;
-                max_data = true;
+                sent.max_data = true;
                 buf.write(frame::Type::MAX_DATA);
                 varint::write(self.local_max_data, &mut buf).unwrap();
             }
@@ -2024,7 +2020,7 @@ impl Connection {
                 pending.max_stream_data.remove(&id);
                 let rs = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
                 if rs.is_finished() { continue; }
-                max_stream_data.insert(id);
+                sent.max_stream_data.insert(id);
                 trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
                 buf.write(frame::Type::MAX_STREAM_DATA);
                 buf.write(id);
@@ -2047,7 +2043,7 @@ impl Connection {
                     data: data,
                 };
                 frame.encode(true, &mut buf);
-                streams.push_back(frame);
+                sent.stream.push_back(frame);
                 if !stream.data.is_empty() {
                     let stream = frame::Stream { offset: stream.offset + len as u64, ..stream };
                     pending.stream.push_front(stream);
@@ -2067,7 +2063,7 @@ impl Connection {
             acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
             handshake: is_handshake,
-            retransmits: Retransmits { stream: streams, ping, max_data, max_stream_data, ..Retransmits::default() }
+            retransmits: sent,
         });
 
         // If we have any acks, we just sent them; don't immediately resend.  Setting this even if ack_only is false
