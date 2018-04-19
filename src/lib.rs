@@ -46,7 +46,7 @@ pub fn connect(server: &str, port: u16) {
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
-                offset: None,
+                offset: 0,
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),

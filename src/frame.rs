@@ -28,7 +28,7 @@ impl Codec for Frame {
 pub struct StreamFrame {
     pub id: u64,
     pub fin: bool,
-    pub offset: Option<u64>,
+    pub offset: u64,
     pub len: Option<u64>,
     pub data: Vec<u8>,
 }
@@ -37,7 +37,11 @@ impl BufLen for StreamFrame {
     fn buf_len(&self) -> usize {
         1 +
             VarLen::new(self.id).buf_len() +
-            self.offset.map(VarLen::new).buf_len() +
+            if self.offset > 0 {
+                VarLen::new(self.offset).buf_len()
+            } else {
+                0
+            } +
             self.len.map(VarLen::new).buf_len() +
             self.data.len()
     }
@@ -45,7 +49,7 @@ impl BufLen for StreamFrame {
 
 impl Codec for StreamFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
-        let has_offset = if self.offset.is_some() {
+        let has_offset = if self.offset > 0 {
             0x04
         } else {
             0
@@ -62,8 +66,8 @@ impl Codec for StreamFrame {
         };
         buf.put_u8(0x10 | has_offset | has_len | is_fin);
         VarLen::new(self.id).encode(buf);
-        if let Some(offset) = self.offset {
-            VarLen::new(offset).encode(buf);
+        if self.offset > 0 {
+            VarLen::new(self.offset).encode(buf);
         }
         if let Some(len) = self.len {
             VarLen::new(len).encode(buf);
