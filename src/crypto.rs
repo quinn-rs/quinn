@@ -21,7 +21,11 @@ impl PacketKey {
     }
 
     pub fn for_client_handshake(conn_id: u64) -> Self {
-        let shared_key = SigningKey::new(&SHA256, &client_handshake_secret(conn_id));
+        Self::build_handshake_key(conn_id, b"client hs")
+    }
+
+    fn build_handshake_key(conn_id: u64, label: &[u8]) -> Self {
+        let shared_key = SigningKey::new(&SHA256, &expanded_handshake_secret(conn_id, label));
         let mut res = PacketKey::new(&AES_128_GCM);
         qhkdf_expand(&shared_key, b"key", &mut res.data[..res.split]);
         qhkdf_expand(&shared_key, b"iv", &mut res.data[res.split..]);
@@ -70,10 +74,10 @@ impl PacketKey {
     }
 }
 
-fn client_handshake_secret(conn_id: u64) -> Vec<u8> {
+fn expanded_handshake_secret(conn_id: u64, label: &[u8]) -> Vec<u8> {
     let prk = handshake_secret(conn_id);
     let mut out = vec![0u8; SHA256.output_len];
-    qhkdf_expand(&prk, b"client hs", &mut out);
+    qhkdf_expand(&prk, label, &mut out);
     out
 }
 
@@ -101,7 +105,7 @@ mod tests {
     #[test]
     fn test_handshake_client() {
         let conn_id = 0x8394c8f03e515708;
-        let client_handshake_secret = super::client_handshake_secret(conn_id);
+        let client_handshake_secret = super::expanded_handshake_secret(conn_id, b"client hs");
         let expected = b"\x83\x55\xf2\x1a\x3d\x8f\x83\xec\xb3\xd0\xf9\x71\x08\xd3\xf9\x5e\
                          \x0f\x65\xb4\xd8\xae\x88\xa0\x61\x1e\xe4\x9d\xb0\xb5\x23\x59\x1d";
         assert_eq!(&client_handshake_secret, expected);
