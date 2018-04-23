@@ -20,7 +20,7 @@ impl Client {
             .root_store
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         config.versions = vec![ProtocolVersion::TLSv1_3];
-        config.alpn_protocols = vec!["hq-10".into()];
+        config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
         let tls_config = Arc::new(config);
 
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
@@ -91,3 +91,5 @@ fn tag(param: &TransportParameter) -> u16 {
         InitialMaxStreamIdUni(_) => 8,
     }
 }
+
+const ALPN_PROTOCOL: &'static str = "hq-10";
