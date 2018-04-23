@@ -110,7 +110,7 @@ impl Future for Server {
             let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             self.in_buf.truncate(size);
             let packet = Packet::decode(&mut self.in_buf);
-            let conn_id = packet.header.conn_id().unwrap();
+            let conn_id = packet.conn_id().unwrap();
             match self.connections.entry(conn_id) {
                 Entry::Occupied(_) => {
                     println!("connection found for {}", conn_id);
@@ -144,11 +144,8 @@ struct Connection {
 
 impl Connection {
     fn received(&mut self, p: &Packet) -> Option<Packet> {
-        match p.header {
-            Header::Long {
-                ptype: LongType::Initial,
-                ..
-            } => self.handle_initial(p),
+        match p.ptype() {
+            Some(LongType::Initial) => self.handle_initial(p),
             _ => panic!("unhandled packet {:?}", p),
         }
     }

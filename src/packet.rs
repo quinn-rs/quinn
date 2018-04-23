@@ -13,9 +13,20 @@ pub struct Packet {
 }
 
 impl Packet {
+    pub fn ptype(&self) -> Option<LongType> {
+        match self.header {
+            Header::Short { .. } => None,
+            Header::Long { ptype, .. } => Some(ptype),
+        }
+    }
+
+    pub fn conn_id(&self) -> Option<u64> {
+        self.header.conn_id()
+    }
+
     pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
         let unpadded_len = self.buf_len() + key.algorithm().tag_len();
-        let len = if self.header.ptype() == Some(LongType::Initial) && unpadded_len < 1200 {
+        let len = if self.ptype() == Some(LongType::Initial) && unpadded_len < 1200 {
             1200
         } else {
             unpadded_len
@@ -110,14 +121,7 @@ pub enum Header {
 }
 
 impl Header {
-    fn ptype(&self) -> Option<LongType> {
-        match *self {
-            Header::Short { .. } => None,
-            Header::Long { ptype, .. } => Some(ptype),
-        }
-    }
-
-    pub fn conn_id(&self) -> Option<u64> {
+    fn conn_id(&self) -> Option<u64> {
         match *self {
             Header::Short { conn_id, .. } => conn_id,
             Header::Long { conn_id, .. } => Some(conn_id),
