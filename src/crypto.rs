@@ -24,6 +24,10 @@ impl PacketKey {
         Self::build_handshake_key(conn_id, b"client hs")
     }
 
+    pub fn for_server_handshake(conn_id: u64) -> Self {
+        Self::build_handshake_key(conn_id, b"server hs")
+    }
+
     fn build_handshake_key(conn_id: u64, label: &[u8]) -> Self {
         let shared_key = SigningKey::new(&SHA256, &expanded_handshake_secret(conn_id, label));
         let mut res = PacketKey::new(&AES_128_GCM);
