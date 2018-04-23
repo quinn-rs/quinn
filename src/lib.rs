@@ -110,6 +110,8 @@ impl Future for Server {
             let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             self.in_buf.truncate(size);
             let packet = Packet::decode(&mut self.in_buf);
+            self.in_buf.resize(1600, 0);
+
             let conn_id = packet.conn_id().unwrap();
             match self.connections.entry(conn_id) {
                 Entry::Occupied(_) => {
