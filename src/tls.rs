@@ -1,6 +1,6 @@
 use rustls::internal::msgs::{base::PayloadU16, codec::Codec, handshake::ClientExtension,
                              quic::{ClientTransportParameters, Parameter}};
-use rustls::{ClientConfig, ClientSession, ProtocolVersion, Session};
+use rustls::{ClientConfig, ClientSession, NoClientAuth, ProtocolVersion};
 
 use std::sync::Arc;
 
@@ -8,6 +8,8 @@ use types::TransportParameter;
 
 use webpki::DNSNameRef;
 use webpki_roots;
+
+pub use rustls::{Certificate, PrivateKey, ServerConfig, ServerSession, Session};
 
 pub struct Client {
     pub session: ClientSession,
@@ -47,6 +49,13 @@ impl Client {
         self.session.write_tls(&mut buf).unwrap();
         buf
     }
+}
+
+pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
+    let mut config = ServerConfig::new(NoClientAuth::new());
+    config.set_protocols(&[ALPN_PROTOCOL.into()]);
+    config.set_single_cert(cert_chain, key);
+    config
 }
 
 fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {

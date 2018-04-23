@@ -117,7 +117,7 @@ impl Header {
         }
     }
 
-    fn conn_id(&self) -> Option<u64> {
+    pub fn conn_id(&self) -> Option<u64> {
         match *self {
             Header::Short { conn_id, .. } => conn_id,
             Header::Long { conn_id, .. } => Some(conn_id),
