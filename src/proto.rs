@@ -15,7 +15,7 @@ pub struct Packet {
 impl Packet {
     pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
         let unpadded_len = self.buf_len() + key.algorithm().tag_len();
-        let len = if unpadded_len < 1200 {
+        let len = if self.header.ptype() == Some(LongType::Initial) && unpadded_len < 1200 {
             1200
         } else {
             unpadded_len
@@ -110,6 +110,13 @@ pub enum Header {
 }
 
 impl Header {
+    pub fn ptype(&self) -> Option<LongType> {
+        match *self {
+            Header::Short { .. } => None,
+            Header::Long { ptype, .. } => Some(ptype),
+        }
+    }
+
     fn conn_id(&self) -> Option<u64> {
         match *self {
             Header::Short { conn_id, .. } => conn_id,
@@ -209,7 +216,7 @@ impl Codec for Header {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LongType {
     Initial = 0x7f,
     Retry = 0x7e,
