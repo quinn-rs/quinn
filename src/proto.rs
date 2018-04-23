@@ -110,7 +110,7 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn ptype(&self) -> Option<LongType> {
+    fn ptype(&self) -> Option<LongType> {
         match *self {
             Header::Short { .. } => None,
             Header::Long { ptype, .. } => Some(ptype),
