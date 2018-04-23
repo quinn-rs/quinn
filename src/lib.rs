@@ -18,7 +18,7 @@ use tls::{ServerConfig, ServerSession, Session};
 use self::frame::{Frame, StreamFrame};
 use self::proto::{DRAFT_10, Header, LongType, Packet};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use std::io::{self, Cursor};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
@@ -114,7 +114,7 @@ impl Future for Server {
             match self.connections.entry(conn_id) {
                 Entry::Occupied(_) => {
                     println!("connection found for {}", conn_id);
-                },
+                }
                 Entry::Vacant(entry) => {
                     let conn = entry.insert(Connection {
                         local_id: self.rng.gen(),
@@ -129,7 +129,7 @@ impl Future for Server {
                         rsp.encode(&key, &mut self.out_buf);
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &conn.addr));
                     }
-                },
+                }
             };
         }
     }
@@ -145,7 +145,10 @@ struct Connection {
 impl Connection {
     fn received(&mut self, p: &Packet) -> Option<Packet> {
         match p.header {
-            Header::Long { ptype: LongType::Initial, .. } => self.handle_initial(p),
+            Header::Long {
+                ptype: LongType::Initial,
+                ..
+            } => self.handle_initial(p),
             _ => panic!("unhandled packet {:?}", p),
         }
     }
@@ -165,7 +168,9 @@ impl Connection {
         debug_assert_eq!(did_read, frame.data.len());
         self.tls.process_new_packets().expect("TLS errors found");
         let mut handshake = Vec::new();
-        let wrote = self.tls.write_tls(&mut handshake).expect("TLS errors found");
+        let wrote = self.tls
+            .write_tls(&mut handshake)
+            .expect("TLS errors found");
         println!("wrote handshake of {} bytes", wrote);
 
         Some(Packet {
