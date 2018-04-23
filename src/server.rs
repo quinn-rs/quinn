@@ -29,8 +29,8 @@ impl Server {
         Server {
             socket: UdpSocket::bind(&addr).unwrap(),
             tls_config: Arc::new(tls_config),
-            in_buf: vec![0u8; 1600],
-            out_buf: vec![0u8; 1600],
+            in_buf: vec![0u8; 65536],
+            out_buf: vec![0u8; 65536],
             rng: thread_rng(),
             connections: HashMap::new(),
         }
