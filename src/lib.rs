@@ -16,7 +16,7 @@ use rand::{thread_rng, Rng, ThreadRng};
 use tls::{ServerConfig, ServerSession, Session};
 
 use self::frame::{Frame, StreamFrame};
-use self::proto::{DRAFT_10, Header, LongType, Packet};
+use self::packet::{DRAFT_10, Header, LongType, Packet};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io::{self, Cursor};
@@ -28,7 +28,7 @@ use tokio::net::UdpSocket;
 mod codec;
 mod crypto;
 mod frame;
-mod proto;
+mod packet;
 pub mod tls;
 mod types;
 
