@@ -1,7 +1,9 @@
-use rustls::internal::msgs::{base::PayloadU16, codec::Codec, handshake::ClientExtension,
-                             quic::{ClientTransportParameters, Parameter}};
-use rustls::{ClientConfig, ClientSession, NoClientAuth, ProtocolVersion};
+use rustls::internal::msgs::{base::PayloadU16, codec::Codec};
+use rustls::internal::msgs::quic::{ClientTransportParameters, Parameter};
+use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
+use rustls::quic::ClientSession;
 
+use std::io;
 use std::sync::Arc;
 
 use types::TransportParameter;
@@ -16,38 +18,29 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(hostname: &str) -> Client {
+    pub fn new() -> Client {
         let mut config = ClientConfig::new();
         config
             .root_store
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         config.versions = vec![ProtocolVersion::TLSv1_3];
         config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
-        let tls_config = Arc::new(config);
-
-        let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
         Client {
-            session: ClientSession::with_handshake_exts(
-                &tls_config,
-                pki_server_name,
-                vec![
-                    ClientExtension::TransportParameters(ClientTransportParameters {
-                        initial_version: 1,
-                        parameters: encode_transport_parameters(&vec![
-                            TransportParameter::InitialMaxStreamData(131072),
-                            TransportParameter::InitialMaxData(1048576),
-                            TransportParameter::IdleTimeout(300),
-                        ]),
-                    }),
-                ],
-            ),
+            session: ClientSession::new(&Arc::new(config)),
         }
     }
 
-    pub fn get_handshake(&mut self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.session.write_tls(&mut buf).unwrap();
-        buf
+    pub fn get_handshake(&mut self, hostname: &str) -> io::Result<Vec<u8>> {
+        let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
+        let params = ClientTransportParameters {
+            initial_version: 1,
+            parameters: encode_transport_parameters(&vec![
+                TransportParameter::InitialMaxStreamData(131072),
+                TransportParameter::InitialMaxData(1048576),
+                TransportParameter::IdleTimeout(300),
+            ]),
+        };
+        self.session.get_handshake(pki_server_name, params)
     }
 }
 

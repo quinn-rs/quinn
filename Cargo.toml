@@ -10,6 +10,6 @@ tokio = "0.1"
 tokio-io = "0.1"
 rand = "0.4"
 ring = "0.13.0-alpha"
-rustls = { path = "../rustls" }
+rustls = { path = "../rustls", features = ["quic"] }
 webpki = "0.18.0-alpha"
 webpki-roots = "0.14"

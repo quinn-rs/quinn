@@ -31,12 +31,12 @@ pub mod tls;
 mod types;
 
 pub fn connect(server: &str, port: u16) {
-    let mut client = tls::Client::new(server);
+    let mut client = tls::Client::new();
     let mut rng = thread_rng();
     let conn_id: u64 = rng.gen();
     let number: u32 = rng.gen();
 
-    let handshake = client.get_handshake();
+    let handshake = client.get_handshake(server).unwrap();
     let packet = Packet {
         header: Header::Long {
             ptype: LongType::Initial,
