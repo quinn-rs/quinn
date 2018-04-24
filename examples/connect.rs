@@ -9,6 +9,7 @@ extern crate slog_term;
 use std::net::{UdpSocket, SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::time::{Instant, Duration};
 use std::io::{self, Write};
+use std::str;
 
 use failure::Error;
 use quicr::{Endpoint, Config, Io, Timer, Event, Directionality, ReadError};
@@ -37,7 +38,6 @@ type Result<T> = ::std::result::Result<T, Error>;
 
 fn run(log: Logger) -> Result<()> {
     let remote = ::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?;
-    let remote = normalize(remote.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?);
     let mut ctx = Context::new(log, remote)?;
     ctx.run()?;
     Ok(())
@@ -47,6 +47,7 @@ struct Context {
     log: Logger,
     socket: UdpSocket,
     client: Endpoint,
+    remote_host: String,
     remote: SocketAddrV6,
     loss_timer: Option<u64>,
     close_timer: Option<u64>,
@@ -54,9 +55,15 @@ struct Context {
 }
 
 impl Context {
-    fn new(log: Logger, remote: SocketAddrV6) -> Result<Self> {
+    fn new(log: Logger, remote_host: String) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
+        let mut protocols = Vec::new();
+        const HTTP_0_9: &[u8] = b"HTTP/0.9";
+        protocols.push(HTTP_0_9.len() as u8);
+        protocols.extend_from_slice(HTTP_0_9);
+        let remote = normalize(remote_host.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?);
         let config = Config {
+            protocols,
             //receive_window: 256,
             //stream_receive_window: 256,
             ..Config::default()
@@ -64,7 +71,7 @@ impl Context {
         Ok(Self {
             socket,
             client: Endpoint::new(log.clone(), config, rand::random(), None)?,
-            log, remote,
+            log, remote_host, remote,
             loss_timer: None,
             close_timer: None,
             idle_timer: None,
@@ -73,17 +80,17 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(self.remote);
+        let c = self.client.connect(self.remote, Some(self.remote_host.as_bytes()));
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;
         let mut recvd = 0;
         loop {
             while let Some(e) = self.client.poll() { match e {
-                Event::Connected(_) => {
-                    info!(self.log, "connected, submitting request");
+                Event::Connected { connection: _, protocol } => {
+                    info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
-                    self.client.write(c, s, b"GET /doc-10000.html\r\n"[..].into()).unwrap();
+                    self.client.write(c, s, b"GET /index.html\r\n"[..].into()).unwrap();
                     self.client.finish(c, s);
                 }
                 Event::ConnectionLost { reason, .. } => {

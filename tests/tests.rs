@@ -151,10 +151,10 @@ fn connect() {
     let log = logger();
     let mut pair = Pair::new(log, Config::default(), Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server_addr);
+    let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    assert_matches!(pair.server.poll(), Some(Event::Connected(_)));
-    assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
+    assert_matches!(pair.server.poll(), Some(Event::Connected { .. }));
+    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
     const REASON: &[u8] = b"whee";
 
     info!(pair.log, "closing");
@@ -170,10 +170,10 @@ fn connect() {
 fn stateless_reset() {
     let log = logger();
     let mut pair = Pair::new(log, Config::default(), Config::default());
-    let client_conn = pair.client.connect(pair.server_addr);
+    let client_conn = pair.client.connect(pair.server_addr, None);
     info!(pair.log, "connecting");
     pair.drive();
-    assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
+    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
@@ -193,10 +193,10 @@ fn reset_stream() {
     let log = logger();
     let mut pair = Pair::new(log, Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server_addr);
+    let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    let server_conn = if let Some(Event::Connected(c)) = pair.server.poll() { c } else { panic!("server didn't connect"); };
-    assert_matches!(pair.client.poll(), Some(Event::Connected(x)) if x == client_conn);
+    let server_conn = if let Some(Event::Connected { connection: c, .. }) = pair.server.poll() { c } else { panic!("server didn't connect"); };
+    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     info!(pair.log, "resetting stream");

@@ -1,5 +1,5 @@
 use std::collections::{hash_map, VecDeque, BTreeMap};
-use std::{io, cmp, fmt, mem};
+use std::{io, cmp, fmt, mem, str};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
 
@@ -73,6 +73,9 @@ pub struct Config {
     pub minimum_window: u64,
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
+
+    /// List of permissible protocols
+    pub protocols: Vec<u8>,
 }
 
 pub struct ListenConfig<'a> {
@@ -101,6 +104,7 @@ impl Default for Config {
         initial_window: 10 * 1460,
         minimum_window: 2 * 1460,
         loss_reduction_factor: 0x8000, // 1/2
+        protocols: Vec::new(),
     }}
 }
 
@@ -246,6 +250,18 @@ impl Endpoint {
             tls.check_private_key()?;
         }
 
+        if !config.protocols.is_empty() {
+            let config = config.clone();
+            tls.set_alpn_protos(&config.protocols)?;
+            tls.set_alpn_select_callback(move |_ssl, protos| {
+                if let Some(x) = ssl::select_next_proto(&config.protocols, protos) {
+                    Ok(x)
+                } else {
+                    Err(ssl::AlpnError::ALERT_FATAL)
+                }
+            });
+        }
+
         let tls = tls.build();
 
         Ok(Self {
@@ -382,13 +398,14 @@ impl Endpoint {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, remote: SocketAddrV6) -> ConnectionHandle {
+    pub fn connect(&mut self, remote: SocketAddrV6, hostname: Option<&[u8]>) -> ConnectionHandle {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, 18);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
+        if let Some(hostname) = hostname { tls.set_hostname(str::from_utf8(hostname).expect("malformed hostname")).unwrap(); }
         let mut tls = match tls.connect(MemoryStream::new()) {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
@@ -643,7 +660,10 @@ impl Endpoint {
                             } else {
                                 self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into());
                             }
-                            self.events.push_back(Event::Connected(conn));
+                            self.events.push_back(Event::Connected {
+                                connection: conn,
+                                protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
+                            });
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
                             self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
                             self.connections[conn.0].pending.max_data = true;
@@ -2026,6 +2046,22 @@ impl Connection {
                 buf.write_var(rs.max_data);
             }
 
+            // MAX_STREAM_ID uni
+            if pending.max_uni_stream_id && buf.len() + 9 < max_size {
+                pending.max_uni_stream_id = false;
+                sent.max_uni_stream_id = true;
+                buf.write(frame::Type::MAX_STREAM_ID);
+                buf.write(StreamId::new(!self.side, Directionality::Uni, self.max_remote_uni_stream));
+            }
+
+            // MAX_STREAM_ID bi
+            if pending.max_bi_stream_id && buf.len() + 9 < max_size {
+                pending.max_bi_stream_id = false;
+                sent.max_bi_stream_id = true;
+                buf.write(frame::Type::MAX_STREAM_ID);
+                buf.write(StreamId::new(!self.side, Directionality::Bi, self.max_remote_bi_stream));
+            }
+
             // STREAM
             while buf.len() + 25 < max_size {
                 let mut stream = if let Some(x) = pending.stream.pop_front() { x } else { break; };
@@ -2153,6 +2189,18 @@ impl Connection {
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
                     e.remove_entry();
+                    if id.initiator() != self.side {
+                        match id.directionality() {
+                            Directionality::Uni => {
+                                self.max_remote_uni_stream += 1;
+                                self.pending.max_uni_stream_id = true;
+                            }
+                            Directionality::Bi => {
+                                self.max_remote_bi_stream += 1;
+                                self.pending.max_bi_stream_id = true;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2656,7 +2704,10 @@ lazy_static! {
 #[derive(Debug)]
 pub enum Event {
     /// A connection was successfully established.
-    Connected(ConnectionHandle),
+    Connected {
+        connection: ConnectionHandle,
+        protocol: Option<Box<[u8]>>,
+    },
     /// A connection was lost.
     ConnectionLost {
         connection: ConnectionHandle,
@@ -2716,7 +2767,7 @@ pub enum ConnectionError {
     #[fail(display = "{}", error_code)]
     TransportError { error_code: TransportError },
     /// The peer closed the connection automatically.
-    #[fail(display = "closed by peer: {}", reason)]
+    #[fail(display = "peer detected an error: {}", reason)]
     ConnectionClosed { reason: frame::ConnectionClose },
     /// The peer closed the connection at the peer application's request.
     #[fail(display = "closed by peer application: {}", reason)]
