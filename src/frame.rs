@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Frame {
     Padding(PaddingFrame),
     Stream(StreamFrame),
@@ -34,7 +34,7 @@ impl Codec for Frame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct StreamFrame {
     pub id: u64,
     pub fin: bool,
@@ -96,7 +96,7 @@ impl Codec for StreamFrame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PaddingFrame(pub usize);
 
 impl BufLen for PaddingFrame {
