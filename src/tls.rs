@@ -1,5 +1,5 @@
 use rustls::internal::msgs::{base::PayloadU16, codec::Codec};
-use rustls::internal::msgs::quic::{ClientTransportParameters, Parameter};
+use rustls::internal::msgs::quic::ClientTransportParameters;
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
 use rustls::quic::ClientSession;
 
@@ -11,7 +11,9 @@ use types::TransportParameter;
 use webpki::DNSNameRef;
 use webpki_roots;
 
-pub use rustls::{Certificate, PrivateKey, ServerConfig, ServerSession, Session};
+pub use rustls::internal::msgs::quic::{Parameter, ServerTransportParameters};
+pub use rustls::{Certificate, PrivateKey, ServerConfig, Session};
+pub use rustls::quic::ServerSession;
 
 pub struct Client {
     pub session: ClientSession,
@@ -51,7 +53,7 @@ pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> Ser
     config
 }
 
-fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {
+pub fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {
     use self::TransportParameter::*;
     let mut ret = Vec::new();
     for param in params {

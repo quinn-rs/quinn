@@ -5,10 +5,11 @@ use rand::{thread_rng, Rng, ThreadRng};
 use crypto::PacketKey;
 use frame::{Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet};
-use tls::{ServerConfig, ServerSession, Session};
+use types::TransportParameter;
+use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
 
 use std::collections::{HashMap, hash_map::Entry};
-use std::io::{self, Cursor};
+use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
@@ -62,7 +63,18 @@ impl Future for Server {
                         local_id: self.rng.gen(),
                         local_pn: self.rng.gen(),
                         addr: addr.clone(),
-                        tls: ServerSession::new(&self.tls_config),
+                        tls: ServerSession::new(
+                            &self.tls_config,
+                            ServerTransportParameters {
+                                negotiated_version: DRAFT_10,
+                                supported_versions: vec![DRAFT_10],
+                                parameters: tls::encode_transport_parameters(&vec![
+                                    TransportParameter::InitialMaxStreamData(131072),
+                                    TransportParameter::InitialMaxData(1048576),
+                                    TransportParameter::IdleTimeout(300),
+                                ]),
+                            },
+                        ),
                     });
 
                     if let Some(rsp) = conn.received(&packet) {
@@ -102,15 +114,7 @@ impl Connection {
         self.local_id += 1;
         let number = self.local_pn;
         self.local_pn += 1;
-        let mut read = Cursor::new(&frame.data);
-        let did_read = self.tls.read_tls(&mut read).expect("should read data");
-        debug_assert_eq!(did_read, frame.data.len());
-        self.tls.process_new_packets().expect("TLS errors found");
-        let mut handshake = Vec::new();
-        let wrote = self.tls
-            .write_tls(&mut handshake)
-            .expect("TLS errors found");
-        println!("wrote handshake of {} bytes", wrote);
+        let handshake = self.tls.get_handshake(&frame.data).unwrap();
 
         Some(Packet {
             header: Header::Long {
