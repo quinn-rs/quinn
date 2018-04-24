@@ -24,6 +24,10 @@ impl Packet {
         self.header.conn_id()
     }
 
+    pub fn number(&self) -> u32 {
+        self.header.number()
+    }
+
     pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
         let unpadded_len = self.buf_len() + key.algorithm().tag_len();
         let len = if self.ptype() == Some(LongType::Initial) && unpadded_len < 1200 {

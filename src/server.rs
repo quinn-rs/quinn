@@ -3,7 +3,7 @@ use futures::{Future, Poll};
 use rand::{thread_rng, Rng, ThreadRng};
 
 use crypto::PacketKey;
-use frame::{Frame, StreamFrame};
+use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet};
 use types::TransportParameter;
 use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
@@ -124,6 +124,11 @@ impl Connection {
                 number,
             },
             payload: vec![
+                Frame::Ack(AckFrame {
+                    largest: p.number(),
+                    ack_delay: 0,
+                    blocks: vec![Ack::Ack(0)],
+                }),
                 Frame::Stream(StreamFrame {
                     id: 0,
                     fin: false,
