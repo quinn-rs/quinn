@@ -4,6 +4,7 @@ use codec::{BufLen, Codec, VarLen};
 
 #[derive(Debug, PartialEq)]
 pub enum Frame {
+    Ack(AckFrame),
     Padding(PaddingFrame),
     Stream(StreamFrame),
 }
@@ -11,6 +12,7 @@ pub enum Frame {
 impl BufLen for Frame {
     fn buf_len(&self) -> usize {
         match *self {
+            Frame::Ack(ref f) => f.buf_len(),
             Frame::Padding(ref f) => f.buf_len(),
             Frame::Stream(ref f) => f.buf_len(),
         }
@@ -20,6 +22,7 @@ impl BufLen for Frame {
 impl Codec for Frame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match *self {
+            Frame::Ack(ref f) => f.encode(buf),
             Frame::Padding(ref f) => f.encode(buf),
             Frame::Stream(ref f) => f.encode(buf),
         }
@@ -28,6 +31,7 @@ impl Codec for Frame {
     fn decode<T: Buf>(buf: &mut T) -> Self {
         match buf.bytes()[0] {
             v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)),
+            0x0d => Frame::Ack(AckFrame::decode(buf)),
             0 => Frame::Padding(PaddingFrame::decode(buf)),
             v => panic!("unimplemented decoding for frame type {}", v),
         }
@@ -97,6 +101,74 @@ impl Codec for StreamFrame {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct AckFrame {
+    pub largest: u32,
+    pub ack_delay: u64,
+    pub blocks: Vec<Ack>,
+}
+
+impl BufLen for AckFrame {
+    fn buf_len(&self) -> usize {
+        1 + VarLen(self.largest as u64).buf_len() + VarLen(self.ack_delay).buf_len()
+            + VarLen((self.blocks.len() - 1) as u64).buf_len()
+            + self.blocks
+                .iter()
+                .map(|v| VarLen(v.value()).buf_len())
+                .sum::<usize>()
+    }
+}
+
+impl Codec for AckFrame {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        buf.put_u8(0x0d);
+        VarLen(self.largest as u64).encode(buf);
+        VarLen(self.ack_delay).encode(buf);
+        VarLen((self.blocks.len() - 1) as u64).encode(buf);
+        for ack in self.blocks.iter() {
+            VarLen(ack.value()).encode(buf);
+        }
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let _ = buf.get_u8();
+        let largest = VarLen::decode(buf).0 as u32;
+        let ack_delay = VarLen::decode(buf).0;
+        let count = VarLen::decode(buf).0;
+        debug_assert_eq!(count % 2, 0);
+
+        let mut blocks = vec![];
+        for i in 0..count + 1 {
+            blocks.push(if i % 2 == 0 {
+                Ack::Ack(VarLen::decode(buf).0)
+            } else {
+                Ack::Gap(VarLen::decode(buf).0)
+            });
+        }
+
+        AckFrame {
+            largest,
+            ack_delay,
+            blocks,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Ack {
+    Ack(u64),
+    Gap(u64),
+}
+
+impl Ack {
+    fn value(&self) -> u64 {
+        match *self {
+            Ack::Ack(v) => v,
+            Ack::Gap(v) => v,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct PaddingFrame(pub usize);
 
 impl BufLen for PaddingFrame {
@@ -143,4 +215,29 @@ enum FrameType {
     StreamOffFin = 0x15,
     StreamOffLen = 0x16,
     StreamOffLenFin = 0x17,
+}
+
+#[cfg(test)]
+mod tests {
+    use codec::{BufLen, Codec};
+    use std::io::Cursor;
+
+    #[test]
+    fn test_ack_round_trip() {
+        let obj = super::Frame::Ack(super::AckFrame {
+            largest: 485971334,
+            ack_delay: 0,
+            blocks: vec![super::Ack::Ack(0)],
+        });
+        let bytes = b"\x0d\x9c\xf7\x55\x86\x00\x00\x00";
+        assert_eq!(obj.buf_len(), bytes.len());
+
+        let mut buf = Vec::with_capacity(64);
+        obj.encode(&mut buf);
+        assert_eq!(&buf, bytes);
+
+        let mut read = Cursor::new(bytes);
+        let decoded = super::Frame::decode(&mut read);
+        assert_eq!(decoded, obj);
+    }
 }
