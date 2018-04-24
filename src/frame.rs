@@ -190,33 +190,6 @@ impl Codec for PaddingFrame {
     }
 }
 
-enum FrameType {
-    Padding = 0x0,
-    ResetStream = 0x1,
-    ConnectionClose = 0x2,
-    ApplicationClose = 0x3,
-    MaxData = 0x4,
-    MaxStreamData = 0x5,
-    MaxStreamId = 0x6,
-    Ping = 0x7,
-    Blocked = 0x8,
-    StreamBlocked = 0x9,
-    StreamIdBlocked = 0xa,
-    NewConnectionId = 0xb,
-    StopSending = 0xc,
-    Ack = 0xd,
-    PathChallenge = 0xe,
-    PathResponse = 0xf,
-    Stream = 0x10,
-    StreamFin = 0x11,
-    StreamLen = 0x12,
-    StreamLenFin = 0x13,
-    StreamOff = 0x14,
-    StreamOffFin = 0x15,
-    StreamOffLen = 0x16,
-    StreamOffLenFin = 0x17,
-}
-
 #[cfg(test)]
 mod tests {
     use codec::{BufLen, Codec};
