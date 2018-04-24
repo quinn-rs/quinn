@@ -11,7 +11,7 @@ extern crate webpki_roots;
 
 use futures::Future;
 
-use rand::{thread_rng, Rng};
+use rand::{ThreadRng, thread_rng, Rng};
 
 use self::frame::{Frame, StreamFrame};
 use self::packet::{DRAFT_10, Header, LongType, Packet};
@@ -30,44 +30,55 @@ mod server;
 pub mod tls;
 mod types;
 
-pub fn connect(server: &str, port: u16) {
-    let mut client = tls::Client::new();
-    let mut rng = thread_rng();
-    let conn_id: u64 = rng.gen();
-    let number: u32 = rng.gen();
 
-    let handshake = client.get_handshake(server).unwrap();
-    let packet = Packet {
-        header: Header::Long {
-            ptype: LongType::Initial,
-            conn_id,
-            version: DRAFT_10,
-            number,
-        },
-        payload: vec![
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ],
-    };
-    println!("PACKET {:?}", packet);
+pub struct Client {
+    socket: Option<UdpSocket>,
+    tls: tls::Client,
+    buf: Option<Vec<u8>>,
+    rng: ThreadRng,
+}
 
-    let local = "0.0.0.0:0".parse().unwrap();
-    let sock = UdpSocket::bind(&local).unwrap();
-    let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
-    println!("{:?} -> {:?}", local, remote);
+impl Client {
+    pub fn new() -> Self {
+        let local = "0.0.0.0:0".parse().unwrap();
+        Client {
+            socket: Some(UdpSocket::bind(&local).unwrap()),
+            tls: tls::Client::new(),
+            buf: Some(vec![0u8; 65536]),
+            rng: thread_rng(),
+        }
+    }
 
-    let handshake_key = crypto::PacketKey::for_client_handshake(conn_id);
-    let mut buf = Vec::new();
-    packet.encode(&handshake_key, &mut buf);
-    let (sock, mut buf, len, remote) = sock.send_dgram(buf, &remote)
-        .and_then(|(sock, buf)| sock.recv_dgram(buf))
-        .wait()
-        .unwrap();
-    buf.truncate(len);
-    println!("{:?} {:?} {:?} {:?}", sock, len, remote, buf);
+    pub fn connect(&mut self, server: &str, port: u16) {
+        let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
+        let handshake = self.tls.get_handshake(server).unwrap();
+        let packet = Packet {
+            header: Header::Long {
+                ptype: LongType::Initial,
+                conn_id: self.rng.gen(),
+                version: DRAFT_10,
+                number: self.rng.gen(),
+            },
+            payload: vec![
+                Frame::Stream(StreamFrame {
+                    id: 0,
+                    fin: false,
+                    offset: 0,
+                    len: Some(handshake.len() as u64),
+                    data: handshake,
+                }),
+            ],
+        };
+
+        let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
+        let mut buf = self.buf.take().unwrap();
+        packet.encode(&handshake_key, &mut buf);
+        let (_, mut buf, len, _) = self.socket.take()
+            .unwrap()
+            .send_dgram(buf, &remote)
+            .and_then(|(sock, buf)| sock.recv_dgram(buf))
+            .wait()
+            .unwrap();
+        buf.truncate(len);
+    }
 }

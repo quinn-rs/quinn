@@ -4,5 +4,6 @@ use std::env;
 
 fn main() {
     let server = env::args().nth(1).unwrap();
-    quinn::connect(&server, 4433);
+    let mut client = quinn::Client::new();
+    client.connect(&server, 4433);
 }
