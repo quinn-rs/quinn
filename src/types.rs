@@ -1,9 +1,3 @@
-pub struct NegotiationPacket {
-    conn_id: u64,
-    version: u32,
-    supported: Vec<u32>,
-}
-
 pub enum TransportParameter {
     InitialMaxStreamData(u32),
     InitialMaxData(u32),
