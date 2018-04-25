@@ -1168,11 +1168,18 @@ impl Endpoint {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.connections[conn.0].blocked();
         let time = self.connections[conn.0].on_ack_received(&self.config, now, ack);
-        self.io.push_back(Io::TimerStart {
-            connection: conn,
-            timer: Timer::LossDetection,
-            time,
-        });
+        if time == u64::max_value()  {
+            self.io.push_back(Io::TimerStop {
+                connection: conn,
+                timer: Timer::LossDetection,
+            });
+        } else {
+            self.io.push_back(Io::TimerStart {
+                connection: conn,
+                timer: Timer::LossDetection,
+                time,
+            });
+        }
         if was_blocked && !self.connections[conn.0].blocked() {
             for stream in self.connections[conn.0].blocked_streams.drain() {
                 self.events.push_back(Event::StreamWritable { connection: conn, stream });
