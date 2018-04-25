@@ -142,7 +142,7 @@ impl Endpoint {
 
 pub struct NewConnection {
     pub connection: Connection,
-    pub incoming_streams: IncomingStreams,
+    pub incoming: IncomingStreams,
     pub address: SocketAddr,
 }
 
@@ -178,7 +178,7 @@ impl Future for Driver {
                             let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn: connection });
                             let _ = endpoint.incoming.unbounded_send(NewConnection {
                                 connection: Connection(conn.clone()),
-                                incoming_streams: IncomingStreams { endpoint: Endpoint(self.0.clone()), conn },
+                                incoming: IncomingStreams { endpoint: Endpoint(self.0.clone()), conn },
                                 address: address.into(),
                             });
                         }
