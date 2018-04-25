@@ -1831,7 +1831,7 @@ impl Connection {
         }
 
         let mut alarm_duration: u64;
-        if self.handshake_sent != 0 {
+        if self.handshake_sent != 0 || !self.handshake_pending.is_empty() {
             // Handshake retransmission alarm.
             if self.smoothed_rtt == 0 {
                 alarm_duration = 2 * config.default_initial_rtt;
