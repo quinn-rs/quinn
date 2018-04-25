@@ -16,7 +16,7 @@ use std::io::Read;
 use std::fmt;
 
 use futures::{Future, Stream};
-use tokio::executor::current_thread::CurrentThread;
+use tokio::executor::current_thread::{self, CurrentThread};
 use failure::{ResultExt, Fail};
 
 use openssl::pkey::{PKey, Private};
@@ -98,7 +98,25 @@ fn run(log: Logger) -> Result<()> {
     executor.spawn(incoming.for_each(move |conn| {
         info!(log, "got connection");
         let log = log.clone();
-        
+        current_thread::spawn(
+            conn.incoming.into_future()
+                .map_err(|e| unreachable!())
+                .and_then(|(stream, _)| match stream {
+                    Some(quicr::NewStream::Bi(send, recv)) => Ok((send, recv)),
+                    Some(quicr::NewStream::Uni(_)) => unreachable!(),
+                    None => Err(format_err!("no request submitted")),
+                })
+                .and_then(|(send, recv)| recv.read_to_end(64 * 1024)
+                          .map_err(|e| format_err!("failed reading request: {}", e))
+                          .map(move |data| (send, data)))
+                .and_then(move |(send, _)| {
+                    eprintln!("processing request");
+                    tokio::io::write_all(send, b"hello\n").map_err(|e| format_err!("failed to send response: {}", e))
+                })
+                .and_then(|(send, _)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+                .map(|_| eprintln!("done"))
+                .map_err(|e| eprintln!("failed: {}", e))
+        );
         Ok(())
     }));
 
