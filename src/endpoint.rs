@@ -461,7 +461,7 @@ impl Endpoint {
                                 tls, clienthello_packet: None, remote_id_set: true,
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
-                            self.connections[conn.0].set_params(params);
+                            self.connections[conn.0].set_params(&self.config, params);
                             self.connections[conn.0].pending_acks.insert_one(packet_number as u64);
                             self.dirty_conns.insert(conn);
                         } else {
@@ -645,7 +645,7 @@ impl Endpoint {
                         Ok(mut tls) => {
                             if self.connections[conn.0].side == Side::Client {
                                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                                    self.connections[conn.0].set_params(params.expect("transport param errors should fail the handshake"));
+                                    self.connections[conn.0].set_params(&self.config, params.expect("transport param errors should fail the handshake"));
                                 } else {
                                     debug!(self.log, "server didn't send transport params");
                                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TRANSPORT_PARAMETER_ERROR.into() }));
@@ -2173,10 +2173,14 @@ impl Connection {
         buf.into()
     }
 
-    fn set_params(&mut self, params: TransportParameters) {
+    fn set_params(&mut self, config: &Config, params: TransportParameters) {
         self.max_bi_streams = params.initial_max_streams_bidi as u64;
         self.max_uni_streams = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
+        for i in match self.side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 1..(config.max_remote_bi_streams+1) } {
+            let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
+            self.streams.get_mut(&id).unwrap().send_mut().unwrap().max_data = params.initial_max_stream_data as u64;
+        }
         self.params = params;
     }
 
