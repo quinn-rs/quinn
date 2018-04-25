@@ -4,7 +4,7 @@ use rand::{thread_rng, ThreadRng};
 
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
+use packet::{DRAFT_10, Header, LongType, Packet};
 use types::{Endpoint, TransportParameter};
 use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
 
@@ -50,15 +50,16 @@ impl Future for Server {
         loop {
             let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             self.in_buf.truncate(size);
-            let packet = Packet::decode(KeyType::Initial, &mut self.in_buf);
-            self.in_buf.resize(1600, 0);
 
-            let conn_id = packet.conn_id().unwrap();
+            let partial = Packet::start_decode(&mut self.in_buf);
+            let conn_id = partial.conn_id().unwrap();
             match self.connections.entry(conn_id) {
                 Entry::Occupied(_) => {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
+                    let packet = partial.finish(&PacketKey::for_client_handshake(conn_id), &mut self.in_buf);
+                    self.in_buf.resize(1600, 0);
                     let mut endpoint = Endpoint::new(&mut self.rng);
                     endpoint.dst_cid = conn_id;
                     endpoint.hs_cid = conn_id;

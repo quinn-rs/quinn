@@ -75,23 +75,33 @@ impl Packet {
         buf.truncate(payload_start + out_len);
     }
 
-    pub fn decode(key_type: KeyType, buf: &mut Vec<u8>) -> Self {
+    pub fn start_decode(buf: &mut Vec<u8>) -> PartialDecode {
         let (header, header_len) = {
             let mut read = Cursor::new(&buf);
             let header = Header::decode(&mut read);
             (header, read.position())
         };
+        PartialDecode {
+            header,
+            header_len,
+        }
+    }
+}
 
+pub struct PartialDecode {
+    header: Header,
+    header_len: u64,
+}
+
+impl PartialDecode {
+    pub fn conn_id(&self) -> Option<u64> {
+        self.header.conn_id()
+    }
+
+    pub fn finish(self, key: &PacketKey, buf: &mut Vec<u8>) -> Packet {
+        let PartialDecode { header, header_len } = self;
         let payload_len = {
             let (header_buf, mut payload) = buf.split_at_mut(header_len as usize);
-            let key = match key_type {
-                KeyType::Initial => {
-                    PacketKey::for_client_handshake(header.conn_id().unwrap())
-                }
-                KeyType::ServerHandshake(cid) => {
-                    PacketKey::for_server_handshake(cid)
-                }
-            };
             let payload = key.decrypt(header.number(), &header_buf, &mut payload);
             payload.len() as u64
         };
@@ -301,11 +311,6 @@ impl ShortType {
             _ => panic!("invalid short packet type {}", v),
         }
     }
-}
-
-pub enum KeyType {
-    Initial,
-    ServerHandshake(u64),
 }
 
 pub const DRAFT_10: u32 = 0xff00000a;

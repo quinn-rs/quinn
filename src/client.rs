@@ -4,7 +4,7 @@ use rand::thread_rng;
 
 use crypto::{self, PacketKey};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
+use packet::{DRAFT_10, Header, LongType, Packet};
 use tls;
 use types::Endpoint;
 
@@ -87,8 +87,8 @@ impl Future for ConnectFuture {
                 let (sock, mut buf, len, addr) = try_ready!(future.poll());
                 buf.truncate(len);
 
-                let key_type = KeyType::ServerHandshake(self.endpoint.hs_cid);
-                let packet = Packet::decode(key_type, &mut buf);
+                let key = PacketKey::for_server_handshake(self.endpoint.hs_cid);
+                let packet = Packet::start_decode(&mut buf).finish(&key, &mut buf);
                 self.endpoint.dst_cid = packet.conn_id().unwrap();
                 let tls_frame = packet.payload.iter().filter_map(|f| {
                     match *f {
