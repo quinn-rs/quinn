@@ -1,10 +1,10 @@
 [package]
-name = "quicr-tokio"
+name = "quicr"
 version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
 
 [dependencies]
-quicr = { path = ".." }
+quicr-core = { path = ".." }
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
 tokio-io = "0.1"

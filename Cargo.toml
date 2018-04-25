@@ -1,5 +1,5 @@
 [package]
-name = "quicr"
+name = "quicr-core"
 version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
 
@@ -24,4 +24,4 @@ assert_matches = "1.1"
 hex-literal = "0.1.1"
 
 [workspace]
-members = ["quicr-tokio"]
+members = ["quicr"]

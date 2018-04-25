@@ -1,4 +1,4 @@
-extern crate quicr;
+extern crate quicr_core as quicr;
 extern crate openssl;
 extern crate rand;
 #[macro_use]

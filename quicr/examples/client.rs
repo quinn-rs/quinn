@@ -1,6 +1,6 @@
 extern crate tokio;
 extern crate tokio_timer;
-extern crate quicr_tokio as quicr;
+extern crate quicr;
 #[macro_use]
 extern crate failure;
 #[macro_use]
