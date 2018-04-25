@@ -822,6 +822,9 @@ impl Endpoint {
                     }
                     Frame::Ack(ack) => {
                         self.on_ack_received(now, conn, ack);
+                        for stream in self.connections[conn.0].finished_streams.drain(..) {
+                            self.events.push_back(Event::StreamFinished { connection: conn, stream });
+                        }
                     }
                     Frame::Padding | Frame::Ping => {}
                     Frame::ConnectionClose(reason) => {
@@ -1507,6 +1510,7 @@ struct Connection {
     // Remotely initiated
     max_remote_uni_stream: u64,
     max_remote_bi_stream: u64,
+    finished_streams: Vec<StreamId>,
 }
 
 /// Represents one or more packets subject to retransmission
@@ -1664,6 +1668,7 @@ impl Connection {
             max_bi_streams: 0,
             max_remote_uni_stream: config.max_remote_uni_streams as u64,
             max_remote_bi_stream: config.max_remote_bi_streams as u64,
+            finished_streams: Vec::new(),
         }
     }
 
@@ -1782,7 +1787,10 @@ impl Connection {
                     true
                 } else { false }
             };
-            if recvd { self.maybe_cleanup(frame.id); }
+            if recvd {
+                self.maybe_cleanup(frame.id);
+                self.finished_streams.push(frame.id);
+            }
         }
         self.pending_acks.subtract(&info.acks);
     }
@@ -2734,6 +2742,11 @@ pub enum Event {
     },
     /// A formerly write-blocked stream might now accept a write
     StreamWritable {
+        connection: ConnectionHandle,
+        stream: StreamId,
+    },
+    /// All data sent on `stream` has been received by the peer
+    StreamFinished {
         connection: ConnectionHandle,
         stream: StreamId,
     },
