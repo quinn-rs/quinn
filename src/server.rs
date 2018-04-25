@@ -4,7 +4,7 @@ use rand::{thread_rng, Rng, ThreadRng};
 
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
 use types::TransportParameter;
 use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
 
@@ -50,7 +50,7 @@ impl Future for Server {
         loop {
             let (size, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             self.in_buf.truncate(size);
-            let packet = Packet::decode(&mut self.in_buf);
+            let packet = Packet::decode(KeyType::Initial, &mut self.in_buf);
             self.in_buf.resize(1600, 0);
 
             let conn_id = packet.conn_id().unwrap();
