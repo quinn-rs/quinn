@@ -2,8 +2,8 @@ use futures::{Async, Future, Poll};
 
 use rand::thread_rng;
 
-use crypto;
-use frame::{Frame, StreamFrame};
+use crypto::{self, PacketKey};
+use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
 use tls;
 use types::Endpoint;
@@ -23,6 +23,7 @@ impl QuicStream {
         endpoint.hs_cid = endpoint.dst_cid;
         let mut tls = tls::Client::new();
         let handshake = tls.get_handshake(server).unwrap();
+
         let packet = Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
@@ -41,6 +42,7 @@ impl QuicStream {
             ],
         };
 
+        endpoint.src_pn += 1;
         let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&handshake_key, &mut buf);
@@ -49,6 +51,7 @@ impl QuicStream {
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         ConnectFuture {
             endpoint,
+            tls,
             state: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
         }
     }
@@ -57,6 +60,7 @@ impl QuicStream {
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
     endpoint: Endpoint,
+    tls: tls::Client,
     state: ConnectFutureState,
 }
 
@@ -81,8 +85,41 @@ impl Future for ConnectFuture {
 
             let key_type = KeyType::ServerHandshake(self.endpoint.hs_cid);
             let packet = Packet::decode(key_type, &mut buf);
-            println!("PACKET: {:?}", packet);
+            self.endpoint.dst_cid = packet.conn_id().unwrap();
+            let tls_frame = packet.payload.iter().filter_map(|f| {
+                match *f {
+                    Frame::Stream(ref f) => Some(f),
+                    _ => None,
+                }
+            }).next().unwrap();
+            let tls = self.tls.process_handshake_messages(&tls_frame.data).unwrap();
 
+            let rsp = Packet {
+                header: Header::Long {
+                    ptype: LongType::Handshake,
+                    conn_id: packet.conn_id().unwrap(),
+                    version: DRAFT_10,
+                    number: self.endpoint.src_pn,
+                },
+                payload: vec![
+                    Frame::Ack(AckFrame {
+                        largest: packet.number(),
+                        ack_delay: 0,
+                        blocks: vec![Ack::Ack(0)],
+                    }),
+                    Frame::Stream(StreamFrame {
+                        id: 0,
+                        fin: false,
+                        offset: 0,
+                        len: Some(tls.len() as u64),
+                        data: tls,
+                    }),
+                ],
+            };
+
+            self.endpoint.src_pn += 1;
+            let key = PacketKey::for_client_handshake(self.endpoint.hs_cid);
+            rsp.encode(&key, &mut buf);
             new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
         };
         if let Some(state) = new.take() {
