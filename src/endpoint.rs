@@ -462,6 +462,7 @@ impl Endpoint {
                             }));
                             self.connections[conn.0].rx_packet = packet_number as u64;
                             self.connections[conn.0].set_params(params);
+                            self.connections[conn.0].pending_acks.insert_one(packet_number as u64);
                             self.dirty_conns.insert(conn);
                         } else {
                             debug!(self.log, "ClientHello missing transport params extension");
