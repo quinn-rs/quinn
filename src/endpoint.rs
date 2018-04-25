@@ -742,6 +742,7 @@ impl Endpoint {
                     return State::closed(e);
                 }
             };
+            trace!(self.log, "packet authenticated"; "pn" => number);
             self.on_packet_authenticated(now, conn, number);
             for frame in frame::Iter::new(payload.into()) {
                 match frame {

@@ -55,13 +55,14 @@ struct Context {
 }
 
 impl Context {
-    fn new(log: Logger, remote_host: String) -> Result<Self> {
+    fn new(log: Logger, mut remote_host: String) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
         let mut protocols = Vec::new();
-        const HTTP_0_9: &[u8] = b"HTTP/0.9";
-        protocols.push(HTTP_0_9.len() as u8);
-        protocols.extend_from_slice(HTTP_0_9);
+        const PROTO: &[u8] = b"hq-11";
+        protocols.push(PROTO.len() as u8);
+        protocols.extend_from_slice(PROTO);
         let remote = normalize(remote_host.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?);
+        if let Some(x) = remote_host.rfind(':') { remote_host.truncate(x); }
         let config = Config {
             protocols,
             //receive_window: 256,
@@ -87,7 +88,7 @@ impl Context {
         let mut recvd = 0;
         loop {
             while let Some(e) = self.client.poll() { match e {
-                Event::Connected { connection: _, protocol } => {
+                Event::Connected { protocol, .. } => {
                     info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
                     self.client.write(c, s, b"GET /index.html\r\n"[..].into()).unwrap();
