@@ -53,26 +53,28 @@ fn run(log: Logger) -> Result<()> {
     let (endpoint, driver, _) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket, log.clone(), config, rand::random(), None)?;
     let mut executor = CurrentThread::new_with_park(timer);
 
-    executor.spawn(
+    executor.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    executor.block_on(
         endpoint.connect(&remote, Some(remote_host.as_bytes()))
-            .map_err(|e| eprintln!("failed to connect: {}", e))
+            .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|(conn, _)| {
                 println!("connected!");
-                conn.open(quicr::Directionality::Bi).map_err(|e| eprintln!("failed to open stream: {}", e))
+                conn.open_bi().map_err(|e| format_err!("failed to open stream: {}", e))
             })
-            .and_then(|stream| {
+            .and_then(|(send, recv)| {
                 println!("opened a stream");
-                tokio::io::write_all(stream, b"GET /index.html\r\n").map_err(|e| eprintln!("failed to send request: {}", e))
+                tokio::io::write_all(send, b"GET /index.html\r\n").map_err(|e| format_err!("failed to send request: {}", e))
+                    .map(move |(send, _)| (send, recv))
             })
-            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| eprintln!("failed to shutdown stream: {}", e)))
-            .and_then(|stream| stream.read_to_end(usize::max_value()).map_err(|e| eprintln!("failed to read response: {}", e)))
+            .and_then(|(send, recv)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e))
+                      .map(move |_| recv))
+            .and_then(|recv| recv.read_to_end(usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e)))
             .map(|data| {
                 io::stdout().write_all(&data).unwrap();
                 io::stdout().flush().unwrap();
                 println!("done")
             })
-    );
-    executor.block_on(driver).map_err(|e| e.into_inner().unwrap())?;
+    ).map_err(|e| e.into_inner().unwrap())?;
 
     Ok(())
 }
