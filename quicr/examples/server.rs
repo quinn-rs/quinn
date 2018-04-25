@@ -90,17 +90,16 @@ fn run(log: Logger) -> Result<()> {
         cert = X509::from_der(&data).context("failed to load cert.der")?;
     }
 
-    let (endpoint, driver, incoming) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket,
-                                                                 log.clone(), config, rand::random(),
-                                                                 Some(quicr::ListenConfig { private_key: &key, cert: &cert }))?;
+    let (_, driver, incoming) = quicr::Endpoint::from_std(
+        &tokio::reactor::Handle::current(), timer.handle(), socket,
+        log.clone(), config, Some(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() }))?;
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {
         info!(log, "got connection");
-        let log = log.clone();
         current_thread::spawn(
             conn.incoming.into_future()
-                .map_err(|e| unreachable!())
+                .map_err(|_| unreachable!())
                 .and_then(|(stream, _)| match stream {
                     Some(quicr::NewStream::Bi(send, recv)) => Ok((send, recv)),
                     Some(quicr::NewStream::Uni(_)) => unreachable!(),

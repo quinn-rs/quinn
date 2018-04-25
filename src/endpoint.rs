@@ -80,6 +80,7 @@ pub struct Config {
 pub struct ListenConfig<'a> {
     pub private_key: &'a PKeyRef<Private>,
     pub cert: &'a X509Ref,
+    pub state: PersistentState,
 }
 
 impl Default for Config {
@@ -120,10 +121,9 @@ pub struct Endpoint {
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
     config: Arc<Config>,
-    state: PersistentState,
+    state: Option<PersistentState>,
     events: VecDeque<(ConnectionHandle, Event)>,
     io: VecDeque<Io>,
-    listen: bool,
     dirty_conns: FnvHashSet<ConnectionHandle>,
     readable_conns: FnvHashSet<ConnectionHandle>,
 }
@@ -173,10 +173,9 @@ impl Rand for PersistentState {
 }
 
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self, ssl::Error> {
+    pub fn new(log: Logger, config: Config, listen: Option<ListenConfig>) -> Result<Self, ssl::Error> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
-        let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
 
         let mut tls = SslContext::builder(SslMethod::tls())?;
         tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
@@ -189,18 +188,21 @@ impl Endpoint {
             SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
         );
         tls.set_default_verify_paths()?;
-        {
-            let cookie_factory = cookie_factory.clone();
-            tls.set_stateless_cookie_generate_cb(move |tls, buf| {
+        if let Some(ref listen) = listen {
+            let cookie_factory = Arc::new(CookieFactory::new(listen.state.cookie_key));
+            {
+                let cookie_factory = cookie_factory.clone();
+                tls.set_stateless_cookie_generate_cb(move |tls, buf| {
+                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                    Ok(cookie_factory.generate(conn, buf))
+                });
+            }
+            tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
                 let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                Ok(cookie_factory.generate(conn, buf))
+                cookie_factory.verify(conn, cookie)
             });
         }
-        tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
-            let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-            cookie_factory.verify(conn, cookie)
-        });
-        let reset_key = state.reset_key;
+        let reset_key = listen.as_ref().map(|x| x.state.reset_key);
         tls.add_custom_ext(
             26, ssl::ExtensionContext::TLS1_3_ONLY | ssl::ExtensionContext::CLIENT_HELLO | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
             { let config = config.clone();
@@ -217,7 +219,7 @@ impl Endpoint {
                   };
                   let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
                   if am_server {
-                      params.stateless_reset_token = Some(reset_token_for(&reset_key, &conn.id));
+                      params.stateless_reset_token = Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
                   }
                   params.write(&mut buf);
                   Ok(Some(buf))
@@ -264,18 +266,20 @@ impl Endpoint {
         let tls = tls.build();
 
         Ok(Self {
-            log, rng, config, state, tls,
+            log, rng, config, tls,
+            state: listen.map(|x| x.state),
             initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
             events: VecDeque::new(),
             io: VecDeque::new(),
-            listen: listen.is_some(),
             dirty_conns: FnvHashSet::default(),
             readable_conns: FnvHashSet::default(),
         })
     }
+
+    fn listen(&self) -> bool { self.state.is_some() }
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
@@ -307,7 +311,7 @@ impl Endpoint {
             let (packet, rest) = match Packet::decode(&data, LOCAL_ID_LEN) {
                 Ok(x) => x,
                 Err(HeaderError::UnsupportedVersion { source, destination }) => {
-                    if !self.listen {
+                    if !self.listen() {
                         debug!(self.log, "dropping packet with unsupported version");
                         return;
                     }
@@ -358,7 +362,7 @@ impl Endpoint {
         // Potentially create a new connection
         //
 
-        if !self.listen {
+        if !self.listen() {
             debug!(self.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
             return;
         }
@@ -389,7 +393,7 @@ impl Endpoint {
                 buf.resize(start + padding, 0);
                 self.rng.fill_bytes(&mut buf[start..start+padding]);
             }
-            buf.extend(&reset_token_for(&self.state.reset_key, &dest_id));
+            buf.extend(&reset_token_for(&self.state.as_ref().unwrap().reset_key, &dest_id));
             self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");

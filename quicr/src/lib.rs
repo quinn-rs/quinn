@@ -102,7 +102,7 @@ pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
 
 impl Endpoint {
     pub fn from_std(reactor: &tokio_reactor::Handle, timer: timer::Handle, socket: std::net::UdpSocket,
-                    log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) ->
+                    log: Logger, config: Config, listen: Option<ListenConfig>) ->
         Result<(Self, Driver, Incoming), Error>
     {
         let (send, recv) = mpsc::unbounded();
@@ -110,7 +110,7 @@ impl Endpoint {
             timer,
             log: log.clone(),
             socket: UdpSocket::from_std(socket, reactor)?,
-            inner: quicr::Endpoint::new(log, config, state, listen)?,
+            inner: quicr::Endpoint::new(log, config, listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -144,6 +144,7 @@ pub struct NewConnection {
     pub connection: Connection,
     pub incoming: IncomingStreams,
     pub address: SocketAddr,
+    pub protocol: Option<Box<[u8]>>,
 }
 
 impl Future for Driver {
@@ -170,7 +171,7 @@ impl Future for Driver {
             while let Some((connection, event)) = endpoint.inner.poll() {
                 use quicr::Event::*;
                 match event {
-                    Connected { address, .. } => {
+                    Connected { address, protocol } => {
                         if let Some(c) = endpoint.pending.get_mut(&connection).unwrap().connecting.take() {
                             // Graceful close should be handled by drop impl
                             let _ = c.send(None);
@@ -180,6 +181,7 @@ impl Future for Driver {
                                 connection: Connection(conn.clone()),
                                 incoming: IncomingStreams { endpoint: Endpoint(self.0.clone()), conn },
                                 address: address.into(),
+                                protocol,
                             });
                         }
                     }

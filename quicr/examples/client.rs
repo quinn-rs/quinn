@@ -7,7 +7,6 @@ extern crate failure;
 extern crate slog;
 extern crate slog_term;
 extern crate futures;
-extern crate rand;
 extern crate url;
 
 use std::net::{UdpSocket, ToSocketAddrs};
@@ -51,7 +50,7 @@ fn run(log: Logger) -> Result<()> {
     let reactor = tokio::reactor::Reactor::new()?;
     let timer = tokio_timer::Timer::new(reactor);
     
-    let (endpoint, driver, _) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket, log.clone(), config, rand::random(), None)?;
+    let (endpoint, driver, _) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket, log.clone(), config, None)?;
     let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
 

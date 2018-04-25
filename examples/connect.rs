@@ -71,7 +71,7 @@ impl Context {
         };
         Ok(Self {
             socket,
-            client: Endpoint::new(log.clone(), config, rand::random(), None)?,
+            client: Endpoint::new(log.clone(), config, None)?,
             log, remote_host, remote,
             loss_timer: None,
             close_timer: None,

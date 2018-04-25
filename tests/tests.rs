@@ -80,13 +80,13 @@ impl Pair {
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
             server_config,
-            *STATE,
             Some(ListenConfig {
                 private_key: &KEY,
                 cert: &CERT,
+                state: *STATE,
             })).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), client_config, *STATE, None).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), client_config, None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }
@@ -125,10 +125,10 @@ fn version_negotiate() {
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
         Config::default(),
-        *STATE,
         Some(ListenConfig {
             private_key: &KEY,
             cert: &CERT,
+            state: *STATE,
         })).unwrap();
     server.handle(0, client_addr,
                   // Long-header packet with reserved version number
@@ -177,10 +177,10 @@ fn stateless_reset() {
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
-        *STATE,
         Some(ListenConfig {
             private_key: &KEY,
             cert: &CERT,
+            state: *STATE,
         })).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
