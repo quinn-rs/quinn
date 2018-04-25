@@ -81,10 +81,7 @@ impl Packet {
             let header = Header::decode(&mut read);
             (header, read.position())
         };
-        PartialDecode {
-            header,
-            header_len,
-        }
+        PartialDecode { header, header_len }
     }
 }
 

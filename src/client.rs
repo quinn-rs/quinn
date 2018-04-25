@@ -90,13 +90,18 @@ impl Future for ConnectFuture {
                 let key = PacketKey::for_server_handshake(self.endpoint.hs_cid);
                 let packet = Packet::start_decode(&mut buf).finish(&key, &mut buf);
                 self.endpoint.dst_cid = packet.conn_id().unwrap();
-                let tls_frame = packet.payload.iter().filter_map(|f| {
-                    match *f {
+                let tls_frame = packet
+                    .payload
+                    .iter()
+                    .filter_map(|f| match *f {
                         Frame::Stream(ref f) => Some(f),
                         _ => None,
-                    }
-                }).next().unwrap();
-                let tls = self.tls.process_handshake_messages(&tls_frame.data).unwrap();
+                    })
+                    .next()
+                    .unwrap();
+                let tls = self.tls
+                    .process_handshake_messages(&tls_frame.data)
+                    .unwrap();
 
                 let rsp = Packet {
                     header: Header::Long {

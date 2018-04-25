@@ -58,8 +58,10 @@ impl Future for Server {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
-                    let packet = partial.finish(&PacketKey::for_client_handshake(conn_id), &mut self.in_buf);
+                    let key = PacketKey::for_client_handshake(conn_id);
+                    let packet = partial.finish(&key, &mut self.in_buf);
                     self.in_buf.resize(1600, 0);
+
                     let mut endpoint = Endpoint::new(&mut self.rng);
                     endpoint.dst_cid = conn_id;
                     endpoint.hs_cid = conn_id;
