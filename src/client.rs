@@ -19,7 +19,8 @@ pub struct QuicStream {}
 
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let endpoint = Endpoint::new(&mut thread_rng());
+        let mut endpoint = Endpoint::new(&mut thread_rng());
+        endpoint.hs_cid = endpoint.dst_cid;
         let mut tls = tls::Client::new();
         let handshake = tls.get_handshake(server).unwrap();
         let packet = Packet {
@@ -78,7 +79,7 @@ impl Future for ConnectFuture {
             let (sock, mut buf, len, addr) = try_ready!(future.poll());
             buf.truncate(len);
 
-            let key_type = KeyType::ServerHandshake(self.endpoint.dst_cid);
+            let key_type = KeyType::ServerHandshake(self.endpoint.hs_cid);
             let packet = Packet::decode(key_type, &mut buf);
             println!("PACKET: {:?}", packet);
 
