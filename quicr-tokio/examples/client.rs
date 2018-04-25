@@ -8,12 +8,14 @@ extern crate slog;
 extern crate slog_term;
 extern crate futures;
 extern crate rand;
+extern crate url;
 
 use std::net::{UdpSocket, ToSocketAddrs};
 use std::io::{self, Write};
 
 use futures::Future;
 use tokio::executor::current_thread::CurrentThread;
+use url::Url;
 
 use slog::{Logger, Drain};
 use failure::Error;
@@ -33,9 +35,8 @@ fn main() {
 }
 
 fn run(log: Logger) -> Result<()> {
-    let mut remote_host = ::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?;
-    let remote = remote_host.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
-    if let Some(x) = remote_host.rfind(':') { remote_host.truncate(x); }
+    let url = Url::parse(&::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?)?;
+    let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
     let socket = UdpSocket::bind("[::]:0")?;
     let mut protocols = Vec::new();
@@ -52,18 +53,19 @@ fn run(log: Logger) -> Result<()> {
     
     let (endpoint, driver, _) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket, log.clone(), config, rand::random(), None)?;
     let mut executor = CurrentThread::new_with_park(timer);
+    let request = format!("GET {}\r\n", url.path());
 
     executor.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
     executor.block_on(
-        endpoint.connect(&remote, Some(remote_host.as_bytes()))
+        endpoint.connect(&remote, url.host_str().map(|x| x.as_bytes()))
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|(conn, _)| {
-                println!("connected!");
+                eprintln!("connected!");
                 conn.open_bi().map_err(|e| format_err!("failed to open stream: {}", e))
             })
             .and_then(|(send, recv)| {
-                println!("opened a stream");
-                tokio::io::write_all(send, b"GET /index.html\r\n").map_err(|e| format_err!("failed to send request: {}", e))
+                eprintln!("opened a stream");
+                tokio::io::write_all(send, request.as_bytes()).map_err(|e| format_err!("failed to send request: {}", e))
                     .map(move |(send, _)| (send, recv))
             })
             .and_then(|(send, recv)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e))
@@ -72,7 +74,7 @@ fn run(log: Logger) -> Result<()> {
             .map(|data| {
                 io::stdout().write_all(&data).unwrap();
                 io::stdout().flush().unwrap();
-                println!("done")
+                eprintln!("done")
             })
     ).map_err(|e| e.into_inner().unwrap())?;
 
