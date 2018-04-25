@@ -22,3 +22,6 @@ openssl = { version = "0.10.6", features = ["v111"] }
 slog-term = "2"
 assert_matches = "1.1"
 hex-literal = "0.1.1"
+
+[workspace]
+members = ["quicr-tokio"]

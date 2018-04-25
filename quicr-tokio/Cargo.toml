@@ -1,0 +1,21 @@
+[package]
+name = "quicr-tokio"
+version = "0.1.0"
+authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+
+[dependencies]
+quicr = { path = ".." }
+tokio-reactor = "0.1.1"
+tokio-udp = "0.1"
+tokio-io = "0.1"
+tokio-timer = "0.2.1"
+slog = "2.1"
+futures = "0.1.21"
+fnv = "1.0.6"
+openssl = "0.10.6"
+failure = "0.1"
+
+[dev-dependencies]
+tokio = "0.1.5"
+slog-term = "2"
+rand = "0.4"
