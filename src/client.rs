@@ -1,11 +1,12 @@
 use futures::{Async, Future, Poll};
 
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
 
 use crypto;
 use frame::{Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
 use tls;
+use types::Endpoint;
 
 use std::io;
 use std::net::ToSocketAddrs;
@@ -18,15 +19,15 @@ pub struct QuicStream {}
 
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let mut rng = thread_rng();
+        let endpoint = Endpoint::new(&mut thread_rng());
         let mut tls = tls::Client::new();
         let handshake = tls.get_handshake(server).unwrap();
         let packet = Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
-                conn_id: rng.gen(),
+                conn_id: endpoint.dst_cid,
                 version: DRAFT_10,
-                number: rng.gen(),
+                number: endpoint.src_pn,
             },
             payload: vec![
                 Frame::Stream(StreamFrame {
@@ -46,6 +47,7 @@ impl QuicStream {
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         ConnectFuture {
+            endpoint,
             state: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
         }
     }
@@ -53,6 +55,7 @@ impl QuicStream {
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
+    endpoint: Endpoint,
     state: ConnectFutureState,
 }
 
@@ -74,6 +77,11 @@ impl Future for ConnectFuture {
         if let ConnectFutureState::WaitingForResponse(ref mut future) = self.state {
             let (sock, mut buf, len, addr) = try_ready!(future.poll());
             buf.truncate(len);
+
+            let key_type = KeyType::ServerHandshake(self.endpoint.dst_cid);
+            let packet = Packet::decode(key_type, &mut buf);
+            println!("PACKET: {:?}", packet);
+
             new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
         };
         if let Some(state) = new.take() {
