@@ -12,7 +12,7 @@ use webpki::DNSNameRef;
 use webpki_roots;
 
 pub use rustls::internal::msgs::quic::{Parameter, ServerTransportParameters};
-pub use rustls::{Certificate, PrivateKey, ServerConfig, Session};
+pub use rustls::{Certificate, PrivateKey, ServerConfig, Session, TLSError};
 pub use rustls::quic::ServerSession;
 
 pub struct Client {
@@ -43,6 +43,10 @@ impl Client {
             ]),
         };
         self.session.get_handshake(pki_server_name, params)
+    }
+
+    pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
+        self.session.process_handshake_messages(data)
     }
 }
 
