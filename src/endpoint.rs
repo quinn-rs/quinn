@@ -662,6 +662,7 @@ impl Endpoint {
                             }
                             self.events.push_back(Event::Connected {
                                 connection: conn,
+                                address: remote,
                                 protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
                             });
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
@@ -2706,6 +2707,7 @@ pub enum Event {
     /// A connection was successfully established.
     Connected {
         connection: ConnectionHandle,
+        address: SocketAddrV6,
         protocol: Option<Box<[u8]>>,
     },
     /// A connection was lost.
