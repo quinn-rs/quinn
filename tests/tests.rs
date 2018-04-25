@@ -153,16 +153,16 @@ fn connect() {
     info!(pair.log, "connecting");
     let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    assert_matches!(pair.server.poll(), Some(Event::Connected { .. }));
-    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
+    assert_matches!(pair.server.poll(), Some((_, Event::Connected { .. })));
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     const REASON: &[u8] = b"whee";
 
     info!(pair.log, "closing");
     pair.client.close(0, client_conn, 42, REASON.into());
     pair.drive();
-    assert_matches!(pair.server.poll(), Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
+    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
         reason: ApplicationClose { error_code: 42, ref reason }
-    }, .. }) if reason == REASON);
+    } })) if reason == REASON);
     assert_matches!(pair.client.poll(), None);
 }
 
@@ -173,7 +173,7 @@ fn stateless_reset() {
     let client_conn = pair.client.connect(pair.server_addr, None);
     info!(pair.log, "connecting");
     pair.drive();
-    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
@@ -185,7 +185,7 @@ fn stateless_reset() {
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
-    assert_matches!(pair.client.poll(), Some(Event::ConnectionLost { reason: ConnectionError::Reset, connection }) if connection == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_conn);
 }
 
 #[test]
@@ -195,15 +195,15 @@ fn reset_stream() {
     info!(pair.log, "connecting");
     let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    let server_conn = if let Some(Event::Connected { connection: c, .. }) = pair.server.poll() { c } else { panic!("server didn't connect"); };
-    assert_matches!(pair.client.poll(), Some(Event::Connected { connection, .. } ) if connection == client_conn);
+    let server_conn = if let Some((c, Event::Connected { .. })) = pair.server.poll() { c } else { panic!("server didn't connect"); };
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     info!(pair.log, "resetting stream");
     pair.client.reset(client_conn, s, 1);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some(Event::StreamReadable { connection, stream }) if connection == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code }) if error_code == 1);
     assert_matches!(pair.client.poll(), None);
 }

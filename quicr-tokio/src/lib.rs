@@ -165,10 +165,10 @@ impl Future for Driver {
                     Err(e) => { return Err(e); }
                 }
             }
-            while let Some(event) = endpoint.inner.poll() {
+            while let Some((connection, event)) = endpoint.inner.poll() {
                 use quicr::Event::*;
                 match event {
-                    Connected { connection, address, .. } => {
+                    Connected { address, .. } => {
                         if let Some(c) = endpoint.pending.get_mut(&connection).unwrap().connecting.take() {
                             // Graceful close should be handled by drop impl
                             let _ = c.send(None);
@@ -181,18 +181,18 @@ impl Future for Driver {
                             });
                         }
                     }
-                    ConnectionLost { connection, reason } => {
+                    ConnectionLost { reason } => {
                         if let Some(c) = endpoint.pending.get_mut(&connection).unwrap().connecting.take() {
                             // Graceful close should be handled by drop impl
                             let _ = c.send(Some(reason));
                         }
                     }
-                    StreamWritable { connection, stream } => {
+                    StreamWritable { stream } => {
                         if let Some(writer) = endpoint.pending.get_mut(&connection).unwrap().blocked_writers.remove(&stream) {
                             writer.notify();
                         }
                     }
-                    StreamReadable { connection, stream } => {
+                    StreamReadable { stream } => {
                         let pending = endpoint.pending.get_mut(&connection).unwrap();
                         if let Some(reader) = pending.blocked_readers.remove(&stream) {
                             reader.notify();
@@ -203,7 +203,7 @@ impl Future for Driver {
                             if let Some(x) = pending.incoming_streams_reader.take() { x.notify(); }
                         }
                     }
-                    StreamAvailable { connection, directionality } => {
+                    StreamAvailable { directionality } => {
                         let pending = endpoint.pending.get_mut(&connection).unwrap();
                         let queue = match directionality {
                             Directionality::Uni => &mut pending.uni_opening,
@@ -218,7 +218,7 @@ impl Future for Driver {
                             }
                         }
                     }
-                    StreamFinished { connection, stream } => {
+                    StreamFinished { stream } => {
                         let _ = endpoint.pending.get_mut(&connection).unwrap()
                             .finishing.remove(&stream).unwrap().send(());
                     }

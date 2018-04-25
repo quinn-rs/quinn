@@ -87,7 +87,7 @@ impl Context {
         let mut sent = 0;
         let mut recvd = 0;
         loop {
-            while let Some(e) = self.client.poll() { match e {
+            while let Some((connection, e)) = self.client.poll() { match e {
                 Event::Connected { protocol, .. } => {
                     info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
                     let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
@@ -98,7 +98,7 @@ impl Context {
                     self.client.close(time, c, 0, b""[..].into());
                     bail!("connection lost: {}", reason);
                 }
-                Event::StreamReadable { connection, stream } => {
+                Event::StreamReadable { stream } => {
                     assert_eq!(c, connection);
                     loop { match self.client.read_unordered(connection, stream) {
                         Ok((data, offset)) => {
@@ -122,6 +122,7 @@ impl Context {
                 }
                 Event::StreamWritable { .. } => {}
                 Event::StreamAvailable { .. } => {}
+                Event::StreamFinished { .. } => {}
             }}
             while let Some(io) = self.client.poll_io(time) { match io {
                 Io::Transmit { destination, packet } => { sent += 1; self.socket.send_to(&packet, destination)?; }
