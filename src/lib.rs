@@ -9,16 +9,17 @@ extern crate tokio_io;
 extern crate webpki;
 extern crate webpki_roots;
 
-use futures::Future;
+use futures::{Async, Future, Poll};
 
-use rand::{ThreadRng, thread_rng, Rng};
+use rand::{thread_rng, Rng};
 
 use self::frame::{Frame, StreamFrame};
 use self::packet::{DRAFT_10, Header, LongType, Packet};
 
+use std::io;
 use std::net::ToSocketAddrs;
 
-use tokio::net::UdpSocket;
+use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
 pub use server::Server;
 
@@ -31,33 +32,19 @@ pub mod tls;
 mod types;
 
 
-pub struct Client {
-    socket: Option<UdpSocket>,
-    tls: tls::Client,
-    buf: Option<Vec<u8>>,
-    rng: ThreadRng,
-}
+pub struct QuicStream {}
 
-impl Client {
-    pub fn new() -> Self {
-        let local = "0.0.0.0:0".parse().unwrap();
-        Client {
-            socket: Some(UdpSocket::bind(&local).unwrap()),
-            tls: tls::Client::new(),
-            buf: Some(vec![0u8; 65536]),
-            rng: thread_rng(),
-        }
-    }
-
-    pub fn connect(&mut self, server: &str, port: u16) {
-        let remote = (server, port).to_socket_addrs().unwrap().next().unwrap();
-        let handshake = self.tls.get_handshake(server).unwrap();
+impl QuicStream {
+    pub fn connect(server: &str, port: u16) -> ConnectFuture {
+        let mut rng = thread_rng();
+        let mut tls = tls::Client::new();
+        let handshake = tls.get_handshake(server).unwrap();
         let packet = Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
-                conn_id: self.rng.gen(),
+                conn_id: rng.gen(),
                 version: DRAFT_10,
-                number: self.rng.gen(),
+                number: rng.gen(),
             },
             payload: vec![
                 Frame::Stream(StreamFrame {
@@ -71,14 +58,51 @@ impl Client {
         };
 
         let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
-        let mut buf = self.buf.take().unwrap();
+        let mut buf = Vec::with_capacity(65536);
         packet.encode(&handshake_key, &mut buf);
-        let (_, mut buf, len, _) = self.socket.take()
-            .unwrap()
-            .send_dgram(buf, &remote)
-            .and_then(|(sock, buf)| sock.recv_dgram(buf))
-            .wait()
-            .unwrap();
-        buf.truncate(len);
+
+        let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
+        let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
+        ConnectFuture {
+            state: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
+        }
     }
+}
+
+#[must_use = "futures do nothing unless polled"]
+pub struct ConnectFuture {
+    state: ConnectFutureState,
+}
+
+impl Future for ConnectFuture {
+    type Item = ();
+    type Error = io::Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let mut new = None;
+        if let ConnectFutureState::InitialSent(ref mut future) = self.state {
+            let (sock, mut buf) = try_ready!(future.poll());
+            let size = buf.capacity();
+            buf.resize(size, 0);
+            new = Some(ConnectFutureState::WaitingForResponse(sock.recv_dgram(buf)));
+        };
+        if let Some(state) = new.take() {
+            self.state = state;
+        }
+
+        if let ConnectFutureState::WaitingForResponse(ref mut future) = self.state {
+            let (sock, mut buf, len, addr) = try_ready!(future.poll());
+            buf.truncate(len);
+            new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
+        };
+        if let Some(state) = new.take() {
+            self.state = state;
+        }
+
+        Ok(Async::NotReady)
+    }
+}
+
+enum ConnectFutureState {
+    InitialSent(SendDgram<Vec<u8>>),
+    WaitingForResponse(RecvDgram<Vec<u8>>),
 }
