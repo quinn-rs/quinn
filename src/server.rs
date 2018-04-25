@@ -1,11 +1,11 @@
 use futures::{Future, Poll};
 
-use rand::{thread_rng, Rng, ThreadRng};
+use rand::{thread_rng, ThreadRng};
 
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, KeyType, LongType, Packet};
-use types::TransportParameter;
+use types::{Endpoint, TransportParameter};
 use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -59,9 +59,12 @@ impl Future for Server {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
+                    let mut endpoint = Endpoint::new(&mut self.rng);
+                    endpoint.dst_cid = conn_id;
+                    endpoint.hs_cid = conn_id;
+
                     let conn = entry.insert(Connection {
-                        local_id: self.rng.gen(),
-                        local_pn: self.rng.gen(),
+                        endpoint,
                         addr: addr.clone(),
                         tls: ServerSession::new(
                             &self.tls_config,
@@ -90,8 +93,7 @@ impl Future for Server {
 }
 
 struct Connection {
-    local_id: u64,
-    local_pn: u32,
+    endpoint: Endpoint,
     addr: SocketAddr,
     tls: ServerSession,
 }
@@ -109,17 +111,14 @@ impl Connection {
             Frame::Stream(ref f) => f,
             _ => panic!("expected stream frame as first in payload"),
         };
-
-        let conn_id = self.local_id;
-        self.local_id += 1;
-        let number = self.local_pn;
-        self.local_pn += 1;
         let handshake = self.tls.get_handshake(&frame.data).unwrap();
 
+        let number = self.endpoint.src_pn;
+        self.endpoint.src_pn += 1;
         Some(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
-                conn_id,
+                conn_id: self.endpoint.dst_cid,
                 version: DRAFT_10,
                 number,
             },
