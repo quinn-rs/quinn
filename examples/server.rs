@@ -5,11 +5,17 @@ use std::{fs::File, io::BufReader};
 use rustls::internal::pemfile;
 
 fn main() {
-    let certs = {
+    let mut certs = {
         let f = File::open("server.crt").expect("cannot open 'server.crt'");
         let mut reader = BufReader::new(f);
         pemfile::certs(&mut reader).expect("cannot read certificates")
     };
+
+    certs.extend_from_slice(&{
+        let f = File::open("intermediate.pem").expect("cannot open 'intermediate.pem'");
+        let mut reader = BufReader::new(f);
+        pemfile::certs(&mut reader).expect("cannot read certificates")
+    });
 
     let key = {
         let f = File::open("server.key").expect("cannot open 'server.key'");
