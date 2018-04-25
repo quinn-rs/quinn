@@ -1355,6 +1355,9 @@ impl Endpoint {
         self.reset_idle_timeout(now, conn);
         self.connections[conn.0].on_packet_authenticated(now, packet);
     }
+
+    /// Look up whether we're the client or server of `conn`.
+    pub fn get_side(&self, conn: ConnectionHandle) -> Side { self.connections[conn.0].side }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
