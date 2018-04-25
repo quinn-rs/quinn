@@ -1079,6 +1079,7 @@ impl Endpoint {
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
+                self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
                 if self.connections[conn.0].state.as_ref().unwrap().is_app_closed() {
                     self.forget(conn);
                 } else {
