@@ -1221,8 +1221,10 @@ impl Endpoint {
         } else if stream_budget < data.len() as u64 {
             Err((data.split_off(stream_budget as usize), WriteError::Blocked))
         } else { Ok(()) };
-        self.connections[conn.0].transmit(stream, data);
-        self.dirty_conns.insert(conn);
+        if !data.is_empty() {
+            self.connections[conn.0].transmit(stream, data);
+            self.dirty_conns.insert(conn);
+        }
         result
     }
 
@@ -1926,7 +1928,7 @@ impl Connection {
             self.data_sent += data.len() as u64;
         }
         self.pending.stream.push_back(frame::Stream {
-            offset, fin: data.is_empty(), data,
+            offset, fin: false, data,
             id: stream,
         });
     }
