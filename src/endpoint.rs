@@ -14,7 +14,6 @@ use openssl::pkey::{PKeyRef, Private};
 use openssl::x509::X509Ref;
 use openssl::hash::MessageDigest;
 use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
-use failure;
 use blake2::Blake2b;
 use digest::{Input, VariableOutput};
 use constant_time_eq::constant_time_eq;
@@ -174,8 +173,8 @@ impl Rand for PersistentState {
 }
 
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self, failure::Error> {
-        let rng = OsRng::new()?;
+    pub fn new(log: Logger, config: Config, state: PersistentState, listen: Option<ListenConfig>) -> Result<Self, ssl::Error> {
+        let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
         let cookie_factory = Arc::new(CookieFactory::new(state.cookie_key));
 
