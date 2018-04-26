@@ -18,5 +18,7 @@ mod crypto;
 mod frame;
 mod packet;
 mod server;
+#[cfg(test)]
+mod tests;
 pub mod tls;
 mod types;
