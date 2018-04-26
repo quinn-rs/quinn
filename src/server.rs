@@ -65,23 +65,7 @@ impl Future for Server {
                     let mut endpoint = Endpoint::new(&mut self.rng);
                     endpoint.dst_cid = conn_id;
                     endpoint.hs_cid = conn_id;
-
-                    let conn = entry.insert(Connection {
-                        endpoint,
-                        addr: addr.clone(),
-                        tls: ServerSession::new(
-                            &self.tls_config,
-                            ServerTransportParameters {
-                                negotiated_version: DRAFT_10,
-                                supported_versions: vec![DRAFT_10],
-                                parameters: tls::encode_transport_parameters(&vec![
-                                    TransportParameter::InitialMaxStreamData(131072),
-                                    TransportParameter::InitialMaxData(1048576),
-                                    TransportParameter::IdleTimeout(300),
-                                ]),
-                            },
-                        ),
-                    });
+                    let conn = entry.insert(Connection::new(endpoint, &addr, &self.tls_config));
 
                     if let Some(rsp) = conn.received(&packet) {
                         self.out_buf.truncate(0);
@@ -102,6 +86,25 @@ struct Connection {
 }
 
 impl Connection {
+    fn new(endpoint: Endpoint, addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>) -> Self {
+        Connection {
+            endpoint,
+            addr: addr.clone(),
+            tls: ServerSession::new(
+                tls_config,
+                ServerTransportParameters {
+                    negotiated_version: DRAFT_10,
+                    supported_versions: vec![DRAFT_10],
+                    parameters: tls::encode_transport_parameters(&vec![
+                        TransportParameter::InitialMaxStreamData(131072),
+                        TransportParameter::InitialMaxData(1048576),
+                        TransportParameter::IdleTimeout(300),
+                    ]),
+                },
+            ),
+        }
+    }
+
     fn received(&mut self, p: &Packet) -> Option<Packet> {
         match p.ptype() {
             Some(LongType::Initial) => self.handle_initial(p),
