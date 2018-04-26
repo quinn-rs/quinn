@@ -50,18 +50,19 @@ impl QuicStream {
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         ConnectFuture {
-            endpoint,
-            tls,
-            state: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
+            state: ClientStreamState {
+                endpoint,
+                tls,
+            },
+            future: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
         }
     }
 }
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
-    endpoint: Endpoint,
-    tls: tls::Client,
-    state: ConnectFutureState,
+    state: ClientStreamState,
+    future: ConnectFutureState,
 }
 
 impl Future for ConnectFuture {
@@ -72,24 +73,24 @@ impl Future for ConnectFuture {
         let mut new = None;
         loop {
             waiting = true;
-            if let ConnectFutureState::InitialSent(ref mut future) = self.state {
+            if let ConnectFutureState::InitialSent(ref mut future) = self.future {
                 let (sock, mut buf) = try_ready!(future.poll());
                 let size = buf.capacity();
                 buf.resize(size, 0);
                 new = Some(ConnectFutureState::WaitingForResponse(sock.recv_dgram(buf)));
             };
-            if let Some(state) = new.take() {
+            if let Some(future) = new.take() {
                 waiting = false;
-                self.state = state;
+                self.future = future;
             }
 
-            if let ConnectFutureState::WaitingForResponse(ref mut future) = self.state {
+            if let ConnectFutureState::WaitingForResponse(ref mut future) = self.future {
                 let (sock, mut buf, len, addr) = try_ready!(future.poll());
                 buf.truncate(len);
 
-                let key = PacketKey::for_server_handshake(self.endpoint.hs_cid);
+                let key = PacketKey::for_server_handshake(self.state.endpoint.hs_cid);
                 let packet = Packet::start_decode(&mut buf).finish(&key, &mut buf);
-                self.endpoint.dst_cid = packet.conn_id().unwrap();
+                self.state.endpoint.dst_cid = packet.conn_id().unwrap();
                 let tls_frame = packet
                     .payload
                     .iter()
@@ -99,7 +100,8 @@ impl Future for ConnectFuture {
                     })
                     .next()
                     .unwrap();
-                let tls = self.tls
+                let tls = self.state
+                    .tls
                     .process_handshake_messages(&tls_frame.data)
                     .unwrap();
 
@@ -108,7 +110,7 @@ impl Future for ConnectFuture {
                         ptype: LongType::Handshake,
                         conn_id: packet.conn_id().unwrap(),
                         version: DRAFT_10,
-                        number: self.endpoint.src_pn,
+                        number: self.state.endpoint.src_pn,
                     },
                     payload: vec![
                         Frame::Ack(AckFrame {
@@ -126,14 +128,14 @@ impl Future for ConnectFuture {
                     ],
                 };
 
-                self.endpoint.src_pn += 1;
-                let key = PacketKey::for_client_handshake(self.endpoint.hs_cid);
+                self.state.endpoint.src_pn += 1;
+                let key = PacketKey::for_client_handshake(self.state.endpoint.hs_cid);
                 rsp.encode(&key, &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
             };
-            if let Some(state) = new.take() {
+            if let Some(future) = new.take() {
                 waiting = false;
-                self.state = state;
+                self.future = future;
             }
 
             if waiting {
@@ -143,6 +145,11 @@ impl Future for ConnectFuture {
 
         Ok(Async::NotReady)
     }
+}
+
+struct ClientStreamState {
+    endpoint: Endpoint,
+    tls: tls::Client,
 }
 
 enum ConnectFutureState {
