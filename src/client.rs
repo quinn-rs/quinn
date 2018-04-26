@@ -100,13 +100,13 @@ impl Future for ConnectFuture {
     }
 }
 
-struct ClientStreamState {
-    endpoint: Endpoint,
-    tls: tls::Client,
+pub(crate) struct ClientStreamState {
+    pub(crate) endpoint: Endpoint,
+    pub(crate) tls: tls::Client,
 }
 
 impl ClientStreamState {
-    fn initial(&mut self, server: &str) -> Packet {
+    pub(crate) fn initial(&mut self, server: &str) -> Packet {
         let number = self.endpoint.src_pn;
         self.endpoint.src_pn += 1;
         let handshake = self.tls.get_handshake(server).unwrap();
@@ -130,7 +130,7 @@ impl ClientStreamState {
         }
     }
 
-    fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
+    pub(crate) fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
         self.endpoint.dst_cid = rsp.conn_id().unwrap();
         let tls_frame = rsp.payload
             .iter()

@@ -80,14 +80,18 @@ impl Future for Server {
     }
 }
 
-struct ServerStreamState {
+pub(crate) struct ServerStreamState {
     endpoint: Endpoint,
     addr: SocketAddr,
     tls: ServerSession,
 }
 
 impl ServerStreamState {
-    fn new(endpoint: Endpoint, addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>) -> Self {
+    pub(crate) fn new(
+        endpoint: Endpoint,
+        addr: &SocketAddr,
+        tls_config: &Arc<tls::ServerConfig>,
+    ) -> Self {
         Self {
             endpoint,
             addr: addr.clone(),
@@ -106,7 +110,7 @@ impl ServerStreamState {
         }
     }
 
-    fn handle(&mut self, p: &Packet) -> Option<Packet> {
+    pub(crate) fn handle(&mut self, p: &Packet) -> Option<Packet> {
         match p.ptype() {
             Some(LongType::Initial) => self.handle_initial(p),
             _ => panic!("unhandled packet {:?}", p),
