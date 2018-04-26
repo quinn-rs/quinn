@@ -1,4 +1,4 @@
-use rand::{Rng, ThreadRng};
+use rand::{thread_rng, Rng};
 
 pub struct Endpoint {
     pub dst_cid: u64,
@@ -7,7 +7,8 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    pub fn new(rng: &mut ThreadRng) -> Self {
+    pub fn new() -> Self {
+        let mut rng = thread_rng();
         Endpoint {
             dst_cid: rng.gen(),
             hs_cid: 0,

@@ -1,7 +1,5 @@
 use futures::{Future, Poll};
 
-use rand::{thread_rng, ThreadRng};
-
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet};
@@ -20,7 +18,6 @@ pub struct Server {
     tls_config: Arc<ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    rng: ThreadRng,
     connections: HashMap<u64, ServerStreamState>,
 }
 
@@ -32,7 +29,6 @@ impl Server {
             tls_config: Arc::new(tls_config),
             in_buf: vec![0u8; 65536],
             out_buf: vec![0u8; 65536],
-            rng: thread_rng(),
             connections: HashMap::new(),
         }
     }
@@ -61,7 +57,7 @@ impl Future for Server {
                     let key = PacketKey::for_client_handshake(conn_id);
                     let packet = partial.finish(&key, &mut self.in_buf);
 
-                    let mut endpoint = Endpoint::new(&mut self.rng);
+                    let mut endpoint = Endpoint::new();
                     endpoint.dst_cid = conn_id;
                     endpoint.hs_cid = conn_id;
                     let state =

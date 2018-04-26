@@ -1,7 +1,5 @@
 use futures::{Async, Future, Poll};
 
-use rand::thread_rng;
-
 use crypto::{self, PacketKey};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet};
@@ -19,7 +17,7 @@ pub struct QuicStream {}
 
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let mut endpoint = Endpoint::new(&mut thread_rng());
+        let mut endpoint = Endpoint::new();
         endpoint.hs_cid = endpoint.dst_cid;
         let mut state = ClientStreamState {
             endpoint,

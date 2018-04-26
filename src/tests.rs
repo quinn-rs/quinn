@@ -1,7 +1,5 @@
 extern crate untrusted;
 
-use rand::{thread_rng, ThreadRng};
-
 use rustls::internal::pemfile;
 
 use std::{fs::File, io::{BufReader, Read}};
@@ -18,16 +16,15 @@ use webpki;
 
 #[test]
 fn test_handshake() {
-    let mut rng = thread_rng();
-    let mut cs = client_state(&mut rng);
-    let mut ss = server_state(&mut rng);
+    let mut cs = client_state();
+    let mut ss = server_state();
 
     let initial = cs.initial("example.com");
     let server_hello = ss.handle(&initial).unwrap();
     assert!(cs.handle(&server_hello).is_some());
 }
 
-fn server_state(mut rng: &mut ThreadRng) -> ServerStreamState {
+fn server_state() -> ServerStreamState {
     let certs = {
         let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
         let mut reader = BufReader::new(f);
@@ -40,14 +37,14 @@ fn server_state(mut rng: &mut ThreadRng) -> ServerStreamState {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let endpoint = Endpoint::new(&mut rng);
+    let endpoint = Endpoint::new();
     let addr = "0.0.0.0:0".parse().unwrap();
     let tls_config = Arc::new(tls::build_server_config(certs, keys[0].clone()));
     ServerStreamState::new(endpoint, &addr, &tls_config)
 }
 
-fn client_state(mut rng: &mut ThreadRng) -> ClientStreamState {
-    let mut endpoint = Endpoint::new(&mut rng);
+fn client_state() -> ClientStreamState {
+    let mut endpoint = Endpoint::new();
     endpoint.hs_cid = endpoint.dst_cid;
 
     let tls = {
