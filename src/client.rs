@@ -17,13 +17,7 @@ pub struct QuicStream {}
 
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let mut endpoint = Endpoint::new();
-        endpoint.hs_cid = endpoint.dst_cid;
-        let mut state = ClientStreamState {
-            endpoint,
-            tls: tls::Client::new(),
-        };
-
+        let mut state = ClientStreamState::new();
         let packet = state.initial(server);
         let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
         let mut buf = Vec::with_capacity(65536);
@@ -104,7 +98,15 @@ pub(crate) struct ClientStreamState {
 }
 
 impl ClientStreamState {
+    pub fn new() -> Self {
+        Self {
+            endpoint: Endpoint::new(),
+            tls: tls::Client::new(),
+        }
+    }
+
     pub(crate) fn initial(&mut self, server: &str) -> Packet {
+        self.endpoint.hs_cid = self.endpoint.dst_cid;
         let number = self.endpoint.src_pn;
         self.endpoint.src_pn += 1;
         let handshake = self.tls.get_handshake(server).unwrap();

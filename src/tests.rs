@@ -44,9 +44,6 @@ fn server_state() -> ServerStreamState {
 }
 
 fn client_state() -> ClientStreamState {
-    let mut endpoint = Endpoint::new();
-    endpoint.hs_cid = endpoint.dst_cid;
-
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
         let mut bytes = Vec::new();
@@ -59,5 +56,8 @@ fn client_state() -> ClientStreamState {
         tls::Client::with_config(config)
     };
 
-    ClientStreamState { endpoint, tls }
+    ClientStreamState {
+        endpoint: Endpoint::new(),
+        tls,
+    }
 }
