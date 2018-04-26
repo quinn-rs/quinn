@@ -21,7 +21,7 @@ pub struct Server {
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
     rng: ThreadRng,
-    connections: HashMap<u64, Connection>,
+    connections: HashMap<u64, ServerStreamState>,
 }
 
 impl Server {
@@ -65,13 +65,14 @@ impl Future for Server {
                     let mut endpoint = Endpoint::new(&mut self.rng);
                     endpoint.dst_cid = conn_id;
                     endpoint.hs_cid = conn_id;
-                    let conn = entry.insert(Connection::new(endpoint, &addr, &self.tls_config));
+                    let state =
+                        entry.insert(ServerStreamState::new(endpoint, &addr, &self.tls_config));
 
-                    if let Some(rsp) = conn.handle(&packet) {
+                    if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
                         let key = PacketKey::for_server_handshake(conn_id);
                         rsp.encode(&key, &mut self.out_buf);
-                        try_ready!(self.socket.poll_send_to(&self.out_buf, &conn.addr));
+                        try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
                     }
                 }
             };
@@ -79,15 +80,15 @@ impl Future for Server {
     }
 }
 
-struct Connection {
+struct ServerStreamState {
     endpoint: Endpoint,
     addr: SocketAddr,
     tls: ServerSession,
 }
 
-impl Connection {
+impl ServerStreamState {
     fn new(endpoint: Endpoint, addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>) -> Self {
-        Connection {
+        Self {
             endpoint,
             addr: addr.clone(),
             tls: ServerSession::new(
