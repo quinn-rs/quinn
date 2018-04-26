@@ -75,9 +75,9 @@ impl Packet {
         buf.truncate(payload_start + out_len);
     }
 
-    pub fn start_decode(buf: &mut Vec<u8>) -> PartialDecode {
+    pub fn start_decode(buf: &[u8]) -> PartialDecode {
         let (header, header_len) = {
-            let mut read = Cursor::new(&buf);
+            let mut read = Cursor::new(buf);
             let header = Header::decode(&mut read);
             (header, read.position() as usize)
         };
@@ -95,17 +95,13 @@ impl PartialDecode {
         self.header.conn_id()
     }
 
-    pub fn finish(self, key: &PacketKey, buf: &mut Vec<u8>) -> Packet {
+    pub fn finish(self, key: &PacketKey, buf: &mut [u8]) -> Packet {
         let PartialDecode { header, header_len } = self;
-        let payload_len = {
-            let (header_buf, mut payload) = buf.split_at_mut(header_len);
-            let payload = key.decrypt(header.number(), &header_buf, &mut payload);
-            payload.len()
-        };
-        buf.truncate(header_len + payload_len);
+        let (header_buf, mut encrypted) = buf.split_at_mut(header_len);
+        let decrypted = key.decrypt(header.number(), &header_buf, &mut encrypted);
+        let mut read = Cursor::new(decrypted);
 
         let mut payload = Vec::new();
-        let mut read = Cursor::new(&buf[header_len..header_len + payload_len]);
         while read.has_remaining() {
             let frame = Frame::decode(&mut read);
             payload.push(frame);
