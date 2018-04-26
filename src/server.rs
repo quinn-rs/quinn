@@ -54,14 +54,9 @@ impl Future for Server {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
+                    let state = entry.insert(ServerStreamState::new(&addr, &self.tls_config));
                     let key = PacketKey::for_client_handshake(conn_id);
                     let packet = partial.finish(&key, &mut self.in_buf);
-
-                    let mut endpoint = Endpoint::new();
-                    endpoint.dst_cid = conn_id;
-                    endpoint.hs_cid = conn_id;
-                    let state =
-                        entry.insert(ServerStreamState::new(endpoint, &addr, &self.tls_config));
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
@@ -86,13 +81,9 @@ pub(crate) struct ServerStreamState {
 }
 
 impl ServerStreamState {
-    pub(crate) fn new(
-        endpoint: Endpoint,
-        addr: &SocketAddr,
-        tls_config: &Arc<tls::ServerConfig>,
-    ) -> Self {
+    pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>) -> Self {
         Self {
-            endpoint,
+            endpoint: Endpoint::new(),
             addr: addr.clone(),
             tls: ServerSession::new(
                 tls_config,
@@ -117,6 +108,10 @@ impl ServerStreamState {
     }
 
     fn handle_initial(&mut self, p: &Packet) -> Option<Packet> {
+        let conn_id = p.conn_id().unwrap();
+        self.endpoint.dst_cid = conn_id;
+        self.endpoint.hs_cid = conn_id;
+
         let frame = match p.payload[0] {
             Frame::Stream(ref f) => f,
             _ => panic!("expected stream frame as first in payload"),

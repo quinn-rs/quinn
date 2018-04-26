@@ -37,10 +37,9 @@ fn server_state() -> ServerStreamState {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let endpoint = Endpoint::new();
     let addr = "0.0.0.0:0".parse().unwrap();
     let tls_config = Arc::new(tls::build_server_config(certs, keys[0].clone()));
-    ServerStreamState::new(endpoint, &addr, &tls_config)
+    ServerStreamState::new(&addr, &tls_config)
 }
 
 fn client_state() -> ClientStreamState {
