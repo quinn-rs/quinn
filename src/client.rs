@@ -72,7 +72,13 @@ impl Future for ConnectFuture {
                 let key = PacketKey::for_server_handshake(self.state.endpoint.hs_cid);
                 let packet = Packet::start_decode(&mut buf).finish(&key, &mut buf);
 
-                let req = self.state.handle(&packet);
+                let req = match self.state.handle(&packet) {
+                    Some(p) => p,
+                    None => {
+                        return Err(io::Error::new(io::ErrorKind::Other, "no response to packet"));
+                    }
+                };
+
                 let key = PacketKey::for_client_handshake(self.state.endpoint.hs_cid);
                 req.encode(&key, &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
@@ -121,7 +127,7 @@ impl ClientStreamState {
         }
     }
 
-    fn handle(&mut self, rsp: &Packet) -> Packet {
+    fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
         self.endpoint.dst_cid = rsp.conn_id().unwrap();
         let tls_frame = rsp
             .payload
@@ -138,7 +144,7 @@ impl ClientStreamState {
 
         let number = self.endpoint.src_pn;
         self.endpoint.src_pn += 1;
-        Packet {
+        Some(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
                 conn_id: self.endpoint.dst_cid,
@@ -159,7 +165,7 @@ impl ClientStreamState {
                     data: tls,
                 }),
             ],
-        }
+        })
     }
 }
 

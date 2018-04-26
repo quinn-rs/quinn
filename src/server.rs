@@ -67,7 +67,7 @@ impl Future for Server {
                     endpoint.hs_cid = conn_id;
                     let conn = entry.insert(Connection::new(endpoint, &addr, &self.tls_config));
 
-                    if let Some(rsp) = conn.received(&packet) {
+                    if let Some(rsp) = conn.handle(&packet) {
                         self.out_buf.truncate(0);
                         let key = PacketKey::for_server_handshake(conn_id);
                         rsp.encode(&key, &mut self.out_buf);
@@ -105,7 +105,7 @@ impl Connection {
         }
     }
 
-    fn received(&mut self, p: &Packet) -> Option<Packet> {
+    fn handle(&mut self, p: &Packet) -> Option<Packet> {
         match p.ptype() {
             Some(LongType::Initial) => self.handle_initial(p),
             _ => panic!("unhandled packet {:?}", p),
