@@ -75,7 +75,10 @@ impl Future for ConnectFuture {
                 let req = match self.state.handle(&packet) {
                     Some(p) => p,
                     None => {
-                        return Err(io::Error::new(io::ErrorKind::Other, "no response to packet"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "no response to packet",
+                        ));
                     }
                 };
 
@@ -129,8 +132,7 @@ impl ClientStreamState {
 
     fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
         self.endpoint.dst_cid = rsp.conn_id().unwrap();
-        let tls_frame = rsp
-            .payload
+        let tls_frame = rsp.payload
             .iter()
             .filter_map(|f| match *f {
                 Frame::Stream(ref f) => Some(f),
