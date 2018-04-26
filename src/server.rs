@@ -60,7 +60,6 @@ impl Future for Server {
                 Entry::Vacant(entry) => {
                     let key = PacketKey::for_client_handshake(conn_id);
                     let packet = partial.finish(&key, &mut self.in_buf);
-                    self.in_buf.resize(1600, 0);
 
                     let mut endpoint = Endpoint::new(&mut self.rng);
                     endpoint.dst_cid = conn_id;
@@ -76,6 +75,10 @@ impl Future for Server {
                     }
                 }
             };
+
+            let size = self.in_buf.capacity();
+            self.in_buf.truncate(0);
+            self.in_buf.resize(size, 0);
         }
     }
 }
