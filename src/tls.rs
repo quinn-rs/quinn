@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use types::TransportParameter;
 
-use webpki::DNSNameRef;
+use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
 pub use rustls::internal::msgs::quic::{Parameter, ServerTransportParameters};
@@ -21,12 +21,10 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Client {
-        let mut config = ClientConfig::new();
-        config
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        config.versions = vec![ProtocolVersion::TLSv1_3];
-        config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+        Self::with_config(build_client_config(None))
+    }
+
+    pub fn with_config(config: ClientConfig) -> Client {
         Client {
             session: ClientSession::new(&Arc::new(config)),
         }
@@ -48,6 +46,15 @@ impl Client {
     pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
         self.session.process_handshake_messages(data)
     }
+}
+
+pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
+    let mut config = ClientConfig::new();
+    let anchors = anchors.unwrap_or(&webpki_roots::TLS_SERVER_ROOTS);
+    config.root_store.add_server_trust_anchors(anchors);
+    config.versions = vec![ProtocolVersion::TLSv1_3];
+    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+    config
 }
 
 pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
