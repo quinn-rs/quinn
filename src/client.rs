@@ -90,47 +90,10 @@ impl Future for ConnectFuture {
 
                 let key = PacketKey::for_server_handshake(self.state.endpoint.hs_cid);
                 let packet = Packet::start_decode(&mut buf).finish(&key, &mut buf);
-                self.state.endpoint.dst_cid = packet.conn_id().unwrap();
-                let tls_frame = packet
-                    .payload
-                    .iter()
-                    .filter_map(|f| match *f {
-                        Frame::Stream(ref f) => Some(f),
-                        _ => None,
-                    })
-                    .next()
-                    .unwrap();
-                let tls = self.state
-                    .tls
-                    .process_handshake_messages(&tls_frame.data)
-                    .unwrap();
 
-                let rsp = Packet {
-                    header: Header::Long {
-                        ptype: LongType::Handshake,
-                        conn_id: packet.conn_id().unwrap(),
-                        version: DRAFT_10,
-                        number: self.state.endpoint.src_pn,
-                    },
-                    payload: vec![
-                        Frame::Ack(AckFrame {
-                            largest: packet.number(),
-                            ack_delay: 0,
-                            blocks: vec![Ack::Ack(0)],
-                        }),
-                        Frame::Stream(StreamFrame {
-                            id: 0,
-                            fin: false,
-                            offset: 0,
-                            len: Some(tls.len() as u64),
-                            data: tls,
-                        }),
-                    ],
-                };
-
-                self.state.endpoint.src_pn += 1;
+                let req = self.state.handle(&packet);
                 let key = PacketKey::for_client_handshake(self.state.endpoint.hs_cid);
-                rsp.encode(&key, &mut buf);
+                req.encode(&key, &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
             };
             if let Some(future) = new.take() {
@@ -150,6 +113,49 @@ impl Future for ConnectFuture {
 struct ClientStreamState {
     endpoint: Endpoint,
     tls: tls::Client,
+}
+
+impl ClientStreamState {
+    fn handle(&mut self, rsp: &Packet) -> Packet {
+        self.endpoint.dst_cid = rsp.conn_id().unwrap();
+        let tls_frame = rsp
+            .payload
+            .iter()
+            .filter_map(|f| match *f {
+                Frame::Stream(ref f) => Some(f),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        let tls = self.tls
+            .process_handshake_messages(&tls_frame.data)
+            .unwrap();
+
+        let number = self.endpoint.src_pn;
+        self.endpoint.src_pn += 1;
+        Packet {
+            header: Header::Long {
+                ptype: LongType::Handshake,
+                conn_id: self.endpoint.dst_cid,
+                version: DRAFT_10,
+                number,
+            },
+            payload: vec![
+                Frame::Ack(AckFrame {
+                    largest: rsp.number(),
+                    ack_delay: 0,
+                    blocks: vec![Ack::Ack(0)],
+                }),
+                Frame::Stream(StreamFrame {
+                    id: 0,
+                    fin: false,
+                    offset: 0,
+                    len: Some(tls.len() as u64),
+                    data: tls,
+                }),
+            ],
+        }
+    }
 }
 
 enum ConnectFutureState {
