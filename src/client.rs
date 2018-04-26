@@ -21,28 +21,12 @@ impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
         let mut endpoint = Endpoint::new(&mut thread_rng());
         endpoint.hs_cid = endpoint.dst_cid;
-        let mut tls = tls::Client::new();
-        let handshake = tls.get_handshake(server).unwrap();
-
-        let packet = Packet {
-            header: Header::Long {
-                ptype: LongType::Initial,
-                conn_id: endpoint.dst_cid,
-                version: DRAFT_10,
-                number: endpoint.src_pn,
-            },
-            payload: vec![
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(handshake.len() as u64),
-                    data: handshake,
-                }),
-            ],
+        let mut state = ClientStreamState {
+            endpoint,
+            tls: tls::Client::new(),
         };
 
-        endpoint.src_pn += 1;
+        let packet = state.initial(server);
         let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&handshake_key, &mut buf);
@@ -50,10 +34,7 @@ impl QuicStream {
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         ConnectFuture {
-            state: ClientStreamState {
-                endpoint,
-                tls,
-            },
+            state,
             future: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
         }
     }
@@ -116,6 +97,30 @@ struct ClientStreamState {
 }
 
 impl ClientStreamState {
+    fn initial(&mut self, server: &str) -> Packet {
+        let number = self.endpoint.src_pn;
+        self.endpoint.src_pn += 1;
+        let handshake = self.tls.get_handshake(server).unwrap();
+
+        Packet {
+            header: Header::Long {
+                ptype: LongType::Initial,
+                conn_id: self.endpoint.dst_cid,
+                version: DRAFT_10,
+                number,
+            },
+            payload: vec![
+                Frame::Stream(StreamFrame {
+                    id: 0,
+                    fin: false,
+                    offset: 0,
+                    len: Some(handshake.len() as u64),
+                    data: handshake,
+                }),
+            ],
+        }
+    }
+
     fn handle(&mut self, rsp: &Packet) -> Packet {
         self.endpoint.dst_cid = rsp.conn_id().unwrap();
         let tls_frame = rsp
