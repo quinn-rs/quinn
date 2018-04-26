@@ -778,6 +778,7 @@ impl Endpoint {
                                 let rs = stream.recv_mut().unwrap();
                                 if let Some(final_offset) = rs.final_offset() {
                                     if end > final_offset || (frame.fin && end != final_offset) {
+                                        debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
                                         self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
                                         return State::closed(TransportError::FINAL_OFFSET_ERROR);
                                     }
@@ -785,6 +786,9 @@ impl Endpoint {
                                 let prev_end = rs.limit();
                                 let new_bytes = end.saturating_sub(prev_end);
                                 if end > rs.max_data || data_recvd + new_bytes > max_data {
+                                    debug!(self.log, "flow control error";
+                                           "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
+                                           "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
                                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FLOW_CONTROL_ERROR.into() }));
                                     return State::closed(TransportError::FLOW_CONTROL_ERROR);
                                 }
@@ -868,6 +872,8 @@ impl Endpoint {
                         if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
                             let ss = stream.send_mut().unwrap();
                             if offset > ss.max_data {
+                                trace!(self.log, "stream limit increased"; "stream" => id.0,
+                                       "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                                 if ss.offset == ss.max_data {
                                     self.events.push_back((conn, Event::StreamWritable { stream: id }));
                                 }
@@ -1045,30 +1051,37 @@ impl Endpoint {
 
     fn reset_idle_timeout(&mut self, now: u64, conn: ConnectionHandle) {
         let dt = cmp::min(self.config.idle_timeout, self.connections[conn.0].params.idle_timeout) as u64 * 1000000;
-        self.io.push_back(Io::TimerStart { time: now + dt, connection: conn, timer: Timer::Idle });
+        self.connections[conn.0].set_idle = Some(Some(now + dt));
     }
 
-    /// Returns whether anything was sent
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
-        let mut timer = None;
         let mut sent = false;
-        while let Some((packet, t)) = self.connections[conn.0].next_packet(&self.log, &self.config, now) {
-            timer = t.or(timer);
+        while let Some(packet) = self.connections[conn.0].next_packet(&self.log, &self.config, now) {
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: packet.into(),
             });
             sent = true;
         }
-        if let Some(time) = timer {
-            self.io.push_back(Io::TimerStart {
-                connection: conn,
-                timer: Timer::LossDetection,
-                time
-            });
-        }
         if sent {
             self.reset_idle_timeout(now, conn);
+        }
+        {
+            let c = &mut self.connections[conn.0];
+            if let Some(setting) = c.set_idle.take() {
+                if let Some(time) = setting {
+                    self.io.push_back(Io::TimerStart { connection: conn, timer: Timer::Idle, time });
+                } else {
+                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
+                }
+            }
+            if let Some(setting) = c.set_loss_detection.take() {
+                if let Some(time) = setting {
+                    self.io.push_back(Io::TimerStart { connection: conn, timer: Timer::LossDetection, time });
+                } else {
+                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
+                }
+            }
         }
     }
 
@@ -1105,6 +1118,7 @@ impl Endpoint {
                 self.events.push_back((conn, Event::ConnectionLost {
                     reason: ConnectionError::TimedOut,
                 }));
+                self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
             }
             Timer::LossDetection => {
                 if self.connections[conn.0].handshake_sent != 0 {
@@ -1146,14 +1160,7 @@ impl Endpoint {
                     self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].rto_count += 1;
                 }
-                let alarm = self.connections[conn.0].compute_loss_detection_alarm(&self.config);
-                if alarm != u64::max_value() {
-                    self.io.push_back(Io::TimerStart {
-                        connection: conn,
-                        timer: Timer::LossDetection,
-                        time: alarm,
-                    });
-                }
+                self.connections[conn.0].set_loss_detection_alarm(&self.config);
                 self.dirty_conns.insert(conn);
             }
         }
@@ -1173,19 +1180,7 @@ impl Endpoint {
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.connections[conn.0].blocked();
-        let time = self.connections[conn.0].on_ack_received(&self.config, now, ack);
-        if time == u64::max_value()  {
-            self.io.push_back(Io::TimerStop {
-                connection: conn,
-                timer: Timer::LossDetection,
-            });
-        } else {
-            self.io.push_back(Io::TimerStart {
-                connection: conn,
-                timer: Timer::LossDetection,
-                time,
-            });
-        }
+        self.connections[conn.0].on_ack_received(&self.config, now, ack);
         if was_blocked && !self.connections[conn.0].blocked() {
             for stream in self.connections[conn.0].blocked_streams.drain() {
                 self.events.push_back((conn, Event::StreamWritable { stream }));
@@ -1203,9 +1198,13 @@ impl Endpoint {
     pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> Result<(), (Bytes, WriteError)> {
         if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err((data, WriteError::Blocked)); }
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
-        if self.connections[conn.0].blocked() { return Err((data, WriteError::Blocked)); }
+        if self.connections[conn.0].blocked() {
+            self.connections[conn.0].blocked_streams.insert(stream);
+            return Err((data, WriteError::Blocked));
+        }
         let (stop_reason, stream_budget) = {
             let ss = self.connections[conn.0].streams.get_mut(&stream).expect("stream already closed").send_mut().unwrap();
+            trace!(self.log, "writing"; "stream" => stream.0, "stream max data" => ss.max_data, "stream offset" => ss.offset);
             (match ss.state {
                   stream::SendState::ResetSent  { ref mut stop_reason }
                 | stream::SendState::ResetRecvd { ref mut stop_reason } => stop_reason.take(),
@@ -1219,15 +1218,19 @@ impl Endpoint {
         }
 
         let conn_budget = self.connections[conn.0].max_data - self.connections[conn.0].data_sent;
-        let result = if conn_budget < data.len() as u64 {
+        
+        let result = if conn_budget < stream_budget && conn_budget < data.len() as u64 {
             self.connections[conn.0].blocked_streams.insert(stream);
             Err((data.split_off(conn_budget as usize), WriteError::Blocked))
         } else if stream_budget < data.len() as u64 {
             Err((data.split_off(stream_budget as usize), WriteError::Blocked))
         } else { Ok(()) };
         if !data.is_empty() {
+            trace!(self.log, "queuing"; "stream" => stream.0, "len" => data.len());
             self.connections[conn.0].transmit(stream, data);
             self.dirty_conns.insert(conn);
+        } else {
+            trace!(self.log, "stream blocked"; "stream" => stream.0);
         }
         result
     }
@@ -1266,6 +1269,7 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
     pub fn read_unordered(&mut self, conn: ConnectionHandle, stream: StreamId) -> Result<(Bytes, u64), ReadError> {
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream) {
             x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -1320,7 +1324,7 @@ impl Endpoint {
 
     fn close_common(&mut self, now: u64, conn: ConnectionHandle) {
         trace!(self.log, "connection closed");
-        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
+        self.connections[conn.0].set_loss_detection = Some(None);
         self.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::Close,
@@ -1347,6 +1351,7 @@ impl Endpoint {
                 packet: self.connections[conn.0].make_close(&reason),
             });
             self.reset_idle_timeout(now, conn);
+            self.dirty_conns.insert(conn);
         }
         self.connections[conn.0].state = Some(match self.connections[conn.0].state.take().unwrap() {
             State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed { reason, alert: None, app_closed: true }),
@@ -1500,6 +1505,11 @@ struct Connection {
     pending_acks: RangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
     permit_ack_only: bool,
+
+    // Timer updates: None if no change, Some(None) to stop, Some(Some(_)) to reset
+
+    set_idle: Option<Option<u64>>,
+    set_loss_detection: Option<Option<u64>>,
 
     //
     // Stream states
@@ -1664,6 +1674,9 @@ impl Connection {
             pending_acks: RangeSet::new(),
             permit_ack_only: false,
 
+            set_idle: None,
+            set_loss_detection: None,
+
             streams,
             next_uni_stream: 0,
             next_bi_stream: match side { Side::Client => 1, Side::Server => 0 },
@@ -1683,7 +1696,7 @@ impl Connection {
     }
 
     /// Returns new loss detection alarm time, if applicable
-    fn on_packet_sent(&mut self, config: &Config, now: u64, packet_number: u64, packet: SentPacket) -> Option<u64> {
+    fn on_packet_sent(&mut self, config: &Config, now: u64, packet_number: u64, packet: SentPacket) {
         self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
         let handshake = packet.handshake;
@@ -1697,14 +1710,12 @@ impl Connection {
                 self.time_of_last_sent_handshake_packet = now;
             }
             self.bytes_in_flight += bytes as u64;
-            Some(self.compute_loss_detection_alarm(config))
-        } else {
-            None
+            self.set_loss_detection_alarm(config);
         }
     }
 
-    /// Returns new loss detection alarm time
-    fn on_ack_received(&mut self, config: &Config, now: u64, ack: frame::Ack) -> u64 {
+    /// Updates set_loss_detection
+    fn on_ack_received(&mut self, config: &Config, now: u64, ack: frame::Ack) {
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
@@ -1721,7 +1732,7 @@ impl Connection {
             }
         }
         self.detect_lost_packets(config, now, ack.largest);
-        self.compute_loss_detection_alarm(config)
+        self.set_loss_detection_alarm(config);
     }
 
     fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {
@@ -1848,9 +1859,10 @@ impl Connection {
 
     fn in_recovery(&self, packet: u64) -> bool { packet <= self.end_of_recovery }
 
-    fn compute_loss_detection_alarm(&self, config: &Config) -> u64 {
+    fn set_loss_detection_alarm(&mut self, config: &Config) {
         if self.bytes_in_flight == 0 {
-            return u64::max_value();
+            self.set_loss_detection = Some(None);
+            return;
         }
 
         let mut alarm_duration: u64;
@@ -1864,7 +1876,8 @@ impl Connection {
             alarm_duration = cmp::max(alarm_duration + self.max_ack_delay,
                                       config.min_tlp_timeout);
             alarm_duration = alarm_duration * 2u64.pow(self.handshake_count);
-            return self.time_of_last_sent_handshake_packet + alarm_duration;
+            self.set_loss_detection = Some(Some(self.time_of_last_sent_handshake_packet + alarm_duration));
+            return;
         }
 
         if self.loss_time != 0 {
@@ -1880,7 +1893,7 @@ impl Connection {
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
         }
-        self.time_of_last_sent_retransmittable_packet + alarm_duration
+        self.set_loss_detection = Some(Some(self.time_of_last_sent_retransmittable_packet + alarm_duration));
     }
 
     /// Retransmit time-out
@@ -1937,7 +1950,7 @@ impl Connection {
         });
     }
 
-    fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<(Vec<u8>, Option<u64>)> {
+    fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
         let is_handshake;
         match *self.state.as_ref().unwrap() {
             ref x if x.is_closed() => { return None; }
@@ -2074,6 +2087,7 @@ impl Connection {
             if pending.max_uni_stream_id && buf.len() + 9 < max_size {
                 pending.max_uni_stream_id = false;
                 sent.max_uni_stream_id = true;
+                trace!(log, "MAX_STREAM_ID (unidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(!self.side, Directionality::Uni, self.max_remote_uni_stream));
             }
@@ -2082,6 +2096,7 @@ impl Connection {
             if pending.max_bi_stream_id && buf.len() + 9 < max_size {
                 pending.max_bi_stream_id = false;
                 sent.max_bi_stream_id = true;
+                trace!(log, "MAX_STREAM_ID (bidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(!self.side, Directionality::Bi, self.max_remote_bi_stream));
             }
@@ -2093,12 +2108,13 @@ impl Connection {
                     continue;
                 }
                 let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
-                trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => stream.fin);
                 let data = stream.data.split_to(len);
+                let fin = stream.fin && stream.data.is_empty();
+                trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
                 let frame = frame::Stream {
                     id: stream.id,
                     offset: stream.offset,
-                    fin: stream.fin && stream.data.is_empty(),
+                    fin: fin,
                     data: data,
                 };
                 frame.encode(true, &mut buf);
@@ -2118,7 +2134,7 @@ impl Connection {
         }
         self.encrypt(is_handshake, number, &mut buf, header_len);
 
-        let timer = self.on_packet_sent(config, now, number, SentPacket {
+        self.on_packet_sent(config, now, number, SentPacket {
             acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
             handshake: is_handshake,
@@ -2129,8 +2145,7 @@ impl Connection {
         // needlessly prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to
         // avoid double-transmitting acks all the time.
         self.permit_ack_only = false;
-
-        Some((buf, timer))
+        Some(buf)
     }
 
     fn encrypt(&self, handshake: bool, number: u64, buf: &mut Vec<u8>, header_len: u16) {
@@ -2183,7 +2198,7 @@ impl Connection {
         self.max_bi_streams = params.initial_max_streams_bidi as u64;
         self.max_uni_streams = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
-        for i in match self.side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 1..(config.max_remote_bi_streams+1) } {
+        for i in match self.side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 0..(config.max_remote_bi_streams+1) } {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
             self.streams.get_mut(&id).unwrap().send_mut().unwrap().max_data = params.initial_max_stream_data as u64;
         }

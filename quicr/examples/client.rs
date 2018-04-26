@@ -59,11 +59,9 @@ fn run(log: Logger) -> Result<()> {
         endpoint.connect(&remote, url.host_str().map(|x| x.as_bytes()))
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|(conn, _)| {
-                eprintln!("connected!");
                 conn.open_bi().map_err(|e| format_err!("failed to open stream: {}", e))
             })
             .and_then(|(send, recv)| {
-                eprintln!("opened a stream");
                 tokio::io::write_all(send, request.as_bytes()).map_err(|e| format_err!("failed to send request: {}", e))
                     .map(move |(send, _)| (send, recv))
             })
@@ -73,7 +71,6 @@ fn run(log: Logger) -> Result<()> {
             .map(|data| {
                 io::stdout().write_all(&data).unwrap();
                 io::stdout().flush().unwrap();
-                eprintln!("done")
             })
     ).map_err(|e| e.into_inner().unwrap())?;
 

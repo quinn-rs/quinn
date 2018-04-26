@@ -14,6 +14,9 @@ use std::net::UdpSocket;
 use std::fs::File;
 use std::io::Read;
 use std::fmt;
+use std::path::{self, Path, PathBuf};
+use std::str;
+use std::rc::Rc;
 
 use futures::{Future, Stream};
 use tokio::executor::current_thread::{self, CurrentThread};
@@ -62,6 +65,10 @@ fn main() {
 }
 
 fn run(log: Logger) -> Result<()> {
+    let root = ::std::env::args().nth(1).ok_or(format_err!("missing root argument"))?;
+    let root = Rc::new(Path::new(&root).to_owned());
+    if !root.exists() { bail!("root path does not exist"); }
+
     let socket = UdpSocket::bind("[::]:4433")?;
     let mut protocols = Vec::new();
     const PROTO: &[u8] = b"hq-11";
@@ -96,25 +103,41 @@ fn run(log: Logger) -> Result<()> {
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {
-        info!(log, "got connection");
+        let quicr::NewConnection { incoming, address, .. } = conn;
+        info!(log, "got connection"; "remote" => %address);
+        let root = root.clone();
+        let log = log.clone();
+        let log2 = log.clone();
         current_thread::spawn(
-            conn.incoming.into_future()
-                .map_err(|_| unreachable!())
-                .and_then(|(stream, _)| match stream {
-                    Some(quicr::NewStream::Bi(send, recv)) => Ok((send, recv)),
-                    Some(quicr::NewStream::Uni(_)) => unreachable!(),
-                    None => Err(format_err!("no request submitted")),
+            incoming
+                .map_err(move |e| info!(log2, "connection terminated"; "remote" => %address, "reason" => %e))
+                .and_then(|stream| { match stream {
+                    quicr::NewStream::Bi(send, recv) => Ok((send, recv)),
+                    quicr::NewStream::Uni(_) => unreachable!(),
+                }})
+                .for_each(move |(send, recv)| {
+                    let root = root.clone();
+                    let log = log.clone();
+                    let log2 = log.clone();
+                    let log3 = log.clone();
+                    current_thread::spawn(
+                        recv.read_to_end(64 * 1024)
+                            .map_err(|e| format_err!("failed reading request: {}", e))
+                            .map(move |data| (send, data))
+                            .and_then(move |(send, req)| {
+                                info!(log, "got request"; "remote" => %address);
+                                let resp = process_request(&root, &req).unwrap_or_else(move |e| {
+                                    error!(log, "failed to process request"; "reaosn" => %e.pretty());
+                                    format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
+                                });
+                                tokio::io::write_all(send, resp).map_err(|e| format_err!("failed to send response: {}", e))
+                            })
+                            .and_then(|(send, _)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+                            .map(move |_| info!(log3, "request complete"; "remote" => %address))
+                            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
+                    );
+                    Ok(())
                 })
-                .and_then(|(send, recv)| recv.read_to_end(64 * 1024)
-                          .map_err(|e| format_err!("failed reading request: {}", e))
-                          .map(move |data| (send, data)))
-                .and_then(move |(send, _)| {
-                    eprintln!("processing request");
-                    tokio::io::write_all(send, b"hello\n").map_err(|e| format_err!("failed to send response: {}", e))
-                })
-                .and_then(|(send, _)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
-                .map(|_| eprintln!("done"))
-                .map_err(|e| eprintln!("failed: {}", e))
         );
         Ok(())
     }));
@@ -122,4 +145,27 @@ fn run(log: Logger) -> Result<()> {
     executor.block_on(driver).map_err(|e| e.into_inner().unwrap())?;
 
     Ok(())
+}
+
+fn process_request(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
+    if x.len() < 4 || &x[0..4] != b"GET " { bail!("missing GET"); }
+    if x[4..].len() < 2 || &x[x.len()-2..] != b"\r\n" { bail!("missing \\r\\n"); }
+    let path = str::from_utf8(&x[4..x.len()-2]).context("path is malformed UTF-8")?;
+    let path = Path::new(&path);
+    let mut real_path = PathBuf::from(root);
+    let mut components = path.components();
+    match components.next() {
+        Some(path::Component::RootDir) => {}
+        _ => { bail!("path must be absolute"); }
+    }
+    for c in components {
+        match c {
+            path::Component::Normal(x) => { real_path.push(x); }
+            x => { bail!("illegal component in path: {:?}", x); }
+        }
+    }
+    let mut file = File::open(real_path)?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).context("failed reading file")?;
+    Ok(data.into())
 }

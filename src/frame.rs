@@ -118,7 +118,7 @@ impl Frame {
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
             ApplicationClose(_) => Type::APPLICATION_CLOSE,
             MaxData(_) => Type::MAX_DATA,
-            MaxStreamData { .. } => Type::MAX_STREAM_ID,
+            MaxStreamData { .. } => Type::MAX_STREAM_DATA,
             MaxStreamId(_) => Type::MAX_STREAM_ID,
             Ping => Type::PING,
             Blocked { .. } => Type::BLOCKED,
