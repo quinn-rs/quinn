@@ -81,6 +81,7 @@ fn run(log: Logger) -> Result<()> {
     };
 
     let reactor = tokio::reactor::Reactor::new()?;
+    let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
 
     let key;
@@ -98,7 +99,7 @@ fn run(log: Logger) -> Result<()> {
     }
 
     let (_, driver, incoming) = quicr::Endpoint::from_std(
-        &tokio::reactor::Handle::current(), timer.handle(), socket,
+        &handle, timer.handle(), socket,
         log.clone(), config, Some(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() }))?;
     let mut executor = CurrentThread::new_with_park(timer);
 
