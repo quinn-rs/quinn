@@ -308,3 +308,44 @@ impl ShortType {
 }
 
 pub const DRAFT_10: u32 = 0xff00000a;
+
+#[cfg(test)]
+mod tests {
+    use super::{DRAFT_10, Header, LongType, Packet};
+    use frame::{Frame, StreamFrame};
+    use crypto::PacketKey;
+
+    #[test]
+    fn test_roundtrip() {
+        let mut buf = vec![0u8; 65536];
+        let bytes = b"\x00\x01\x02\x03";
+        let packet = Packet {
+            header: Header::Long {
+                ptype: LongType::Initial,
+                conn_id: 123456789,
+                version: DRAFT_10,
+                number: 987654321,
+            },
+            payload: vec![
+                Frame::Stream(StreamFrame {
+                    id: 0,
+                    fin: false,
+                    offset: 0,
+                    len: Some(bytes.len() as u64),
+                    data: bytes.to_vec(),
+                }),
+            ],
+        };
+
+        let key = PacketKey::for_client_handshake(123456789);
+        packet.encode(&key, &mut buf);
+        let mut decoded = Packet::start_decode(&mut buf).finish(&key);
+
+        decoded.payload.retain(|f| if let Frame::Padding(_) = *f {
+            false
+        } else {
+            true
+        });
+        assert_eq!(packet, decoded);
+    }
+}
