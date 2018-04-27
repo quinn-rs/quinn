@@ -6,7 +6,7 @@ use crypto::PacketKey;
 
 use std::io::Cursor;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Packet {
     pub header: Header,
     pub payload: Vec<Frame>,
@@ -119,7 +119,7 @@ impl BufLen for Packet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Header {
     Short {
         ptype: ShortType,
@@ -267,7 +267,7 @@ impl LongType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ShortType {
     One = 0x0,
     Two = 0x1,
