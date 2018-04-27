@@ -75,30 +75,31 @@ impl Packet {
         buf.truncate(payload_start + out_len);
     }
 
-    pub fn start_decode(buf: &[u8]) -> PartialDecode {
+    pub fn start_decode(buf: &mut [u8]) -> PartialDecode {
         let (header, header_len) = {
-            let mut read = Cursor::new(buf);
+            let mut read = Cursor::new(&buf);
             let header = Header::decode(&mut read);
             (header, read.position() as usize)
         };
-        PartialDecode { header, header_len }
+        PartialDecode { header, header_len, buf }
     }
 }
 
-pub struct PartialDecode {
+pub struct PartialDecode<'a> {
     header: Header,
     header_len: usize,
+    buf: &'a mut [u8],
 }
 
-impl PartialDecode {
+impl<'a> PartialDecode<'a> {
     pub fn conn_id(&self) -> Option<u64> {
         self.header.conn_id()
     }
 
-    pub fn finish(self, key: &PacketKey, buf: &mut [u8]) -> Packet {
-        let PartialDecode { header, header_len } = self;
-        let (header_buf, mut encrypted) = buf.split_at_mut(header_len);
-        let decrypted = key.decrypt(header.number(), &header_buf, &mut encrypted);
+    pub fn finish(self, key: &PacketKey) -> Packet {
+        let PartialDecode { header, header_len, buf } = self;
+        let (header_buf, payload_buf) = buf.split_at_mut(header_len);
+        let decrypted = key.decrypt(header.number(), &header_buf, payload_buf);
         let mut read = Cursor::new(decrypted);
 
         let mut payload = Vec::new();

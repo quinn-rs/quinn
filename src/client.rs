@@ -62,7 +62,7 @@ impl Future for ConnectFuture {
                 let packet = {
                     let mut pbuf = &mut buf[..len];
                     let key = PacketKey::for_server_handshake(self.state.endpoint.hs_cid);
-                    Packet::start_decode(&pbuf).finish(&key, &mut pbuf)
+                    Packet::start_decode(pbuf).finish(&key)
                 };
 
                 let req = match self.state.handle(&packet) {

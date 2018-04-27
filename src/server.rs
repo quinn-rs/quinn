@@ -45,7 +45,7 @@ impl Future for Server {
     fn poll(&mut self) -> Poll<(), io::Error> {
         loop {
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
-            let partial = Packet::start_decode(&self.in_buf[..len]);
+            let partial = Packet::start_decode(&mut self.in_buf[..len]);
             let conn_id = partial.conn_id().unwrap();
             match self.connections.entry(conn_id) {
                 Entry::Occupied(_) => {
@@ -54,7 +54,7 @@ impl Future for Server {
                 Entry::Vacant(entry) => {
                     let state = entry.insert(ServerStreamState::new(&addr, &self.tls_config));
                     let key = PacketKey::for_client_handshake(conn_id);
-                    let packet = partial.finish(&key, &mut self.in_buf[..len]);
+                    let packet = partial.finish(&key);
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
