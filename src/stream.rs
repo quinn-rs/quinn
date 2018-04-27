@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{VecDeque, BTreeMap};
 
 use bytes::Bytes;
 
@@ -162,4 +162,145 @@ pub enum RecvState {
     Recv { size: Option<u64> },
     DataRecvd { size: u64 }, ResetRecvd { size: u64, error_code: u16 },
     Closed,
+}
+
+#[derive(Debug)]
+pub struct Assembler {
+    offset: u64,
+    /// (offset, data)
+    segments: BTreeMap<u64, Bytes>,
+}
+
+impl Assembler {
+    pub fn new() -> Self { Self::with_offset(0) }
+    pub fn with_offset(x: u64) -> Self { Self { offset: x, segments: BTreeMap::new() } }
+    pub fn is_empty(&self) -> bool { self.segments.is_empty() }
+    pub fn offset(&self) -> u64 { self.offset }
+
+    pub fn next(&mut self) -> Option<Bytes> {
+        if let Some(data) = self.segments.remove(&self.offset) {
+            self.offset += data.len() as u64;
+            Some(data)
+        } else { None }
+    }
+
+    pub fn insert(&mut self, mut offset: u64, mut data: Bytes) {
+        let prev_end = if let Some((&prev_off, prev_data)) = self.segments.range(..offset).rev().next() {
+            prev_off + prev_data.len() as u64
+        } else {
+            self.offset
+        };
+        if let Some(relative) = prev_end.checked_sub(offset) {
+            if relative >= data.len() as u64 { return; }
+            offset += relative;
+            data.advance(relative as usize);
+        }
+
+        // For every segment we overlap:
+        // - if the segment extends past our end, truncate ourselves and finish
+        // - if we meet or extend past the segment's end, drop it
+        // This ensures our data remains roughly as contiguous as possible.
+        let mut to_drop = Vec::new();
+        for (&next_off, next_data) in self.segments.range(offset..) {
+            let end = offset + data.len() as u64;
+            let next_end = next_off + next_data.len() as u64;
+            if next_off >= end {
+                // There's a gap here, so we're finished.
+                break;
+            } else if next_end < end {
+                // The existing segment is a subset of us; discard it
+                to_drop.push(next_off);
+            } else if next_off == offset {
+                // We are wholly contained by the existing segment; bail out.
+                // Note that this can only happen on the first iteration, so to_drop is necessarily empty, so skipping
+                // the cleanup is fine.
+                return;
+            } else {
+                // We partially overlap the existing segment; truncate and finish.
+                data.truncate((next_off - offset) as usize);
+                break;
+            }
+        }
+        for x in to_drop { self.segments.remove(&x); }
+        self.segments.insert(offset, data);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn assemble_ordered() {
+        let mut x = Assembler::new();
+        assert_matches!(x.next(), None);
+        x.insert(0, (&b"123"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        x.insert(3, (&b"456"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
+        x.insert(6, (&b"789"[..]).into());
+        x.insert(9, (&b"10"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"789");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"10");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_unordered() {
+        let mut x = Assembler::new();
+        x.insert(3, (&b"456"[..]).into());
+        assert_matches!(x.next(), None);
+        x.insert(0, (&b"123"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_duplicate() {
+        let mut x = Assembler::new();
+        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, (&b"123"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_contained() {
+        let mut x = Assembler::new();
+        x.insert(0, (&b"12345"[..]).into());
+        x.insert(1, (&b"234"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_contains() {
+        let mut x = Assembler::new();
+        x.insert(1, (&b"234"[..]).into());
+        x.insert(0, (&b"12345"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_overlapping() {
+        let mut x = Assembler::new();
+        x.insert(0, (&b"123"[..]).into());
+        x.insert(1, (&b"234"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"4");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_complex() {
+        let mut x = Assembler::new();
+        x.insert(0, (&b"1"[..]).into());
+        x.insert(2, (&b"3"[..]).into());
+        x.insert(4, (&b"5"[..]).into());
+        x.insert(0, (&b"123456"[..]).into());
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(x.next(), None);
+    }
 }

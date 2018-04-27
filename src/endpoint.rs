@@ -459,7 +459,7 @@ impl Endpoint {
                         if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                             let params = params.expect("transport parameter errors should have aborted the handshake");
                             let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
-                            self.connections[conn.0].stream0_data = frame::StreamAssembler::with_offset(incoming_len);
+                            self.connections[conn.0].stream0_data = stream::Assembler::with_offset(incoming_len);
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                                 tls, clienthello_packet: None, remote_id_set: true,
@@ -1409,7 +1409,7 @@ struct Connection {
     remote_id: ConnectionId,
     remote: SocketAddrV6,
     state: Option<State>,
-    stream0_data: frame::StreamAssembler,
+    stream0_data: stream::Assembler,
     side: Side,
     mtu: u16,
     rx_packet: u64,
@@ -1628,7 +1628,7 @@ impl Connection {
         }
         Self {
             local_id, remote_id, remote, side,
-            stream0_data: frame::StreamAssembler::new(),
+            stream0_data: stream::Assembler::new(),
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
@@ -2835,7 +2835,7 @@ mod packet {
 
 /// Forward data from an Initial or Retry packet to a stream for a TLS context
 fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
-    let mut staging = frame::StreamAssembler::new();
+    let mut staging = stream::Assembler::new();
     for frame in frame::Iter::new(payload) {
         match frame {
             Frame::Padding => {}
