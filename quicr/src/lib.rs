@@ -95,7 +95,7 @@ impl Pending {
         error: None,
     }}
 
-    pub fn fail(mut self, reason: ConnectionError) {
+    pub fn fail(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
         for (_, writer) in self.blocked_writers.drain() {
             writer.notify()
@@ -181,8 +181,7 @@ impl Future for Driver {
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut buf = [0; 64 * 1024];
-        let mut endpoint = self.0.borrow_mut();
-        let endpoint = &mut *endpoint;
+        let endpoint = &mut *self.0.borrow_mut();
         if endpoint.driver.is_none() { endpoint.driver = Some(task::current()); }
         let now = micros_from(endpoint.epoch.elapsed());
         loop {
@@ -214,7 +213,7 @@ impl Future for Driver {
                         }
                     }
                     ConnectionLost { reason } => {
-                        endpoint.pending.remove(&connection).unwrap().fail(reason);
+                        endpoint.pending.get_mut(&connection).unwrap().fail(reason);
                     }
                     StreamWritable { stream } => {
                         if let Some(writer) = endpoint.pending.get_mut(&connection).unwrap().blocked_writers.remove(&stream) {
@@ -630,8 +629,8 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut endpoint = self.endpoint.0.borrow_mut();
-        // TODO: Yield error
-        let pending = if let Some(x) = endpoint.pending.get_mut(&self.conn.conn) { x } else { return Ok(Async::Ready(None)); };
+        let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
+        if let Some(ref x) = pending.error { return Err(x.clone()); }
         if let Some(x) = pending.incoming_streams.pop_front() {
             let recv = RecvStream::new(self.endpoint.clone(), self.conn.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
