@@ -1221,8 +1221,15 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
-    pub fn read(&mut self, _conn: ConnectionHandle, _stream: StreamId) -> Result<Bytes, ReadError> {
-        unimplemented!()
+    pub fn read(&mut self, conn: ConnectionHandle, stream: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        match self.connections[conn.0].read(stream, buf) {
+            x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
+                self.connections[conn.0].maybe_cleanup(stream);
+                x
+            }
+            x => x
+        }
     }
 
     /// Read data from a stream out of order
@@ -1238,7 +1245,7 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active incoming channel
     pub fn read_unordered(&mut self, conn: ConnectionHandle, stream: StreamId) -> Result<(Bytes, u64), ReadError> {
         self.dirty_conns.insert(conn); // May need to send flow control frames after reading
-        match self.connections[conn.0].read(stream) {
+        match self.connections[conn.0].read_unordered(stream) {
             x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
                 x
@@ -2228,7 +2235,7 @@ impl Connection {
         self.pending.stream.push_back(frame::Stream { id, data: Bytes::new(), offset: ss.offset, fin: true });
     }
 
-    fn read(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
+    fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
         match rs.state {
@@ -2252,6 +2259,43 @@ impl Connection {
             rs.state = stream::RecvState::Closed;
             Err(ReadError::Finished)
         } else { Err(ReadError::Blocked) }
+    }
+
+    fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
+        assert_ne!(id, StreamId(0), "cannot read an internal stream");
+        let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
+        match rs.state {
+            stream::RecvState::ResetRecvd { error_code, .. } => {
+                rs.state = stream::RecvState::Closed;
+                return Err(ReadError::Reset { error_code });
+            }
+            stream::RecvState::Closed => {
+                unreachable!()
+            }
+            stream::RecvState::Recv { .. } | stream::RecvState::DataRecvd { .. } => {}
+        }
+
+        for (data, offset) in rs.buffered.drain(..) {
+            rs.assembler.insert(offset, &data);
+        }
+
+        if rs.assembler.blocked() {
+            if let stream::RecvState::DataRecvd { .. } = rs.state {
+                rs.state = stream::RecvState::Closed;
+                return Err(ReadError::Finished);
+            } else {
+                return Err(ReadError::Blocked);
+            }
+        }
+
+        let n = rs.assembler.read(buf);
+        rs.max_data += n as u64;
+        self.local_max_data += n as u64;
+        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
+        self.pending.max_stream_data.insert(id);
+        self.pending.max_data = true;
+
+        Ok(n)
     }
 
     fn stop_sending(&mut self, stream: StreamId, error_code: u16) {

@@ -29,19 +29,10 @@ impl MemoryStream {
 
 impl Read for MemoryStream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let n;
-        {
-            let (a, b) = self.incoming.peek();
-            let a_n = a.len().min(buf.len());
-            buf[0..a_n].copy_from_slice(&a[0..a_n]);
-            let b_n = b.len().min(buf.len().saturating_sub(a.len()));
-            buf[a_n..(a_n+b_n)].copy_from_slice(&b[0..b_n]);
-            n = a_n + b_n;
-        }
+        let n = self.incoming.read(buf);
         if n == 0 {
             return Err(io::Error::new(io::ErrorKind::WouldBlock, "no data available"));
         }
-        self.incoming.advance(n);
         Ok(n)
     }
 }

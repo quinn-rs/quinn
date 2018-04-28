@@ -67,7 +67,7 @@ impl Stream {
 impl From<Send> for Stream { fn from(x: Send) -> Stream { Stream::Send(x) } }
 impl From<Recv> for Stream { fn from(x: Recv) -> Stream { Stream::Recv(x) } }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct Send {
     pub offset: u64,
     pub max_data: u64,
@@ -94,13 +94,16 @@ impl Send {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Recv {
     pub state: RecvState,
     pub recvd: RangeSet,
     pub buffered: VecDeque<(Bytes, u64)>,
-    /// Current limit, which may or may not have been sent
+    /// Upper limit dictated by the peer
     pub max_data: u64,
+    /// Whether any unordered reads have been performed, making this stream unusable for ordered reads
+    pub unordered: bool,
+    pub assembler: Assembler,
 }
 
 impl Recv {
@@ -109,6 +112,8 @@ impl Recv {
         recvd: RangeSet::new(),
         buffered: VecDeque::new(),
         max_data,
+        unordered: false,
+        assembler: Assembler::new(),
     }}
 
     /// No more data expected from peer
@@ -201,35 +206,36 @@ impl Assembler {
         self.written.len()
     }
 
-    /// Slices representing the leading prefix of available bytes
-    pub fn peek(&self) -> (&[u8], &[u8]) {
-        let (a, b) = self.data.as_slices();
-        let len = self.prefix_len();
-        let n = a.len().min(len);
-        (&a[0..n], &b[0..(len - n)])
-    }
+    pub fn read(&mut self, buf: &mut [u8]) -> usize {
+        let n;
+        {
+            let (a, b) = self.data.as_slices();
+            let available = self.prefix_len();
+            let a_len = a.len().min(available);
+            let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
+            let a_n = a.len().min(buf.len());
+            buf[0..a_n].copy_from_slice(&a[0..a_n]);
+            let b_n = b.len().min(buf.len().saturating_sub(a.len()));
+            buf[a_n..(a_n+b_n)].copy_from_slice(&b[0..b_n]);
+            n = a_n + b_n;
+        }
 
-    pub fn advance(&mut self, n: usize) {
-        debug_assert!(self.prefix_len() >= n, "advanced past unreceived data");
         self.offset += n as u64;
         self.data.drain(0..n);
         let q = n / 8;
         let r = n % 8;
         let carry = (self.written_offset as usize + r) / 8;
         self.written.drain(0..(q + carry));
-        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;
+        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;        
+
+        n
     }
 
     /// Testing convenience
     fn next(&mut self) -> Option<Box<[u8]>> {
         let mut buf = Vec::new();
-        buf.reserve_exact(self.prefix_len());
-        {
-            let (a, b) = self.peek();
-            buf.extend_from_slice(a);
-            buf.extend_from_slice(b);
-        }
-        self.advance(buf.len());
+        buf.resize(self.prefix_len(), 0);
+        self.read(&mut buf);
         if !buf.is_empty() { Some(buf.into()) } else { None }
     }
 
