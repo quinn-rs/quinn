@@ -1195,36 +1195,18 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
-        if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err(WriteError::Blocked); }
-        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
-        if self.connections[conn.0].blocked() {
-            self.connections[conn.0].blocked_streams.insert(stream);
-            return Err(WriteError::Blocked);
+        let r = self.connections[conn.0].write(stream, data);
+        match r {
+            Ok(n) => {
+                self.dirty_conns.insert(conn);
+                trace!(self.log, "write"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0, "len" => n)
+            }
+            Err(WriteError::Blocked) => {
+                trace!(self.log, "write blocked"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0)
+            }
+            _ => {}
         }
-        let (stop_reason, stream_budget) = {
-            let ss = self.connections[conn.0].streams.get_mut(&stream).expect("stream already closed").send_mut().unwrap();
-            trace!(self.log, "writing"; "stream" => stream.0, "stream max data" => ss.max_data, "stream offset" => ss.offset);
-            (match ss.state {
-                  stream::SendState::ResetSent  { ref mut stop_reason }
-                | stream::SendState::ResetRecvd { ref mut stop_reason } => stop_reason.take(),
-                _ => None,
-            },
-            ss.max_data - ss.offset)
-        };
-
-        if let Some(error_code) = stop_reason {
-            self.connections[conn.0].maybe_cleanup(stream);
-            return Err(WriteError::Stopped { error_code });
-        }
-
-        if stream_budget == 0 {
-            return Err(WriteError::Blocked);
-        }
-
-        let conn_budget = self.connections[conn.0].max_data - self.connections[conn.0].data_sent;
-        let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.connections[conn.0].transmit(stream, (&data[0..n]).into());
-        Ok(n)
+        r
     }
 
     /// Indicate that no more data will be sent on a stream
@@ -2338,6 +2320,38 @@ impl Connection {
             }
         }
         Ok(self.streams.get_mut(&id))
+    }
+
+    fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        if self.state.as_ref().unwrap().is_closed() { return Err(WriteError::Blocked); }
+        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
+        if self.blocked() {
+            self.blocked_streams.insert(stream);
+            return Err(WriteError::Blocked);
+        }
+        let (stop_reason, stream_budget) = {
+            let ss = self.streams.get_mut(&stream).expect("stream already closed").send_mut().unwrap();
+            (match ss.state {
+                stream::SendState::ResetSent  { ref mut stop_reason }
+                | stream::SendState::ResetRecvd { ref mut stop_reason } => stop_reason.take(),
+                _ => None,
+            },
+             ss.max_data - ss.offset)
+        };
+
+        if let Some(error_code) = stop_reason {
+            self.maybe_cleanup(stream);
+            return Err(WriteError::Stopped { error_code });
+        }
+
+        if stream_budget == 0 {
+            return Err(WriteError::Blocked);
+        }
+
+        let conn_budget = self.max_data - self.data_sent;
+        let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
+        self.transmit(stream, (&data[0..n]).into());
+        Ok(n)
     }
 }
 
