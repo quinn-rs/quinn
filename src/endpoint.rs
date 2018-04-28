@@ -1190,17 +1190,16 @@ impl Endpoint {
 
     /// Transmit data on a stream
     ///
-    /// Returns `Ok(())` if all data was written. If an error is encounterd, `Err((remaining, reason))` is returned,
-    /// where `remaining` is the portion of the data that was not written.
+    /// Returns the number of bytes written on success.
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
-    pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, mut data: Bytes) -> Result<(), (Bytes, WriteError)> {
-        if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err((data, WriteError::Blocked)); }
+    pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        if self.connections[conn.0].state.as_ref().unwrap().is_closed() { return Err(WriteError::Blocked); }
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side);
         if self.connections[conn.0].blocked() {
             self.connections[conn.0].blocked_streams.insert(stream);
-            return Err((data, WriteError::Blocked));
+            return Err(WriteError::Blocked);
         }
         let (stop_reason, stream_budget) = {
             let ss = self.connections[conn.0].streams.get_mut(&stream).expect("stream already closed").send_mut().unwrap();
@@ -1212,27 +1211,20 @@ impl Endpoint {
             },
             ss.max_data - ss.offset)
         };
+
         if let Some(error_code) = stop_reason {
             self.connections[conn.0].maybe_cleanup(stream);
-            return Err((data, WriteError::Stopped { error_code }));
+            return Err(WriteError::Stopped { error_code });
+        }
+
+        if stream_budget == 0 {
+            return Err(WriteError::Blocked);
         }
 
         let conn_budget = self.connections[conn.0].max_data - self.connections[conn.0].data_sent;
-        
-        let result = if conn_budget < stream_budget && conn_budget < data.len() as u64 {
-            self.connections[conn.0].blocked_streams.insert(stream);
-            Err((data.split_off(conn_budget as usize), WriteError::Blocked))
-        } else if stream_budget < data.len() as u64 {
-            Err((data.split_off(stream_budget as usize), WriteError::Blocked))
-        } else { Ok(()) };
-        if !data.is_empty() {
-            trace!(self.log, "queuing"; "stream" => stream.0, "len" => data.len());
-            self.connections[conn.0].transmit(stream, data);
-            self.dirty_conns.insert(conn);
-        } else {
-            trace!(self.log, "stream blocked"; "stream" => stream.0);
-        }
-        result
+        let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
+        self.connections[conn.0].transmit(stream, (&data[0..n]).into());
+        Ok(n)
     }
 
     /// Indicate that no more data will be sent on a stream

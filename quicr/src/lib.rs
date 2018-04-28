@@ -428,7 +428,6 @@ pub struct SendStream {
     conn: Rc<ConnectionInner>,
     stream: StreamId,
     finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
-    stop_reason: Option<u16>,
     finished: bool,
 }
 
@@ -443,7 +442,6 @@ impl SendStream {
     fn new(endpoint: Endpoint, conn: Rc<ConnectionInner>, stream: StreamId) -> Self { Self {
         endpoint, conn, stream,
         finishing: None,
-        stop_reason: None,
         finished: false,
     }}
 }
@@ -456,23 +454,18 @@ impl RecvStream {
 }
 
 impl SendStream {
-    /// The error code provided by the remote application explaining why we must stop writing to this stream
-    pub fn stop_reason(&self) -> Option<u16> { self.stop_reason }
-
     pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.endpoint.0.borrow_mut();
         use quicr::WriteError::*;
-        let n = match endpoint.inner.write(self.conn.conn, self.stream, buf.into()) {
-            Ok(()) => buf.len(),
-            Err((ref unwritten, Blocked)) if unwritten.len() < buf.len() => buf.len() - unwritten.len(),
-            Err((_, Blocked)) => {
+        let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
+            Ok(n) => n,
+            Err(Blocked) => {
                 let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
                 if let Some(ref x) = pending.error { return Err(WriteError::ConnectionClosed(x.clone())); }
                 pending.blocked_writers.insert(self.stream, task::current());
                 return Ok(Async::NotReady);
             }
-            Err((_, Stopped { error_code })) => {
-                self.stop_reason = Some(error_code);
+            Err(Stopped { error_code }) => {
                 return Err(WriteError::Stopped { error_code });
             }
         };
