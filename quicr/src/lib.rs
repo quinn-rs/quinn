@@ -20,7 +20,7 @@ use std::collections::VecDeque;
 use std::time::{Instant, Duration};
 
 use tokio_udp::UdpSocket;
-use tokio_io::{AsyncWrite};
+use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::{Delay, timer};
 use slog::Logger;
 use futures::{Future, Poll, Async};
@@ -503,7 +503,8 @@ impl io::Write for SendStream {
         match SendStream::poll_write(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(WriteError::Stopped { .. }) => Err(io::Error::new(io::ErrorKind::ConnectionReset, "peer stopped this stream")),
+            Err(WriteError::Stopped { error_code }) =>
+                Err(io::Error::new(io::ErrorKind::ConnectionReset, format!("stream stopped by peer: error {}", error_code))),
             Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
         }
     }
@@ -571,9 +572,49 @@ impl RecvStream {
         }
     }
 
+    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+        let endpoint = &mut *self.endpoint.0.borrow_mut();
+        use quicr::ReadError::*;
+        let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
+        match endpoint.inner.read(self.conn.conn, self.stream, buf) {
+            Ok(n) => Ok(Async::Ready(n)),
+            Err(Blocked) => {
+                if let Some(ref x) = pending.error { return Err(ReadError::ConnectionClosed(x.clone())); }
+                pending.blocked_readers.insert(self.stream, task::current());
+                Ok(Async::NotReady)
+            }
+            Err(Reset { error_code }) => {
+                pending.remote_recv_streams.remove(&self.stream);
+                Err(ReadError::Reset { error_code })
+            }
+            Err(Finished) => {
+                pending.remote_recv_streams.remove(&self.stream);
+                self.recvd = true;
+                Err(ReadError::Finished)
+            }
+        }
+    }
+
     pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
         ReadToEnd { stream: self, size_limit, buffer: Vec::new() }
     }
+}
+
+impl io::Read for RecvStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        use ReadError::*;
+        match self.poll_read(buf) {
+            Ok(Async::Ready(n)) => Ok(n),
+            Err(Finished) => Ok(0),
+            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
+            Err(Reset { error_code }) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("stream reset by peer: error {}", error_code))),
+            Err(ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
+        }
+    }
+}
+
+impl AsyncRead for RecvStream {
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool { false }
 }
 
 #[derive(Debug, Fail, Clone)]
