@@ -1,4 +1,4 @@
-use std::collections::{VecDeque, BTreeMap};
+use std::collections::VecDeque;
 
 use bytes::Bytes;
 
@@ -164,65 +164,89 @@ pub enum RecvState {
     Closed,
 }
 
+/// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug)]
 pub struct Assembler {
     offset: u64,
-    /// (offset, data)
-    segments: BTreeMap<u64, Bytes>,
+    data: VecDeque<u8>,
+    /// bitmap of data bytes; 0 = written, 1 = not
+    written: VecDeque<u8>,
+    /// number of bits of written to skip; always < 8
+    written_offset: u8,
 }
 
 impl Assembler {
-    pub fn new() -> Self { Self::with_offset(0) }
-    pub fn with_offset(x: u64) -> Self { Self { offset: x, segments: BTreeMap::new() } }
-    pub fn is_empty(&self) -> bool { self.segments.is_empty() }
-    pub fn offset(&self) -> u64 { self.offset }
+    pub fn new() -> Self { Self {
+        offset: 0,
+        data: VecDeque::new(),
+        written: VecDeque::new(),
+        written_offset: 0,
+    }}
 
-    pub fn next(&mut self) -> Option<Bytes> {
-        if let Some(data) = self.segments.remove(&self.offset) {
-            self.offset += data.len() as u64;
-            Some(data)
-        } else { None }
+    /// Whether `peek` will return at least one nonempty slice
+    pub fn blocked(&self) -> bool {
+        let mask = !0 >> self.written_offset;
+        self.written.front().map_or(true, |x| x & mask == mask)
     }
 
-    pub fn insert(&mut self, mut offset: u64, mut data: Bytes) {
-        let prev_end = if let Some((&prev_off, prev_data)) = self.segments.range(..offset).rev().next() {
-            prev_off + prev_data.len() as u64
-        } else {
-            self.offset
-        };
-        if let Some(relative) = prev_end.checked_sub(offset) {
-            if relative >= data.len() as u64 { return; }
-            offset += relative;
-            data.advance(relative as usize);
-        }
+    pub fn offset(&self) -> u64 { self.offset }
 
-        // For every segment we overlap:
-        // - if the segment extends past our end, truncate ourselves and finish
-        // - if we meet or extend past the segment's end, drop it
-        // This ensures our data remains roughly as contiguous as possible.
-        let mut to_drop = Vec::new();
-        for (&next_off, next_data) in self.segments.range(offset..) {
-            let end = offset + data.len() as u64;
-            let next_end = next_off + next_data.len() as u64;
-            if next_off >= end {
-                // There's a gap here, so we're finished.
-                break;
-            } else if next_end < end {
-                // The existing segment is a subset of us; discard it
-                to_drop.push(next_off);
-            } else if next_off == offset {
-                // We are wholly contained by the existing segment; bail out.
-                // Note that this can only happen on the first iteration, so to_drop is necessarily empty, so skipping
-                // the cleanup is fine.
-                return;
-            } else {
-                // We partially overlap the existing segment; truncate and finish.
-                data.truncate((next_off - offset) as usize);
-                break;
-            }
+    /// Leading written bytes
+    fn prefix_len(&self) -> usize {
+        for i in 0..self.written.len() {
+            let x = self.written[i];
+            if x == 0 || (i == 0 && x << self.written_offset == 0) { continue; }
+            return (i * 8 + x.leading_zeros() as usize) - self.written_offset as usize;
         }
-        for x in to_drop { self.segments.remove(&x); }
-        self.segments.insert(offset, data);
+        self.written.len()
+    }
+
+    /// Slices representing the leading prefix of available bytes
+    pub fn peek(&self) -> (&[u8], &[u8]) {
+        let (a, b) = self.data.as_slices();
+        let len = self.prefix_len();
+        let n = a.len().min(len);
+        (&a[0..n], &b[0..(len - n)])
+    }
+
+    pub fn advance(&mut self, n: usize) {
+        debug_assert!(self.prefix_len() >= n, "advanced past unreceived data");
+        self.offset += n as u64;
+        self.data.drain(0..n);
+        let q = n / 8;
+        let r = n % 8;
+        let carry = (self.written_offset as usize + r) / 8;
+        self.written.drain(0..(q + carry));
+        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;
+    }
+
+    /// Testing convenience
+    fn next(&mut self) -> Option<Box<[u8]>> {
+        let mut buf = Vec::new();
+        buf.reserve_exact(self.prefix_len());
+        {
+            let (a, b) = self.peek();
+            buf.extend_from_slice(a);
+            buf.extend_from_slice(b);
+        }
+        self.advance(buf.len());
+        if !buf.is_empty() { Some(buf.into()) } else { None }
+    }
+
+    pub fn insert(&mut self, offset: u64, data: &[u8]) {
+        let start = (offset - self.offset) as usize;
+        let end = start + data.len();
+        if end > self.data.len() {
+            self.data.resize(end, 0);
+            // 1 extra to leave room for written_extra
+            self.written.resize(end/8 + (end % 8 != 0) as usize + 1, !0);
+        }
+        for i in 0..data.len() {
+            let position = start + i;
+            self.data[position] = data[i];
+            let bit = self.written_offset as usize + position;
+            self.written[bit / 8] &= !(1 << (7 - bit % 8));
+        }
     }
 }
 
@@ -240,8 +264,7 @@ mod test {
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
         x.insert(6, (&b"789"[..]).into());
         x.insert(9, (&b"10"[..]).into());
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"789");
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"10");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"78910");
         assert_matches!(x.next(), None);
     }
 
@@ -251,8 +274,7 @@ mod test {
         x.insert(3, (&b"456"[..]).into());
         assert_matches!(x.next(), None);
         x.insert(0, (&b"123"[..]).into());
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
     }
 
@@ -288,8 +310,7 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, (&b"123"[..]).into());
         x.insert(1, (&b"234"[..]).into());
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"4");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
         assert_matches!(x.next(), None);
     }
 
