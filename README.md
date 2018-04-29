@@ -5,10 +5,9 @@ standardization by the IETF](https://quicwg.github.io/). It is currently suitabl
 implementation is split up into the state macine crate `quicr-core` which performs no IO internally and can be tested
 deterministically, and a high-level tokio-compatible API in `quicr`. See `quicr/examples/` for usage.
 
-[![MIT licensed][mit-badge]][mit-url]
-
-[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[mit-url]: LICENSE-MIT
+[![Crates.io](https://img.shields.io/crates/v/quicr.svg)](https://crates.io/crates/quicr)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
 ## Features
 
