@@ -22,6 +22,7 @@ deterministically, and a high-level tokio-compatible API in `quicr`. See `quicr/
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
 - [x] Stateless retry
+- [ ] Migration
 - [ ] 0-RTT data
 - [ ] Session resumption
 
