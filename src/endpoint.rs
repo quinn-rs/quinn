@@ -1310,7 +1310,7 @@ impl Endpoint {
     /// Close a connection immediately
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
-    /// all communications of interest have been completed.
+    /// all important communications have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
         if let &State::Drained = self.connections[conn.0].state.as_ref().unwrap() {
             self.forget(conn);

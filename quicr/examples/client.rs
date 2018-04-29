@@ -61,14 +61,12 @@ fn run(log: Logger) -> Result<()> {
             .and_then(|(conn, _)| {
                 conn.open_bi().map_err(|e| format_err!("failed to open stream: {}", e))
             })
-            .and_then(|(send, recv)| {
-                tokio::io::write_all(send, request.as_bytes()).map_err(|e| format_err!("failed to send request: {}", e))
-                    .map(move |(send, _)| (send, recv))
+            .and_then(|stream| {
+                tokio::io::write_all(stream, request.as_bytes()).map_err(|e| format_err!("failed to send request: {}", e))
             })
-            .and_then(|(send, recv)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                      .map(move |_| recv))
-            .and_then(|recv| recv.read_to_end(usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e)))
-            .map(|data| {
+            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+            .and_then(|stream| quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e)))
+            .map(|(_, data)| {
                 io::stdout().write_all(&data).unwrap();
                 io::stdout().flush().unwrap();
             })

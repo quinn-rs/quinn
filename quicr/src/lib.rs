@@ -1,3 +1,11 @@
+//! QUIC transport protocol support for Tokio
+//!
+//! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing shortcomings of TCP, such as
+//! head-of-line blocking, poor security, slow handshakes, and inefficient congestion control. This crate provides a
+//! portable userspace implementation.
+
+#![warn(missing_docs)]
+
 extern crate quicr_core as quicr;
 extern crate tokio_reactor;
 extern crate tokio_udp;
@@ -32,23 +40,23 @@ use fnv::{FnvHashMap, FnvHashSet};
 use openssl::ssl;
 use bytes::Bytes;
 
-use quicr::{Directionality, StreamId, ConnectionHandle};
+use quicr::{Directionality, StreamId, ConnectionHandle, Side};
 
-pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError, TransportError};
+pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError};
 
+/// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
 pub enum Error {
-    #[fail(display = "{}", _0)]
-    Io(io::Error),
-    #[fail(display = "{}", _0)]
-    Transport(TransportError),
-    #[fail(display = "{}", _0)]
-    Ssl(openssl::ssl::Error),
+    /// An error arising during setup of the underlying UDP socket.
+    #[fail(display = "error setting up UDP socket: {}", _0)]
+    Socket(io::Error),
+    /// An error arising from the TLS layer.
+    #[fail(display = "error setting up TLS: {}", _0)]
+    Tls(openssl::ssl::Error),
 }
 
-impl From<io::Error> for Error { fn from(x: io::Error) -> Self { Error::Io(x) } }
-impl From<TransportError> for Error { fn from(x: TransportError) -> Self { Error::Transport(x) } }
-impl From<ssl::Error> for Error { fn from(x: ssl::Error) -> Self { Error::Ssl(x) } }
+impl From<io::Error> for Error { fn from(x: io::Error) -> Self { Error::Socket(x) } }
+impl From<ssl::Error> for Error { fn from(x: ssl::Error) -> Self { Error::Tls(x) } }
 
 struct EndpointInner {
     log: Logger,
@@ -80,7 +88,7 @@ struct Pending {
 }
 
 impl Pending {
-    pub fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self { Self {
+    fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self { Self {
         blocked_writers: FnvHashMap::default(),
         blocked_readers: FnvHashMap::default(),
         connecting,
@@ -95,7 +103,7 @@ impl Pending {
         error: None,
     }}
 
-    pub fn fail(&mut self, reason: ConnectionError) {
+    fn fail(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
         for (_, writer) in self.blocked_writers.drain() {
             writer.notify()
@@ -121,12 +129,16 @@ impl Pending {
     }
 }
 
-#[derive(Clone)]
+/// A QUIC endpoint.
+///
+/// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both client and server for
+/// different connections.
 pub struct Endpoint(Rc<RefCell<EndpointInner>>);
 
-/// A future that drives an endpoint
+/// A future that drives IO on an endpoint.
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
+/// The stream of incoming connections.
 pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
 
 impl Endpoint {
@@ -150,6 +162,9 @@ impl Endpoint {
         Ok((Endpoint(rc.clone()), Driver(rc), recv))
     }
 
+    /// Connect to a remote endpoint.
+    ///
+    /// `hostname` is used by the remote endpoint for disambiguation if `addr` hosts multiple services.
     pub fn connect(&self, addr: &SocketAddr, hostname: Option<&[u8]>) -> Box<Future<Item=(Connection, IncomingStreams), Error=ConnectionError>> {
         let (send, recv) = oneshot::channel();
         let conn = {
@@ -158,8 +173,8 @@ impl Endpoint {
             endpoint.pending.insert(conn, Pending::new(Some(send)));
             conn
         };
-        let endpoint = self.clone();
-        let conn = Rc::new(ConnectionInner { endpoint: endpoint.clone(), conn });
+        let endpoint = Endpoint(self.0.clone());
+        let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn, side: Side::Client });
         Box::new(
             recv.map_err(|_| unreachable!())
                 .and_then(move |err| if let Some(err) = err { Err(err) } else {
@@ -169,10 +184,15 @@ impl Endpoint {
     }
 }
 
+/// A connection initiated by a remote client.
 pub struct NewConnection {
+    /// The connection itself.
     pub connection: Connection,
+    /// The stream of QUIC streams initiated by the client.
     pub incoming: IncomingStreams,
+    /// The address from which the connection originates.
     pub address: SocketAddr,
+    /// Identifier of the application-layer protocol that was negotiated.
     pub protocol: Option<Box<[u8]>>,
 }
 
@@ -203,7 +223,11 @@ impl Future for Driver {
                         if let Some(c) = endpoint.pending.get_mut(&connection).unwrap().connecting.take() {
                             let _ = c.send(None);
                         } else {
-                            let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn: connection });
+                            let conn = Rc::new(ConnectionInner {
+                                endpoint: Endpoint(self.0.clone()),
+                                conn: connection,
+                                side: Side::Server,
+                            });
                             let _ = endpoint.incoming.unbounded_send(NewConnection {
                                 connection: Connection(conn.clone()),
                                 incoming: IncomingStreams { endpoint: Endpoint(self.0.clone()), conn },
@@ -359,11 +383,14 @@ fn normalize(x: SocketAddr) -> SocketAddrV6 {
 struct ConnectionInner {
     endpoint: Endpoint,
     conn: ConnectionHandle,
+    side: Side,
 }
 
+/// A QUIC connection.
 pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
+    /// Initite a new outgoing unidirectional stream.
     pub fn open_uni(&self) -> Box<Future<Item=SendStream, Error=ConnectionError>> {
         let (send, recv) = oneshot::channel();
         {
@@ -375,16 +402,16 @@ impl Connection {
                 pending.uni_opening.push_back(send);
             }
         }
-        let endpoint = self.0.endpoint.clone();
         let conn = self.0.clone();
         Box::new(
             recv.map_err(|_| unreachable!())
                 .and_then(|result| result)
-                .map(move |stream| SendStream::new(endpoint, conn, stream))
+                .map(move |stream| SendStream(Stream::new(conn, stream)))
         )
     }
 
-    pub fn open_bi(&self) -> Box<Future<Item=(SendStream, RecvStream), Error=ConnectionError>> {
+    /// Initiate a new outgoing bidirectional stream.
+    pub fn open_bi(&self) -> Box<Future<Item=Stream, Error=ConnectionError>> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.0.borrow_mut();
@@ -395,17 +422,25 @@ impl Connection {
                 pending.bi_opening.push_back(send);
             }
         }
-        let endpoint = self.0.endpoint.clone();
         let conn = self.0.clone();
         Box::new(
             recv.map_err(|_| unreachable!())
                 .and_then(|result| result)
                 .map(move |stream| {
-                    (SendStream::new(endpoint.clone(), conn.clone(), stream), RecvStream::new(endpoint, conn, stream))
+                    Stream::new(conn.clone(), stream)
                 })
         )
     }
 
+    /// Close the connection immediately.
+    ///
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
+    /// all important communications have been completed.
+    ///
+    /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
+    ///
+    /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
+    /// should be kept under 1KiB.
     pub fn close(&self, error_code: u16, reason: &[u8]) {
         let endpoint = &mut *self.0.endpoint.0.borrow_mut();
         endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.0.conn, error_code, reason.into());
@@ -422,39 +457,67 @@ impl Drop for ConnectionInner {
     }
 }
 
-pub struct SendStream {
-    endpoint: Endpoint,
-    conn: Rc<ConnectionInner>,
-    stream: StreamId,
-    finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
-    finished: bool,
+/// Trait of readable streams
+pub trait Read {
+    /// Read a segment of data from any offset in the stream.
+    ///
+    /// Returns a segment of data and their offset in the stream. Segments may be received in any order and may overlap.
+    ///
+    /// Using this function reduces latency improves throughput by avoiding head-of-line blocking within the stream, and
+    /// reduces computational overhead by allowing data to be passed on without any intermediate buffering. Prefer it
+    /// whenever possible.
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
+    /// Read data contiguously from the stream.
+    ///
+    /// Incurs latency, throughput, and computational overhead and is not necessary for most applications. Prefer
+    /// `poll_read_unordered` whenever possible.
+    ///
+    /// # Panics
+    /// - If called after `poll_read_unordered` was called on the same stream.
+    ///   This is forbidden because an unordered read could consume a segment of data from a location other than the end
+    ///   of the stream, making it impossible for future ordered reads to proceed.
+    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
 }
 
-pub struct RecvStream {
-    endpoint: Endpoint,
+/// Trait of writable streams
+pub trait Write {
+    /// Write some bytes to the stream.
+    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
+    /// Indicate that no more data will be written.
+    ///
+    /// Completes when the peer has acknowledged all sent data.
+    fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
+    /// Abandon transmitting data on this stream.
+    ///
+    /// No new data may be transmitted, and no previously transmitted data will be retransmitted if lost.
+    fn reset(&self, error_code: u16);
+}
+
+/// A stream that supports both sending and receiving data
+pub struct Stream {
     conn: Rc<ConnectionInner>,
     stream: StreamId,
+
+    // Send only
+    finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
+    finished: bool,
+
+    // Recv only
     recvd: bool,
 }
 
-impl SendStream {
-    fn new(endpoint: Endpoint, conn: Rc<ConnectionInner>, stream: StreamId) -> Self { Self {
-        endpoint, conn, stream,
+impl Stream {
+    fn new(conn: Rc<ConnectionInner>, stream: StreamId) -> Self { Self {
+        conn, stream,
         finishing: None,
         finished: false,
-    }}
-}
-
-impl RecvStream {
-    fn new(endpoint: Endpoint, conn: Rc<ConnectionInner>, stream: StreamId) -> Self { Self {
-        endpoint, conn, stream,
         recvd: false,
     }}
 }
 
-impl SendStream {
-    pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
-        let mut endpoint = self.endpoint.0.borrow_mut();
+impl Write for Stream {
+    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
+        let mut endpoint = self.conn.endpoint.0.borrow_mut();
         use quicr::WriteError::*;
         let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
             Ok(n) => n,
@@ -472,8 +535,8 @@ impl SendStream {
         Ok(Async::Ready(n))
     }
 
-    pub fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
-        let mut endpoint = self.endpoint.0.borrow_mut();
+    fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
+        let mut endpoint = self.conn.endpoint.0.borrow_mut();
         if self.finishing.is_none() {
             endpoint.inner.finish(self.conn.conn, self.stream);
             let (send, recv) = oneshot::channel();
@@ -491,66 +554,16 @@ impl SendStream {
         }
     }
 
-    pub fn reset(&self, error_code: u16) {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
+    fn reset(&self, error_code: u16) {
+        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
         endpoint.inner.reset(self.conn.conn, self.stream, error_code);
         endpoint.driver.as_ref().map(|x| x.notify());
     }
 }
 
-impl io::Write for SendStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match SendStream::poll_write(self, buf) {
-            Ok(Async::Ready(n)) => Ok(n),
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(WriteError::Stopped { error_code }) =>
-                Err(io::Error::new(io::ErrorKind::ConnectionReset, format!("stream stopped by peer: error {}", error_code))),
-            Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
-}
-
-impl AsyncWrite for SendStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.poll_finish().map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e)))
-    }
-}
-
-impl Drop for SendStream {
-    fn drop(&mut self) {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
-        if !self.finished {
-            endpoint.inner.reset(self.conn.conn, self.stream, 0);
-        }
-        endpoint.driver.as_ref().map(|x| x.notify());
-    }
-}
-
-#[derive(Debug, Fail, Clone)]
-pub enum WriteError {
-    /// The peer is no longer accepting data on this stream.
-    #[fail(display = "sending stopped by peer: error {}", error_code)]
-    Stopped { error_code: u16 },
-    /// The connection was closed.
-    #[fail(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
-}
-
-impl Drop for RecvStream {
-    fn drop(&mut self) {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
-        if !self.recvd {
-            endpoint.inner.stop_sending(self.conn.conn, self.stream, 0);
-        }
-        endpoint.driver.as_ref().map(|x| x.notify());
-    }
-}
-
-impl RecvStream {
-    pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
+impl Read for Stream {
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
+        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
         use quicr::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
@@ -572,8 +585,8 @@ impl RecvStream {
         }
     }
 
-    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
+    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
         use quicr::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
@@ -594,16 +607,64 @@ impl RecvStream {
             }
         }
     }
+}
 
-    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
-        ReadToEnd { stream: self, size_limit, buffer: Vec::new() }
+impl io::Write for Stream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match Write::poll_write(self, buf) {
+            Ok(Async::Ready(n)) => Ok(n),
+            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
+            Err(WriteError::Stopped { error_code }) =>
+                Err(io::Error::new(io::ErrorKind::ConnectionReset, format!("stream stopped by peer: error {}", error_code))),
+            Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+impl AsyncWrite for Stream {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.poll_finish().map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e)))
     }
 }
 
-impl io::Read for RecvStream {
+impl Drop for Stream {
+    fn drop(&mut self) {
+        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let ours = self.stream.initiator() == self.conn.side;
+        let (send, recv) = match self.stream.directionality() {
+            Directionality::Bi => (true, true),
+            Directionality::Uni => (ours, !ours),
+        };
+        if send && !self.finished {
+            endpoint.inner.reset(self.conn.conn, self.stream, 0);
+        }
+        if recv && !self.recvd{
+            endpoint.inner.stop_sending(self.conn.conn, self.stream, 0);
+        }
+        endpoint.driver.as_ref().map(|x| x.notify());
+    }
+}
+
+/// Errors that arise from writing to a stream
+#[derive(Debug, Fail, Clone)]
+pub enum WriteError {
+    /// The peer is no longer accepting data on this stream.
+    #[fail(display = "sending stopped by peer: error {}", error_code)]
+    Stopped {
+        /// The error code supplied by the peer.
+        error_code: u16
+    },
+    /// The connection was closed.
+    #[fail(display = "connection closed: {}", _0)]
+    ConnectionClosed(ConnectionError),
+}
+
+impl io::Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use ReadError::*;
-        match self.poll_read(buf) {
+        match Read::poll_read(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Err(Finished) => Ok(0),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
@@ -613,15 +674,53 @@ impl io::Read for RecvStream {
     }
 }
 
+impl AsyncRead for Stream {
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool { false }
+}
+
+/// A stream that can only be used to send data
+pub struct SendStream(Stream);
+
+impl Write for SendStream {
+    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> { Write::poll_write(&mut self.0, buf) }
+    fn poll_finish(&mut self) -> Poll<(), ConnectionError> { self.0.poll_finish() }
+    fn reset(&self, error_code: u16) { self.0.reset(error_code); }
+}
+
+impl io::Write for SendStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+impl AsyncWrite for SendStream {
+    fn shutdown(&mut self) -> Poll<(), io::Error> { self.0.shutdown() }
+}
+
+/// A stream that can only be used to receive data
+pub struct RecvStream(Stream);
+
+impl Read for RecvStream {
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> { self.0.poll_read_unordered() }
+    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> { Read::poll_read(&mut self.0, buf) }
+}
+
+impl io::Read for RecvStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+}
+
 impl AsyncRead for RecvStream {
     unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool { false }
 }
 
+/// Errors that arise from reading from a stream.
 #[derive(Debug, Fail, Clone)]
 pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
     #[fail(display = "stream reset by peer: error {}", error_code)]
-    Reset { error_code: u16 },
+    Reset {
+        /// The error code supplied by the peer.
+        error_code: u16
+    },
     /// The data on this stream has been fully delivered and no more will be transmitted.
     #[fail(display = "the stream has been completely received")]
     Finished,
@@ -655,14 +754,18 @@ impl Future for Timer {
     }
 }
 
+/// A stream of QUIC streams initiated by a remote peer.
 pub struct IncomingStreams {
     endpoint: Endpoint,
     conn: Rc<ConnectionInner>,
 }
 
+/// A stream initiated by a remote peer.
 pub enum NewStream {
+    /// A unidirectional stream.
     Uni(RecvStream),
-    Bi(SendStream, RecvStream),
+    /// A bidirectional stream.
+    Bi(Stream),
 }
 
 impl FuturesStream for IncomingStreams {
@@ -673,11 +776,11 @@ impl FuturesStream for IncomingStreams {
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         if let Some(ref x) = pending.error { return Err(x.clone()); }
         if let Some(x) = pending.incoming_streams.pop_front() {
-            let recv = RecvStream::new(self.endpoint.clone(), self.conn.clone(), x);
+            let stream = Stream::new(self.conn.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
-                NewStream::Uni(recv)
+                NewStream::Uni(RecvStream(stream))
             } else {
-                NewStream::Bi(SendStream::new(self.endpoint.clone(), self.conn.clone(), x), recv)
+                NewStream::Bi(stream)
             };
             return Ok(Async::Ready(Some(stream)));
         }
@@ -690,19 +793,25 @@ impl FuturesStream for IncomingStreams {
     }
 }
 
-/// Uses unordered reads to be more efficient than using `AsyncRead`
-pub struct ReadToEnd {
-    stream: RecvStream,
+
+/// Uses unordered reads to be more efficient than using `AsyncRead` would allow
+pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
+    ReadToEnd { stream: Some(stream), size_limit, buffer: Vec::new() }
+}
+
+/// Future produced by `read_to_end`
+pub struct ReadToEnd<T> {
+    stream: Option<T>,
     buffer: Vec<u8>,
     size_limit: usize,
 }
 
-impl Future for ReadToEnd {
-    type Item = Box<[u8]>;
+impl<T: Read> Future for ReadToEnd<T> {
+    type Item = (T, Box<[u8]>);
     type Error = ReadError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
-            match self.stream.poll_read_unordered() {
+            match self.stream.as_mut().unwrap().poll_read_unordered() {
                 Ok(Async::Ready((data, offset))) => {
                     let len = self.buffer.len().max(offset as usize + data.len());
                     if len > self.size_limit { return Err(ReadError::Finished); }
@@ -711,7 +820,7 @@ impl Future for ReadToEnd {
                 }
                 Ok(Async::NotReady) => { return Ok(Async::NotReady); }
                 Err(ReadError::Finished) => {
-                    return Ok(Async::Ready(mem::replace(&mut self.buffer, Vec::new()).into()));
+                    return Ok(Async::Ready((self.stream.take().unwrap(), mem::replace(&mut self.buffer, Vec::new()).into())));
                 }
                 Err(e) => { return Err(e); }
             }

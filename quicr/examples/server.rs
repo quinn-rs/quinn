@@ -112,28 +112,30 @@ fn run(log: Logger) -> Result<()> {
         current_thread::spawn(
             incoming
                 .map_err(move |e| info!(log2, "connection terminated"; "remote" => %address, "reason" => %e))
-                .and_then(|stream| { match stream {
-                    quicr::NewStream::Bi(send, recv) => Ok((send, recv)),
-                    quicr::NewStream::Uni(_) => unreachable!(),
-                }})
-                .for_each(move |(send, recv)| {
+                .for_each(move |stream| {
+                    let stream = match stream {
+                        quicr::NewStream::Bi(stream) => stream,
+                        quicr::NewStream::Uni(_) => {
+                            error!(log, "client opened unidirectional stream"; "remote" => %address);
+                            return Ok(());
+                        }
+                    };
                     let root = root.clone();
                     let log = log.clone();
                     let log2 = log.clone();
                     let log3 = log.clone();
                     current_thread::spawn(
-                        recv.read_to_end(64 * 1024)
+                        quicr::read_to_end(stream, 64 * 1024)
                             .map_err(|e| format_err!("failed reading request: {}", e))
-                            .map(move |data| (send, data))
-                            .and_then(move |(send, req)| {
+                            .and_then(move |(stream, req)| {
                                 info!(log, "got request"; "remote" => %address);
                                 let resp = process_request(&root, &req).unwrap_or_else(move |e| {
                                     error!(log, "failed to process request"; "reaosn" => %e.pretty());
                                     format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
                                 });
-                                tokio::io::write_all(send, resp).map_err(|e| format_err!("failed to send response: {}", e))
+                                tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
                             })
-                            .and_then(|(send, _)| tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+                            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
                             .map(move |_| info!(log3, "request complete"; "remote" => %address))
                             .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
                     );
