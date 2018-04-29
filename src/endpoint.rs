@@ -33,18 +33,19 @@ pub struct ConnectionHandle(usize);
 
 impl From<ConnectionHandle> for usize { fn from(x: ConnectionHandle) -> usize { x.0 } }
 
+/// Parameters governing the core QUIC state machine.
 pub struct Config {
-    /// Maximum number of bidirectional streams remote endpoints can initiate.
+    /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
     pub max_remote_bi_streams: u16,
-    /// Maximum number of unidirectional streams remote endpoints can initiate.
+    /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
     pub max_remote_uni_streams: u16,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
-    /// Maximum value is 600 seconds. May be reduced for a given connection by the peer's transport parameters.
+    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's own idle timeout.
     pub idle_timeout: u16,
-    /// Maximum number of bytes to buffer per stream before blocking the sender.
+    /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
     pub stream_receive_window: u32,
-    /// Maximum number of bytes to buffer per connection before blocking the sender.
+    /// Maximum number of bytes the peer may transmit across all streams of a connection before becoming blocked.
     pub receive_window: u32,
 
     /// Maximum number of tail loss probes before an RTO fires.
@@ -77,9 +78,13 @@ pub struct Config {
     pub protocols: Vec<u8>,
 }
 
+/// Information needed to accept incoming connections.
 pub struct ListenConfig<'a> {
+    /// A TLS private key.
     pub private_key: &'a PKeyRef<Private>,
+    /// A TLS certificate corresponding to `private_key`.
     pub cert: &'a X509Ref,
+    /// Persistent state needed to gracefully recover from crashes.
     pub state: PersistentState,
 }
 
@@ -145,7 +150,7 @@ fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
     result
 }
 
-/// Information that should be preserved between restarts
+/// Information that should be preserved between restarts.
 ///
 /// Keeping this around allows better behavior by clients that communicated with a previous instance of the same
 /// endpoint.
