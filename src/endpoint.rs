@@ -2238,6 +2238,7 @@ impl Connection {
     fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
+        rs.unordered = true;
         match rs.state {
             stream::RecvState::ResetRecvd { error_code, .. } => {
                 rs.state = stream::RecvState::Closed;
@@ -2264,6 +2265,7 @@ impl Connection {
     fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
+        assert!(!rs.unordered, "cannot perform ordered reads following unordered reads on a stream");
         match rs.state {
             stream::RecvState::ResetRecvd { error_code, .. } => {
                 rs.state = stream::RecvState::Closed;
