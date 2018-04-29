@@ -540,8 +540,8 @@ pub trait Read {
     ///
     /// # Panics
     /// - If called after `poll_read_unordered` was called on the same stream.
-    ///   This is forbidden because an unordered read could consume a segment of data from a location other than the end
-    ///   of the stream, making it impossible for future ordered reads to proceed.
+    ///   This is forbidden because an unordered read could consume a segment of data from a location other than the start
+    ///   of the receive buffer, making it impossible for future ordered reads to proceed.
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
 }
 
