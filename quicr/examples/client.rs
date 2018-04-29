@@ -52,6 +52,8 @@ fn run(log: Logger) -> Result<()> {
         .logger(log.clone())
         .config(quicr::Config {
             protocols,
+            // BEWARE: Insecure setting! Think very carefully before disabling `verify_peers` outside of tests.
+            verify_peers: false,
             ..quicr::Config::default()
         })
         .bind("[::]:0")?;
