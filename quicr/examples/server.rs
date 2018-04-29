@@ -10,7 +10,6 @@ extern crate futures;
 extern crate rand;
 extern crate openssl;
 
-use std::net::UdpSocket;
 use std::fs::File;
 use std::io::Read;
 use std::fmt;
@@ -69,7 +68,6 @@ fn run(log: Logger) -> Result<()> {
     let root = Rc::new(Path::new(&root).to_owned());
     if !root.exists() { bail!("root path does not exist"); }
 
-    let socket = UdpSocket::bind("[::]:4433")?;
     let mut protocols = Vec::new();
     const PROTO: &[u8] = b"hq-11";
     protocols.push(PROTO.len() as u8);
@@ -103,7 +101,7 @@ fn run(log: Logger) -> Result<()> {
             ..quicr::Config::default()
         })
         .listen(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() })
-        .from_std(socket)?;
+        .bind("[::]:4433")?;
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {

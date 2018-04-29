@@ -4,7 +4,35 @@
 //! head-of-line blocking, poor security, slow handshakes, and inefficient congestion control. This crate provides a
 //! portable userspace implementation.
 //!
-//! The entry point of this crate is the `Endpoint`.
+//! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
+//!
+//! The futures and streams defined in this crate are not `Send` because they necessarily share state with eachother. As
+//! a result, they must be spawned using an executor that operates on the same thread that they were constructed, such
+//! as with `tokio::executor::current_thread`. The standard tokio runtime offloads futures to a threadpool, so its
+//! components must instead be pieced together by hand as follows:
+//!
+//! ```
+//! extern crate tokio;
+//! extern crate tokio_timer;
+//! extern crate quicr;
+//! extern crate futures;
+//!
+//! use futures::Future;
+//!
+//! fn main() {
+//!   let reactor = tokio::reactor::Reactor::new().unwrap();
+//!   let reactor_handle = reactor.handle();
+//!   let timer = tokio_timer::Timer::new(reactor);
+//!   let timer_handle = timer.handle();
+//!   let mut executor = tokio::executor::current_thread::CurrentThread::new_with_park(timer);
+//!
+//!   let (endpoint, driver, _) = quicr::Endpoint::new()
+//!       .reactor(&reactor_handle).timer(timer_handle)
+//!       .bind("[::]:0").unwrap();
+//!   executor.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+//!   // ...
+//! }
+//! ```
 
 #![warn(missing_docs)]
 
@@ -23,7 +51,7 @@ extern crate failure;
 extern crate bytes;
 
 use std::{io, mem};
-use std::net::{SocketAddr, SocketAddrV6};
+use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -161,7 +189,7 @@ impl<'a> EndpointBuilder<'a> {
     pub fn listen(mut self, config: ListenConfig<'a>) -> Self { self.listen = Some(config); self }
     pub fn config(mut self, config: Config) -> Self { self.config = config; self }
 
-    pub fn from_std(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
+    pub fn from_socket(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
         let reactor = if let Some(x) = self.reactor { Cow::Borrowed(x) } else { Cow::Owned(tokio_reactor::Handle::current()) };
         let socket = UdpSocket::from_std(socket, &reactor)?;
         let (send, recv) = mpsc::unbounded();
@@ -179,9 +207,10 @@ impl<'a> EndpointBuilder<'a> {
         }));
         Ok((Endpoint(rc.clone()), Driver(rc), recv))
     }
-    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint, Driver, Incoming), Error> {
+
+    pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        self.from_std(socket)
+        self.from_socket(socket)
     }
 }
 

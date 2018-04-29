@@ -9,7 +9,7 @@ extern crate slog_term;
 extern crate futures;
 extern crate url;
 
-use std::net::{UdpSocket, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::io::{self, Write};
 
 use futures::Future;
@@ -37,7 +37,6 @@ fn run(log: Logger) -> Result<()> {
     let url = Url::parse(&::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?)?;
     let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
-    let socket = UdpSocket::bind("[::]:0")?;
     let mut protocols = Vec::new();
     const PROTO: &[u8] = b"hq-11";
     protocols.push(PROTO.len() as u8);
@@ -55,7 +54,7 @@ fn run(log: Logger) -> Result<()> {
             protocols,
             ..quicr::Config::default()
         })
-        .from_std(socket)?;
+        .bind("[::]:0")?;
     let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
 
