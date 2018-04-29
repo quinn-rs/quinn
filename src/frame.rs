@@ -164,11 +164,12 @@ impl From<TransportError> for ConnectionClose {
 impl<T> ConnectionClose<T>
     where T: AsRef<[u8]>
 {
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.put_u8(Type::CONNECTION_CLOSE.into());
         out.put_u16::<BigEndian>(self.error_code.into());
-        varint::write(self.reason.as_ref().len() as u64, out).unwrap();
-        out.put_slice(self.reason.as_ref());
+        let actual_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        varint::write(actual_len as u64, out).unwrap();
+        out.put_slice(&self.reason.as_ref()[0..actual_len]);
     }
 }
 
@@ -194,11 +195,12 @@ impl<T> fmt::Display for ApplicationClose<T>
 impl<T> ApplicationClose<T>
     where T: AsRef<[u8]>
 {
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.put_u8(Type::APPLICATION_CLOSE.into());
         out.put_u16::<BigEndian>(self.error_code.into());
-        varint::write(self.reason.as_ref().len() as u64, out).unwrap();
-        out.put_slice(self.reason.as_ref());
+        let actual_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        varint::write(actual_len as u64, out).unwrap();
+        out.put_slice(&self.reason.as_ref()[0..actual_len]);
     }
 }
 

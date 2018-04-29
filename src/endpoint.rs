@@ -2159,9 +2159,10 @@ impl Connection {
             key_phase: self.key_phase
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
+        let max_len = self.mtu - header_len - AEAD_TAG_SIZE as u16;
         match *reason {
-            state::CloseReason::Application(ref x) => x.encode(&mut buf),
-            state::CloseReason::Connection(ref x) => x.encode(&mut buf),
+            state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
+            state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
         self.encrypt(false, number, &mut buf, header_len);
         buf.into()
@@ -2902,9 +2903,10 @@ fn handshake_close<R>(crypto: &CryptoContext,
         ty: packet::HANDSHAKE, destination_id: remote_id.clone(), source_id: local_id.clone(), number: packet_number
     }.encode(&mut buf);
     let header_len = buf.len();
+    let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
     match reason.into() {
-        state::CloseReason::Application(ref x) => x.encode(&mut buf),
-        state::CloseReason::Connection(ref x) => x.encode(&mut buf),
+        state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
+        state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
     }
     set_payload_length(&mut buf, header_len);
     let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
