@@ -167,7 +167,8 @@ impl<T> ConnectionClose<T>
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.put_u8(Type::CONNECTION_CLOSE.into());
         out.put_u16::<BigEndian>(self.error_code.into());
-        let actual_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
         out.put_slice(&self.reason.as_ref()[0..actual_len]);
     }
@@ -198,7 +199,8 @@ impl<T> ApplicationClose<T>
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.put_u8(Type::APPLICATION_CLOSE.into());
         out.put_u16::<BigEndian>(self.error_code.into());
-        let actual_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
         out.put_slice(&self.reason.as_ref()[0..actual_len]);
     }
