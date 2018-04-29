@@ -47,6 +47,10 @@ pub struct Config {
     pub stream_receive_window: u32,
     /// Maximum number of bytes the peer may transmit across all streams of a connection before becoming blocked.
     pub receive_window: u32,
+    /// Maximum number of incoming connections to buffer.
+    ///
+    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to be large.
+    pub accept_buffer: u32,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -101,6 +105,7 @@ impl Default for Config {
         idle_timeout: 10,
         stream_receive_window: 64 * 1024,
         receive_window: 1024 * 1024,
+        accept_buffer: 1024,
 
         max_tlps: 2,
         reordering_threshold: 3,
@@ -138,6 +143,15 @@ pub struct Endpoint {
     io: VecDeque<Io>,
     dirty_conns: FnvHashSet<ConnectionHandle>,
     readable_conns: FnvHashSet<ConnectionHandle>,
+    incoming: VecDeque<NewConnection>,
+    incoming_handshakes: usize,
+}
+
+/// Information about a new incoming connection
+pub struct NewConnection {
+    pub handle: ConnectionHandle,
+    pub address: SocketAddrV6,
+    pub protocol: Option<Box<[u8]>>,
 }
 
 const MIN_INITIAL_SIZE: usize = 1200;
@@ -289,6 +303,8 @@ impl Endpoint {
             io: VecDeque::new(),
             dirty_conns: FnvHashSet::default(),
             readable_conns: FnvHashSet::default(),
+            incoming: VecDeque::new(),
+            incoming_handshakes: 0,
         })
     }
 
@@ -470,6 +486,16 @@ impl Endpoint {
                 match tls.accept() {
                     Ok(_) => unreachable!(),
                     Err(HandshakeError::WouldBlock(mut tls)) => {
+                        if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
+                            debug!(self.log, "rejecting connection due to full accept buffer");
+                            let n = self.gen_initial_packet_num();
+                            self.io.push_back(Io::Transmit {
+                                destination: remote,
+                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY),
+                            });
+                            return;
+                        }
+
                         trace!(self.log, "performing handshake"; "connection" => %local_id);
                         if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                             let params = params.expect("transport parameter errors should have aborted the handshake");
@@ -482,6 +508,7 @@ impl Endpoint {
                             self.connections[conn.0].set_params(&self.config, params);
                             self.connections[conn.0].pending_acks.insert_one(packet_number as u64);
                             self.dirty_conns.insert(conn);
+                            self.incoming_handshakes += 1;
                         } else {
                             debug!(self.log, "ClientHello missing transport params extension");
                             let n = self.gen_initial_packet_num();
@@ -683,10 +710,22 @@ impl Endpoint {
                             } else {
                                 self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into());
                             }
-                            self.events.push_back((conn, Event::Connected {
-                                address: remote,
-                                protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
-                            }));
+                            match self.connections[conn.0].side {
+                                Side::Client => {
+                                    self.events.push_back((conn, Event::Connected {
+                                        address: remote,
+                                        protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
+                                    }));
+                                }
+                                Side::Server => {
+                                    self.incoming_handshakes -= 1;
+                                    self.incoming.push_back(NewConnection {
+                                        handle: conn,
+                                        address: remote,
+                                        protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
+                                    });
+                                }
+                            }
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
                             self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
                                 .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
@@ -1045,6 +1084,7 @@ impl Endpoint {
         // Transmit CONNECTION_CLOSE if necessary
         match state {
             State::HandshakeFailed(ref state) => {
+                if !was_closed { self.incoming_handshakes -= 1; }
                 let n = self.connections[conn.0].get_tx_number();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
@@ -1371,6 +1411,8 @@ impl Endpoint {
 
     /// Look up whether we're the client or server of `conn`.
     pub fn get_side(&self, conn: ConnectionHandle) -> Side { self.connections[conn.0].side }
+
+    pub fn accept(&mut self) -> Option<NewConnection> { self.incoming.pop_front() }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]

@@ -260,6 +260,23 @@ pub struct NewConnection {
     pub protocol: Option<Box<[u8]>>,
 }
 
+impl NewConnection {
+    fn new(endpoint: Endpoint, info: quicr::NewConnection) -> Self {
+        let quicr::NewConnection { handle, address, protocol } = info;
+        let conn = Rc::new(ConnectionInner {
+            endpoint: Endpoint(endpoint.0.clone()),
+            conn: handle,
+            side: Side::Server,
+        });
+        NewConnection {
+            connection: Connection(conn.clone()),
+            incoming: IncomingStreams { endpoint, conn },
+            address: address.into(),
+            protocol,
+        }
+    }
+}
+
 impl Future for Driver {
     type Item = ();
     type Error = io::Error;
@@ -283,22 +300,10 @@ impl Future for Driver {
             while let Some((connection, event)) = endpoint.inner.poll() {
                 use quicr::Event::*;
                 match event {
-                    Connected { address, protocol } => {
-                        if let Some(c) = endpoint.pending.get_mut(&connection).unwrap().connecting.take() {
-                            let _ = c.send(None);
-                        } else {
-                            let conn = Rc::new(ConnectionInner {
-                                endpoint: Endpoint(self.0.clone()),
-                                conn: connection,
-                                side: Side::Server,
-                            });
-                            let _ = endpoint.incoming.unbounded_send(NewConnection {
-                                connection: Connection(conn.clone()),
-                                incoming: IncomingStreams { endpoint: Endpoint(self.0.clone()), conn },
-                                address: address.into(),
-                                protocol,
-                            });
-                        }
+                    Connected { .. } => {
+                        let _ = endpoint.pending.get_mut(&connection).unwrap().connecting.take()
+                            .expect("got Connected event for unknown connection")
+                            .send(None);
                     }
                     ConnectionLost { reason } => {
                         endpoint.pending.get_mut(&connection).unwrap().fail(reason);
@@ -413,6 +418,9 @@ impl Future for Driver {
                         }
                     }
                 }
+            }
+            while let Some(x) = endpoint.inner.accept() {
+                let _ = endpoint.incoming.unbounded_send(NewConnection::new(Endpoint(self.0.clone()), x));
             }
             let mut fired = false;
             loop {
