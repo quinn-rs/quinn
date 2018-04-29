@@ -2,6 +2,14 @@
 name = "quicr-core"
 version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/Ralith/quicr"
+description = "State machine for the QUIC transport protocol"
+keywords = ["quic"]
+categories = [ "network-programming", "asynchronous" ]
+
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
 rand = "0.4"

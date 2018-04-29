@@ -2,6 +2,14 @@
 name = "quicr"
 version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/Ralith/quicr"
+description = "QUIC transport protocol implementation for Tokio"
+keywords = ["quic"]
+categories = [ "network-programming", "asynchronous" ]
+
+[badges]
+maintenance = { status = "experimental" }
 
 [dependencies]
 quicr-core = { path = ".." }
