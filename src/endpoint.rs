@@ -1110,7 +1110,9 @@ impl Endpoint {
         // Transmit CONNECTION_CLOSE if necessary
         match state {
             State::HandshakeFailed(ref state) => {
-                if !was_closed { self.incoming_handshakes -= 1; }
+                if !was_closed && self.connections[conn.0].side == Side::Server {
+                    self.incoming_handshakes -= 1;
+                }
                 let n = self.connections[conn.0].get_tx_number();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
