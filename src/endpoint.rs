@@ -459,7 +459,7 @@ impl Endpoint {
             return;
         };
         let mut stream = MemoryStream::new();
-        if !parse_initial(&mut stream, payload) || stream.read_blocked() { return; } // TODO: Send close?
+        if !parse_initial(&self.log, &mut stream, payload) { return; } // TODO: Send close?
         trace!(self.log, "got initial");
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
@@ -556,6 +556,8 @@ impl Endpoint {
         State::Handshake(mut state) => {
             match packet.header {
                 Header::Long { ty: packet::RETRY, number, destination_id: conn_id, source_id: remote_id, .. } => {
+                    trace!(self.log, "retry packet"; "connection" => %conn_id, "pn" => number);
+                    // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
                     if state.clienthello_packet.is_none() {
                         // Received Retry as a server
                         debug!(self.log, "received retry from client"; "connection" => %conn_id);
@@ -565,46 +567,54 @@ impl Endpoint {
                         // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                         State::Handshake(state)
                     } else if state.tls.get_ref().read_offset() != 0 {
+                        // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
                         debug!(self.log, "received retry after a handshake packet");
                         self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
                         State::handshake_failed(TransportError::PROTOCOL_VIOLATION,None)
-                    } else if self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload)
-                        .map_or(true, |x| { !parse_initial(state.tls.get_mut(), x.into()) || state.tls.get_ref().read_blocked() })
-                    {
-                        debug!(self.log, "invalid retry payload");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
-                    } else { match state.tls.handshake() {
-                        Err(HandshakeError::WouldBlock(mut tls)) => {
-                            trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
-                            self.on_packet_authenticated(now, conn, number as u64);
-                            let local_id = self.connections[conn.0].local_id.clone();
-                            let crypto = CryptoContext::handshake(&remote_id, Side::Client);
-                            // Discard transport state
-                            self.connections[conn.0] = Connection::new(
-                                crypto, local_id, remote_id, remote, self.initial_packet_number.sample(&mut self.rng).into(), Side::Client, &self.config
-                            );
-                            // Send updated ClientHello
-                            self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                            tls.get_mut().reset_read();
-                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
-                        },
-                        Ok(_) => {
-                            debug!(self.log, "unexpectedly completed handshake in RETRY packet");
+                    } else if let Some(payload) = self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload) {
+                        let mut new_stream = MemoryStream::new();
+                        if !parse_initial(&self.log, &mut new_stream, payload.into()) {
+                            debug!(self.log, "invalid retry payload");
                             self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                            return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
                         }
-                        Err(HandshakeError::Failure(mut tls)) => {
-                            debug!(self.log, "handshake failed"; "reason" => %tls.error());
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_HANDSHAKE_FAILED.into() }));
-                            State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, Some(tls.get_mut().take_outgoing().to_owned().into()))
+                        *state.tls.get_mut() = new_stream;
+                        match state.tls.handshake() {
+                            Err(HandshakeError::WouldBlock(mut tls)) => {
+                                trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
+                                self.on_packet_authenticated(now, conn, number as u64);
+                                let local_id = self.connections[conn.0].local_id.clone();
+                                // The server sees the next Initial packet as our first, so we update our keys to match the new remote_id
+                                let crypto = CryptoContext::handshake(&remote_id, Side::Client);
+                                // Discard transport state
+                                self.connections[conn.0] = Connection::new(
+                                    crypto, local_id, remote_id, remote, self.initial_packet_number.sample(&mut self.rng).into(), Side::Client, &self.config
+                                );
+                                // Send updated ClientHello
+                                self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                                // Prepare to receive Handshake packets that start stream 0 from offset 0
+                                tls.get_mut().reset_read();
+                                State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
+                            },
+                            Ok(_) => {
+                                debug!(self.log, "unexpectedly completed handshake in RETRY packet");
+                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                                State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                            }
+                            Err(HandshakeError::Failure(mut tls)) => {
+                                debug!(self.log, "handshake failed"; "reason" => %tls.error());
+                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_HANDSHAKE_FAILED.into() }));
+                                State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, Some(tls.get_mut().take_outgoing().to_owned().into()))
+                            }
+                            Err(HandshakeError::SetupFailure(e)) => {
+                                error!(self.log, "handshake setup failed"; "reason" => %e);
+                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
+                                State::handshake_failed(TransportError::INTERNAL_ERROR, None)
+                            }
                         }
-                        Err(HandshakeError::SetupFailure(e)) => {
-                            error!(self.log, "handshake setup failed"; "reason" => %e);
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
-                            State::handshake_failed(TransportError::INTERNAL_ERROR, None)
-                        }
-                    }
+                    } else {
+                        debug!(self.log, "failed to authenticate retry packet");
+                        State::Handshake(state)
                     }
                 }
                 Header::Long { ty: packet::HANDSHAKE, destination_id: id, source_id: remote_id, number, .. } => {
@@ -2912,7 +2922,7 @@ mod packet {
 }
 
 /// Forward data from an Initial or Retry packet to a stream for a TLS context
-fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
+fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) -> bool {
     for frame in frame::Iter::new(payload) {
         match frame {
             Frame::Padding => {}
@@ -2920,10 +2930,13 @@ fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
             Frame::Stream(frame::Stream { id: StreamId(0), fin: false, offset, data, .. }) => {
                 stream.insert(offset, &data);
             }
-            _ => { return false; } // Invalid packet
+            x => { debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty()); return false; } // Invalid packet
         }
     }
-    true
+    if stream.read_blocked() {
+        debug!(log, "initial/retry packet missing stream frame(s)");
+        false
+    } else { true }
 }
 
 fn handshake_close<R>(crypto: &CryptoContext,
