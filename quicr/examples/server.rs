@@ -74,11 +74,6 @@ fn run(log: Logger) -> Result<()> {
     const PROTO: &[u8] = b"hq-11";
     protocols.push(PROTO.len() as u8);
     protocols.extend_from_slice(PROTO);
-    let config = quicr::Config {
-        protocols,
-        max_remote_bi_streams: 64,
-        ..quicr::Config::default()
-    };
 
     let reactor = tokio::reactor::Reactor::new()?;
     let handle = reactor.handle();
@@ -98,9 +93,17 @@ fn run(log: Logger) -> Result<()> {
         cert = X509::from_der(&data).context("failed to load cert.der")?;
     }
 
-    let (_, driver, incoming) = quicr::Endpoint::from_std(
-        &handle, timer.handle(), socket,
-        log.clone(), config, Some(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() }))?;
+    let (_, driver, incoming) = quicr::Endpoint::new()
+        .reactor(&handle)
+        .timer(timer.handle())
+        .logger(log.clone())
+        .config(quicr::Config {
+            protocols,
+            max_remote_bi_streams: 64,
+            ..quicr::Config::default()
+        })
+        .listen(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() })
+        .from_std(socket)?;
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {

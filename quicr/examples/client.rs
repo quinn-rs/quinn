@@ -42,15 +42,20 @@ fn run(log: Logger) -> Result<()> {
     const PROTO: &[u8] = b"hq-11";
     protocols.push(PROTO.len() as u8);
     protocols.extend_from_slice(PROTO);
-    let config = quicr::Config {
-        protocols,
-        ..quicr::Config::default()
-    };
 
     let reactor = tokio::reactor::Reactor::new()?;
+    let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
     
-    let (endpoint, driver, _) = quicr::Endpoint::from_std(&tokio::reactor::Handle::current(), timer.handle(), socket, log.clone(), config, None)?;
+    let (endpoint, driver, _) = quicr::Endpoint::new()
+        .reactor(&handle)
+        .timer(timer.handle())
+        .logger(log.clone())
+        .config(quicr::Config {
+            protocols,
+            ..quicr::Config::default()
+        })
+        .from_std(socket)?;
     let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
 

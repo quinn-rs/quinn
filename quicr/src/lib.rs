@@ -3,6 +3,8 @@
 //! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing shortcomings of TCP, such as
 //! head-of-line blocking, poor security, slow handshakes, and inefficient congestion control. This crate provides a
 //! portable userspace implementation.
+//!
+//! The entry point of this crate is the `Endpoint`.
 
 #![warn(missing_docs)]
 
@@ -26,6 +28,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::time::{Instant, Duration};
+use std::borrow::Cow;
 
 use tokio_udp::UdpSocket;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -138,20 +141,35 @@ pub struct Endpoint(Rc<RefCell<EndpointInner>>);
 /// A future that drives IO on an endpoint.
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
-/// The stream of incoming connections.
+/// Stream of incoming connections.
 pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
 
-impl Endpoint {
-    pub fn from_std(reactor: &tokio_reactor::Handle, timer: timer::Handle, socket: std::net::UdpSocket,
-                    log: Logger, config: Config, listen: Option<ListenConfig>) ->
-        Result<(Self, Driver, Incoming), Error>
-    {
+/// A helper for constructing an `Endpoint`.
+pub struct EndpointBuilder<'a> {
+    reactor: Option<&'a tokio_reactor::Handle>,
+    timer: Option<timer::Handle>,
+    logger: Logger,
+    listen: Option<ListenConfig<'a>>,
+    config: Config,
+}
+
+#[allow(missing_docs)]
+impl<'a> EndpointBuilder<'a> {
+    pub fn reactor(mut self, handle: &'a tokio_reactor::Handle) -> Self { self.reactor = Some(handle); self }
+    pub fn timer(mut self, handle: timer::Handle) -> Self { self.timer = Some(handle); self }
+    pub fn logger(mut self, logger: Logger) -> Self { self.logger = logger; self }
+    pub fn listen(mut self, config: ListenConfig<'a>) -> Self { self.listen = Some(config); self }
+    pub fn config(mut self, config: Config) -> Self { self.config = config; self }
+
+    pub fn from_std(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
+        let reactor = if let Some(x) = self.reactor { Cow::Borrowed(x) } else { Cow::Owned(tokio_reactor::Handle::current()) };
+        let socket = UdpSocket::from_std(socket, &reactor)?;
         let (send, recv) = mpsc::unbounded();
         let rc = Rc::new(RefCell::new(EndpointInner {
-            timer,
-            log: log.clone(),
-            socket: UdpSocket::from_std(socket, reactor)?,
-            inner: quicr::Endpoint::new(log, config, listen)?,
+            timer: self.timer.unwrap_or_else(|| timer::Handle::current()),
+            log: self.logger.clone(),
+            socket: socket,
+            inner: quicr::Endpoint::new(self.logger, self.config, self.listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -161,6 +179,25 @@ impl Endpoint {
         }));
         Ok((Endpoint(rc.clone()), Driver(rc), recv))
     }
+    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint, Driver, Incoming), Error> {
+        let socket = std::net::UdpSocket::bind(addr)?;
+        self.from_std(socket)
+    }
+}
+
+impl<'a> Default for EndpointBuilder<'a> {
+    fn default() -> Self { Endpoint::new() }
+}
+
+impl Endpoint {
+    /// Begin constructing an `Endpoint`
+    pub fn new<'a>() -> EndpointBuilder<'a> { EndpointBuilder {
+        reactor: None,
+        timer: None,
+        logger: Logger::root(slog::Discard, o!()),
+        listen: None,
+        config: Config::default(),
+    }}
 
     /// Connect to a remote endpoint.
     ///
