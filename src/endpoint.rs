@@ -2891,6 +2891,20 @@ impl From<TransportError> for ConnectionError {
     fn from(x: TransportError) -> Self { ConnectionError::TransportError { error_code: x } }
 }
 
+impl From<ConnectionError> for io::Error {
+    fn from(x: ConnectionError) -> io::Error {
+        use self::ConnectionError::*;
+        match x {
+            TimedOut => io::Error::new(io::ErrorKind::TimedOut, "timed out"),
+            Reset => io::Error::new(io::ErrorKind::ConnectionReset, "reset by peer"),
+            ApplicationClosed { reason } => io::Error::new(io::ErrorKind::ConnectionAborted, format!("closed by peer application: {}", reason)),
+            ConnectionClosed { reason } => io::Error::new(io::ErrorKind::ConnectionAborted, format!("peer detected an error: {}", reason)),
+            TransportError { error_code } => io::Error::new(io::ErrorKind::Other, format!("{}", error_code)),
+            VersionMismatch => io::Error::new(io::ErrorKind::Other, "version mismatch"),
+        }
+    }
+}
+
 mod packet {
     pub const INITIAL: u8 = 0x7F;
     pub const RETRY: u8 = 0x7E;
