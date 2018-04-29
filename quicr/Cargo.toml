@@ -12,7 +12,7 @@ categories = [ "network-programming", "asynchronous" ]
 maintenance = { status = "experimental" }
 
 [dependencies]
-quicr-core = { path = ".." }
+quicr-core = { path = "..", version = "0.1.0" }
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
 tokio-io = "0.1"
