@@ -54,7 +54,7 @@ use std::{io, mem};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, hash_map};
 use std::time::{Instant, Duration};
 use std::borrow::Cow;
 
@@ -103,6 +103,11 @@ struct EndpointInner {
     driver: Option<Task>,
 }
 
+impl EndpointInner {
+    /// Wake up a blocked `Driver` task to process I/O
+    fn notify(&self) { self.driver.as_ref().map(|x| x.notify()); }
+}
+
 struct Pending {
     blocked_writers: FnvHashMap<StreamId, Task>,
     blocked_readers: FnvHashMap<StreamId, Task>,
@@ -115,6 +120,8 @@ struct Pending {
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
+    draining: Option<oneshot::Sender<()>>,
+    drained: bool,
 }
 
 impl Pending {
@@ -130,6 +137,8 @@ impl Pending {
         incoming_streams_reader: None,
         finishing: FnvHashMap::default(),
         error: None,
+        draining: None,
+        drained: false,
     }}
 
     fn fail(&mut self, reason: ConnectionError) {
@@ -308,6 +317,11 @@ impl Future for Driver {
                     ConnectionLost { reason } => {
                         endpoint.pending.get_mut(&connection).unwrap().fail(reason);
                     }
+                    ConnectionDrained => {
+                        if let Some(x) = endpoint.pending.get_mut(&connection).and_then(|p| { p.drained = true; p.draining.take() }) {
+                            let _ = x.send(());
+                        }
+                    }
                     StreamWritable { stream } => {
                         if let Some(writer) = endpoint.pending.get_mut(&connection).unwrap().blocked_writers.remove(&stream) {
                             writer.notify();
@@ -458,6 +472,9 @@ struct ConnectionInner {
 }
 
 /// A QUIC connection.
+///
+/// If a `Connection` is dropped without being explicitly closed, it will be automatically closed with an `error_code`
+/// of 0 and an empty `reason`.
 pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
@@ -471,6 +488,7 @@ impl Connection {
             } else {
                 let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
                 pending.uni_opening.push_back(send);
+                // We don't notify the driver here because there's no way to ask the peer for more streams
             }
         }
         let conn = self.0.clone();
@@ -491,6 +509,7 @@ impl Connection {
             } else {
                 let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
                 pending.bi_opening.push_back(send);
+                // We don't notify the driver here because there's no way to ask the peer for more streams
             }
         }
         let conn = self.0.clone();
@@ -512,19 +531,29 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
     /// should be kept under 1KiB.
-    pub fn close(&self, error_code: u16, reason: &[u8]) {
-        let endpoint = &mut *self.0.endpoint.0.borrow_mut();
-        endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.0.conn, error_code, reason.into());
-        endpoint.driver.as_ref().map(|x| x.notify());
+    // FIXME: Infallible
+    pub fn close(self, error_code: u16, reason: &[u8]) -> Box<Future<Item=(), Error=()>> {
+        let (send, recv) = oneshot::channel();
+        {
+            let endpoint = &mut *self.0.endpoint.0.borrow_mut();
+            endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.0.conn, error_code, reason.into());
+            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+            pending.draining = Some(send);
+        }
+        Box::new(recv.then(move |_| { let _ = self; Ok(()) }))
     }
 }
 
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.0.borrow_mut();
-        endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.conn, 0, (&[][..]).into());
-        endpoint.pending.remove(&self.conn);
-        endpoint.driver.as_ref().map(|x| x.notify());
+        if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.conn) {
+            if pending.get().draining.is_none() && !pending.get().drained {
+                endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.conn, 0, (&[][..]).into());
+                endpoint.driver.as_ref().map(|x| x.notify());
+            }
+            pending.remove_entry();
+        } else { unreachable!() }
     }
 }
 
@@ -603,7 +632,7 @@ impl Write for Stream {
                 return Err(WriteError::Stopped { error_code });
             }
         };
-        endpoint.driver.as_ref().map(|x| x.notify());
+        endpoint.notify();
         Ok(Async::Ready(n))
     }
 
@@ -614,6 +643,7 @@ impl Write for Stream {
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
             endpoint.pending.get_mut(&self.conn.conn).unwrap().finishing.insert(self.stream, send);
+            endpoint.notify();
         }
         let r = self.finishing.as_mut().unwrap().poll().unwrap();
         match r {
@@ -629,7 +659,7 @@ impl Write for Stream {
     fn reset(&self, error_code: u16) {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
         endpoint.inner.reset(self.conn.conn, self.stream, error_code);
-        endpoint.driver.as_ref().map(|x| x.notify());
+        endpoint.notify();
     }
 }
 
@@ -713,7 +743,7 @@ impl Drop for Stream {
         if recv && !self.recvd{
             endpoint.inner.stop_sending(self.conn.conn, self.stream, 0);
         }
-        endpoint.driver.as_ref().map(|x| x.notify());
+        endpoint.notify();
     }
 }
 

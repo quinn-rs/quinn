@@ -184,10 +184,13 @@ impl<T> fmt::Display for ApplicationClose<T>
     where T: AsRef<[u8]>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.error_code.fmt(f)?;
         if !self.reason.as_ref().is_empty() {
-            f.write_str(": ")?;
             f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
+            f.write_str(" (code ")?;
+            self.error_code.fmt(f)?;
+            f.write_str(")")?;
+        } else {
+            self.error_code.fmt(f)?;
         }
         Ok(())
     }

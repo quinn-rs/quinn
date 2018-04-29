@@ -1158,6 +1158,7 @@ impl Endpoint {
         match timer {
             Timer::Close => {
                 self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
+                self.events.push_back((conn, Event::ConnectionDrained));
                 if self.connections[conn.0].state.as_ref().unwrap().is_app_closed() {
                     self.forget(conn);
                 } else {
@@ -2868,6 +2869,8 @@ pub enum Event {
     ConnectionLost {
         reason: ConnectionError
     },
+    /// A closed connection was dropped.
+    ConnectionDrained,
     /// A stream has data or errors waiting to be read
     StreamReadable {
         /// The affected stream
@@ -2925,11 +2928,11 @@ pub enum ConnectionError {
     /// The peer violated the QUIC specification as understood by this implementation.
     #[fail(display = "{}", error_code)]
     TransportError { error_code: TransportError },
-    /// The peer closed the connection automatically.
-    #[fail(display = "peer detected an error: {}", reason)]
+    /// The peer's QUIC stack aborted the connection automatically.
+    #[fail(display = "aborted by peer: {}", reason)]
     ConnectionClosed { reason: frame::ConnectionClose },
-    /// The peer closed the connection at the peer application's request.
-    #[fail(display = "closed by peer application: {}", reason)]
+    /// The peer closed the connection.
+    #[fail(display = "closed by peer: {}", reason)]
     ApplicationClosed { reason: frame::ApplicationClose },
     /// The peer is unable to continue processing this connection, usually due to having restarted.
     #[fail(display = "reset by peer")]
