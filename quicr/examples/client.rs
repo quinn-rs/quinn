@@ -8,25 +8,42 @@ extern crate slog;
 extern crate slog_term;
 extern crate futures;
 extern crate url;
+#[macro_use]
+extern crate structopt;
 
 use std::net::ToSocketAddrs;
 use std::io::{self, Write};
 use std::time::{Instant, Duration};
+use std::path::PathBuf;
 
 use futures::Future;
 use tokio::executor::current_thread::CurrentThread;
 use url::Url;
+use structopt::StructOpt;
 
 use slog::{Logger, Drain};
 use failure::Error;
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "client")]
+struct Opt {
+    /// file to log TLS keys to for debugging
+    #[structopt(parse(from_os_str), long = "keylog")]
+    keylog: Option<PathBuf>,
+    url: Url,
+    /// whether to accept invalid (e.g. self-signed) TLS certificates
+    #[structopt(long = "accept-invalid-certs")]
+    accept_invalid_certs: bool,
+}
+
 fn main() {
+    let opt = Opt::from_args();
     let code = {
         let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
         let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
-        if let Err(e) = run(Logger::root(drain, o!())) {
+        if let Err(e) = run(Logger::root(drain, o!()), opt) {
             eprintln!("ERROR: {}", e);
             1
         } else { 0 }
@@ -34,8 +51,8 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger) -> Result<()> {
-    let url = Url::parse(&::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?)?;
+fn run(log: Logger, options: Opt) -> Result<()> {
+    let url = options.url;
     let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
     let mut protocols = Vec::new();
@@ -53,8 +70,8 @@ fn run(log: Logger) -> Result<()> {
         .logger(log.clone())
         .config(quicr::Config {
             protocols,
-            // BEWARE: Insecure setting! Think very carefully before disabling `verify_peers` outside of tests.
-            verify_peers: false,
+            keylog: options.keylog,
+            verify_peers: !options.accept_invalid_certs,
             ..quicr::Config::default()
         })
         .bind("[::]:0")?;

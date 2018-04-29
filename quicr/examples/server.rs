@@ -9,6 +9,8 @@ extern crate slog_term;
 extern crate futures;
 extern crate rand;
 extern crate openssl;
+#[macro_use]
+extern crate structopt;
 
 use std::fs::File;
 use std::io::Read;
@@ -21,6 +23,7 @@ use std::ascii;
 use futures::{Future, Stream};
 use tokio::executor::current_thread::{self, CurrentThread};
 use failure::{ResultExt, Fail};
+use structopt::StructOpt;
 
 use openssl::pkey::{PKey, Private};
 use openssl::x509::X509;
@@ -52,11 +55,23 @@ impl ErrorExt for Error {
     fn pretty(&self) -> PrettyErr { PrettyErr(self.cause()) }
 }
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "server")]
+struct Opt {
+    /// file to log TLS keys to for debugging
+    #[structopt(parse(from_os_str), long = "keylog")]
+    keylog: Option<PathBuf>,
+    /// directory to serve files from
+    #[structopt(parse(from_os_str))]
+    root: PathBuf,
+}
+
 fn main() {
+    let opt = Opt::from_args();
     let code = {
         let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
         let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
-        if let Err(e) = run(Logger::root(drain, o!())) {
+        if let Err(e) = run(Logger::root(drain, o!()), opt) {
             eprintln!("ERROR: {}", e.pretty());
             1
         } else { 0 }
@@ -64,9 +79,8 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger) -> Result<()> {
-    let root = ::std::env::args().nth(1).ok_or(format_err!("missing root argument"))?;
-    let root = Rc::new(Path::new(&root).to_owned());
+fn run(log: Logger, options: Opt) -> Result<()> {
+    let root = Rc::new(options.root);
     if !root.exists() { bail!("root path does not exist"); }
 
     let mut protocols = Vec::new();
@@ -99,6 +113,7 @@ fn run(log: Logger) -> Result<()> {
         .config(quicr::Config {
             protocols,
             max_remote_bi_streams: 64,
+            keylog: options.keylog,
             ..quicr::Config::default()
         })
         .listen(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() })

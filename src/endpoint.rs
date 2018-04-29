@@ -2,6 +2,7 @@ use std::collections::{hash_map, VecDeque, BTreeMap};
 use std::{io, cmp, fmt, mem, str};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
+use std::path::PathBuf;
 
 use bytes::{Buf, BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
 use rand::{distributions, OsRng, Rng, Rand};
@@ -86,6 +87,12 @@ pub struct Config {
     /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
     /// connection, but allows them to connect to servers that are using self-signed certificates.
     pub verify_peers: bool,
+
+    /// Path to write NSS SSLKEYLOGFILE-compatible key log.
+    ///
+    /// Enabling this compromises security by committing secret information to disk. Useful for debugging communications
+    /// when using tools like Wireshark.
+    pub keylog: Option<PathBuf>,
 }
 
 /// Information needed to accept incoming connections.
@@ -121,7 +128,9 @@ impl Default for Config {
         minimum_window: 2 * 1460,
         loss_reduction_factor: 0x8000, // 1/2
         protocols: Vec::new(),
+
         verify_peers: true,
+        keylog: None,
     }}
 }
 
@@ -288,6 +297,23 @@ impl Endpoint {
                     Err(ssl::AlpnError::ALERT_FATAL)
                 }
             });
+        }
+
+        if let Some(ref path) = config.keylog {
+            match ::std::fs::File::create(path) {
+                Ok(file) => {
+                    let file = ::std::sync::Mutex::new(file);
+                    tls.set_keylog_callback(move |_, line| {
+                        use std::io::Write;
+                        let mut file = file.lock().unwrap();
+                        let _ = file.write_all(line.as_bytes());
+                        let _ = file.write_all(b"\n");
+                    });
+                }
+                Err(e) => {
+                    error!(log, "failed to open keylog file"; "reason" => %e);
+                }
+            }
         }
 
         let tls = tls.build();
