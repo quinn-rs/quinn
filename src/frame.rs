@@ -1,11 +1,11 @@
 use std::{mem, fmt, io};
 use std::ops::Range;
 
-use bytes::{Bytes, Buf, BufMut, BigEndian};
+use bytes::{Bytes, Buf, BufMut};
 
-use {varint, FromBytes, TransportError, StreamId};
+use {varint, TransportError, StreamId};
 use range_set::RangeSet;
-use coding::{self, BufExt};
+use coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Type(u8);
@@ -165,8 +165,8 @@ impl<T> ConnectionClose<T>
     where T: AsRef<[u8]>
 {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
-        out.put_u8(Type::CONNECTION_CLOSE.into());
-        out.put_u16::<BigEndian>(self.error_code.into());
+        out.write(Type::CONNECTION_CLOSE);
+        out.write(self.error_code);
         let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
@@ -197,8 +197,8 @@ impl<T> ApplicationClose<T>
     where T: AsRef<[u8]>
 {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
-        out.put_u8(Type::APPLICATION_CLOSE.into());
-        out.put_u16::<BigEndian>(self.error_code.into());
+        out.write(Type::APPLICATION_CLOSE);
+        out.write(self.error_code);
         let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
@@ -228,7 +228,7 @@ impl Ack {
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        buf.put_u8(Type::ACK.into());
+        buf.write(Type::ACK);
         varint::write(largest, buf).unwrap();
         varint::write(delay, buf).unwrap();
         varint::write(ranges.len() as u64 - 1, buf).unwrap();
@@ -278,90 +278,95 @@ impl<T> Stream<T>
 }
 
 pub struct Iter {
-    bytes: Bytes,
+    // TODO: ditch io::Cursor after bytes 0.5
+    bytes: io::Cursor<Bytes>,
     last_ty: Option<Type>,
 }
 
+enum IterErr {
+    UnexpectedEnd,
+    InvalidFrameId,
+}
+
+impl From<UnexpectedEnd> for IterErr { fn from(_: UnexpectedEnd) -> Self { IterErr::UnexpectedEnd } }
+
 impl Iter {
-    pub fn new(payload: Bytes) -> Self { Iter { bytes: payload, last_ty: None } }
+    pub fn new(payload: Bytes) -> Self { Iter { bytes: io::Cursor::new(payload), last_ty: None } }
 
-    fn get_var(&mut self) -> Option<u64> {
-        let (x, advance) = {
-            let mut buf = io::Cursor::new(&self.bytes[..]);
-            (varint::read(&mut buf)?, buf.position())
-        };
-        self.bytes.advance(advance as usize);
-        Some(x)
+    fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
+        let len = self.bytes.get_var()?;
+        if len > self.bytes.remaining() as u64 { return Err(UnexpectedEnd); }
+        let start = self.bytes.position() as usize;
+        self.bytes.advance(len as usize);
+        Ok(self.bytes.get_ref().slice(start, start + len as usize))
     }
 
-    fn take_len(&mut self) -> Option<Bytes> {
-        let len = self.get_var()?;
-        if len > self.bytes.len() as u64 { return None; }
-        Some(self.bytes.split_to(len as usize))
-    }
-
-    fn get<T: FromBytes>(&mut self) -> Option<T> { T::from(&mut self.bytes) }
-
-    fn try_next(&mut self) -> Option<Frame> {
-        let ty = Type(self.bytes[0]);
+    fn try_next(&mut self) -> Result<Frame, IterErr> {
+        let ty = self.bytes.get::<Type>()?;
         self.last_ty = Some(ty);
-        self.bytes.advance(1);
-        Some(match ty {
+        Ok(match ty {
             Type::PADDING => Frame::Padding,
             Type::RST_STREAM => Frame::RstStream(RstStream {
-                id: StreamId(self.get_var()?),
-                error_code: self.get()?,
-                final_offset: self.get_var()?,
+                id: self.bytes.get()?,
+                error_code: self.bytes.get()?,
+                final_offset: self.bytes.get_var()?,
             }),
             Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
-                error_code: self.get::<u16>()?.into(),
+                error_code: self.bytes.get()?,
                 reason: self.take_len()?,
             }),
             Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
-                error_code: self.get::<u16>()?,
+                error_code: self.bytes.get()?,
                 reason: self.take_len()?,
             }),
-            Type::MAX_DATA => Frame::MaxData(self.get_var()?),
+            Type::MAX_DATA => Frame::MaxData(self.bytes.get_var()?),
             Type::MAX_STREAM_DATA => Frame::MaxStreamData {
-                id: StreamId(self.get_var()?),
-                offset: self.get_var()?,
+                id: self.bytes.get()?,
+                offset: self.bytes.get_var()?,
             },
-            Type::MAX_STREAM_ID => Frame::MaxStreamId(StreamId(self.get_var()?)),
+            Type::MAX_STREAM_ID => Frame::MaxStreamId(self.bytes.get()?),
             Type::PING => Frame::Ping,
             Type::BLOCKED => Frame::Blocked {
-                offset: self.get_var()?,
+                offset: self.bytes.get_var()?,
             },
             Type::STREAM_BLOCKED => Frame::StreamBlocked {
-                id: StreamId(self.get_var()?),
-                offset: self.get_var()?,
+                id: self.bytes.get()?,
+                offset: self.bytes.get_var()?,
             },
             Type::STREAM_ID_BLOCKED => Frame::StreamIdBlocked {
-                id: StreamId(self.get_var()?),
+                id: self.bytes.get()?,
             },
             Type::STOP_SENDING => Frame::StopSending {
-                id: StreamId(self.get_var()?),
-                error_code: self.get::<u16>()?,
+                id: self.bytes.get()?,
+                error_code: self.bytes.get()?,
             },
             Type::ACK => {
-                let largest = self.get_var()?;
-                let delay = self.get_var()?;
-                let extra_blocks = self.get_var()? as usize;
-                let len = scan_ack_blocks(&self.bytes[..], largest, extra_blocks)?;
+                let largest = self.bytes.get_var()?;
+                let delay = self.bytes.get_var()?;
+                let extra_blocks = self.bytes.get_var()? as usize;
+                let start = self.bytes.position() as usize;
+                let len = scan_ack_blocks(&self.bytes.bytes()[..], largest, extra_blocks).ok_or(UnexpectedEnd)?;
+                self.bytes.advance(len);
                 Frame::Ack(Ack {
                     delay, largest,
-                    additional: self.bytes.split_to(len),
+                    additional: self.bytes.get_ref().slice(start, start + len),
                 })
             }
-            Type::PATH_CHALLENGE => Frame::PathChallenge(self.get::<u64>()?),
-            Type::PATH_RESPONSE => Frame::PathResponse(self.get::<u64>()?),
+            Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
+            Type::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
-                    id: StreamId(self.get_var()?),
-                    offset: if s.off() { self.get_var()? } else { 0 },
+                    id: self.bytes.get()?,
+                    offset: if s.off() { self.bytes.get_var()? } else { 0 },
                     fin: s.fin(),
-                    data: if s.len() { self.take_len()? } else { mem::replace(&mut self.bytes, Bytes::new()) }
+                    data: if s.len() { self.take_len()? } else {
+                        let mut x = mem::replace(self.bytes.get_mut(), Bytes::new());
+                        x.advance(self.bytes.position() as usize);
+                        self.bytes.set_position(0);
+                        x
+                    }
                 }),
-                None => return None,
+                None => { return Err(IterErr::InvalidFrameId); }
             }
         })
     }
@@ -370,12 +375,12 @@ impl Iter {
 impl Iterator for Iter {
     type Item = Frame;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.bytes.is_empty() { return None; }
+        if !self.bytes.has_remaining() { return None; }
         match self.try_next() {
-            x@Some(_) => x,
-            None => {
+            Ok(x) => Some(x),
+            Err(_) => {
                 // Corrupt frame, skip it and everything that follows
-                self.bytes = Bytes::new();
+                self.bytes = io::Cursor::new(Bytes::new());
                 Some(Frame::Invalid(self.last_ty.unwrap()))
             }
         }
@@ -430,9 +435,9 @@ pub struct RstStream {
 
 impl RstStream {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
-        out.put_u8(Type::RST_STREAM.into());
+        out.write(Type::RST_STREAM);
         varint::write(self.id.0, out).unwrap();
-        out.put_u16::<BigEndian>(self.error_code);
+        out.write(self.error_code);
         varint::write(self.final_offset, out).unwrap();
     }
 }

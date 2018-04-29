@@ -57,13 +57,13 @@ pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
         w.put_u8(x as u8);
     } else if x < 2u64.pow(14) {
         if w.remaining_mut() < 2 { return Err(WriteError::InsufficientSpace); }
-        w.put_u16::<BigEndian>(0b01 << 14 | x as u16);
+        w.put_u16_be(0b01 << 14 | x as u16);
     } else if x < 2u64.pow(30) {
         if w.remaining_mut() < 4 { return Err(WriteError::InsufficientSpace); }
-        w.put_u32::<BigEndian>(0b10 << 30 | x as u32);
+        w.put_u32_be(0b10 << 30 | x as u32);
     } else if x < 2u64.pow(62) {
         if w.remaining_mut() < 8 { return Err(WriteError::InsufficientSpace); }
-        w.put_u64::<BigEndian>(0b11 << 62 | x);
+        w.put_u64_be(0b11 << 62 | x);
     } else {
        return Err(WriteError::OversizedValue);
     }

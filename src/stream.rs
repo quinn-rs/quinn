@@ -4,8 +4,6 @@ use bytes::Bytes;
 
 use range_set::RangeSet;
 
-use {Side, StreamId};
-
 #[derive(Debug)]
 pub enum Stream {
     Send(Send),
@@ -14,15 +12,6 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn new(id: StreamId, side: Side, window: u64) -> Self {
-        use Directionality::*;
-        match (id.directionality(), id.initiator(), side) {
-            (Bi, _, _) => Stream::Both(Send::new(), Recv::new(window)),
-            (Uni, x, y) if x == y => Send::new().into(),
-            (Uni, _, _) => Recv::new(window).into()
-        }
-    }
-
     pub fn new_bi(window: u64) -> Self { Stream::Both(Send::new(), Recv::new(window)) }
 
     pub fn send(&self) -> Option<&Send> {
@@ -231,7 +220,7 @@ impl Assembler {
         n
     }
 
-    /// Testing convenience
+    #[cfg(test)]
     fn next(&mut self) -> Option<Box<[u8]>> {
         let mut buf = Vec::new();
         buf.resize(self.prefix_len(), 0);

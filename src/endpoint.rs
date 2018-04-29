@@ -513,8 +513,8 @@ impl Endpoint {
                 }
             }
             Ok(false) => {
-                trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id);
                 let data = tls.get_mut().take_outgoing();
+                trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
                 let mut buf = Vec::<u8>::new();
                 Header::Long {
                     ty: packet::RETRY,
@@ -2897,7 +2897,7 @@ fn parse_initial(stream: &mut MemoryStream, payload: Bytes) -> bool {
         match frame {
             Frame::Padding => {}
             Frame::Ack(_) => {}
-            Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
+            Frame::Stream(frame::Stream { id: StreamId(0), fin: false, offset, data, .. }) => {
                 stream.insert(offset, &data);
             }
             _ => { return false; } // Invalid packet

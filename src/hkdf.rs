@@ -2,7 +2,7 @@ use openssl::hash::MessageDigest;
 use openssl::sign::Signer;
 use openssl::pkey::PKey;
 
-use bytes::{BufMut, BigEndian};
+use bytes::BufMut;
 
 pub fn extract(algo: MessageDigest, salt: &[u8], ikm: &[u8]) -> Box<[u8]> {
     let key = PKey::hmac(salt).unwrap();
@@ -41,7 +41,7 @@ pub fn qexpand(algo: MessageDigest, prk: &[u8], label: &[u8], length: u16) -> Bo
     const PREFIX: &[u8] = b"QUIC ";
     assert!(label.len() < u8::max_value() as usize - PREFIX.len());
     let mut info = Vec::new();
-    info.put_u16::<BigEndian>(length);
+    info.put_u16_be(length);
     info.put_u8(PREFIX.len() as u8 + label.len() as u8);
     info.put_slice(PREFIX);
     info.put_slice(label);

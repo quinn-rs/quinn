@@ -35,9 +35,6 @@ mod frame;
 use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
-mod from_bytes;
-use from_bytes::{FromBytes};
-
 mod endpoint;
 pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError};
 

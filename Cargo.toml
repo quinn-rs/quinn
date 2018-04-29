@@ -14,7 +14,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 rand = "0.4"
 slab = "0.4"
-bytes = "0.4.6"
+bytes = "0.4.7"
 byteorder = "1.1"
 failure = "0.1"
 digest = "0.7"

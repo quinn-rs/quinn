@@ -1,4 +1,4 @@
-use bytes::{Buf, BufMut, BigEndian};
+use bytes::{Buf, BufMut};
 
 use coding::{BufExt, BufMutExt};
 use {VERSION, Side};
@@ -108,7 +108,7 @@ impl TransportParameters {
             r.get::<u32>().unwrap();
         } else {
             if r.remaining() < 31 { return Err(Error::Malformed); }
-            let negotiated = r.get_u32::<BigEndian>();
+            let negotiated = r.get::<u32>().unwrap();
             if negotiated != VERSION { return Err(Error::VersionNegotiation); }
             let supported_bytes = r.get::<u8>().unwrap();
             if supported_bytes < 4 || supported_bytes > 252 || supported_bytes % 4 != 0 {

@@ -1,6 +1,9 @@
 use std::fmt;
 
+use bytes::{Buf, BufMut};
+
 use frame;
+use coding::{self, BufExt, BufMutExt};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Error(u16);
@@ -9,7 +12,11 @@ impl Error {
     pub fn frame(ty: frame::Type) -> Self { Error(0x100 | u8::from(ty) as u16) }
 }
 
-impl From<u16> for Error { fn from(x: u16) -> Self { Error(x) } }
+impl coding::Value for Error {
+    fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> { Ok(Error(buf.get::<u16>()?)) }
+    fn encode<B: BufMut>(&self, buf: &mut B) { buf.write::<u16>(self.0) }
+}
+
 impl From<Error> for u16 { fn from(x: Error) -> u16 { x.0 } }
 
 macro_rules! errors {
