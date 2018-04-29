@@ -11,6 +11,7 @@ extern crate url;
 
 use std::net::ToSocketAddrs;
 use std::io::{self, Write};
+use std::time::{Instant, Duration};
 
 use futures::Future;
 use tokio::executor::current_thread::CurrentThread;
@@ -60,19 +61,28 @@ fn run(log: Logger) -> Result<()> {
     let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
 
+    let start = Instant::now();
     executor.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
     executor.block_on(
         endpoint.connect(&remote, url.host_str().map(|x| x.as_bytes()))
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|(conn, _)| {
+            .and_then(move |(conn, _)| {
+                eprintln!("connected at {}", duration_secs(&start.elapsed()));
                 conn.open_bi().map_err(|e| format_err!("failed to open stream: {}", e))
             })
             .and_then(|stream| {
                 tokio::io::write_all(stream, request.as_bytes()).map_err(|e| format_err!("failed to send request: {}", e))
             })
             .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
-            .and_then(|stream| quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e)))
-            .map(|(_, data)| {
+            .and_then(|stream| {
+                let response_start = Instant::now();
+                eprintln!("request sent at {}", duration_secs(&(response_start - start)));
+                quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e))
+                    .map(move |x| (x, response_start))
+            })
+            .map(|((_, data), response_start)| {
+                let seconds = duration_secs(&response_start.elapsed());
+                eprintln!("response received in {} - {} KiB/s", seconds, data.len() as f32 / (seconds * 1024.0));
                 io::stdout().write_all(&data).unwrap();
                 io::stdout().flush().unwrap();
             })
@@ -80,3 +90,5 @@ fn run(log: Logger) -> Result<()> {
 
     Ok(())
 }
+
+fn duration_secs(x: &Duration) -> f32 { x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9 }

@@ -16,6 +16,7 @@ use std::fmt;
 use std::path::{self, Path, PathBuf};
 use std::str;
 use std::rc::Rc;
+use std::ascii;
 
 use futures::{Future, Stream};
 use tokio::executor::current_thread::{self, CurrentThread};
@@ -106,18 +107,18 @@ fn run(log: Logger) -> Result<()> {
 
     executor.spawn(incoming.for_each(move |conn| {
         let quicr::NewConnection { incoming, address, .. } = conn;
-        info!(log, "got connection"; "remote" => %address);
-        let root = root.clone();
-        let log = log.clone();
+        let log = log.new(o!("remote" => format!("{}", address)));
+        info!(log, "got connection");
         let log2 = log.clone();
+        let root = root.clone();
         current_thread::spawn(
             incoming
-                .map_err(move |e| info!(log2, "connection terminated"; "remote" => %address, "reason" => %e))
+                .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
                 .for_each(move |stream| {
                     let stream = match stream {
                         quicr::NewStream::Bi(stream) => stream,
                         quicr::NewStream::Uni(_) => {
-                            error!(log, "client opened unidirectional stream"; "remote" => %address);
+                            error!(log, "client opened unidirectional stream");
                             return Ok(());
                         }
                     };
@@ -129,15 +130,20 @@ fn run(log: Logger) -> Result<()> {
                         quicr::read_to_end(stream, 64 * 1024)
                             .map_err(|e| format_err!("failed reading request: {}", e))
                             .and_then(move |(stream, req)| {
-                                info!(log, "got request"; "remote" => %address);
+                                let mut escaped = String::new();
+                                for &x in &req[..] {
+                                    let part = ascii::escape_default(x).collect::<Vec<_>>();
+                                    escaped.push_str(str::from_utf8(&part).unwrap());
+                                }
+                                info!(log, "got request"; "content" => escaped);
                                 let resp = process_request(&root, &req).unwrap_or_else(move |e| {
-                                    error!(log, "failed to process request"; "reaosn" => %e.pretty());
+                                    error!(log, "failed to process request"; "reason" => %e.pretty());
                                     format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
                                 });
                                 tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
                             })
                             .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
-                            .map(move |_| info!(log3, "request complete"; "remote" => %address))
+                            .map(move |_| info!(log3, "request complete"))
                             .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
                     );
                     Ok(())
