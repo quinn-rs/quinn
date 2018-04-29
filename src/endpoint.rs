@@ -76,6 +76,12 @@ pub struct Config {
 
     /// List of permissible protocols
     pub protocols: Vec<u8>,
+
+    /// Whether to verify the authenticity of peer certificates.
+    ///
+    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
+    /// connection, but allows them to connect to servers that are using self-signed certificates.
+    pub verify_peers: bool,
 }
 
 /// Information needed to accept incoming connections.
@@ -110,6 +116,7 @@ impl Default for Config {
         minimum_window: 2 * 1460,
         loss_reduction_factor: 0x8000, // 1/2
         protocols: Vec::new(),
+        verify_peers: true,
     }}
 }
 
@@ -193,6 +200,7 @@ impl Endpoint {
             SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
         );
         tls.set_default_verify_paths()?;
+        if config.verify_peers { tls.set_verify(ssl::SslVerifyMode::PEER); }
         if let Some(ref listen) = listen {
             let cookie_factory = Arc::new(CookieFactory::new(listen.state.cookie_key));
             {

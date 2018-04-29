@@ -79,14 +79,14 @@ impl Pair {
         let server_addr = "[::1]:42".parse().unwrap();
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
-            server_config,
+            Config { verify_peers: false, ..server_config },
             Some(ListenConfig {
                 private_key: &KEY,
                 cert: &CERT,
                 state: *STATE,
             })).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), client_config, None).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), Config { verify_peers: false, ..client_config }, None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }
@@ -124,7 +124,7 @@ fn version_negotiate() {
     let client_addr = "[::2]:7890".parse().unwrap();
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
-        Config::default(),
+        Config { verify_peers: false, ..Config::default() },
         Some(ListenConfig {
             private_key: &KEY,
             cert: &CERT,
@@ -176,7 +176,7 @@ fn stateless_reset() {
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
-        Config::default(),
+        Config { verify_peers: false, ..Config::default() },
         Some(ListenConfig {
             private_key: &KEY,
             cert: &CERT,
