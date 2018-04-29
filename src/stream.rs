@@ -93,6 +93,8 @@ pub struct Recv {
     /// Whether any unordered reads have been performed, making this stream unusable for ordered reads
     pub unordered: bool,
     pub assembler: Assembler,
+    /// Whether the application is aware of this stream yet
+    pub fresh: bool,
 }
 
 impl Recv {
@@ -103,6 +105,7 @@ impl Recv {
         max_data,
         unordered: false,
         assembler: Assembler::new(),
+        fresh: true,
     }}
 
     /// No more data expected from peer

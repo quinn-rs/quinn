@@ -301,7 +301,10 @@ impl Endpoint {
             let &conn = self.readable_conns.iter().next()?;
             if let Some(&stream) = self.connections[conn.0].readable_streams.iter().next() {
                 self.connections[conn.0].readable_streams.remove(&stream);
-                return Some((conn, Event::StreamReadable { stream }));
+                let rs = self.connections[conn.0].streams.get_mut(&stream).unwrap()
+                    .recv_mut().unwrap();
+                let fresh = mem::replace(&mut rs.fresh, false);
+                return Some((conn, Event::StreamReadable { stream, fresh }));
             }
             self.readable_conns.remove(&conn);
         }
@@ -2813,9 +2816,12 @@ pub enum Event {
     ConnectionLost {
         reason: ConnectionError
     },
-    /// A stream has data waiting to be read
+    /// A stream has data or errors waiting to be read
     StreamReadable {
+        /// The affected stream
         stream: StreamId,
+        /// Whether this is the first event on the stream
+        fresh: bool,
     },
     /// A formerly write-blocked stream might now accept a write
     StreamWritable {

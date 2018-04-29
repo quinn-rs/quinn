@@ -67,7 +67,7 @@ use futures::Stream as FuturesStream;
 use futures::unsync::{oneshot, mpsc};
 use futures::task::{self, Task};
 use futures::stream::FuturesUnordered;
-use fnv::{FnvHashMap, FnvHashSet};
+use fnv::FnvHashMap;
 use openssl::ssl;
 use bytes::Bytes;
 
@@ -113,7 +113,6 @@ struct Pending {
     cancel_idle: Option<oneshot::Sender<()>>,
     incoming_streams: VecDeque<StreamId>,
     incoming_streams_reader: Option<Task>,
-    remote_recv_streams: FnvHashSet<StreamId>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
 }
@@ -129,7 +128,6 @@ impl Pending {
         cancel_idle: None,
         incoming_streams: VecDeque::new(),
         incoming_streams_reader: None,
-        remote_recv_streams: FnvHashSet::default(),
         finishing: FnvHashMap::default(),
         error: None,
     }}
@@ -310,13 +308,12 @@ impl Future for Driver {
                             writer.notify();
                         }
                     }
-                    StreamReadable { stream } => {
+                    StreamReadable { stream, fresh } => {
                         let pending = endpoint.pending.get_mut(&connection).unwrap();
                         if let Some(reader) = pending.blocked_readers.remove(&stream) {
                             reader.notify();
                         }
-                        if !pending.remote_recv_streams.contains(&stream) {
-                            pending.remote_recv_streams.insert(stream);
+                        if fresh {
                             pending.incoming_streams.push_back(stream);
                             if let Some(x) = pending.incoming_streams_reader.take() { x.notify(); }
                         }
@@ -569,6 +566,7 @@ pub struct Stream {
     finished: bool,
 
     // Recv only
+    // Whether data reception is complete (due to either finish or reset)
     recvd: bool,
 }
 
@@ -640,11 +638,10 @@ impl Read for Stream {
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
-                pending.remote_recv_streams.remove(&self.stream);
+                self.recvd = true;
                 Err(ReadError::Reset { error_code })
             }
             Err(Finished) => {
-                pending.remote_recv_streams.remove(&self.stream);
                 self.recvd = true;
                 Err(ReadError::Finished)
             }
@@ -663,11 +660,10 @@ impl Read for Stream {
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
-                pending.remote_recv_streams.remove(&self.stream);
+                self.recvd = true;
                 Err(ReadError::Reset { error_code })
             }
             Err(Finished) => {
-                pending.remote_recv_streams.remove(&self.stream);
                 self.recvd = true;
                 Err(ReadError::Finished)
             }
