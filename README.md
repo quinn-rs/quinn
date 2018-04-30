@@ -9,6 +9,8 @@ deterministically, and a high-level tokio-compatible API in `quicr`. See `quicr/
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
+[API Docs](https://ralith.github.io/quicr/quicr/)
+
 ## Features
 
 - Simultaneous client/server operation
