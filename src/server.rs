@@ -2,7 +2,7 @@ use futures::{Future, Poll};
 
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
 use types::{Endpoint, TransportParameter};
 use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
 
@@ -53,13 +53,12 @@ impl Future for Server {
                 }
                 Entry::Vacant(entry) => {
                     let state = entry.insert(ServerStreamState::new(&addr, &self.tls_config));
-                    let key = PacketKey::for_client_handshake(conn_id);
+                    let key = state.decode_key(&partial);
                     let packet = partial.finish(&key);
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
-                        let key = PacketKey::for_server_handshake(conn_id);
-                        rsp.encode(&key, &mut self.out_buf);
+                        rsp.encode(&state.encode_key(), &mut self.out_buf);
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
                     }
                 }
@@ -92,6 +91,14 @@ impl ServerStreamState {
                 },
             ),
         }
+    }
+
+    pub(crate) fn encode_key(&self) -> PacketKey {
+        PacketKey::for_server_handshake(self.endpoint.hs_cid)
+    }
+
+    pub(crate) fn decode_key(&self, h: &PartialDecode) -> PacketKey {
+        PacketKey::for_client_handshake(h.conn_id().unwrap())
     }
 
     pub(crate) fn handle(&mut self, p: &Packet) -> Option<Packet> {

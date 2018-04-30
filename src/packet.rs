@@ -86,7 +86,7 @@ impl Packet {
 }
 
 pub struct PartialDecode<'a> {
-    header: Header,
+    pub(crate) header: Header,
     header_len: usize,
     buf: &'a mut [u8],
 }

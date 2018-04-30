@@ -2,7 +2,7 @@ use futures::{Async, Future, Poll};
 
 use crypto::{self, PacketKey};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
 use tls;
 use types::Endpoint;
 
@@ -61,8 +61,9 @@ impl Future for ConnectFuture {
                 let (sock, mut buf, len, addr) = try_ready!(future.poll());
                 let packet = {
                     let mut pbuf = &mut buf[..len];
-                    let key = PacketKey::for_server_handshake(self.state.endpoint.hs_cid);
-                    Packet::start_decode(pbuf).finish(&key)
+                    let decode = Packet::start_decode(pbuf);
+                    let key = self.state.decode_key(&decode);
+                    decode.finish(&key)
                 };
 
                 let req = match self.state.handle(&packet) {
@@ -75,8 +76,7 @@ impl Future for ConnectFuture {
                     }
                 };
 
-                let key = PacketKey::for_client_handshake(self.state.endpoint.hs_cid);
-                req.encode(&key, &mut buf);
+                req.encode(&self.state.encode_key(), &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
             };
             if let Some(future) = new.take() {
@@ -104,6 +104,14 @@ impl ClientStreamState {
             endpoint: Endpoint::new(),
             tls: tls::Client::new(),
         }
+    }
+
+    pub(crate) fn encode_key(&self) -> PacketKey {
+        PacketKey::for_client_handshake(self.endpoint.hs_cid)
+    }
+
+    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
+        PacketKey::for_server_handshake(self.endpoint.hs_cid)
     }
 
     pub(crate) fn initial(&mut self, server: &str) -> Packet {
