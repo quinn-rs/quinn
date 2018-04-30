@@ -14,10 +14,7 @@ pub struct Packet {
 
 impl Packet {
     pub fn ptype(&self) -> Option<LongType> {
-        match self.header {
-            Header::Short { .. } => None,
-            Header::Long { ptype, .. } => Some(ptype),
-        }
+        self.header.ptype()
     }
 
     pub fn conn_id(&self) -> Option<u64> {
@@ -144,6 +141,13 @@ pub enum Header {
 }
 
 impl Header {
+    pub fn ptype(&self) -> Option<LongType> {
+        match *self {
+            Header::Short { .. } => None,
+            Header::Long { ptype, .. } => Some(ptype),
+        }
+    }
+
     fn conn_id(&self) -> Option<u64> {
         match *self {
             Header::Short { conn_id, .. } => conn_id,
