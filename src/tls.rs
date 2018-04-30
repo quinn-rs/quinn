@@ -1,19 +1,19 @@
 use rustls::internal::msgs::{base::PayloadU16, codec::Codec};
-use rustls::internal::msgs::quic::ClientTransportParameters;
+use rustls::internal::msgs::quic::Parameter;
+use rustls::internal::msgs::quic::{ClientTransportParameters, ServerTransportParameters};
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
-use rustls::quic::ClientSession;
+use rustls::quic::{ClientSession, ServerSession};
 
 use std::io;
 use std::sync::Arc;
 
+use packet::DRAFT_10;
 use types::TransportParameter;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::internal::msgs::quic::{Parameter, ServerTransportParameters};
-pub use rustls::{Certificate, PrivateKey, ServerConfig, Session, TLSError};
-pub use rustls::quic::ServerSession;
+pub use rustls::{Certificate, PrivateKey, ServerConfig, TLSError};
 
 pub struct ClientTls {
     pub session: ClientSession,
@@ -57,14 +57,37 @@ impl ClientTls {
     }
 }
 
-pub struct ServerTls {}
+pub struct ServerTls {
+    session: ServerSession,
+}
 
 impl ServerTls {
+    pub fn with_config(config: &Arc<ServerConfig>) -> Self {
+        Self {
+            session: ServerSession::new(
+                config,
+                ServerTransportParameters {
+                    negotiated_version: DRAFT_10,
+                    supported_versions: vec![DRAFT_10],
+                    parameters: encode_transport_parameters(&vec![
+                        TransportParameter::InitialMaxStreamData(131072),
+                        TransportParameter::InitialMaxData(1048576),
+                        TransportParameter::IdleTimeout(300),
+                    ]),
+                },
+            ),
+        }
+    }
+
     pub fn build_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
         let mut config = ServerConfig::new(NoClientAuth::new());
         config.set_protocols(&[ALPN_PROTOCOL.into()]);
         config.set_single_cert(cert_chain, key);
         config
+    }
+
+    pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
+        self.session.get_handshake(input)
     }
 }
 

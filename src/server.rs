@@ -3,8 +3,8 @@ use futures::{Future, Poll};
 use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
-use types::{Endpoint, TransportParameter};
-use tls::{self, ServerConfig, ServerSession, ServerTransportParameters};
+use types::Endpoint;
+use tls::{self, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io;
@@ -15,14 +15,14 @@ use tokio::net::UdpSocket;
 
 pub struct Server {
     socket: UdpSocket,
-    tls_config: Arc<ServerConfig>,
+    tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
     connections: HashMap<u64, ServerStreamState>,
 }
 
 impl Server {
-    pub fn new(ip: &str, port: u16, tls_config: ServerConfig) -> Self {
+    pub fn new(ip: &str, port: u16, tls_config: tls::ServerConfig) -> Self {
         let addr = (ip, port).to_socket_addrs().unwrap().next().unwrap();
         Server {
             socket: UdpSocket::bind(&addr).unwrap(),
@@ -70,7 +70,7 @@ impl Future for Server {
 pub(crate) struct ServerStreamState {
     endpoint: Endpoint,
     addr: SocketAddr,
-    tls: ServerSession,
+    tls: ServerTls,
 }
 
 impl ServerStreamState {
@@ -78,18 +78,7 @@ impl ServerStreamState {
         Self {
             endpoint: Endpoint::new(),
             addr: addr.clone(),
-            tls: ServerSession::new(
-                tls_config,
-                ServerTransportParameters {
-                    negotiated_version: DRAFT_10,
-                    supported_versions: vec![DRAFT_10],
-                    parameters: tls::encode_transport_parameters(&vec![
-                        TransportParameter::InitialMaxStreamData(131072),
-                        TransportParameter::InitialMaxData(1048576),
-                        TransportParameter::IdleTimeout(300),
-                    ]),
-                },
-            ),
+            tls: ServerTls::with_config(tls_config),
         }
     }
 
