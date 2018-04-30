@@ -6,8 +6,8 @@ openssl-pre = openssl_1_1_0.overrideAttrs (old: rec {
   src = fetchFromGitHub {
     owner = "openssl";
     repo = "openssl";
-    rev = "OpenSSL_1_1_1-pre5";
-    sha256 = "0fnfgg5hpxhw3dry1zz0ccn2i9c3v7w51zq9r48h4rcmrbkbbczx";
+    rev = "OpenSSL_1_1_1-pre5-21-gd4da95a773";
+    sha256 = "08jy3ii5jh24q5qmm8sdnjmgzlyjp2p7x79yyil5l5ac781q2vfb";
   };
   patches = [ ./openssl-tls-28.patch ];
   # dontStrip = true;
