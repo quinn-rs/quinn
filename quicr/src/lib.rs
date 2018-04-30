@@ -578,6 +578,7 @@ pub trait Read {
     /// reduces computational overhead by allowing data to be passed on without any intermediate buffering. Prefer it
     /// whenever possible.
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
+
     /// Read data contiguously from the stream.
     ///
     /// Incurs latency, throughput, and computational overhead and is not necessary for most applications. Prefer
@@ -588,16 +589,23 @@ pub trait Read {
     ///   This is forbidden because an unordered read could consume a segment of data from a location other than the start
     ///   of the receive buffer, making it impossible for future ordered reads to proceed.
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
+
+    /// Abandon receiving data on this stream.
+    ///
+    /// The peer is notified and will reset this stream in response.
+    fn stop(&mut self, error_code: u16);
 }
 
 /// Trait of writable streams
 pub trait Write {
     /// Write some bytes to the stream.
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
+
     /// Indicate that no more data will be written.
     ///
     /// Completes when the peer has acknowledged all sent data.
     fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
+
     /// Abandon transmitting data on this stream.
     ///
     /// No new data may be transmitted, and no previously transmitted data will be retransmitted if lost.
@@ -614,7 +622,7 @@ pub struct Stream {
     finished: bool,
 
     // Recv only
-    // Whether data reception is complete (due to either finish or reset)
+    // Whether data reception is complete (due to receiving finish or reset or sending stop)
     recvd: bool,
 }
 
@@ -718,6 +726,13 @@ impl Read for Stream {
             }
         }
     }
+
+    fn stop(&mut self, error_code: u16) {
+        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        endpoint.inner.stop_sending(self.conn.conn, self.stream, error_code);
+        endpoint.notify();
+        self.recvd = true;
+    }
 }
 
 impl io::Write for Stream {
@@ -751,7 +766,7 @@ impl Drop for Stream {
         if send && !self.finished {
             endpoint.inner.reset(self.conn.conn, self.stream, 0);
         }
-        if recv && !self.recvd{
+        if recv && !self.recvd {
             endpoint.inner.stop_sending(self.conn.conn, self.stream, 0);
         }
         endpoint.notify();
@@ -813,6 +828,7 @@ pub struct RecvStream(Stream);
 impl Read for RecvStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> { self.0.poll_read_unordered() }
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> { Read::poll_read(&mut self.0, buf) }
+    fn stop(&mut self, error_code: u16) { self.0.stop(error_code) }
 }
 
 impl io::Read for RecvStream {
