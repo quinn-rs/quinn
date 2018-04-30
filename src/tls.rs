@@ -2,7 +2,7 @@ use rustls::internal::msgs::{base::PayloadU16, codec::Codec};
 use rustls::internal::msgs::quic::Parameter;
 use rustls::internal::msgs::quic::{ClientTransportParameters, ServerTransportParameters};
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
-use rustls::quic::{ClientSession, ServerSession};
+use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 
 use std::io;
 use std::sync::Arc;
@@ -64,7 +64,12 @@ impl ClientTls {
     }
 
     pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
-        self.session.process_handshake_messages(data)
+        let res = self.session.process_handshake_messages(data)?;
+        let TLSResult { messages, key_ready } = res;
+        if let Some((suite, secret)) = key_ready {
+            self.secret = Secret::Shared(suite, secret);
+        }
+        Ok(messages)
     }
 }
 
@@ -159,6 +164,7 @@ const ALPN_PROTOCOL: &'static str = "hq-10";
 
 pub enum Secret {
     Handshake(u64),
+    Shared(&'static SupportedCipherSuite, QuicSecret),
 }
 
 impl Secret {
@@ -175,6 +181,9 @@ impl Secret {
                     &SHA256,
                     &expanded_handshake_secret(cid, label),
                 )
+            },
+            Secret::Shared(suite, QuicSecret::For1RTT(ref secret)) => {
+                PacketKey::new(suite.get_aead_alg(), suite.get_hash(), secret)
             }
         }
     }
