@@ -64,6 +64,12 @@ struct Opt {
     /// directory to serve files from
     #[structopt(parse(from_os_str))]
     root: PathBuf,
+    /// TLS private key in PEM format
+    #[structopt(parse(from_os_str), long = "key", default_value = "key.pem")]
+    key: PathBuf,
+    /// TLS certificate in PEM format
+    #[structopt(parse(from_os_str), long = "cert", default_value = "cert.pem")]
+    cert: PathBuf,
 }
 
 fn main() {
@@ -95,15 +101,15 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let key;
     let cert;
     {
-        let mut key_file = File::open("key.der").context("failed to open key.der")?;
+        let mut key_file = File::open(options.key).context("failed to open key")?;
         let mut data = Vec::new();
-        key_file.read_to_end(&mut data).context("failed reading key.der")?;
-        key = PKey::<Private>::private_key_from_der(&data).context("failed to load key.der")?;
+        key_file.read_to_end(&mut data).context("failed reading key")?;
+        key = PKey::<Private>::private_key_from_pem(&data).context("failed to load key")?;
         data.clear();
 
-        let mut cert_file = File::open("cert.der").context("failed to open cert.der")?;
-        cert_file.read_to_end(&mut data).context("failed reading cert.der")?;
-        cert = X509::from_der(&data).context("failed to load cert.der")?;
+        let mut cert_file = File::open(options.cert).context("failed to open cert")?;
+        cert_file.read_to_end(&mut data).context("failed reading cert")?;
+        cert = X509::from_pem(&data).context("failed to load cert")?;
     }
 
     let (_, driver, incoming) = quicr::Endpoint::new()
