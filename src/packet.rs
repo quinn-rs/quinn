@@ -81,7 +81,11 @@ impl Packet {
             let header = Header::decode(&mut read);
             (header, read.position() as usize)
         };
-        PartialDecode { header, header_len, buf }
+        PartialDecode {
+            header,
+            header_len,
+            buf,
+        }
     }
 }
 
@@ -97,7 +101,11 @@ impl<'a> PartialDecode<'a> {
     }
 
     pub fn finish(self, key: &PacketKey) -> Packet {
-        let PartialDecode { header, header_len, buf } = self;
+        let PartialDecode {
+            header,
+            header_len,
+            buf,
+        } = self;
         let (header_buf, payload_buf) = buf.split_at_mut(header_len);
         let decrypted = key.decrypt(header.number(), &header_buf, payload_buf);
         let mut read = Cursor::new(decrypted);
@@ -341,10 +349,12 @@ mod tests {
         packet.encode(&key, &mut buf);
         let mut decoded = Packet::start_decode(&mut buf).finish(&key);
 
-        decoded.payload.retain(|f| if let Frame::Padding(_) = *f {
-            false
-        } else {
-            true
+        decoded.payload.retain(|f| {
+            if let Frame::Padding(_) = *f {
+                false
+            } else {
+                true
+            }
         });
         assert_eq!(packet, decoded);
     }
