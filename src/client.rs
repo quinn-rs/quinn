@@ -3,7 +3,7 @@ use futures::{Async, Future, Poll};
 use crypto::{self, PacketKey};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
-use tls;
+use tls::ClientTls;
 use types::Endpoint;
 
 use std::io;
@@ -95,14 +95,14 @@ impl Future for ConnectFuture {
 
 pub(crate) struct ClientStreamState {
     pub(crate) endpoint: Endpoint,
-    pub(crate) tls: tls::Client,
+    pub(crate) tls: ClientTls,
 }
 
 impl ClientStreamState {
     pub fn new() -> Self {
         Self {
             endpoint: Endpoint::new(),
-            tls: tls::Client::new(),
+            tls: ClientTls::new(),
         }
     }
 

@@ -15,17 +15,17 @@ pub use rustls::internal::msgs::quic::{Parameter, ServerTransportParameters};
 pub use rustls::{Certificate, PrivateKey, ServerConfig, Session, TLSError};
 pub use rustls::quic::ServerSession;
 
-pub struct Client {
+pub struct ClientTls {
     pub session: ClientSession,
 }
 
-impl Client {
-    pub fn new() -> Client {
+impl ClientTls {
+    pub fn new() -> Self {
         Self::with_config(build_client_config(None))
     }
 
-    pub fn with_config(config: ClientConfig) -> Client {
-        Client {
+    pub fn with_config(config: ClientConfig) -> Self {
+        Self {
             session: ClientSession::new(&Arc::new(config)),
         }
     }

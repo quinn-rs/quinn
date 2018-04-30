@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use client::ClientStreamState;
 use server::ServerStreamState;
-use tls;
+use tls::{self, ClientTls};
 use types::Endpoint;
 
 use self::untrusted::Input;
@@ -52,7 +52,7 @@ fn client_state() -> ClientStreamState {
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
         let config = tls::build_client_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
-        tls::Client::with_config(config)
+        ClientTls::with_config(config)
     };
 
     ClientStreamState {
