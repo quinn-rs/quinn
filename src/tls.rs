@@ -57,11 +57,15 @@ impl ClientTls {
     }
 }
 
-pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config.set_protocols(&[ALPN_PROTOCOL.into()]);
-    config.set_single_cert(cert_chain, key);
-    config
+pub struct ServerTls {}
+
+impl ServerTls {
+    pub fn build_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
+        let mut config = ServerConfig::new(NoClientAuth::new());
+        config.set_protocols(&[ALPN_PROTOCOL.into()]);
+        config.set_single_cert(cert_chain, key);
+        config
+    }
 }
 
 pub fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {

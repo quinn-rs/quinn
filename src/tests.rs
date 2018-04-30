@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use client::ClientStreamState;
 use server::ServerStreamState;
-use tls::{self, ClientTls};
+use tls::{ClientTls, ServerTls};
 use types::Endpoint;
 
 use self::untrusted::Input;
@@ -38,7 +38,7 @@ fn server_state() -> ServerStreamState {
     };
 
     let addr = "0.0.0.0:0".parse().unwrap();
-    let tls_config = Arc::new(tls::build_server_config(certs, keys[0].clone()));
+    let tls_config = Arc::new(ServerTls::build_config(certs, keys[0].clone()));
     ServerStreamState::new(&addr, &tls_config)
 }
 
