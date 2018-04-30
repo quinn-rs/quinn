@@ -73,7 +73,7 @@ use bytes::Bytes;
 
 use quicr::{Directionality, StreamId, ConnectionHandle, Side};
 
-pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError};
+pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError, ConnectionId};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -263,15 +263,13 @@ pub struct NewConnection {
     pub connection: Connection,
     /// The stream of QUIC streams initiated by the client.
     pub incoming: IncomingStreams,
-    /// The address from which the connection originates.
-    pub address: SocketAddr,
     /// Identifier of the application-layer protocol that was negotiated.
     pub protocol: Option<Box<[u8]>>,
 }
 
 impl NewConnection {
     fn new(endpoint: Endpoint, info: quicr::NewConnection) -> Self {
-        let quicr::NewConnection { handle, address, protocol } = info;
+        let quicr::NewConnection { handle, protocol } = info;
         let conn = Rc::new(ConnectionInner {
             endpoint: Endpoint(endpoint.0.clone()),
             conn: handle,
@@ -280,7 +278,6 @@ impl NewConnection {
         NewConnection {
             connection: Connection(conn.clone()),
             incoming: IncomingStreams { endpoint, conn },
-            address: address.into(),
             protocol,
         }
     }
@@ -541,6 +538,20 @@ impl Connection {
             pending.draining = Some(send);
         }
         Box::new(recv.then(move |_| { let _ = self; Ok(()) }))
+    }
+
+    /// The peer's UDP address.
+    pub fn remote_address(&self) -> SocketAddr {
+        (*self.0.endpoint.0.borrow().inner.get_remote_address(self.0.conn)).into()
+    }
+
+    /// The `ConnectionId` used for `conn` locally.
+    pub fn local_id(&self) -> ConnectionId {
+        self.0.endpoint.0.borrow().inner.get_local_id(self.0.conn).clone()
+    }
+    /// The `ConnectionId` used for `conn` by the peer.
+    pub fn remote_id(&self) -> ConnectionId {
+        self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn).clone()
     }
 }
 

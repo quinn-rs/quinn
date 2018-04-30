@@ -121,9 +121,15 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {
-        let quicr::NewConnection { incoming, address, .. } = conn;
-        let log = log.new(o!("remote" => format!("{}", address)));
-        info!(log, "got connection");
+        let quicr::NewConnection { incoming, protocol, connection } = conn;
+        let address = connection.remote_address();
+        let local_id = connection.local_id();
+        let remote_id = connection.remote_id();
+        let log = log.new(o!("local_id" => format!("{}", local_id)));
+        info!(log, "got connection";
+              "remote_id" => %remote_id,
+              "address" => %address,
+              "protocol" => protocol.map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
         let log2 = log.clone();
         let root = root.clone();
         current_thread::spawn(

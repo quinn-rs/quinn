@@ -159,7 +159,6 @@ pub struct Endpoint {
 /// Information about a new incoming connection
 pub struct NewConnection {
     pub handle: ConnectionHandle,
-    pub address: SocketAddrV6,
     pub protocol: Option<Box<[u8]>>,
 }
 
@@ -739,7 +738,6 @@ impl Endpoint {
                             match self.connections[conn.0].side {
                                 Side::Client => {
                                     self.events.push_back((conn, Event::Connected {
-                                        address: remote,
                                         protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
                                     }));
                                 }
@@ -747,7 +745,6 @@ impl Endpoint {
                                     self.incoming_handshakes -= 1;
                                     self.incoming.push_back(NewConnection {
                                         handle: conn,
-                                        address: remote,
                                         protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
                                     });
                                 }
@@ -1441,11 +1438,20 @@ impl Endpoint {
     /// Look up whether we're the client or server of `conn`.
     pub fn get_side(&self, conn: ConnectionHandle) -> Side { self.connections[conn.0].side }
 
+    /// The `ConnectionId` used for `conn` locally.
+    pub fn get_local_id(&self, conn: ConnectionHandle) -> &ConnectionId { &self.connections[conn.0].local_id }
+    /// The `ConnectionId` used for `conn` by the peer.
+    pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId { &self.connections[conn.0].remote_id }
+    pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 { &self.connections[conn.0].remote }
+
     pub fn accept(&mut self) -> Option<NewConnection> { self.incoming.pop_front() }
 }
 
+/// Protocol-level identifier for a connection.
+///
+/// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-struct ConnectionId(ArrayVec<[u8; 18]>);
+pub struct ConnectionId(ArrayVec<[u8; 18]>);
 
 impl ::std::ops::Deref for ConnectionId {
     type Target = [u8];
@@ -2890,7 +2896,6 @@ lazy_static! {
 pub enum Event {
     /// A connection was successfully established.
     Connected {
-        address: SocketAddrV6,
         protocol: Option<Box<[u8]>>,
     },
     /// A connection was lost.
