@@ -4,7 +4,6 @@ use rustls::internal::msgs::quic::{ClientTransportParameters, ServerTransportPar
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
 use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 
-use std::io;
 use std::sync::Arc;
 
 use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
@@ -50,7 +49,7 @@ impl ClientTls {
         self.secret.build_key(Side::Server)
     }
 
-    pub fn get_handshake(&mut self, hostname: &str) -> io::Result<Vec<u8>> {
+    pub fn get_handshake(&mut self, hostname: &str) -> Result<Vec<u8>, TLSError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
         let params = ClientTransportParameters {
             initial_version: 1,
@@ -60,7 +59,13 @@ impl ClientTls {
                 TransportParameter::IdleTimeout(300),
             ]),
         };
-        self.session.get_handshake(pki_server_name, params)
+
+        let res = self.session.get_handshake(pki_server_name, params)?;
+        let TLSResult { messages, key_ready } = res;
+        if let Some((suite, secret)) = key_ready {
+            self.secret = Secret::Shared(suite, secret);
+        }
+        Ok(messages)
     }
 
     pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
@@ -113,7 +118,12 @@ impl ServerTls {
     }
 
     pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
-        self.session.get_handshake(input)
+        let res = self.session.get_handshake(input)?;
+        let TLSResult { messages, key_ready } = res;
+        if let Some((suite, secret)) = key_ready {
+            self.secret = Secret::Shared(suite, secret);
+        }
+        Ok(messages)
     }
 }
 
