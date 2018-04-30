@@ -1,10 +1,9 @@
 use futures::{Future, Poll};
 
-use crypto::PacketKey;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
+use packet::{DRAFT_10, Header, LongType, Packet};
 use types::Endpoint;
-use tls::{self, ServerTls};
+use tls::{self, Secret, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io;
@@ -52,13 +51,14 @@ impl Future for Server {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
-                    let state = entry.insert(ServerStreamState::new(&addr, &self.tls_config));
-                    let key = state.decode_key(&partial);
+                    let state =
+                        entry.insert(ServerStreamState::new(&addr, &self.tls_config, conn_id));
+                    let key = state.tls.decode_key(&partial);
                     let packet = partial.finish(&key);
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
-                        rsp.encode(&state.encode_key(), &mut self.out_buf);
+                        rsp.encode(&state.tls.encode_key(), &mut self.out_buf);
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
                     }
                 }
@@ -74,20 +74,12 @@ pub(crate) struct ServerStreamState {
 }
 
 impl ServerStreamState {
-    pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>) -> Self {
+    pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>, hs_cid: u64) -> Self {
         Self {
             endpoint: Endpoint::new(),
             addr: addr.clone(),
-            tls: ServerTls::with_config(tls_config),
+            tls: ServerTls::with_config(tls_config, Secret::Handshake(hs_cid)),
         }
-    }
-
-    pub(crate) fn encode_key(&self) -> PacketKey {
-        PacketKey::for_server_handshake(self.endpoint.hs_cid)
-    }
-
-    pub(crate) fn decode_key(&self, h: &PartialDecode) -> PacketKey {
-        PacketKey::for_client_handshake(h.conn_id().unwrap())
     }
 
     pub(crate) fn handle(&mut self, p: &Packet) -> Option<Packet> {

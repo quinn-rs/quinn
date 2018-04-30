@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use client::ClientStreamState;
 use server::ServerStreamState;
-use tls::{ClientTls, ServerTls};
+use tls::{ClientTls, Secret, ServerTls};
 use types::Endpoint;
 
 use self::untrusted::Input;
@@ -17,14 +17,14 @@ use webpki;
 #[test]
 fn test_handshake() {
     let mut cs = client_state();
-    let mut ss = server_state();
-
     let initial = cs.initial("example.com");
+
+    let mut ss = server_state(initial.conn_id().unwrap());
     let server_hello = ss.handle(&initial).unwrap();
     assert!(cs.handle(&server_hello).is_some());
 }
 
-fn server_state() -> ServerStreamState {
+fn server_state(hs_cid: u64) -> ServerStreamState {
     let certs = {
         let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
         let mut reader = BufReader::new(f);
@@ -39,10 +39,14 @@ fn server_state() -> ServerStreamState {
 
     let addr = "0.0.0.0:0".parse().unwrap();
     let tls_config = Arc::new(ServerTls::build_config(certs, keys[0].clone()));
-    ServerStreamState::new(&addr, &tls_config)
+    ServerStreamState::new(&addr, &tls_config, hs_cid)
 }
 
 fn client_state() -> ClientStreamState {
+    let mut endpoint = Endpoint::new();
+    endpoint.hs_cid = endpoint.dst_cid;
+    let secret = Secret::Handshake(endpoint.hs_cid);
+
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
         let mut bytes = Vec::new();
@@ -52,11 +56,8 @@ fn client_state() -> ClientStreamState {
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
         let config = ClientTls::build_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
-        ClientTls::with_config(config)
+        ClientTls::with_config(config, secret)
     };
 
-    ClientStreamState {
-        endpoint: Endpoint::new(),
-        tls,
-    }
+    ClientStreamState { endpoint, tls }
 }

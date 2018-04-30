@@ -1,9 +1,8 @@
 use futures::{Async, Future, Poll};
 
-use crypto::{self, PacketKey};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet, PartialDecode};
-use tls::ClientTls;
+use packet::{DRAFT_10, Header, LongType, Packet};
+use tls::{ClientTls, Secret};
 use types::Endpoint;
 
 use std::io;
@@ -19,9 +18,8 @@ impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
         let mut state = ClientStreamState::new();
         let packet = state.initial(server);
-        let handshake_key = crypto::PacketKey::for_client_handshake(packet.conn_id().unwrap());
         let mut buf = Vec::with_capacity(65536);
-        packet.encode(&handshake_key, &mut buf);
+        packet.encode(&state.tls.encode_key(), &mut buf);
 
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
@@ -62,7 +60,7 @@ impl Future for ConnectFuture {
                 let packet = {
                     let mut pbuf = &mut buf[..len];
                     let decode = Packet::start_decode(pbuf);
-                    let key = self.state.decode_key(&decode);
+                    let key = self.state.tls.decode_key(&decode);
                     decode.finish(&key)
                 };
 
@@ -76,7 +74,7 @@ impl Future for ConnectFuture {
                     }
                 };
 
-                req.encode(&self.state.encode_key(), &mut buf);
+                req.encode(&self.state.tls.encode_key(), &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
             };
             if let Some(future) = new.take() {
@@ -100,22 +98,17 @@ pub(crate) struct ClientStreamState {
 
 impl ClientStreamState {
     pub fn new() -> Self {
+        let mut endpoint = Endpoint::new();
+        endpoint.hs_cid = endpoint.dst_cid;
+        let secret = Secret::Handshake(endpoint.hs_cid);
+
         Self {
-            endpoint: Endpoint::new(),
-            tls: ClientTls::new(),
+            endpoint,
+            tls: ClientTls::new(secret),
         }
     }
 
-    pub(crate) fn encode_key(&self) -> PacketKey {
-        PacketKey::for_client_handshake(self.endpoint.hs_cid)
-    }
-
-    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
-        PacketKey::for_server_handshake(self.endpoint.hs_cid)
-    }
-
     pub(crate) fn initial(&mut self, server: &str) -> Packet {
-        self.endpoint.hs_cid = self.endpoint.dst_cid;
         let number = self.endpoint.src_pn;
         self.endpoint.src_pn += 1;
         let handshake = self.tls.get_handshake(server).unwrap();

@@ -7,7 +7,8 @@ use rustls::quic::{ClientSession, ServerSession};
 use std::io;
 use std::sync::Arc;
 
-use packet::DRAFT_10;
+use crypto::PacketKey;
+use packet::{DRAFT_10, PartialDecode};
 use types::TransportParameter;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
@@ -17,16 +18,18 @@ pub use rustls::{Certificate, PrivateKey, ServerConfig, TLSError};
 
 pub struct ClientTls {
     pub session: ClientSession,
+    secret: Secret,
 }
 
 impl ClientTls {
-    pub fn new() -> Self {
-        Self::with_config(Self::build_config(None))
+    pub fn new(secret: Secret) -> Self {
+        Self::with_config(Self::build_config(None), secret)
     }
 
-    pub fn with_config(config: ClientConfig) -> Self {
+    pub fn with_config(config: ClientConfig, secret: Secret) -> Self {
         Self {
             session: ClientSession::new(&Arc::new(config)),
+            secret,
         }
     }
 
@@ -37,6 +40,18 @@ impl ClientTls {
         config.versions = vec![ProtocolVersion::TLSv1_3];
         config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
         config
+    }
+
+    pub(crate) fn encode_key(&self) -> PacketKey {
+        match self.secret {
+            Secret::Handshake(cid) => PacketKey::for_client_handshake(cid),
+        }
+    }
+
+    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
+        match self.secret {
+            Secret::Handshake(cid) => PacketKey::for_server_handshake(cid),
+        }
     }
 
     pub fn get_handshake(&mut self, hostname: &str) -> io::Result<Vec<u8>> {
@@ -59,10 +74,11 @@ impl ClientTls {
 
 pub struct ServerTls {
     session: ServerSession,
+    secret: Secret,
 }
 
 impl ServerTls {
-    pub fn with_config(config: &Arc<ServerConfig>) -> Self {
+    pub fn with_config(config: &Arc<ServerConfig>, secret: Secret) -> Self {
         Self {
             session: ServerSession::new(
                 config,
@@ -76,6 +92,7 @@ impl ServerTls {
                     ]),
                 },
             ),
+            secret,
         }
     }
 
@@ -84,6 +101,18 @@ impl ServerTls {
         config.set_protocols(&[ALPN_PROTOCOL.into()]);
         config.set_single_cert(cert_chain, key);
         config
+    }
+
+    pub(crate) fn encode_key(&self) -> PacketKey {
+        match self.secret {
+            Secret::Handshake(cid) => PacketKey::for_server_handshake(cid),
+        }
+    }
+
+    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
+        match self.secret {
+            Secret::Handshake(cid) => PacketKey::for_client_handshake(cid),
+        }
     }
 
     pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
@@ -135,3 +164,7 @@ fn tag(param: &TransportParameter) -> u16 {
 }
 
 const ALPN_PROTOCOL: &'static str = "hq-10";
+
+pub enum Secret {
+    Handshake(u64),
+}
