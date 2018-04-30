@@ -51,7 +51,7 @@ fn client_state() -> ClientStreamState {
         let anchor =
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
-        let config = tls::build_client_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
+        let config = ClientTls::build_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
         ClientTls::with_config(config)
     };
 

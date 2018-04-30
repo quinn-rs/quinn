@@ -21,13 +21,22 @@ pub struct ClientTls {
 
 impl ClientTls {
     pub fn new() -> Self {
-        Self::with_config(build_client_config(None))
+        Self::with_config(Self::build_config(None))
     }
 
     pub fn with_config(config: ClientConfig) -> Self {
         Self {
             session: ClientSession::new(&Arc::new(config)),
         }
+    }
+
+    pub fn build_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
+        let mut config = ClientConfig::new();
+        let anchors = anchors.unwrap_or(&webpki_roots::TLS_SERVER_ROOTS);
+        config.root_store.add_server_trust_anchors(anchors);
+        config.versions = vec![ProtocolVersion::TLSv1_3];
+        config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+        config
     }
 
     pub fn get_handshake(&mut self, hostname: &str) -> io::Result<Vec<u8>> {
@@ -46,15 +55,6 @@ impl ClientTls {
     pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
         self.session.process_handshake_messages(data)
     }
-}
-
-pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
-    let mut config = ClientConfig::new();
-    let anchors = anchors.unwrap_or(&webpki_roots::TLS_SERVER_ROOTS);
-    config.root_store.add_server_trust_anchors(anchors);
-    config.versions = vec![ProtocolVersion::TLSv1_3];
-    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
-    config
 }
 
 pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
