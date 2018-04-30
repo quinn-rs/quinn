@@ -142,7 +142,8 @@ impl ClientStreamState {
             })
             .next()
             .unwrap();
-        let tls = self.tls
+
+        let handshake = self.tls
             .process_handshake_messages(&tls_frame.data)
             .unwrap();
 
@@ -165,8 +166,8 @@ impl ClientStreamState {
                     id: 0,
                     fin: false,
                     offset: 0,
-                    len: Some(tls.len() as u64),
-                    data: tls,
+                    len: Some(handshake.len() as u64),
+                    data: handshake,
                 }),
             ],
         })

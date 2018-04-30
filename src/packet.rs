@@ -321,7 +321,7 @@ pub const DRAFT_10: u32 = 0xff00000a;
 mod tests {
     use super::{DRAFT_10, Header, LongType, Packet};
     use frame::{Frame, StreamFrame};
-    use crypto::PacketKey;
+    use tls::{Secret, Side};
 
     #[test]
     fn test_roundtrip() {
@@ -345,7 +345,7 @@ mod tests {
             ],
         };
 
-        let key = PacketKey::for_client_handshake(123456789);
+        let key = Secret::Handshake(123456789).build_key(Side::Client);
         packet.encode(&key, &mut buf);
         let mut decoded = Packet::start_decode(&mut buf).finish(&key);
 

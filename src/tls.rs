@@ -7,14 +7,14 @@ use rustls::quic::{ClientSession, ServerSession};
 use std::io;
 use std::sync::Arc;
 
-use crypto::PacketKey;
+use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
 use packet::{DRAFT_10, PartialDecode};
 use types::TransportParameter;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::{Certificate, PrivateKey, ServerConfig, TLSError};
+pub use rustls::{Certificate, PrivateKey, ServerConfig, SupportedCipherSuite, TLSError};
 
 pub struct ClientTls {
     pub session: ClientSession,
@@ -43,15 +43,11 @@ impl ClientTls {
     }
 
     pub(crate) fn encode_key(&self) -> PacketKey {
-        match self.secret {
-            Secret::Handshake(cid) => PacketKey::for_client_handshake(cid),
-        }
+        self.secret.build_key(Side::Client)
     }
 
     pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
-        match self.secret {
-            Secret::Handshake(cid) => PacketKey::for_server_handshake(cid),
-        }
+        self.secret.build_key(Side::Server)
     }
 
     pub fn get_handshake(&mut self, hostname: &str) -> io::Result<Vec<u8>> {
@@ -104,15 +100,11 @@ impl ServerTls {
     }
 
     pub(crate) fn encode_key(&self) -> PacketKey {
-        match self.secret {
-            Secret::Handshake(cid) => PacketKey::for_server_handshake(cid),
-        }
+        self.secret.build_key(Side::Server)
     }
 
     pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
-        match self.secret {
-            Secret::Handshake(cid) => PacketKey::for_client_handshake(cid),
-        }
+        self.secret.build_key(Side::Client)
     }
 
     pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
@@ -167,4 +159,29 @@ const ALPN_PROTOCOL: &'static str = "hq-10";
 
 pub enum Secret {
     Handshake(u64),
+}
+
+impl Secret {
+    pub fn build_key(&self, side: Side) -> PacketKey {
+        match *self {
+            Secret::Handshake(cid) => {
+                let label = if side == Side::Client {
+                    b"client hs"
+                } else {
+                    b"server hs"
+                };
+                PacketKey::new(
+                    &AES_128_GCM,
+                    &SHA256,
+                    &expanded_handshake_secret(cid, label),
+                )
+            }
+        }
+    }
+}
+
+#[derive(PartialEq)]
+pub enum Side {
+    Client,
+    Server,
 }

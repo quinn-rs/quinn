@@ -2,8 +2,11 @@ use bytes::{BigEndian, Buf, BufMut};
 
 use std::io::Cursor;
 
-use ring::{hkdf, aead::{self, AES_128_GCM, OpeningKey, SealingKey}, digest::SHA256,
-           hmac::SigningKey};
+use ring::{digest, hkdf, aead::{self, OpeningKey, SealingKey}};
+
+pub use ring::aead::AES_128_GCM;
+pub use ring::digest::SHA256;
+pub use ring::hmac::SigningKey;
 
 pub struct PacketKey {
     alg: &'static aead::Algorithm,
@@ -12,27 +15,19 @@ pub struct PacketKey {
 }
 
 impl PacketKey {
-    fn new(alg: &'static aead::Algorithm) -> Self {
-        Self {
-            alg,
-            data: vec![0; alg.key_len() + alg.nonce_len()],
-            split: alg.key_len(),
-        }
-    }
-
-    pub fn for_client_handshake(conn_id: u64) -> Self {
-        Self::build_handshake_key(conn_id, b"client hs")
-    }
-
-    pub fn for_server_handshake(conn_id: u64) -> Self {
-        Self::build_handshake_key(conn_id, b"server hs")
-    }
-
-    fn build_handshake_key(conn_id: u64, label: &[u8]) -> Self {
-        let shared_key = SigningKey::new(&SHA256, &expanded_handshake_secret(conn_id, label));
-        let mut res = PacketKey::new(&AES_128_GCM);
-        qhkdf_expand(&shared_key, b"key", &mut res.data[..res.split]);
-        qhkdf_expand(&shared_key, b"iv", &mut res.data[res.split..]);
+    pub fn new(
+        aead_alg: &'static aead::Algorithm,
+        hash_alg: &'static digest::Algorithm,
+        secret: &[u8],
+    ) -> Self {
+        let mut res = Self {
+            alg: aead_alg,
+            data: vec![0; aead_alg.key_len() + aead_alg.nonce_len()],
+            split: aead_alg.key_len(),
+        };
+        let secret_key = SigningKey::new(hash_alg, secret);
+        qhkdf_expand(&secret_key, b"key", &mut res.data[..res.split]);
+        qhkdf_expand(&secret_key, b"iv", &mut res.data[res.split..]);
         res
     }
 
@@ -78,7 +73,7 @@ impl PacketKey {
     }
 }
 
-fn expanded_handshake_secret(conn_id: u64, label: &[u8]) -> Vec<u8> {
+pub fn expanded_handshake_secret(conn_id: u64, label: &[u8]) -> Vec<u8> {
     let prk = handshake_secret(conn_id);
     let mut out = vec![0u8; SHA256.output_len];
     qhkdf_expand(&prk, label, &mut out);
@@ -113,7 +108,11 @@ mod tests {
         let expected = b"\x83\x55\xf2\x1a\x3d\x8f\x83\xec\xb3\xd0\xf9\x71\x08\xd3\xf9\x5e\
                          \x0f\x65\xb4\xd8\xae\x88\xa0\x61\x1e\xe4\x9d\xb0\xb5\x23\x59\x1d";
         assert_eq!(&client_handshake_secret, expected);
-        let input = super::PacketKey::for_client_handshake(conn_id);
+        let input = super::PacketKey::new(
+            &super::AES_128_GCM,
+            &super::SHA256,
+            &client_handshake_secret,
+        );
         assert_eq!(
             &input.data[..input.split],
             b"\x3a\xd0\x54\x2c\x4a\x85\x84\x74\x00\x63\x04\x9e\x3b\x3c\xaa\xb2"
