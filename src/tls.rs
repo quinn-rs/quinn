@@ -4,10 +4,11 @@ use rustls::internal::msgs::quic::{ClientTransportParameters, ServerTransportPar
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
 use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 
+use std::mem;
 use std::sync::Arc;
 
 use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
-use packet::{DRAFT_10, Header};
+use packet::{DRAFT_10, Header, LongType};
 use types::TransportParameter;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
@@ -18,6 +19,7 @@ pub use rustls::{Certificate, PrivateKey, ServerConfig, SupportedCipherSuite, TL
 pub struct ClientTls {
     pub session: ClientSession,
     secret: Secret,
+    prev_secret: Option<Secret>,
 }
 
 impl ClientTls {
@@ -29,6 +31,7 @@ impl ClientTls {
         Self {
             session: ClientSession::new(&Arc::new(config)),
             secret,
+            prev_secret: None,
         }
     }
 
@@ -41,7 +44,12 @@ impl ClientTls {
         config
     }
 
-    pub(crate) fn encode_key(&self, _: &Header) -> PacketKey {
+    pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
+        if let Some(LongType::Handshake) = h.ptype() {
+            if let Some(Secret::Handshake(_)) = self.prev_secret {
+                return self.prev_secret.as_ref().unwrap().build_key(Side::Client);
+            }
+        }
         self.secret.build_key(Side::Client)
     }
 
@@ -63,7 +71,8 @@ impl ClientTls {
         let res = self.session.get_handshake(pki_server_name, params)?;
         let TLSResult { messages, key_ready } = res;
         if let Some((suite, secret)) = key_ready {
-            self.secret = Secret::Shared(suite, secret);
+            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+            self.prev_secret = Some(old);
         }
         Ok(messages)
     }
@@ -72,7 +81,8 @@ impl ClientTls {
         let res = self.session.process_handshake_messages(data)?;
         let TLSResult { messages, key_ready } = res;
         if let Some((suite, secret)) = key_ready {
-            self.secret = Secret::Shared(suite, secret);
+            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+            self.prev_secret = Some(old);
         }
         Ok(messages)
     }
@@ -81,6 +91,7 @@ impl ClientTls {
 pub struct ServerTls {
     session: ServerSession,
     secret: Secret,
+    prev_secret: Option<Secret>,
 }
 
 impl ServerTls {
@@ -99,6 +110,7 @@ impl ServerTls {
                 },
             ),
             secret,
+            prev_secret: None,
         }
     }
 
@@ -121,7 +133,8 @@ impl ServerTls {
         let res = self.session.get_handshake(input)?;
         let TLSResult { messages, key_ready } = res;
         if let Some((suite, secret)) = key_ready {
-            self.secret = Secret::Shared(suite, secret);
+            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+            self.prev_secret = Some(old);
         }
         Ok(messages)
     }
