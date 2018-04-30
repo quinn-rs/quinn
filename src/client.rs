@@ -19,7 +19,7 @@ impl QuicStream {
         let mut state = ClientStreamState::new();
         let packet = state.initial(server);
         let mut buf = Vec::with_capacity(65536);
-        packet.encode(&state.tls.encode_key(), &mut buf);
+        packet.encode(&state.tls.encode_key(&packet.header), &mut buf);
 
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
@@ -60,7 +60,7 @@ impl Future for ConnectFuture {
                 let packet = {
                     let mut pbuf = &mut buf[..len];
                     let decode = Packet::start_decode(pbuf);
-                    let key = self.state.tls.decode_key(&decode);
+                    let key = self.state.tls.decode_key(&decode.header);
                     decode.finish(&key)
                 };
 
@@ -74,7 +74,7 @@ impl Future for ConnectFuture {
                     }
                 };
 
-                req.encode(&self.state.tls.encode_key(), &mut buf);
+                req.encode(&self.state.tls.encode_key(&req.header), &mut buf);
                 new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
             };
             if let Some(future) = new.take() {

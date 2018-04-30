@@ -53,12 +53,12 @@ impl Future for Server {
                 Entry::Vacant(entry) => {
                     let state =
                         entry.insert(ServerStreamState::new(&addr, &self.tls_config, conn_id));
-                    let key = state.tls.decode_key(&partial);
+                    let key = state.tls.decode_key(&partial.header);
                     let packet = partial.finish(&key);
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
-                        rsp.encode(&state.tls.encode_key(), &mut self.out_buf);
+                        rsp.encode(&state.tls.encode_key(&rsp.header), &mut self.out_buf);
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
                     }
                 }

@@ -7,7 +7,7 @@ use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 use std::sync::Arc;
 
 use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
-use packet::{DRAFT_10, PartialDecode};
+use packet::{DRAFT_10, Header};
 use types::TransportParameter;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
@@ -41,11 +41,11 @@ impl ClientTls {
         config
     }
 
-    pub(crate) fn encode_key(&self) -> PacketKey {
+    pub(crate) fn encode_key(&self, _: &Header) -> PacketKey {
         self.secret.build_key(Side::Client)
     }
 
-    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
+    pub(crate) fn decode_key(&self, _: &Header) -> PacketKey {
         self.secret.build_key(Side::Server)
     }
 
@@ -109,11 +109,11 @@ impl ServerTls {
         config
     }
 
-    pub(crate) fn encode_key(&self) -> PacketKey {
+    pub(crate) fn encode_key(&self, _: &Header) -> PacketKey {
         self.secret.build_key(Side::Server)
     }
 
-    pub(crate) fn decode_key(&self, _: &PartialDecode) -> PacketKey {
+    pub(crate) fn decode_key(&self, _: &Header) -> PacketKey {
         self.secret.build_key(Side::Client)
     }
 
