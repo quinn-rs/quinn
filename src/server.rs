@@ -17,7 +17,7 @@ pub struct Server {
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    connections: HashMap<u64, ServerStreamState>,
+    connections: HashMap<u64, (SocketAddr, Endpoint<ServerTls>)>,
 }
 
 impl Server {
@@ -51,15 +51,24 @@ impl Future for Server {
                     println!("connection found for {}", conn_id);
                 }
                 Entry::Vacant(entry) => {
-                    let state =
-                        entry.insert(ServerStreamState::new(&addr, &self.tls_config, conn_id));
-                    let key = state.endpoint.decode_key(&partial.header);
+                    let endpoint = Endpoint::new(
+                        ServerTls::with_config(&self.tls_config),
+                        Side::Server,
+                        Some(Secret::Handshake(conn_id))
+                    );
+                    let &mut (addr, ref mut endpoint) = entry.insert((addr, endpoint));
+                    let key = endpoint.decode_key(&partial.header);
                     let packet = partial.finish(&key);
 
-                    if let Some(rsp) = state.handle(&packet) {
+                    let rsp = match packet.ptype() {
+                        Some(LongType::Initial) => endpoint.handle_handshake(&packet),
+                        _ => panic!("unhandled packet {:?}", packet),
+                    };
+
+                    if let Some(rsp) = rsp {
                         self.out_buf.truncate(0);
-                        rsp.encode(&state.endpoint.encode_key(&rsp.header), &mut self.out_buf);
-                        try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
+                        rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf);
+                        try_ready!(self.socket.poll_send_to(&self.out_buf, &addr));
                     }
                 }
             };
@@ -67,27 +76,3 @@ impl Future for Server {
     }
 }
 
-pub(crate) struct ServerStreamState {
-    endpoint: Endpoint<ServerTls>,
-    addr: SocketAddr,
-}
-
-impl ServerStreamState {
-    pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>, hs_cid: u64) -> Self {
-        Self {
-            endpoint: Endpoint::new(
-                ServerTls::with_config(tls_config),
-                Side::Server,
-                Some(Secret::Handshake(hs_cid)),
-            ),
-            addr: addr.clone(),
-        }
-    }
-
-    pub(crate) fn handle(&mut self, p: &Packet) -> Option<Packet> {
-        match p.ptype() {
-            Some(LongType::Initial) => self.endpoint.handle_handshake(p),
-            _ => panic!("unhandled packet {:?}", p),
-        }
-    }
-}
