@@ -446,11 +446,11 @@ impl Endpoint {
         if !dest_id.is_empty() {
             debug!(self.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
-            // Bound reply size to mitigate spoofed source address amplification attacks
-            let padding = self.rng.gen_range(0, cmp::max(16, packet.payload.len()) - 16);
-            buf.reserve_exact(1 + 8 + 4 + padding + 16);
+            // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
+            let padding = self.rng.gen_range(0, cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE);
+            buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
-                id: ConnectionId::random(&mut self.rng, 18), number: PacketNumber::U8(self.rng.gen()), key_phase
+                id: ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8), number: PacketNumber::U8(self.rng.gen()), key_phase
             }.encode(&mut buf);
             {
                 let start = buf.len();
