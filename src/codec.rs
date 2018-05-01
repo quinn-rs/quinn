@@ -62,6 +62,15 @@ where
     }
 }
 
+impl<T> BufLen for Vec<T>
+where
+    T: BufLen,
+{
+    fn buf_len(&self) -> usize {
+        self.iter().map(|i| i.buf_len()).sum()
+    }
+}
+
 pub trait Codec {
     fn encode<T: BufMut>(&self, buf: &mut T);
     fn decode<T: Buf>(buf: &mut T) -> Self;

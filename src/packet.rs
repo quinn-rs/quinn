@@ -119,8 +119,7 @@ impl<'a> PartialDecode<'a> {
 
 impl BufLen for Packet {
     fn buf_len(&self) -> usize {
-        let payload_len: usize = self.payload.iter().map(|f| f.buf_len()).sum();
-        self.header.buf_len() + payload_len
+        self.header.buf_len() + self.payload.buf_len()
     }
 }
 
