@@ -1,8 +1,9 @@
 use futures::{Async, Future, Poll};
 
+use crypto::Secret;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::Packet;
-use tls::{ClientTls, Secret};
+use tls::ClientTls;
 use types::Endpoint;
 
 use std::io;

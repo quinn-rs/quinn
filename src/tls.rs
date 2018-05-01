@@ -7,7 +7,7 @@ use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 use std::mem;
 use std::sync::Arc;
 
-use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
+use crypto::{PacketKey, Secret};
 use packet::{Header, LongType};
 use types::{DRAFT_10, Side, TransportParameter};
 
@@ -70,8 +70,9 @@ impl ClientTls {
 
         let res = self.session.get_handshake(pki_server_name, params)?;
         let TLSResult { messages, key_ready } = res;
-        if let Some((suite, secret)) = key_ready {
-            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
+            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
             self.prev_secret = Some(old);
         }
         Ok(messages)
@@ -80,8 +81,9 @@ impl ClientTls {
     pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
         let res = self.session.process_handshake_messages(data)?;
         let TLSResult { messages, key_ready } = res;
-        if let Some((suite, secret)) = key_ready {
-            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
+            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
             self.prev_secret = Some(old);
         }
         Ok(messages)
@@ -132,8 +134,9 @@ impl ServerTls {
     pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
         let res = self.session.get_handshake(input)?;
         let TLSResult { messages, key_ready } = res;
-        if let Some((suite, secret)) = key_ready {
-            let old = mem::replace(&mut self.secret, Secret::Shared(suite, secret));
+        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
+            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
             self.prev_secret = Some(old);
         }
         Ok(messages)
@@ -184,30 +187,3 @@ fn tag(param: &TransportParameter) -> u16 {
 }
 
 const ALPN_PROTOCOL: &'static str = "hq-10";
-
-pub enum Secret {
-    Handshake(u64),
-    Shared(&'static SupportedCipherSuite, QuicSecret),
-}
-
-impl Secret {
-    pub fn build_key(&self, side: Side) -> PacketKey {
-        match *self {
-            Secret::Handshake(cid) => {
-                let label = if side == Side::Client {
-                    b"client hs"
-                } else {
-                    b"server hs"
-                };
-                PacketKey::new(
-                    &AES_128_GCM,
-                    &SHA256,
-                    &expanded_handshake_secret(cid, label),
-                )
-            },
-            Secret::Shared(suite, QuicSecret::For1RTT(ref secret)) => {
-                PacketKey::new(suite.get_aead_alg(), suite.get_hash(), secret)
-            }
-        }
-    }
-}

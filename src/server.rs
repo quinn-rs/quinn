@@ -1,9 +1,10 @@
 use futures::{Future, Poll};
 
+use crypto::Secret;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{LongType, Packet};
 use types::Endpoint;
-use tls::{self, Secret, ServerTls};
+use tls::{self, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io;

@@ -8,6 +8,35 @@ pub use ring::aead::AES_128_GCM;
 pub use ring::digest::SHA256;
 pub use ring::hmac::SigningKey;
 
+use types::Side;
+
+pub enum Secret {
+    Handshake(u64),
+    For1Rtt(&'static aead::Algorithm, &'static digest::Algorithm, Vec<u8>),
+}
+
+impl Secret {
+    pub fn build_key(&self, side: Side) -> PacketKey {
+        match *self {
+            Secret::Handshake(cid) => {
+                let label = if side == Side::Client {
+                    b"client hs"
+                } else {
+                    b"server hs"
+                };
+                PacketKey::new(
+                    &AES_128_GCM,
+                    &SHA256,
+                    &expanded_handshake_secret(cid, label),
+                )
+            },
+            Secret::For1Rtt(aead_alg, hash_alg, ref secret) => {
+                PacketKey::new(aead_alg, hash_alg, secret)
+            }
+        }
+    }
+}
+
 pub struct PacketKey {
     alg: &'static aead::Algorithm,
     data: Vec<u8>,

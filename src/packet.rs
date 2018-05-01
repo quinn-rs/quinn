@@ -322,9 +322,9 @@ impl ShortType {
 #[cfg(test)]
 mod tests {
     use super::{Header, LongType, Packet};
-    use types::DRAFT_10;
+    use types::{DRAFT_10, Side};
     use frame::{Frame, StreamFrame};
-    use tls::{Secret, Side};
+    use crypto::Secret;
 
     #[test]
     fn test_roundtrip() {
