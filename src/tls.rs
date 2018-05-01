@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
 use packet::{Header, LongType};
-use types::{DRAFT_10, TransportParameter};
+use types::{DRAFT_10, Side, TransportParameter};
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
@@ -210,10 +210,4 @@ impl Secret {
             }
         }
     }
-}
-
-#[derive(PartialEq)]
-pub enum Side {
-    Client,
-    Server,
 }

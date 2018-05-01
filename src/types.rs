@@ -57,4 +57,10 @@ pub enum TransportParameter {
     InitialMaxStreamIdUni(u32),
 }
 
+#[derive(PartialEq)]
+pub enum Side {
+    Client,
+    Server,
+}
+
 pub const DRAFT_10: u32 = 0xff00000a;
