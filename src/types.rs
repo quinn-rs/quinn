@@ -3,19 +3,24 @@ use rand::{thread_rng, Rng};
 use std::mem;
 
 use crypto::{PacketKey, Secret};
-use frame::Frame;
+use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{Header, LongType, Packet};
+use tls::{ClientTls, QuicTls};
 
-pub struct Endpoint {
+pub struct Endpoint<T> {
     side: Side,
     pub dst_cid: u64,
     pub src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
+    tls: T,
 }
 
-impl Endpoint {
-    pub fn new(side: Side, secret: Option<Secret>) -> Self {
+impl<T> Endpoint<T>
+where
+    T: QuicTls,
+{
+    pub fn new(tls: T, side: Side, secret: Option<Secret>) -> Self {
         let mut rng = thread_rng();
         let dst_cid = rng.gen();
 
@@ -29,6 +34,7 @@ impl Endpoint {
         };
 
         Endpoint {
+            tls,
             side,
             dst_cid,
             src_pn: rng.gen(),
@@ -81,6 +87,59 @@ impl Endpoint {
             },
             payload,
         }
+    }
+
+    pub(crate) fn handle_handshake(&mut self, rsp: &Packet) -> Option<Packet> {
+        self.dst_cid = rsp.conn_id().unwrap();
+        let tls_frame = rsp.payload
+            .iter()
+            .filter_map(|f| match *f {
+                Frame::Stream(ref f) => Some(f),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+
+        let (handshake, new_secret) = self.tls
+            .process_handshake_messages(&tls_frame.data)
+            .unwrap();
+        if let Some(secret) = new_secret {
+            self.set_secret(secret);
+        }
+
+        Some(self.build_handshake_packet(vec![
+            Frame::Ack(AckFrame {
+                largest: rsp.number(),
+                ack_delay: 0,
+                blocks: vec![Ack::Ack(0)],
+            }),
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ]))
+    }
+}
+
+impl Endpoint<ClientTls> {
+    pub(crate) fn initial(&mut self, server: &str) -> Packet {
+        let (handshake, new_secret) = self.tls.get_handshake(server).unwrap();
+        if let Some(secret) = new_secret {
+            self.set_secret(secret);
+        }
+
+        self.build_initial_packet(vec![
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ])
     }
 }
 

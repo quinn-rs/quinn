@@ -50,12 +50,14 @@ impl ClientTls {
         };
         Ok(process_tls_result(self.session.get_handshake(pki_server_name, params)?))
     }
+}
 
-    pub fn process_handshake_messages(
+impl QuicTls for ClientTls {
+    fn process_handshake_messages(
         &mut self,
-        data: &[u8],
+        input: &[u8],
     ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        Ok(process_tls_result(self.session.process_handshake_messages(data)?))
+        Ok(process_tls_result(self.session.process_handshake_messages(input)?))
     }
 }
 
@@ -87,8 +89,13 @@ impl ServerTls {
         config.set_single_cert(cert_chain, key);
         config
     }
+}
 
-    pub fn get_handshake(&mut self, input: &[u8]) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
+impl QuicTls for ServerTls {
+    fn process_handshake_messages(
+        &mut self,
+        input: &[u8],
+    ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
         Ok(process_tls_result(self.session.get_handshake(input)?))
     }
 }
@@ -105,6 +112,13 @@ fn process_tls_result(res: TLSResult) -> (Vec<u8>, Option<Secret>) {
         None
     };
     (messages, secret)
+}
+
+pub trait QuicTls {
+    fn process_handshake_messages(
+        &mut self,
+        input: &[u8],
+    ) -> Result<(Vec<u8>, Option<Secret>), TLSError>;
 }
 
 pub fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {

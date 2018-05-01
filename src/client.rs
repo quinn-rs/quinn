@@ -1,6 +1,5 @@
 use futures::{Async, Future, Poll};
 
-use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::Packet;
 use tls::ClientTls;
 use types::{Endpoint, Side};
@@ -17,7 +16,7 @@ pub struct QuicStream {}
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
         let mut state = ClientStreamState::new();
-        let packet = state.initial(server);
+        let packet = state.endpoint.initial(server);
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&state.endpoint.encode_key(&packet.header), &mut buf);
 
@@ -64,7 +63,7 @@ impl Future for ConnectFuture {
                     decode.finish(&key)
                 };
 
-                let req = match self.state.handle(&packet) {
+                let req = match self.state.endpoint.handle_handshake(&packet) {
                     Some(p) => p,
                     None => {
                         return Err(io::Error::new(
@@ -92,67 +91,14 @@ impl Future for ConnectFuture {
 }
 
 pub(crate) struct ClientStreamState {
-    pub(crate) endpoint: Endpoint,
-    pub(crate) tls: ClientTls,
+    pub(crate) endpoint: Endpoint<ClientTls>,
 }
 
 impl ClientStreamState {
     pub fn new() -> Self {
         Self {
-            endpoint: Endpoint::new(Side::Client, None),
-            tls: ClientTls::new(),
+            endpoint: Endpoint::new(ClientTls::new(), Side::Client, None),
         }
-    }
-
-    pub(crate) fn initial(&mut self, server: &str) -> Packet {
-        let (handshake, new_secret) = self.tls.get_handshake(server).unwrap();
-        if let Some(secret) = new_secret {
-            self.endpoint.set_secret(secret);
-        }
-
-        self.endpoint.build_initial_packet(vec![
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ])
-    }
-
-    pub(crate) fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
-        self.endpoint.dst_cid = rsp.conn_id().unwrap();
-        let tls_frame = rsp.payload
-            .iter()
-            .filter_map(|f| match *f {
-                Frame::Stream(ref f) => Some(f),
-                _ => None,
-            })
-            .next()
-            .unwrap();
-
-        let (handshake, new_secret) = self.tls
-            .process_handshake_messages(&tls_frame.data)
-            .unwrap();
-        if let Some(secret) = new_secret {
-            self.endpoint.set_secret(secret);
-        }
-
-        Some(self.endpoint.build_handshake_packet(vec![
-            Frame::Ack(AckFrame {
-                largest: rsp.number(),
-                ack_delay: 0,
-                blocks: vec![Ack::Ack(0)],
-            }),
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ]))
     }
 }
 

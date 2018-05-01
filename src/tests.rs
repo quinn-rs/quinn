@@ -17,11 +17,11 @@ use webpki;
 #[test]
 fn test_handshake() {
     let mut cs = client_state();
-    let initial = cs.initial("example.com");
+    let initial = cs.endpoint.initial("example.com");
 
     let mut ss = server_state(initial.conn_id().unwrap());
     let server_hello = ss.handle(&initial).unwrap();
-    assert!(cs.handle(&server_hello).is_some());
+    assert!(cs.endpoint.handle_handshake(&server_hello).is_some());
 }
 
 fn server_state(hs_cid: u64) -> ServerStreamState {
@@ -43,8 +43,6 @@ fn server_state(hs_cid: u64) -> ServerStreamState {
 }
 
 fn client_state() -> ClientStreamState {
-    let endpoint = Endpoint::new(Side::Client, None);
-
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
         let mut bytes = Vec::new();
@@ -57,5 +55,6 @@ fn client_state() -> ClientStreamState {
         ClientTls::with_config(config)
     };
 
-    ClientStreamState { endpoint, tls }
+    let endpoint = Endpoint::new(tls, Side::Client, None);
+    ClientStreamState { endpoint }
 }

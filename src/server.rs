@@ -1,7 +1,6 @@
 use futures::{Future, Poll};
 
 use crypto::Secret;
-use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{LongType, Packet};
 use types::{Endpoint, Side};
 use tls::{self, ServerTls};
@@ -69,53 +68,26 @@ impl Future for Server {
 }
 
 pub(crate) struct ServerStreamState {
-    endpoint: Endpoint,
+    endpoint: Endpoint<ServerTls>,
     addr: SocketAddr,
-    tls: ServerTls,
 }
 
 impl ServerStreamState {
     pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>, hs_cid: u64) -> Self {
         Self {
-            endpoint: Endpoint::new(Side::Server, Some(Secret::Handshake(hs_cid))),
+            endpoint: Endpoint::new(
+                ServerTls::with_config(tls_config),
+                Side::Server,
+                Some(Secret::Handshake(hs_cid)),
+            ),
             addr: addr.clone(),
-            tls: ServerTls::with_config(tls_config),
         }
     }
 
     pub(crate) fn handle(&mut self, p: &Packet) -> Option<Packet> {
         match p.ptype() {
-            Some(LongType::Initial) => self.handle_initial(p),
+            Some(LongType::Initial) => self.endpoint.handle_handshake(p),
             _ => panic!("unhandled packet {:?}", p),
         }
-    }
-
-    fn handle_initial(&mut self, p: &Packet) -> Option<Packet> {
-        let conn_id = p.conn_id().unwrap();
-        self.endpoint.dst_cid = conn_id;
-
-        let frame = match p.payload[0] {
-            Frame::Stream(ref f) => f,
-            _ => panic!("expected stream frame as first in payload"),
-        };
-        let (handshake, new_secret) = self.tls.get_handshake(&frame.data).unwrap();
-        if let Some(secret) = new_secret {
-            self.endpoint.set_secret(secret)
-        }
-
-        Some(self.endpoint.build_handshake_packet(vec![
-            Frame::Ack(AckFrame {
-                largest: p.number(),
-                ack_delay: 0,
-                blocks: vec![Ack::Ack(0)],
-            }),
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ]))
     }
 }
