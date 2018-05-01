@@ -8,7 +8,7 @@ use bytes::{Buf, BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
 use rand::{distributions, OsRng, Rng, Rand};
 use rand::distributions::Sample;
 use slab::Slab;
-use openssl::ex_data;
+use openssl::{self, ex_data};
 use openssl::ssl::{self, SslContext, SslMethod, SslOptions, SslVersion, SslMode, Ssl, SslStream, HandshakeError, MidHandshakeSslStream,
                    SslStreamBuilder, SslAlert, SslRef};
 use openssl::pkey::{PKeyRef, Private};
@@ -82,11 +82,11 @@ pub struct Config {
     /// List of permissible protocols
     pub protocols: Vec<u8>,
 
-    /// Whether to verify the authenticity of peer certificates.
+    /// Whether to accept inauthentic or unverifiable peer certificates.
     ///
     /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
     /// connection, but allows them to connect to servers that are using self-signed certificates.
-    pub verify_peers: bool,
+    pub accept_insecure_certs: bool,
 
     /// Path to write NSS SSLKEYLOGFILE-compatible key log.
     ///
@@ -129,7 +129,7 @@ impl Default for Config {
         loss_reduction_factor: 0x8000, // 1/2
         protocols: Vec::new(),
 
-        verify_peers: true,
+        accept_insecure_certs: true,
         keylog: None,
     }}
 }
@@ -169,12 +169,14 @@ const LOCAL_ID_LEN: usize = 8;
 const MAX_ACK_BLOCKS: usize = 64;
 /// Value used in ACKs we transmit
 const ACK_DELAY_EXPONENT: u8 = 3;
+const RESET_TOKEN_SIZE: usize = 16;
+const MAX_CID_SIZE: usize = 18;
 
-fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; 16] {
-    let mut mac = Blake2b::new_keyed(key, 16);
+fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
+    let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
     mac.process(id);
     // TODO: Server ID??
-    let mut result = [0; 16];
+    let mut result = [0; RESET_TOKEN_SIZE];
     mac.variable_result(&mut result).unwrap();
     result
 }
@@ -206,8 +208,19 @@ impl Rand for PersistentState {
     }
 }
 
+#[derive(Debug, Fail)]
+pub enum EndpointError {
+    #[fail(display = "failed to configure TLS: {}", _0)]
+    Tls(ssl::Error),
+    #[fail(display = "failed open keylog file: {}", _0)]
+    Keylog(io::Error),
+}
+
+impl From<ssl::Error> for EndpointError { fn from(x: ssl::Error) -> Self { EndpointError::Tls(x) } }
+impl From<openssl::error::ErrorStack> for EndpointError { fn from(x: openssl::error::ErrorStack) -> Self { EndpointError::Tls(x.into()) } }
+
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, listen: Option<ListenConfig>) -> Result<Self, ssl::Error> {
+    pub fn new(log: Logger, config: Config, listen: Option<ListenConfig>) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
 
@@ -222,7 +235,7 @@ impl Endpoint {
             SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
         );
         tls.set_default_verify_paths()?;
-        if config.verify_peers { tls.set_verify(ssl::SslVerifyMode::PEER); }
+        if !config.accept_insecure_certs { tls.set_verify(ssl::SslVerifyMode::PEER); }
         if let Some(ref listen) = listen {
             let cookie_factory = Arc::new(CookieFactory::new(listen.state.cookie_key));
             {
@@ -299,20 +312,14 @@ impl Endpoint {
         }
 
         if let Some(ref path) = config.keylog {
-            match ::std::fs::File::create(path) {
-                Ok(file) => {
-                    let file = ::std::sync::Mutex::new(file);
-                    tls.set_keylog_callback(move |_, line| {
-                        use std::io::Write;
-                        let mut file = file.lock().unwrap();
-                        let _ = file.write_all(line.as_bytes());
-                        let _ = file.write_all(b"\n");
-                    });
-                }
-                Err(e) => {
-                    error!(log, "failed to open keylog file"; "reason" => %e);
-                }
-            }
+            let file = ::std::fs::File::create(path).map_err(EndpointError::Keylog)?;
+            let file = ::std::sync::Mutex::new(file);
+            tls.set_keylog_callback(move |_, line| {
+                use std::io::Write;
+                let mut file = file.lock().unwrap();
+                let _ = file.write_all(line.as_bytes());
+                let _ = file.write_all(b"\n");
+            });
         }
 
         let tls = tls.build();
@@ -460,7 +467,7 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(&mut self, remote: SocketAddrV6, hostname: Option<&[u8]>) -> ConnectionHandle {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
-        let remote_id = ConnectionId::random(&mut self.rng, 18);
+        let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
@@ -1451,7 +1458,7 @@ impl Endpoint {
 ///
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ConnectionId(ArrayVec<[u8; 18]>);
+pub struct ConnectionId(ArrayVec<[u8; MAX_CID_SIZE]>);
 
 impl ::std::ops::Deref for ConnectionId {
     type Target = [u8];
@@ -1464,8 +1471,8 @@ impl ::std::ops::DerefMut for ConnectionId {
 
 impl ConnectionId {
     fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
-        debug_assert!(len <= 18);
-        let mut v = ArrayVec::from([0; 18]);
+        debug_assert!(len as usize <= MAX_CID_SIZE);
+        let mut v = ArrayVec::from([0; MAX_CID_SIZE]);
         rng.fill_bytes(&mut v[0..len as usize]);
         v.truncate(len as usize);
         ConnectionId(v)
@@ -2685,7 +2692,7 @@ impl Packet {
         let ty = buf.get::<u8>()?;
         let long = ty & 0x80 != 0;
         let ty = ty & !0x80;
-        let mut cid_stage = [0; 18];
+        let mut cid_stage = [0; MAX_CID_SIZE];
         if long {
             let version = buf.get::<u32>()?;
             let ci_lengths = buf.get::<u8>()?;
@@ -3164,7 +3171,7 @@ mod test {
 
     #[test]
     fn handshake_crypto_roundtrip() {
-        let conn = ConnectionId::random(&mut rand::thread_rng(), 18);
+        let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let client = CryptoContext::handshake(&conn, Side::Client);
         let server = CryptoContext::handshake(&conn, Side::Server);
         let header = b"header";

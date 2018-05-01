@@ -79,15 +79,25 @@ pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError, Connecti
 #[derive(Debug, Fail)]
 pub enum Error {
     /// An error arising during setup of the underlying UDP socket.
-    #[fail(display = "error setting up UDP socket: {}", _0)]
+    #[fail(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
     /// An error arising from the TLS layer.
-    #[fail(display = "error setting up TLS: {}", _0)]
-    Tls(openssl::ssl::Error),
+    #[fail(display = "failed to set up TLS: {}", _0)]
+    Tls(ssl::Error),
+    /// An error arising from opening a file for logging TLS keys.
+    #[fail(display = "failed open keylog file: {}", _0)]
+    Keylog(io::Error),
 }
 
-impl From<io::Error> for Error { fn from(x: io::Error) -> Self { Error::Socket(x) } }
-impl From<ssl::Error> for Error { fn from(x: ssl::Error) -> Self { Error::Tls(x) } }
+impl From<quicr::EndpointError> for Error {
+    fn from(x: quicr::EndpointError) -> Self {
+        use quicr::EndpointError::*;
+        match x {
+            Tls(x) => Error::Tls(x),
+            Keylog(x) => Error::Keylog(x),
+        }
+    }
+}
 
 struct EndpointInner {
     log: Logger,
@@ -198,7 +208,7 @@ impl<'a> EndpointBuilder<'a> {
 
     pub fn from_socket(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
         let reactor = if let Some(x) = self.reactor { Cow::Borrowed(x) } else { Cow::Owned(tokio_reactor::Handle::current()) };
-        let socket = UdpSocket::from_std(socket, &reactor)?;
+        let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
         let (send, recv) = mpsc::unbounded();
         let rc = Rc::new(RefCell::new(EndpointInner {
             timer: self.timer.unwrap_or_else(|| timer::Handle::current()),
@@ -216,7 +226,7 @@ impl<'a> EndpointBuilder<'a> {
     }
 
     pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+        let socket = std::net::UdpSocket::bind(addr).map_err(Error::Socket)?;
         self.from_socket(socket)
     }
 }
@@ -609,7 +619,7 @@ pub trait Write {
     /// Abandon transmitting data on this stream.
     ///
     /// No new data may be transmitted, and no previously transmitted data will be retransmitted if lost.
-    fn reset(&self, error_code: u16);
+    fn reset(&mut self, error_code: u16);
 }
 
 /// A stream that supports both sending and receiving data
@@ -675,7 +685,7 @@ impl Write for Stream {
         }
     }
 
-    fn reset(&self, error_code: u16) {
+    fn reset(&mut self, error_code: u16) {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
         endpoint.inner.reset(self.conn.conn, self.stream, error_code);
         endpoint.notify();
@@ -810,7 +820,7 @@ pub struct SendStream(Stream);
 impl Write for SendStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> { Write::poll_write(&mut self.0, buf) }
     fn poll_finish(&mut self) -> Poll<(), ConnectionError> { self.0.poll_finish() }
-    fn reset(&self, error_code: u16) { self.0.reset(error_code); }
+    fn reset(&mut self, error_code: u16) { self.0.reset(error_code); }
 }
 
 impl io::Write for SendStream {

@@ -34,8 +34,8 @@ struct Opt {
     keylog: Option<PathBuf>,
     url: Url,
     /// whether to accept invalid (e.g. self-signed) TLS certificates
-    #[structopt(long = "accept-invalid-certs")]
-    accept_invalid_certs: bool,
+    #[structopt(long = "accept-insecure-certs")]
+    accept_insecure_certs: bool,
 }
 
 fn main() {
@@ -71,7 +71,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .config(quicr::Config {
             protocols,
             keylog: options.keylog,
-            verify_peers: !options.accept_invalid_certs,
+            accept_insecure_certs: !options.accept_insecure_certs,
             ..quicr::Config::default()
         })
         .bind("[::]:0")?;
