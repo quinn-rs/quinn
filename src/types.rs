@@ -1,7 +1,9 @@
-use rand::{thread_rng, Rng};
+use rand::{thread_rng, Rand, Rng};
 
 use std::mem;
+use std::ops::Deref;
 
+use codec::BufLen;
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{Header, LongType, Packet};
@@ -140,6 +142,44 @@ impl Endpoint<ClientTls> {
                 data: handshake,
             }),
         ])
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ConnectionId {
+    pub len: u8,
+    pub bytes: [u8; 18],
+}
+
+impl Copy for ConnectionId {}
+
+impl ConnectionId {
+    pub fn new(bytes: &[u8]) -> Self {
+        let mut res = Self {
+            len: bytes.len() as u8,
+            bytes: [0; 18],
+        };
+        (&mut res.bytes[..bytes.len()]).clone_from_slice(bytes);
+        res
+    }
+}
+
+impl Deref for ConnectionId {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+}
+
+impl Rand for ConnectionId {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let len = rng.gen_range(4u8, 18u8);
+        let mut res = ConnectionId {
+            len,
+            bytes: [0; 18]
+        };
+        rng.fill_bytes(&mut res.bytes[..len as usize]);
+        res
     }
 }
 
