@@ -8,8 +8,8 @@ use std::mem;
 use std::sync::Arc;
 
 use crypto::{expanded_handshake_secret, AES_128_GCM, PacketKey, SHA256};
-use packet::{DRAFT_10, Header, LongType};
-use types::TransportParameter;
+use packet::{Header, LongType};
+use types::{DRAFT_10, TransportParameter};
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;

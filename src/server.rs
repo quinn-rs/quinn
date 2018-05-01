@@ -1,7 +1,7 @@
 use futures::{Future, Poll};
 
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::{LongType, Packet};
 use types::Endpoint;
 use tls::{self, Secret, ServerTls};
 
@@ -100,29 +100,19 @@ impl ServerStreamState {
         };
         let handshake = self.tls.get_handshake(&frame.data).unwrap();
 
-        let number = self.endpoint.src_pn;
-        self.endpoint.src_pn += 1;
-        Some(Packet {
-            header: Header::Long {
-                ptype: LongType::Handshake,
-                conn_id: self.endpoint.dst_cid,
-                version: DRAFT_10,
-                number,
-            },
-            payload: vec![
-                Frame::Ack(AckFrame {
-                    largest: p.number(),
-                    ack_delay: 0,
-                    blocks: vec![Ack::Ack(0)],
-                }),
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(handshake.len() as u64),
-                    data: handshake,
-                }),
-            ],
-        })
+        Some(self.endpoint.build_handshake_packet(vec![
+            Frame::Ack(AckFrame {
+                largest: p.number(),
+                ack_delay: 0,
+                blocks: vec![Ack::Ack(0)],
+            }),
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ]))
     }
 }

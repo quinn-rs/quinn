@@ -1,4 +1,6 @@
 use rand::{thread_rng, Rng};
+use frame::Frame;
+use packet::{Header, LongType, Packet};
 
 pub struct Endpoint {
     pub dst_cid: u64,
@@ -15,6 +17,34 @@ impl Endpoint {
             src_pn: rng.gen(),
         }
     }
+
+    pub fn build_initial_packet(&mut self, payload: Vec<Frame>) -> Packet {
+        let number = self.src_pn;
+        self.src_pn += 1;
+        Packet {
+            header: Header::Long {
+                ptype: LongType::Initial,
+                conn_id: self.dst_cid,
+                version: DRAFT_10,
+                number,
+            },
+            payload,
+        }
+    }
+
+    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> Packet {
+        let number = self.src_pn;
+        self.src_pn += 1;
+        Packet {
+            header: Header::Long {
+                ptype: LongType::Handshake,
+                conn_id: self.dst_cid,
+                version: DRAFT_10,
+                number,
+            },
+            payload,
+        }
+    }
 }
 
 pub enum TransportParameter {
@@ -28,3 +58,5 @@ pub enum TransportParameter {
     AckDelayExponent(u8),
     InitialMaxStreamIdUni(u32),
 }
+
+pub const DRAFT_10: u32 = 0xff00000a;

@@ -319,11 +319,10 @@ impl ShortType {
     }
 }
 
-pub const DRAFT_10: u32 = 0xff00000a;
-
 #[cfg(test)]
 mod tests {
-    use super::{DRAFT_10, Header, LongType, Packet};
+    use super::{Header, LongType, Packet};
+    use types::DRAFT_10;
     use frame::{Frame, StreamFrame};
     use tls::{Secret, Side};
 

@@ -1,7 +1,7 @@
 use futures::{Async, Future, Poll};
 
 use frame::{Ack, AckFrame, Frame, StreamFrame};
-use packet::{DRAFT_10, Header, LongType, Packet};
+use packet::Packet;
 use tls::{ClientTls, Secret};
 use types::Endpoint;
 
@@ -109,27 +109,16 @@ impl ClientStreamState {
     }
 
     pub(crate) fn initial(&mut self, server: &str) -> Packet {
-        let number = self.endpoint.src_pn;
-        self.endpoint.src_pn += 1;
         let handshake = self.tls.get_handshake(server).unwrap();
-
-        Packet {
-            header: Header::Long {
-                ptype: LongType::Initial,
-                conn_id: self.endpoint.dst_cid,
-                version: DRAFT_10,
-                number,
-            },
-            payload: vec![
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(handshake.len() as u64),
-                    data: handshake,
-                }),
-            ],
-        }
+        self.endpoint.build_initial_packet(vec![
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ])
     }
 
     pub(crate) fn handle(&mut self, rsp: &Packet) -> Option<Packet> {
@@ -147,30 +136,20 @@ impl ClientStreamState {
             .process_handshake_messages(&tls_frame.data)
             .unwrap();
 
-        let number = self.endpoint.src_pn;
-        self.endpoint.src_pn += 1;
-        Some(Packet {
-            header: Header::Long {
-                ptype: LongType::Handshake,
-                conn_id: self.endpoint.dst_cid,
-                version: DRAFT_10,
-                number,
-            },
-            payload: vec![
-                Frame::Ack(AckFrame {
-                    largest: rsp.number(),
-                    ack_delay: 0,
-                    blocks: vec![Ack::Ack(0)],
-                }),
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(handshake.len() as u64),
-                    data: handshake,
-                }),
-            ],
-        })
+        Some(self.endpoint.build_handshake_packet(vec![
+            Frame::Ack(AckFrame {
+                largest: rsp.number(),
+                ack_delay: 0,
+                blocks: vec![Ack::Ack(0)],
+            }),
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ]))
     }
 }
 
