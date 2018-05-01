@@ -36,7 +36,7 @@ use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, PersistentState, ListenConfig, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError,
+pub use endpoint::{Endpoint, Config, CertConfig, ListenKeys, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError,
                    NewConnection, ConnectionId, EndpointError};
 
 mod transport_error;

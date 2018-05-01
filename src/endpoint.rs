@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::path::PathBuf;
 
 use bytes::{Buf, BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
-use rand::{distributions, OsRng, Rng, Rand};
+use rand::{distributions, OsRng, Rng};
 use rand::distributions::Sample;
 use slab::Slab;
 use openssl::{self, ex_data};
@@ -95,14 +95,11 @@ pub struct Config {
     pub keylog: Option<PathBuf>,
 }
 
-/// Information needed to accept incoming connections.
-pub struct ListenConfig<'a> {
+pub struct CertConfig<'a> {
     /// A TLS private key.
     pub private_key: &'a PKeyRef<Private>,
     /// A TLS certificate corresponding to `private_key`.
     pub cert: &'a X509Ref,
-    /// Persistent state needed to gracefully recover from crashes.
-    pub state: PersistentState,
 }
 
 impl Default for Config {
@@ -147,7 +144,7 @@ pub struct Endpoint {
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
     config: Arc<Config>,
-    state: Option<PersistentState>,
+    listen_keys: Option<ListenKeys>,
     events: VecDeque<(ConnectionHandle, Event)>,
     io: VecDeque<Io>,
     dirty_conns: FnvHashSet<ConnectionHandle>,
@@ -157,6 +154,7 @@ pub struct Endpoint {
 }
 
 /// Information about a new incoming connection
+#[derive(Debug)]
 pub struct NewConnection {
     pub handle: ConnectionHandle,
     pub protocol: Option<Box<[u8]>>,
@@ -181,30 +179,33 @@ fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     result
 }
 
-/// Information that should be preserved between restarts.
+/// Information that should be preserved between restarts for server endpoints.
 ///
 /// Keeping this around allows better behavior by clients that communicated with a previous instance of the same
 /// endpoint.
 #[derive(Copy, Clone)]
-pub struct PersistentState {
+pub struct ListenKeys {
     /// Cryptographic key used to ensure integrity of data included in handshake cookies.
     ///
     /// Initialize with random bytes.
-    pub cookie_key: [u8; 64],
+    pub cookie: [u8; 64],
     /// Cryptographic key used to send authenticated connection resets to clients who were communicating with a previous
     /// instance of tihs endpoint.
     ///
     /// Initialize with random bytes.
-    pub reset_key: [u8; 64],
+    pub reset: [u8; 64],
 }
 
-impl Rand for PersistentState {
-    fn rand<R: Rng>(rng: &mut R) -> Self {
-        let mut cookie_key = [0; 64];
-        let mut reset_key = [0; 64];
-        rng.fill_bytes(&mut cookie_key);
-        rng.fill_bytes(&mut reset_key);
-        Self { cookie_key, reset_key }
+impl ListenKeys {
+    /// Generate new keys.
+    ///
+    /// Be careful to use a cryptography-grade RNG.
+    pub fn new<R: Rng>(rng: &mut R) -> Self {
+        let mut cookie = [0; 64];
+        let mut reset = [0; 64];
+        rng.fill_bytes(&mut cookie);
+        rng.fill_bytes(&mut reset);
+        Self { cookie, reset }
     }
 }
 
@@ -220,7 +221,7 @@ impl From<ssl::Error> for EndpointError { fn from(x: ssl::Error) -> Self { Endpo
 impl From<openssl::error::ErrorStack> for EndpointError { fn from(x: openssl::error::ErrorStack) -> Self { EndpointError::Tls(x.into()) } }
 
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, listen: Option<ListenConfig>) -> Result<Self, EndpointError> {
+    pub fn new(log: Logger, config: Config, cert: Option<CertConfig>, listen: Option<ListenKeys>) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
 
@@ -237,7 +238,7 @@ impl Endpoint {
         tls.set_default_verify_paths()?;
         if !config.accept_insecure_certs { tls.set_verify(ssl::SslVerifyMode::PEER); }
         if let Some(ref listen) = listen {
-            let cookie_factory = Arc::new(CookieFactory::new(listen.state.cookie_key));
+            let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
             {
                 let cookie_factory = cookie_factory.clone();
                 tls.set_stateless_cookie_generate_cb(move |tls, buf| {
@@ -250,7 +251,7 @@ impl Endpoint {
                 cookie_factory.verify(conn, cookie)
             });
         }
-        let reset_key = listen.as_ref().map(|x| x.state.reset_key);
+        let reset_key = listen.as_ref().map(|x| x.reset);
         tls.add_custom_ext(
             26, ssl::ExtensionContext::TLS1_3_ONLY | ssl::ExtensionContext::CLIENT_HELLO | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
             { let config = config.clone();
@@ -293,9 +294,9 @@ impl Endpoint {
             }
         )?;
 
-        if let Some(ref listen) = listen {
-            tls.set_private_key(listen.private_key)?;
-            tls.set_certificate(listen.cert)?;
+        if let Some(ref cert) = cert {
+            tls.set_private_key(cert.private_key)?;
+            tls.set_certificate(cert.cert)?;
             tls.check_private_key()?;
         }
 
@@ -326,7 +327,7 @@ impl Endpoint {
 
         Ok(Self {
             log, rng, config, tls,
-            state: listen.map(|x| x.state),
+            listen_keys: listen,
             initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
@@ -340,7 +341,7 @@ impl Endpoint {
         })
     }
 
-    fn listen(&self) -> bool { self.state.is_some() }
+    fn listen(&self) -> bool { self.listen_keys.is_some() }
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
@@ -457,7 +458,7 @@ impl Endpoint {
                 buf.resize(start + padding, 0);
                 self.rng.fill_bytes(&mut buf[start..start+padding]);
             }
-            buf.extend(&reset_token_for(&self.state.as_ref().unwrap().reset_key, &dest_id));
+            buf.extend(&reset_token_for(&self.listen_keys.as_ref().unwrap().reset, &dest_id));
             self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
@@ -3171,7 +3172,7 @@ mod test {
 
     #[test]
     fn handshake_crypto_roundtrip() {
-        let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
+        let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
         let client = CryptoContext::handshake(&conn, Side::Client);
         let server = CryptoContext::handshake(&conn, Side::Server);
         let header = b"header";

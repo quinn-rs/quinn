@@ -7,8 +7,6 @@ extern crate failure;
 extern crate slog;
 extern crate slog_term;
 extern crate futures;
-extern crate rand;
-extern crate openssl;
 #[macro_use]
 extern crate structopt;
 
@@ -24,9 +22,6 @@ use futures::{Future, Stream};
 use tokio::executor::current_thread::{self, CurrentThread};
 use failure::{ResultExt, Fail};
 use structopt::StructOpt;
-
-use openssl::pkey::{PKey, Private};
-use openssl::x509::X509;
 
 use slog::{Logger, Drain};
 use failure::Error;
@@ -65,11 +60,11 @@ struct Opt {
     #[structopt(parse(from_os_str))]
     root: PathBuf,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), long = "key", default_value = "key.pem")]
-    key: PathBuf,
+    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
+    key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), long = "cert", default_value = "cert.pem")]
-    cert: PathBuf,
+    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
+    cert: Option<PathBuf>,
 }
 
 fn main() {
@@ -98,22 +93,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
 
-    let key;
-    let cert;
-    {
-        let mut key_file = File::open(options.key).context("failed to open key")?;
-        let mut data = Vec::new();
-        key_file.read_to_end(&mut data).context("failed reading key")?;
-        key = PKey::<Private>::private_key_from_pem(&data).context("failed to load key")?;
-        data.clear();
-
-        let mut cert_file = File::open(options.cert).context("failed to open cert")?;
-        cert_file.read_to_end(&mut data).context("failed reading cert")?;
-        cert = X509::from_pem(&data).context("failed to load cert")?;
-    }
-
-    let (_, driver, incoming) = quicr::Endpoint::new()
-        .reactor(&handle)
+    let mut builder = quicr::Endpoint::new();
+    builder.reactor(&handle)
         .timer(timer.handle())
         .logger(log.clone())
         .config(quicr::Config {
@@ -122,8 +103,24 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             keylog: options.keylog,
             ..quicr::Config::default()
         })
-        .listen(quicr::ListenConfig { private_key: &key, cert: &cert, state: rand::random() })
-        .bind("[::]:4433")?;
+        .listen();
+
+    if let Some(key_path) = options.key {
+        let mut key = Vec::new();
+        File::open(&key_path).context("failed to open private key")?
+        .read_to_end(&mut key).context("failed to read private key")?;
+        builder.private_key_pem(&key).context("failed to load private key")?;
+
+        let cert_path = options.cert.unwrap(); // Ensured present by option parsing
+        let mut cert = Vec::new();
+        File::open(&cert_path).context("failed to open certificate")?
+        .read_to_end(&mut cert).context("failed to read certificate")?;
+        builder.certificate_pem(&cert).context("failed to load certificate")?;
+    } else {
+        builder.generate_insecure_certificate().context("failed to generate certificate")?;
+    }
+
+    let (_, driver, incoming) = builder.bind("[::]:4433")?;
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {

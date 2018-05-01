@@ -63,18 +63,19 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let reactor = tokio::reactor::Reactor::new()?;
     let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
-    
-    let (endpoint, driver, _) = quicr::Endpoint::new()
-        .reactor(&handle)
+
+    let mut builder = quicr::Endpoint::new();
+    builder.reactor(&handle)
         .timer(timer.handle())
         .logger(log.clone())
         .config(quicr::Config {
             protocols,
             keylog: options.keylog,
-            accept_insecure_certs: !options.accept_insecure_certs,
+            accept_insecure_certs: options.accept_insecure_certs,
             ..quicr::Config::default()
-        })
-        .bind("[::]:0")?;
+        });
+    let (endpoint, driver, _) = builder.bind("[::]:0")?;
+
     let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
 

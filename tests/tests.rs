@@ -63,7 +63,7 @@ lazy_static! {
         cert.sign(&KEY, openssl::hash::MessageDigest::sha256()).unwrap();
         cert.build()
     };
-    static ref STATE: PersistentState = rand::random();
+    static ref LISTEN_KEYS: ListenKeys = ListenKeys::new(&mut rand::thread_rng());
 }
 
 struct Pair {
@@ -79,14 +79,14 @@ impl Pair {
         let server_addr = "[::1]:42".parse().unwrap();
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
-            Config { verify_peers: false, ..server_config },
-            Some(ListenConfig {
+            Config { accept_insecure_certs: true, ..server_config },
+            Some(CertConfig {
                 private_key: &KEY,
                 cert: &CERT,
-                state: *STATE,
-            })).unwrap();
+            }),
+            Some(*LISTEN_KEYS)).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), Config { verify_peers: false, ..client_config }, None).unwrap();
+        let client = Endpoint::new(log.new(o!("peer" => "client")), client_config, None, None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }
@@ -124,12 +124,12 @@ fn version_negotiate() {
     let client_addr = "[::2]:7890".parse().unwrap();
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
-        Config { verify_peers: false, ..Config::default() },
-        Some(ListenConfig {
+        Config::default(),
+        Some(CertConfig {
             private_key: &KEY,
             cert: &CERT,
-            state: *STATE,
-        })).unwrap();
+        }),
+        Some(*LISTEN_KEYS)).unwrap();
     server.handle(0, client_addr,
                   // Long-header packet with reserved version number
                   hex!("80 0a1a2a3a
@@ -153,7 +153,7 @@ fn connect() {
     info!(pair.log, "connecting");
     let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    assert_matches!(pair.server.poll(), Some((_, Event::Connected { .. })));
+    assert_matches!(pair.server.accept(), Some(_));
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     const REASON: &[u8] = b"whee";
 
@@ -176,12 +176,12 @@ fn stateless_reset() {
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
-        Config { verify_peers: false, ..Config::default() },
-        Some(ListenConfig {
+        Config::default(),
+        Some(CertConfig {
             private_key: &KEY,
             cert: &CERT,
-            state: *STATE,
-        })).unwrap();
+        }),
+        Some(*LISTEN_KEYS)).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
@@ -195,7 +195,7 @@ fn reset_stream() {
     info!(pair.log, "connecting");
     let client_conn = pair.client.connect(pair.server_addr, None);
     pair.drive();
-    let server_conn = if let Some((c, Event::Connected { .. })) = pair.server.poll() { c } else { panic!("server didn't connect"); };
+    let server_conn = if let Some(c) = pair.server.accept() { c.handle } else { panic!("server didn't connect"); };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
@@ -203,7 +203,7 @@ fn reset_stream() {
     pair.client.reset(client_conn, s, 1);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code }) if error_code == 1);
     assert_matches!(pair.client.poll(), None);
 }

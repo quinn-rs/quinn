@@ -26,9 +26,10 @@
 //!   let timer_handle = timer.handle();
 //!   let mut executor = tokio::executor::current_thread::CurrentThread::new_with_park(timer);
 //!
-//!   let (endpoint, driver, _) = quicr::Endpoint::new()
-//!       .reactor(&reactor_handle).timer(timer_handle)
-//!       .bind("[::]:0").unwrap();
+//!   let mut builder = quicr::Endpoint::new();
+//!   builder.reactor(&reactor_handle).timer(timer_handle);
+//!   let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
+//!
 //!   executor.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
 //!   // ...
 //! }
@@ -49,6 +50,7 @@ extern crate openssl;
 #[macro_use]
 extern crate failure;
 extern crate bytes;
+extern crate rand;
 
 use std::{io, mem};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
@@ -69,11 +71,15 @@ use futures::task::{self, Task};
 use futures::stream::FuturesUnordered;
 use fnv::FnvHashMap;
 use openssl::ssl;
+use openssl::pkey::{PKey, Private};
+use openssl::rsa::Rsa;
+use openssl::x509::X509;
+use openssl::asn1::Asn1Time;
 use bytes::Bytes;
 
-use quicr::{Directionality, StreamId, ConnectionHandle, Side};
+use quicr::{Directionality, StreamId, ConnectionHandle, Side, CertConfig};
 
-pub use quicr::{Config, ListenConfig, PersistentState, ConnectionError, ConnectionId};
+pub use quicr::{Config, ConnectionError, ConnectionId, ListenKeys};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -194,19 +200,63 @@ pub struct EndpointBuilder<'a> {
     reactor: Option<&'a tokio_reactor::Handle>,
     timer: Option<timer::Handle>,
     logger: Logger,
-    listen: Option<ListenConfig<'a>>,
+    listen: Option<ListenKeys>,
     config: Config,
+    private_key: Option<PKey<Private>>,
+    cert: Option<X509>,
 }
 
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
-    pub fn reactor(mut self, handle: &'a tokio_reactor::Handle) -> Self { self.reactor = Some(handle); self }
-    pub fn timer(mut self, handle: timer::Handle) -> Self { self.timer = Some(handle); self }
-    pub fn logger(mut self, logger: Logger) -> Self { self.logger = logger; self }
-    pub fn listen(mut self, config: ListenConfig<'a>) -> Self { self.listen = Some(config); self }
-    pub fn config(mut self, config: Config) -> Self { self.config = config; self }
+    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self { self.reactor = Some(handle); self }
+    pub fn timer(&mut self, handle: timer::Handle) -> &mut Self { self.timer = Some(handle); self }
+    pub fn logger(&mut self, logger: Logger) -> &mut Self { self.logger = logger; self }
+    pub fn config(&mut self, config: Config) -> &mut Self { self.config = config; self }
+
+    /// Prefer `listen_with_keys`.
+    pub fn listen(&mut self) -> &mut Self { self.listen = Some(ListenKeys::new(&mut rand::thread_rng())); self }
+
+    /// Use with persistent `keys` instead of `listen` to allow graceful reset of clients when the server restarts.
+    pub fn listen_with_keys(&mut self, keys: ListenKeys) -> &mut Self { self.listen = Some(keys); self }
+
+    pub fn private_key_pem(&mut self, key: &[u8]) -> Result<&mut Self, ssl::Error> {
+        self.private_key = Some(PKey::<Private>::private_key_from_pem(key)?);
+        Ok(self)
+    }
+    pub fn certificate_pem(&mut self, cert: &[u8]) -> Result<&mut Self, ssl::Error> {
+        self.cert = Some(X509::from_pem(&cert)?);
+        Ok(self)
+    }
+    pub fn private_key_der(&mut self, key: &[u8]) -> Result<&mut Self, ssl::Error> {
+        self.private_key = Some(PKey::<Private>::private_key_from_der(key)?);
+        Ok(self)
+    }
+    pub fn certificate_der(&mut self, cert: &[u8]) -> Result<&mut Self, ssl::Error> {
+        self.cert = Some(X509::from_der(&cert)?);
+        Ok(self)
+    }
+
+    /// Generate a key pair and self-signed TLS certificate.
+    ///
+    /// Peers will be unable to verify this endpoint's identity. Useful when want to host a server with a minimum of
+    /// set-up and don't need to prevent man-in-the-middle attacks.
+    pub fn generate_insecure_certificate(&mut self) -> Result<&mut Self, ssl::Error> {
+        let key = PKey::from_rsa(Rsa::generate(2048)?)?;
+        let mut cert = X509::builder()?;
+        cert.set_pubkey(&key)?;
+        let now = Asn1Time::days_from_now(0)?;
+        cert.set_not_before(&now)?;
+        let forever = Asn1Time::days_from_now(u32::max_value())?;
+        cert.set_not_after(&forever)?;
+        cert.sign(&key, openssl::hash::MessageDigest::sha256())?;
+        self.cert = Some(cert.build());
+        self.private_key = Some(key);
+        Ok(self)
+    }
 
     pub fn from_socket(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
+        let cert = self.cert;
+        let cert_config = self.private_key.as_ref().and_then(|private_key| cert.as_ref().map(|cert| CertConfig { private_key, cert }));
         let reactor = if let Some(x) = self.reactor { Cow::Borrowed(x) } else { Cow::Owned(tokio_reactor::Handle::current()) };
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
         let (send, recv) = mpsc::unbounded();
@@ -214,7 +264,7 @@ impl<'a> EndpointBuilder<'a> {
             timer: self.timer.unwrap_or_else(|| timer::Handle::current()),
             log: self.logger.clone(),
             socket: socket,
-            inner: quicr::Endpoint::new(self.logger, self.config, self.listen)?,
+            inner: quicr::Endpoint::new(self.logger, self.config, cert_config, self.listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -243,6 +293,8 @@ impl Endpoint {
         logger: Logger::root(slog::Discard, o!()),
         listen: None,
         config: Config::default(),
+        cert: None,
+        private_key: None,
     }}
 
     /// Connect to a remote endpoint.

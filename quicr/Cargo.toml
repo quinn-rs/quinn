@@ -25,10 +25,10 @@ fnv = "1.0.6"
 openssl = "0.10.6"
 failure = "0.1"
 bytes = "0.4.7"
+rand = "0.4"
 
 [dev-dependencies]
 tokio = "0.1.5"
 slog-term = "2"
-rand = "0.4"
 url = "1.7"
 structopt = "0.2.7"

@@ -71,7 +71,7 @@ impl Context {
         };
         Ok(Self {
             socket,
-            client: Endpoint::new(log.clone(), config, None)?,
+            client: Endpoint::new(log.clone(), config, None, None)?,
             log, remote_host, remote,
             loss_timer: None,
             close_timer: None,
@@ -98,7 +98,7 @@ impl Context {
                     self.client.close(time, c, 0, b""[..].into());
                     bail!("connection lost: {}", reason);
                 }
-                Event::StreamReadable { stream } => {
+                Event::StreamReadable { stream, .. } => {
                     assert_eq!(c, connection);
                     loop { match self.client.read_unordered(connection, stream) {
                         Ok((data, offset)) => {
@@ -120,9 +120,7 @@ impl Context {
                         }
                     }}
                 }
-                Event::StreamWritable { .. } => {}
-                Event::StreamAvailable { .. } => {}
-                Event::StreamFinished { .. } => {}
+                _ => {}
             }}
             while let Some(io) = self.client.poll_io(time) { match io {
                 Io::Transmit { destination, packet } => { sent += 1; self.socket.send_to(&packet, destination)?; }
