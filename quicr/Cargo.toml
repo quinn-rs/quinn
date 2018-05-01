@@ -6,6 +6,7 @@ license = "MIT/Apache-2.0"
 repository = "https://github.com/Ralith/quicr"
 description = "QUIC transport protocol implementation for Tokio"
 readme = "../README.md"
+documentation = "https://ralith.github.io/quicr/quicr/"
 keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 
