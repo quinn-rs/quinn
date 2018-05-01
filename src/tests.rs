@@ -5,8 +5,7 @@ use rustls::internal::pemfile;
 use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
-use client::ClientStreamState;
-use server::ServerStreamState;
+use crypto::Secret;
 use tls::{ClientTls, ServerTls};
 use types::{Endpoint, Side};
 
@@ -16,15 +15,15 @@ use webpki;
 
 #[test]
 fn test_handshake() {
-    let mut cs = client_state();
-    let initial = cs.endpoint.initial("example.com");
+    let mut c = client_endpoint();
+    let initial = c.initial("example.com");
 
-    let mut ss = server_state(initial.conn_id().unwrap());
-    let server_hello = ss.handle(&initial).unwrap();
-    assert!(cs.endpoint.handle_handshake(&server_hello).is_some());
+    let mut s = server_endpoint(initial.conn_id().unwrap());
+    let server_hello = s.handle_handshake(&initial).unwrap();
+    assert!(c.handle_handshake(&server_hello).is_some());
 }
 
-fn server_state(hs_cid: u64) -> ServerStreamState {
+fn server_endpoint(hs_cid: u64) -> Endpoint<ServerTls> {
     let certs = {
         let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
         let mut reader = BufReader::new(f);
@@ -37,12 +36,15 @@ fn server_state(hs_cid: u64) -> ServerStreamState {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let addr = "0.0.0.0:0".parse().unwrap();
     let tls_config = Arc::new(ServerTls::build_config(certs, keys[0].clone()));
-    ServerStreamState::new(&addr, &tls_config, hs_cid)
+    Endpoint::new(
+        ServerTls::with_config(&tls_config),
+        Side::Server,
+        Some(Secret::Handshake(hs_cid)),
+    )
 }
 
-fn client_state() -> ClientStreamState {
+fn client_endpoint() -> Endpoint<ClientTls> {
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
         let mut bytes = Vec::new();
@@ -55,6 +57,5 @@ fn client_state() -> ClientStreamState {
         ClientTls::with_config(config)
     };
 
-    let endpoint = Endpoint::new(tls, Side::Client, None);
-    ClientStreamState { endpoint }
+    Endpoint::new(tls, Side::Client, None)
 }
