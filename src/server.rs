@@ -92,7 +92,6 @@ impl ServerStreamState {
     fn handle_initial(&mut self, p: &Packet) -> Option<Packet> {
         let conn_id = p.conn_id().unwrap();
         self.endpoint.dst_cid = conn_id;
-        self.endpoint.hs_cid = conn_id;
 
         let frame = match p.payload[0] {
             Frame::Stream(ref f) => f,

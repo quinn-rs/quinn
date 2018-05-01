@@ -98,9 +98,8 @@ pub(crate) struct ClientStreamState {
 
 impl ClientStreamState {
     pub fn new() -> Self {
-        let mut endpoint = Endpoint::new();
-        endpoint.hs_cid = endpoint.dst_cid;
-        let secret = Secret::Handshake(endpoint.hs_cid);
+        let endpoint = Endpoint::new();
+        let secret = Secret::Handshake(endpoint.dst_cid);
 
         Self {
             endpoint,

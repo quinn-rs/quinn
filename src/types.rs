@@ -5,7 +5,6 @@ use packet::{Header, LongType, Packet};
 pub struct Endpoint {
     pub dst_cid: u64,
     pub src_pn: u32,
-    pub hs_cid: u64,
 }
 
 impl Endpoint {
@@ -13,7 +12,6 @@ impl Endpoint {
         let mut rng = thread_rng();
         Endpoint {
             dst_cid: rng.gen(),
-            hs_cid: 0,
             src_pn: rng.gen(),
         }
     }

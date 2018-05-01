@@ -43,9 +43,8 @@ fn server_state(hs_cid: u64) -> ServerStreamState {
 }
 
 fn client_state() -> ClientStreamState {
-    let mut endpoint = Endpoint::new();
-    endpoint.hs_cid = endpoint.dst_cid;
-    let secret = Secret::Handshake(endpoint.hs_cid);
+    let endpoint = Endpoint::new();
+    let secret = Secret::Handshake(endpoint.dst_cid);
 
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
