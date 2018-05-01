@@ -1,6 +1,6 @@
 use bytes::{BigEndian, Buf, BufMut};
 
-use codec::{BufLen, Codec, VarLen};
+use codec::{BufLen, Codec};
 use frame::{Frame, PaddingFrame};
 use crypto::PacketKey;
 
@@ -126,12 +126,6 @@ impl BufLen for Packet {
 
 #[derive(Debug, PartialEq)]
 pub enum Header {
-    Short {
-        ptype: ShortType,
-        conn_id: Option<u64>,
-        key_phase: bool,
-        number: u32,
-    },
     Long {
         ptype: LongType,
         conn_id: u64,
@@ -143,21 +137,18 @@ pub enum Header {
 impl Header {
     pub fn ptype(&self) -> Option<LongType> {
         match *self {
-            Header::Short { .. } => None,
             Header::Long { ptype, .. } => Some(ptype),
         }
     }
 
     fn conn_id(&self) -> Option<u64> {
         match *self {
-            Header::Short { conn_id, .. } => conn_id,
             Header::Long { conn_id, .. } => Some(conn_id),
         }
     }
 
     fn number(&self) -> u32 {
         match *self {
-            Header::Short { number, .. } => number,
             Header::Long { number, .. } => number,
         }
     }
@@ -166,15 +157,6 @@ impl Header {
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match *self {
-            Header::Short {
-                ref ptype,
-                ref conn_id,
-                number,
-                ..
-            } => {
-                1 + if conn_id.is_some() { 8 } else { 0 } + ptype.buf_len()
-                    + VarLen(number as u64).buf_len()
-            }
             Header::Long { .. } => 17,
         }
     }
@@ -194,20 +176,6 @@ impl Codec for Header {
                 buf.put_u32::<BigEndian>(version);
                 buf.put_u32::<BigEndian>(number);
             }
-            Header::Short {
-                ptype,
-                conn_id,
-                key_phase,
-                number,
-            } => {
-                let omit_conn_id = if conn_id.is_some() { 0x40 } else { 0 };
-                let key_phase_bit = if key_phase { 0x20 } else { 0 };
-                buf.put_u8(omit_conn_id | key_phase_bit | 0x10 | ptype.to_byte());
-                if let Some(cid) = conn_id {
-                    buf.put_u64::<BigEndian>(cid);
-                }
-                VarLen(number as u64).encode(buf);
-            }
         }
     }
 
@@ -221,28 +189,7 @@ impl Codec for Header {
                 number: buf.get_u32::<BigEndian>(),
             }
         } else {
-            let ptype = ShortType::from_byte(first & 7);
-            let conn_id = if first & 0x40 == 0x40 {
-                Some(buf.get_u64::<BigEndian>())
-            } else {
-                None
-            };
-
-            let size = ptype.buf_len();
-            let number = if size == 1 {
-                buf.get_u8() as u32
-            } else if size == 2 {
-                buf.get_u16::<BigEndian>() as u32
-            } else {
-                buf.get_u32::<BigEndian>()
-            };
-
-            Header::Short {
-                ptype,
-                conn_id,
-                key_phase: first & 0x20 == 0x20,
-                number,
-            }
+            panic!("short headers not implemented yet");
         }
     }
 }
