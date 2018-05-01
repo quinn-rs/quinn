@@ -11,7 +11,8 @@ use tls::{ClientTls, QuicTls};
 
 pub struct Endpoint<T> {
     side: Side,
-    pub dst_cid: u64,
+    pub dst_cid: ConnectionId,
+    pub src_cid: ConnectionId,
     pub src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
@@ -39,6 +40,7 @@ where
             tls,
             side,
             dst_cid,
+            src_cid: rng.gen(),
             src_pn: rng.gen(),
             secret,
             prev_secret: None,
@@ -69,8 +71,10 @@ where
         Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
-                conn_id: self.dst_cid,
-                version: DRAFT_10,
+                version: DRAFT_11,
+                dst_cid: self.dst_cid,
+                src_cid: self.src_cid,
+                len: (payload.buf_len() + self.secret.tag_len()) as u64,
                 number,
             },
             payload,
@@ -83,8 +87,10 @@ where
         Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
-                conn_id: self.dst_cid,
-                version: DRAFT_10,
+                version: DRAFT_11,
+                dst_cid: self.dst_cid,
+                src_cid: self.src_cid,
+                len: (payload.buf_len() + self.secret.tag_len()) as u64,
                 number,
             },
             payload,
@@ -92,7 +98,7 @@ where
     }
 
     pub(crate) fn handle_handshake(&mut self, rsp: &Packet) -> Option<Packet> {
-        self.dst_cid = rsp.conn_id().unwrap();
+        self.dst_cid = rsp.dst_cid();
         let tls_frame = rsp.payload
             .iter()
             .filter_map(|f| match *f {
@@ -203,4 +209,4 @@ pub enum Side {
 
 impl Copy for Side {}
 
-pub const DRAFT_10: u32 = 0xff00000a;
+pub const DRAFT_11: u32 = 0xff00000b;

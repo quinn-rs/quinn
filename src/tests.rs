@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crypto::Secret;
 use tls::{ClientTls, ServerTls};
-use types::{Endpoint, Side};
+use types::{ConnectionId, Endpoint, Side};
 
 use self::untrusted::Input;
 
@@ -18,12 +18,12 @@ fn test_handshake() {
     let mut c = client_endpoint();
     let initial = c.initial("example.com");
 
-    let mut s = server_endpoint(initial.conn_id().unwrap());
+    let mut s = server_endpoint(initial.dst_cid());
     let server_hello = s.handle_handshake(&initial).unwrap();
     assert!(c.handle_handshake(&server_hello).is_some());
 }
 
-fn server_endpoint(hs_cid: u64) -> Endpoint<ServerTls> {
+fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<ServerTls> {
     let certs = {
         let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
         let mut reader = BufReader::new(f);

@@ -2,7 +2,7 @@ use futures::{Future, Poll};
 
 use crypto::Secret;
 use packet::{LongType, Packet};
-use types::{Endpoint, Side};
+use types::{ConnectionId, Endpoint, Side};
 use tls::{self, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -17,7 +17,7 @@ pub struct Server {
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    connections: HashMap<u64, (SocketAddr, Endpoint<ServerTls>)>,
+    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<ServerTls>)>,
 }
 
 impl Server {
@@ -45,16 +45,16 @@ impl Future for Server {
         loop {
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             let partial = Packet::start_decode(&mut self.in_buf[..len]);
-            let conn_id = partial.conn_id().unwrap();
-            match self.connections.entry(conn_id) {
+            let dst_cid = partial.dst_cid();
+            match self.connections.entry(dst_cid) {
                 Entry::Occupied(_) => {
-                    println!("connection found for {}", conn_id);
+                    println!("connection found for {:?}", dst_cid);
                 }
                 Entry::Vacant(entry) => {
                     let endpoint = Endpoint::new(
                         ServerTls::with_config(&self.tls_config),
                         Side::Server,
-                        Some(Secret::Handshake(conn_id))
+                        Some(Secret::Handshake(dst_cid))
                     );
                     let &mut (addr, ref mut endpoint) = entry.insert((addr, endpoint));
                     let key = endpoint.decode_key(&partial.header);
@@ -75,4 +75,3 @@ impl Future for Server {
         }
     }
 }
-

@@ -8,10 +8,10 @@ pub use ring::aead::AES_128_GCM;
 pub use ring::digest::SHA256;
 pub use ring::hmac::SigningKey;
 
-use types::Side;
+use types::{ConnectionId, Side};
 
 pub enum Secret {
-    Handshake(u64),
+    Handshake(ConnectionId),
     For1Rtt(
         &'static aead::Algorithm,
         &'static digest::Algorithm,
@@ -20,6 +20,13 @@ pub enum Secret {
 }
 
 impl Secret {
+    pub fn tag_len(&self) -> usize {
+        match *self {
+            Secret::Handshake(_) => AES_128_GCM.tag_len(),
+            Secret::For1Rtt(aead_alg, _, _) => aead_alg.tag_len(),
+        }
+    }
+
     pub fn build_key(&self, side: Side) -> PacketKey {
         match *self {
             Secret::Handshake(cid) => {
@@ -106,7 +113,7 @@ impl PacketKey {
     }
 }
 
-pub fn expanded_handshake_secret(conn_id: u64, label: &[u8]) -> Vec<u8> {
+pub fn expanded_handshake_secret(conn_id: ConnectionId, label: &[u8]) -> Vec<u8> {
     let prk = handshake_secret(conn_id);
     let mut out = vec![0u8; SHA256.output_len];
     qhkdf_expand(&prk, label, &mut out);
@@ -122,10 +129,10 @@ pub fn qhkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
     hkdf::expand(key, &info, out);
 }
 
-fn handshake_secret(conn_id: u64) -> SigningKey {
+fn handshake_secret(conn_id: ConnectionId) -> SigningKey {
     let key = SigningKey::new(&SHA256, HANDSHAKE_SALT);
     let mut buf = Vec::with_capacity(8);
-    buf.put_u64::<BigEndian>(conn_id);
+    buf.put_slice(&conn_id);
     hkdf::extract(&key, &buf)
 }
 
@@ -134,10 +141,15 @@ const HANDSHAKE_SALT: &[u8; 20] =
 
 #[cfg(test)]
 mod tests {
+    use types::ConnectionId;
+
     #[test]
     fn test_handshake_client() {
-        let conn_id = 0x8394c8f03e515708;
-        let client_handshake_secret = super::expanded_handshake_secret(conn_id, b"client hs");
+        let hs_cid = ConnectionId {
+            len: 8,
+            bytes: [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let client_handshake_secret = super::expanded_handshake_secret(hs_cid, b"client hs");
         let expected = b"\x83\x55\xf2\x1a\x3d\x8f\x83\xec\xb3\xd0\xf9\x71\x08\xd3\xf9\x5e\
                          \x0f\x65\xb4\xd8\xae\x88\xa0\x61\x1e\xe4\x9d\xb0\xb5\x23\x59\x1d";
         assert_eq!(&client_handshake_secret, expected);

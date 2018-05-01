@@ -1,8 +1,9 @@
 use bytes::{BigEndian, Buf, BufMut};
 
-use codec::{BufLen, Codec};
+use codec::{BufLen, Codec, VarLen};
 use frame::{Frame, PaddingFrame};
 use crypto::PacketKey;
+use types::ConnectionId;
 
 use std::io::Cursor;
 
@@ -17,8 +18,8 @@ impl Packet {
         self.header.ptype()
     }
 
-    pub fn conn_id(&self) -> Option<u64> {
-        self.header.conn_id()
+    pub fn dst_cid(&self) -> ConnectionId {
+        self.header.dst_cid()
     }
 
     pub fn number(&self) -> u32 {
@@ -93,8 +94,8 @@ pub struct PartialDecode<'a> {
 }
 
 impl<'a> PartialDecode<'a> {
-    pub fn conn_id(&self) -> Option<u64> {
-        self.header.conn_id()
+    pub fn dst_cid(&self) -> ConnectionId {
+        self.header.dst_cid()
     }
 
     pub fn finish(self, key: &PacketKey) -> Packet {
@@ -127,8 +128,10 @@ impl BufLen for Packet {
 pub enum Header {
     Long {
         ptype: LongType,
-        conn_id: u64,
         version: u32,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        len: u64,
         number: u32,
     },
 }
@@ -140,9 +143,9 @@ impl Header {
         }
     }
 
-    fn conn_id(&self) -> Option<u64> {
+    fn dst_cid(&self) -> ConnectionId {
         match *self {
-            Header::Long { conn_id, .. } => Some(conn_id),
+            Header::Long { dst_cid, .. } => dst_cid,
         }
     }
 
@@ -156,7 +159,9 @@ impl Header {
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match *self {
-            Header::Long { .. } => 17,
+            Header::Long { dst_cid, src_cid, len, .. } => {
+                10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len()
+            }
         }
     }
 }
@@ -166,13 +171,18 @@ impl Codec for Header {
         match *self {
             Header::Long {
                 ptype,
-                conn_id,
                 version,
+                dst_cid,
+                src_cid,
+                len,
                 number,
             } => {
                 buf.put_u8(128 | ptype.to_byte());
-                buf.put_u64::<BigEndian>(conn_id);
                 buf.put_u32::<BigEndian>(version);
+                buf.put_u8(dst_cid.len << 4 | src_cid.len);
+                buf.put_slice(&dst_cid);
+                buf.put_slice(&src_cid);
+                VarLen(len).encode(buf);
                 buf.put_u32::<BigEndian>(number);
             }
         }
@@ -181,10 +191,24 @@ impl Codec for Header {
     fn decode<T: Buf>(buf: &mut T) -> Self {
         let first = buf.get_u8();
         if first & 128 == 128 {
+            let version = buf.get_u32::<BigEndian>();
+            let cils = buf.get_u8();
+
+            let (dst_cid, src_cid, used) = {
+                let (dcil, scil) = ((cils >> 4) as usize, (cils & 15) as usize);
+                let bytes = buf.bytes();
+                let dst_cid = ConnectionId::new(&bytes[..dcil]);
+                let src_cid = ConnectionId::new(&bytes[dcil..dcil + scil]);
+                (dst_cid, src_cid, dcil + scil)
+            };
+
+            buf.advance(used);
             Header::Long {
                 ptype: LongType::from_byte(first ^ 128),
-                conn_id: buf.get_u64::<BigEndian>(),
-                version: buf.get_u32::<BigEndian>(),
+                version,
+                dst_cid,
+                src_cid,
+                len: VarLen::decode(buf).0,
                 number: buf.get_u32::<BigEndian>(),
             }
         } else {
@@ -268,33 +292,45 @@ impl ShortType {
 #[cfg(test)]
 mod tests {
     use super::{Header, LongType, Packet};
-    use types::{DRAFT_10, Side};
+    use types::{ConnectionId, DRAFT_11, Side};
     use frame::{Frame, StreamFrame};
     use crypto::Secret;
+    use codec::BufLen;
 
     #[test]
     fn test_roundtrip() {
+        let hs_cid = ConnectionId {
+            len: 9,
+            bytes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        };
+
         let mut buf = vec![0u8; 65536];
         let bytes = b"\x00\x01\x02\x03";
+        let payload = vec![
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(bytes.len() as u64),
+                data: bytes.to_vec(),
+            }),
+        ];
+
+        let secret = Secret::Handshake(hs_cid);
+        let len = (payload.buf_len() + secret.tag_len()) as u64;
         let packet = Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
-                conn_id: 123456789,
-                version: DRAFT_10,
+                version: DRAFT_11,
+                dst_cid: hs_cid,
+                src_cid: hs_cid,
+                len,
                 number: 987654321,
             },
-            payload: vec![
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(bytes.len() as u64),
-                    data: bytes.to_vec(),
-                }),
-            ],
+            payload,
         };
 
-        let key = Secret::Handshake(123456789).build_key(Side::Client);
+        let key = secret.build_key(Side::Client);
         packet.encode(&key, &mut buf);
         let mut decoded = Packet::start_decode(&mut buf).finish(&key);
 

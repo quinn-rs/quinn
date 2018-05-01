@@ -7,7 +7,7 @@ use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 use std::sync::Arc;
 
 use crypto::Secret;
-use types::{DRAFT_10, TransportParameter};
+use types::{DRAFT_11, TransportParameter};
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
@@ -71,8 +71,8 @@ impl ServerTls {
             session: ServerSession::new(
                 config,
                 ServerTransportParameters {
-                    negotiated_version: DRAFT_10,
-                    supported_versions: vec![DRAFT_10],
+                    negotiated_version: DRAFT_11,
+                    supported_versions: vec![DRAFT_11],
                     parameters: encode_transport_parameters(&vec![
                         TransportParameter::InitialMaxStreamData(131072),
                         TransportParameter::InitialMaxData(1048576),
