@@ -3,7 +3,7 @@ use futures::{Future, Poll};
 use crypto::Secret;
 use frame::{Ack, AckFrame, Frame, StreamFrame};
 use packet::{LongType, Packet};
-use types::Endpoint;
+use types::{Endpoint, Side};
 use tls::{self, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -54,12 +54,12 @@ impl Future for Server {
                 Entry::Vacant(entry) => {
                     let state =
                         entry.insert(ServerStreamState::new(&addr, &self.tls_config, conn_id));
-                    let key = state.tls.decode_key(&partial.header);
+                    let key = state.endpoint.decode_key(&partial.header);
                     let packet = partial.finish(&key);
 
                     if let Some(rsp) = state.handle(&packet) {
                         self.out_buf.truncate(0);
-                        rsp.encode(&state.tls.encode_key(&rsp.header), &mut self.out_buf);
+                        rsp.encode(&state.endpoint.encode_key(&rsp.header), &mut self.out_buf);
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &state.addr));
                     }
                 }
@@ -77,9 +77,9 @@ pub(crate) struct ServerStreamState {
 impl ServerStreamState {
     pub(crate) fn new(addr: &SocketAddr, tls_config: &Arc<tls::ServerConfig>, hs_cid: u64) -> Self {
         Self {
-            endpoint: Endpoint::new(),
+            endpoint: Endpoint::new(Side::Server, Some(Secret::Handshake(hs_cid))),
             addr: addr.clone(),
-            tls: ServerTls::with_config(tls_config, Secret::Handshake(hs_cid)),
+            tls: ServerTls::with_config(tls_config),
         }
     }
 
@@ -98,7 +98,10 @@ impl ServerStreamState {
             Frame::Stream(ref f) => f,
             _ => panic!("expected stream frame as first in payload"),
         };
-        let handshake = self.tls.get_handshake(&frame.data).unwrap();
+        let (handshake, new_secret) = self.tls.get_handshake(&frame.data).unwrap();
+        if let Some(secret) = new_secret {
+            self.endpoint.set_secret(secret)
+        }
 
         Some(self.endpoint.build_handshake_packet(vec![
             Frame::Ack(AckFrame {

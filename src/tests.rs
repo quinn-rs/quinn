@@ -6,10 +6,9 @@ use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
 use client::ClientStreamState;
-use crypto::Secret;
 use server::ServerStreamState;
 use tls::{ClientTls, ServerTls};
-use types::Endpoint;
+use types::{Endpoint, Side};
 
 use self::untrusted::Input;
 
@@ -44,8 +43,7 @@ fn server_state(hs_cid: u64) -> ServerStreamState {
 }
 
 fn client_state() -> ClientStreamState {
-    let endpoint = Endpoint::new();
-    let secret = Secret::Handshake(endpoint.dst_cid);
+    let endpoint = Endpoint::new(Side::Client, None);
 
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
@@ -56,7 +54,7 @@ fn client_state() -> ClientStreamState {
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
         let config = ClientTls::build_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
-        ClientTls::with_config(config, secret)
+        ClientTls::with_config(config)
     };
 
     ClientStreamState { endpoint, tls }

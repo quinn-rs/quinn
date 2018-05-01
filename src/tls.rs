@@ -4,12 +4,10 @@ use rustls::internal::msgs::quic::{ClientTransportParameters, ServerTransportPar
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
 use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
 
-use std::mem;
 use std::sync::Arc;
 
-use crypto::{PacketKey, Secret};
-use packet::{Header, LongType};
-use types::{DRAFT_10, Side, TransportParameter};
+use crypto::Secret;
+use types::{DRAFT_10, TransportParameter};
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
@@ -18,20 +16,16 @@ pub use rustls::{Certificate, PrivateKey, ServerConfig, SupportedCipherSuite, TL
 
 pub struct ClientTls {
     pub session: ClientSession,
-    secret: Secret,
-    prev_secret: Option<Secret>,
 }
 
 impl ClientTls {
-    pub fn new(secret: Secret) -> Self {
-        Self::with_config(Self::build_config(None), secret)
+    pub fn new() -> Self {
+        Self::with_config(Self::build_config(None))
     }
 
-    pub fn with_config(config: ClientConfig, secret: Secret) -> Self {
+    pub fn with_config(config: ClientConfig) -> Self {
         Self {
             session: ClientSession::new(&Arc::new(config)),
-            secret,
-            prev_secret: None,
         }
     }
 
@@ -44,20 +38,7 @@ impl ClientTls {
         config
     }
 
-    pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
-        if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(Secret::Handshake(_)) = self.prev_secret {
-                return self.prev_secret.as_ref().unwrap().build_key(Side::Client);
-            }
-        }
-        self.secret.build_key(Side::Client)
-    }
-
-    pub(crate) fn decode_key(&self, _: &Header) -> PacketKey {
-        self.secret.build_key(Side::Server)
-    }
-
-    pub fn get_handshake(&mut self, hostname: &str) -> Result<Vec<u8>, TLSError> {
+    pub fn get_handshake(&mut self, hostname: &str) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
         let params = ClientTransportParameters {
             initial_version: 1,
@@ -69,35 +50,44 @@ impl ClientTls {
         };
 
         let res = self.session.get_handshake(pki_server_name, params)?;
-        let TLSResult { messages, key_ready } = res;
-        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+        let TLSResult {
+            messages,
+            key_ready,
+        } = res;
+        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
             let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
-            self.prev_secret = Some(old);
-        }
-        Ok(messages)
+            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
+        } else {
+            None
+        };
+        Ok((messages, secret))
     }
 
-    pub fn process_handshake_messages(&mut self, data: &[u8]) -> Result<Vec<u8>, TLSError> {
+    pub fn process_handshake_messages(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
         let res = self.session.process_handshake_messages(data)?;
-        let TLSResult { messages, key_ready } = res;
-        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+        let TLSResult {
+            messages,
+            key_ready,
+        } = res;
+        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
             let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
-            self.prev_secret = Some(old);
-        }
-        Ok(messages)
+            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
+        } else {
+            None
+        };
+        Ok((messages, secret))
     }
 }
 
 pub struct ServerTls {
     session: ServerSession,
-    secret: Secret,
-    prev_secret: Option<Secret>,
 }
 
 impl ServerTls {
-    pub fn with_config(config: &Arc<ServerConfig>, secret: Secret) -> Self {
+    pub fn with_config(config: &Arc<ServerConfig>) -> Self {
         Self {
             session: ServerSession::new(
                 config,
@@ -111,8 +101,6 @@ impl ServerTls {
                     ]),
                 },
             ),
-            secret,
-            prev_secret: None,
         }
     }
 
@@ -123,23 +111,19 @@ impl ServerTls {
         config
     }
 
-    pub(crate) fn encode_key(&self, _: &Header) -> PacketKey {
-        self.secret.build_key(Side::Server)
-    }
-
-    pub(crate) fn decode_key(&self, _: &Header) -> PacketKey {
-        self.secret.build_key(Side::Client)
-    }
-
-    pub fn get_handshake(&mut self, input: &[u8]) -> Result<Vec<u8>, TLSError> {
+    pub fn get_handshake(&mut self, input: &[u8]) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
         let res = self.session.get_handshake(input)?;
-        let TLSResult { messages, key_ready } = res;
-        if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+        let TLSResult {
+            messages,
+            key_ready,
+        } = res;
+        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
             let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            let old = mem::replace(&mut self.secret, Secret::For1Rtt(aead_alg, hash_alg, secret));
-            self.prev_secret = Some(old);
-        }
-        Ok(messages)
+            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
+        } else {
+            None
+        };
+        Ok((messages, secret))
     }
 }
 

@@ -12,7 +12,11 @@ use types::Side;
 
 pub enum Secret {
     Handshake(u64),
-    For1Rtt(&'static aead::Algorithm, &'static digest::Algorithm, Vec<u8>),
+    For1Rtt(
+        &'static aead::Algorithm,
+        &'static digest::Algorithm,
+        Vec<u8>,
+    ),
 }
 
 impl Secret {
@@ -29,7 +33,7 @@ impl Secret {
                     &SHA256,
                     &expanded_handshake_secret(cid, label),
                 )
-            },
+            }
             Secret::For1Rtt(aead_alg, hash_alg, ref secret) => {
                 PacketKey::new(aead_alg, hash_alg, secret)
             }
