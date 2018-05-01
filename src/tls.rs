@@ -48,37 +48,14 @@ impl ClientTls {
                 TransportParameter::IdleTimeout(300),
             ]),
         };
-
-        let res = self.session.get_handshake(pki_server_name, params)?;
-        let TLSResult {
-            messages,
-            key_ready,
-        } = res;
-        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
-            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
-        } else {
-            None
-        };
-        Ok((messages, secret))
+        Ok(process_tls_result(self.session.get_handshake(pki_server_name, params)?))
     }
 
     pub fn process_handshake_messages(
         &mut self,
         data: &[u8],
     ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        let res = self.session.process_handshake_messages(data)?;
-        let TLSResult {
-            messages,
-            key_ready,
-        } = res;
-        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
-            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
-        } else {
-            None
-        };
-        Ok((messages, secret))
+        Ok(process_tls_result(self.session.process_handshake_messages(data)?))
     }
 }
 
@@ -112,19 +89,22 @@ impl ServerTls {
     }
 
     pub fn get_handshake(&mut self, input: &[u8]) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        let res = self.session.get_handshake(input)?;
-        let TLSResult {
-            messages,
-            key_ready,
-        } = res;
-        let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
-            let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-            Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
-        } else {
-            None
-        };
-        Ok((messages, secret))
+        Ok(process_tls_result(self.session.get_handshake(input)?))
     }
+}
+
+fn process_tls_result(res: TLSResult) -> (Vec<u8>, Option<Secret>) {
+    let TLSResult {
+        messages,
+        key_ready,
+    } = res;
+    let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+        let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
+        Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
+    } else {
+        None
+    };
+    (messages, secret)
 }
 
 pub fn encode_transport_parameters(params: &[TransportParameter]) -> Vec<Parameter> {
