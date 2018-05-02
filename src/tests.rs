@@ -18,17 +18,43 @@ use webpki;
 #[test]
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
-    let initial = c.initial("example.com");
+    let c_initial = c.initial("example.com");
     let mut buf = vec![0u8; 1600];
-    initial.encode(&c.encode_key(&initial.header), &mut buf);
+    c_initial.encode(&c.encode_key(&c_initial.header), &mut buf);
 
-    let partial = Packet::start_decode(&mut buf);
-    assert_eq!(initial.header, partial.header);
+    let mut s = server_endpoint(c_initial.dst_cid());
+    let s_initial = {
+        let partial = Packet::start_decode(&mut buf);
+        assert_eq!(c_initial.header, partial.header);
 
-    let hs_cid = partial.dst_cid();
-    let s = server_endpoint(hs_cid);
-    let key = s.decode_key(&partial.header);
-    let _ = partial.finish(&key);
+        let key = s.decode_key(&partial.header);
+        partial.finish(&key)
+    };
+
+    let s_sh = s.handle_handshake(&s_initial).unwrap();
+    s_sh.encode(&s.encode_key(&s_sh.header), &mut buf);
+
+    let c_sh = {
+        let partial = Packet::start_decode(&mut buf);
+        assert_eq!(s_sh.header, partial.header);
+
+        let key = c.decode_key(&partial.header);
+        partial.finish(&key)
+    };
+
+    let c_fin = c.handle_handshake(&c_sh).unwrap();
+    c_fin.encode(&c.encode_key(&c_fin.header), &mut buf);
+
+    let s_fin = {
+        let partial = Packet::start_decode(&mut buf);
+        assert_eq!(c_fin.header, partial.header);
+
+        let key = s.decode_key(&partial.header);
+        partial.finish(&key)
+    };
+
+    let short = s.handle_handshake(&s_fin).unwrap();
+    assert_eq!(short.ptype(), None);
 }
 
 #[test]
