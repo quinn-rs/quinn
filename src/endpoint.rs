@@ -5,7 +5,7 @@ use std::mem;
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
-use packet::{Header, LongType, Packet};
+use packet::{Header, LongType, Packet, ShortType};
 use tls::{ClientTls, QuicTls};
 use types::{ConnectionId, DRAFT_11, GENERATED_CID_LENGTH, Side};
 
@@ -111,6 +111,22 @@ where
         }
     }
 
+    fn build_short_packet(&mut self, payload: Vec<Frame>) -> Packet {
+        let number = self.src_pn;
+        self.src_pn += 1;
+
+        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
+        Packet {
+            header: Header::Short {
+                key_phase: false,
+                ptype: ShortType::Four,
+                dst_cid: self.dst_cid,
+                number: number,
+            },
+            payload,
+        }
+    }
+
     pub(crate) fn handle_handshake(&mut self, p: &Packet) -> Option<Packet> {
         match p.header {
             Header::Long { src_cid, .. } => {
@@ -133,6 +149,16 @@ where
             .unwrap();
         if let Some(secret) = new_secret {
             self.set_secret(secret);
+        }
+
+        if handshake.is_empty() {
+            return Some(self.build_short_packet(vec![
+                Frame::Ack(AckFrame {
+                    largest: p.number(),
+                    ack_delay: 0,
+                    blocks: vec![Ack::Ack(0)],
+                }),
+            ]));
         }
 
         Some(self.build_handshake_packet(vec![
@@ -170,4 +196,3 @@ impl Endpoint<ClientTls> {
         ])
     }
 }
-
