@@ -72,7 +72,7 @@ pub enum TransportParameter {
     InitialMaxStreamIdUni(u32),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Side {
     Client,
     Server,
