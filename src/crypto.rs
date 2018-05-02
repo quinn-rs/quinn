@@ -147,7 +147,9 @@ mod tests {
     fn test_handshake_client() {
         let hs_cid = ConnectionId {
             len: 8,
-            bytes: [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            bytes: [
+                0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ],
         };
         let client_handshake_secret = super::expanded_handshake_secret(hs_cid, b"client hs");
         let expected = b"\x83\x55\xf2\x1a\x3d\x8f\x83\xec\xb3\xd0\xf9\x71\x08\xd3\xf9\x5e\

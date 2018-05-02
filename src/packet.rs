@@ -52,12 +52,7 @@ impl Packet {
 
         let out_len = {
             let (header_buf, mut payload) = buf.split_at_mut(payload_start);
-            key.encrypt(
-                self.header.number(),
-                &header_buf,
-                &mut payload,
-                tag_len,
-            )
+            key.encrypt(self.header.number(), &header_buf, &mut payload, tag_len)
         };
         buf.truncate(payload_start + out_len);
     }
@@ -148,9 +143,12 @@ impl Header {
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match *self {
-            Header::Long { dst_cid, src_cid, len, .. } => {
-                10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len()
-            }
+            Header::Long {
+                dst_cid,
+                src_cid,
+                len,
+                ..
+            } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len(),
         }
     }
 }

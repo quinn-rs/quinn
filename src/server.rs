@@ -54,7 +54,7 @@ impl Future for Server {
                     let endpoint = Endpoint::new(
                         ServerTls::with_config(&self.tls_config),
                         Side::Server,
-                        Some(Secret::Handshake(dst_cid))
+                        Some(Secret::Handshake(dst_cid)),
                     );
                     let &mut (addr, ref mut endpoint) = entry.insert((addr, endpoint));
                     let key = endpoint.decode_key(&partial.header);

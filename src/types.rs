@@ -198,7 +198,7 @@ impl Rand for ConnectionId {
         let len = rng.gen_range(4u8, 18u8);
         let mut res = ConnectionId {
             len,
-            bytes: [0; 18]
+            bytes: [0; 18],
         };
         rng.fill_bytes(&mut res.bytes[..len as usize]);
         res
