@@ -47,20 +47,30 @@ impl Future for Server {
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             let partial = Packet::start_decode(&mut self.in_buf[..len]);
             let dst_cid = partial.dst_cid();
-            match self.connections.entry(dst_cid) {
-                Entry::Occupied(_) => {
-                    println!("connection found for {:?}", dst_cid);
+
+            let cid = if partial.header.ptype() == Some(LongType::Initial) {
+                let mut endpoint = Endpoint::new(
+                    ServerTls::with_config(&self.tls_config),
+                    Side::Server,
+                    Some(Secret::Handshake(dst_cid)),
+                );
+
+                while self.connections.contains_key(&endpoint.src_cid) {
+                    endpoint.update_src_cid();
                 }
-                Entry::Vacant(entry) => {
-                    let endpoint = Endpoint::new(
-                        ServerTls::with_config(&self.tls_config),
-                        Side::Server,
-                        Some(Secret::Handshake(dst_cid)),
-                    );
-                    let &mut (addr, ref mut endpoint) = entry.insert((addr, endpoint));
+
+                let cid = endpoint.src_cid;
+                self.connections.insert(endpoint.src_cid, (addr, endpoint));
+                cid
+            } else {
+                dst_cid
+            };
+
+            match self.connections.entry(cid) {
+                Entry::Occupied(mut inner) => {
+                    let &mut (addr, ref mut endpoint) = inner.get_mut();
                     let key = endpoint.decode_key(&partial.header);
                     let packet = partial.finish(&key);
-
                     let rsp = match packet.ptype() {
                         Some(LongType::Initial) => endpoint.handle_handshake(&packet),
                         _ => panic!("unhandled packet {:?}", packet),
@@ -72,7 +82,8 @@ impl Future for Server {
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &addr));
                     }
                 }
-            };
+                Entry::Vacant(_) => panic!("connection ID {:?} unknown", dst_cid),
+            }
         }
     }
 }
