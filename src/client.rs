@@ -1,8 +1,9 @@
 use futures::{Async, Future, Poll};
 
+use endpoint::Endpoint;
 use packet::Packet;
 use tls::ClientTls;
-use types::{Endpoint, Side};
+use types::Side;
 
 use std::io;
 use std::net::ToSocketAddrs;

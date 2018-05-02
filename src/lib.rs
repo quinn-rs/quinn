@@ -15,6 +15,7 @@ pub use server::Server;
 mod client;
 mod codec;
 mod crypto;
+mod endpoint;
 mod frame;
 mod packet;
 mod server;

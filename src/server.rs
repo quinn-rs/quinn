@@ -1,8 +1,9 @@
 use futures::{Future, Poll};
 
 use crypto::Secret;
+use endpoint::Endpoint;
 use packet::{LongType, Packet};
-use types::{ConnectionId, Endpoint, Side};
+use types::{ConnectionId, Side};
 use tls::{self, ServerTls};
 
 use std::collections::{HashMap, hash_map::Entry};
