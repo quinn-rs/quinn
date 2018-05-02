@@ -8,7 +8,7 @@ use types::Side;
 use std::io;
 use std::net::ToSocketAddrs;
 
-use tokio::net::{RecvDgram, SendDgram, UdpSocket};
+use tokio::net::UdpSocket;
 
 pub struct QuicStream {}
 
@@ -20,10 +20,13 @@ impl QuicStream {
         packet.encode(&endpoint.encode_key(&packet.header), &mut buf);
 
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
-        let sock = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
+        let socket = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
+        socket.connect(&addr).unwrap();
         ConnectFuture {
             endpoint,
-            future: ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)),
+            socket,
+            buf,
+            state: ConnectionState::Sending,
         }
     }
 }
@@ -31,7 +34,9 @@ impl QuicStream {
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
     endpoint: Endpoint<ClientTls>,
-    future: ConnectFutureState,
+    socket: UdpSocket,
+    buf: Vec<u8>,
+    state: ConnectionState,
 }
 
 impl Future for ConnectFuture {
@@ -39,27 +44,23 @@ impl Future for ConnectFuture {
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut waiting;
-        let mut new = None;
         loop {
             waiting = true;
-            if let ConnectFutureState::InitialSent(ref mut future) = self.future {
-                let (sock, mut buf) = try_ready!(future.poll());
-                let size = buf.capacity();
-                buf.resize(size, 0);
-                new = Some(ConnectFutureState::WaitingForResponse(sock.recv_dgram(buf)));
-            };
-            if let Some(future) = new.take() {
+            if self.state == ConnectionState::Sending {
+                let len = try_ready!(self.socket.poll_send(&self.buf));
+                debug_assert_eq!(len, self.buf.len());
+                let size = self.buf.capacity();
+                self.buf.resize(size, 0);
+                self.state = ConnectionState::Receiving;
                 waiting = false;
-                self.future = future;
             }
 
-            if let ConnectFutureState::WaitingForResponse(ref mut future) = self.future {
-                let (sock, mut buf, len, addr) = try_ready!(future.poll());
+            if self.state == ConnectionState::Receiving {
+                let len = try_ready!(self.socket.poll_recv(&mut self.buf));
                 let packet = {
-                    let mut pbuf = &mut buf[..len];
-                    let decode = Packet::start_decode(pbuf);
-                    let key = self.endpoint.decode_key(&decode.header);
-                    decode.finish(&key)
+                    let partial = Packet::start_decode(&mut self.buf[..len]);
+                    let key = self.endpoint.decode_key(&partial.header);
+                    partial.finish(&key)
                 };
 
                 let req = match self.endpoint.handle_handshake(&packet) {
@@ -72,12 +73,9 @@ impl Future for ConnectFuture {
                     }
                 };
 
-                req.encode(&self.endpoint.encode_key(&req.header), &mut buf);
-                new = Some(ConnectFutureState::InitialSent(sock.send_dgram(buf, &addr)));
-            };
-            if let Some(future) = new.take() {
+                req.encode(&self.endpoint.encode_key(&req.header), &mut self.buf);
+                self.state = ConnectionState::Sending;
                 waiting = false;
-                self.future = future;
             }
 
             if waiting {
@@ -89,7 +87,8 @@ impl Future for ConnectFuture {
     }
 }
 
-enum ConnectFutureState {
-    InitialSent(SendDgram<Vec<u8>>),
-    WaitingForResponse(RecvDgram<Vec<u8>>),
+#[derive(PartialEq)]
+enum ConnectionState {
+    Sending,
+    Receiving,
 }
