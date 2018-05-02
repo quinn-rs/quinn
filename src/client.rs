@@ -10,8 +10,6 @@ use std::net::ToSocketAddrs;
 
 use tokio::net::{RecvDgram, SendDgram, UdpSocket};
 
-pub use server::Server;
-
 pub struct QuicStream {}
 
 impl QuicStream {
