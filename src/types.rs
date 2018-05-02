@@ -57,7 +57,7 @@ where
     }
 
     pub(crate) fn decode_key(&self, _: &Header) -> PacketKey {
-        self.secret.build_key(self.side)
+        self.secret.build_key(self.side.other())
     }
 
     pub(crate) fn set_secret(&mut self, secret: Secret) {
@@ -214,6 +214,15 @@ pub enum TransportParameter {
 pub enum Side {
     Client,
     Server,
+}
+
+impl Side {
+    fn other(&self) -> Side {
+        match *self {
+            Side::Client => Side::Server,
+            Side::Server => Side::Client,
+        }
+    }
 }
 
 impl Copy for Side {}
