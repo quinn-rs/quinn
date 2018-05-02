@@ -5,7 +5,7 @@ use std::ops::Deref;
 
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
-use frame::{Ack, AckFrame, Frame, StreamFrame};
+use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
 use packet::{Header, LongType, Packet};
 use tls::{ClientTls, QuicTls};
 
@@ -65,16 +65,23 @@ where
         self.prev_secret = Some(old);
     }
 
-    pub fn build_initial_packet(&mut self, payload: Vec<Frame>) -> Packet {
+    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> Packet {
         let number = self.src_pn;
         self.src_pn += 1;
+
+        let mut payload_len = payload.buf_len() + self.secret.tag_len();
+        if payload_len < 1200 {
+            payload.push(Frame::Padding(PaddingFrame(1200 - payload_len)));
+            payload_len = 1200;
+        }
+
         Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
                 version: DRAFT_11,
                 dst_cid: self.dst_cid,
                 src_cid: self.src_cid,
-                len: (payload.buf_len() + self.secret.tag_len()) as u64,
+                len: payload_len as u64,
                 number,
             },
             payload,

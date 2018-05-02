@@ -1,8 +1,8 @@
 use bytes::{BigEndian, Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
-use frame::{Frame, PaddingFrame};
 use crypto::PacketKey;
+use frame::Frame;
 use types::ConnectionId;
 
 use std::io::Cursor;
@@ -27,13 +27,8 @@ impl Packet {
     }
 
     pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
-        let unpadded_len = self.buf_len() + key.algorithm().tag_len();
-        let len = if self.ptype() == Some(LongType::Initial) && unpadded_len < 1200 {
-            1200
-        } else {
-            unpadded_len
-        };
-
+        let tag_len = key.algorithm().tag_len();
+        let len = self.buf_len() + tag_len;
         if len > buf.capacity() {
             let diff = len - buf.capacity();
             buf.reserve(diff);
@@ -52,22 +47,16 @@ impl Packet {
                 expected += frame.buf_len();
             }
             debug_assert_eq!(expected, write.position() as usize);
-
-            if unpadded_len < len {
-                let padding = Frame::Padding(PaddingFrame(len - unpadded_len));
-                padding.encode(&mut write);
-            }
             (payload_start, write.into_inner())
         };
 
         let out_len = {
-            let suffix_capacity = key.algorithm().tag_len();
             let (header_buf, mut payload) = buf.split_at_mut(payload_start);
             key.encrypt(
                 self.header.number(),
                 &header_buf,
                 &mut payload,
-                suffix_capacity,
+                tag_len,
             )
         };
         buf.truncate(payload_start + out_len);
