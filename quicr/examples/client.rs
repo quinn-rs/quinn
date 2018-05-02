@@ -55,11 +55,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let url = options.url;
     let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
-    let mut protocols = Vec::new();
-    const PROTO: &[u8] = b"hq-11";
-    protocols.push(PROTO.len() as u8);
-    protocols.extend_from_slice(PROTO);
-
     let reactor = tokio::reactor::Reactor::new()?;
     let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
@@ -69,7 +64,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .timer(timer.handle())
         .logger(log.clone())
         .config(quicr::Config {
-            protocols,
+            protocols: vec![b"hq-11"[..].into()],
             keylog: options.keylog,
             accept_insecure_certs: options.accept_insecure_certs,
             ..quicr::Config::default()

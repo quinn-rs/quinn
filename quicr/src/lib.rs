@@ -87,12 +87,15 @@ pub enum Error {
     /// An error arising during setup of the underlying UDP socket.
     #[fail(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
-    /// An error arising from the TLS layer.
+    /// An error arising from configuring TLS.
     #[fail(display = "failed to set up TLS: {}", _0)]
     Tls(ssl::Error),
     /// An error arising from opening a file for logging TLS keys.
     #[fail(display = "failed open keylog file: {}", _0)]
     Keylog(io::Error),
+    /// A supplied protocol identifier was too long
+    #[fail(display = "protocol ID longer than 255 bytes")]
+    ProtocolTooLong(Box<[u8]>),
 }
 
 impl From<quicr::EndpointError> for Error {
@@ -101,6 +104,7 @@ impl From<quicr::EndpointError> for Error {
         match x {
             Tls(x) => Error::Tls(x),
             Keylog(x) => Error::Keylog(x),
+            ProtocolTooLong(x) => Error::ProtocolTooLong(x),
         }
     }
 }
@@ -325,13 +329,10 @@ pub struct NewConnection {
     pub connection: Connection,
     /// The stream of QUIC streams initiated by the client.
     pub incoming: IncomingStreams,
-    /// Identifier of the application-layer protocol that was negotiated.
-    pub protocol: Option<Box<[u8]>>,
 }
 
 impl NewConnection {
-    fn new(endpoint: Endpoint, info: quicr::NewConnection) -> Self {
-        let quicr::NewConnection { handle, protocol } = info;
+    fn new(endpoint: Endpoint, handle: quicr::ConnectionHandle) -> Self {
         let conn = Rc::new(ConnectionInner {
             endpoint: Endpoint(endpoint.0.clone()),
             conn: handle,
@@ -340,7 +341,6 @@ impl NewConnection {
         NewConnection {
             connection: Connection(conn.clone()),
             incoming: IncomingStreams { endpoint, conn },
-            protocol,
         }
     }
 }
@@ -614,6 +614,11 @@ impl Connection {
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
         self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn).clone()
+    }
+
+    /// The negotiated application protocol
+    pub fn protocol(&self) -> Option<Box<[u8]>> {
+        self.0.endpoint.0.borrow().inner.get_protocol(self.0.conn).map(|x| x.into())
     }
 }
 

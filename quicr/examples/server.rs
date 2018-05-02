@@ -84,11 +84,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let root = Rc::new(options.root);
     if !root.exists() { bail!("root path does not exist"); }
 
-    let mut protocols = Vec::new();
-    const PROTO: &[u8] = b"hq-11";
-    protocols.push(PROTO.len() as u8);
-    protocols.extend_from_slice(PROTO);
-
     let reactor = tokio::reactor::Reactor::new()?;
     let handle = reactor.handle();
     let timer = tokio_timer::Timer::new(reactor);
@@ -98,7 +93,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .timer(timer.handle())
         .logger(log.clone())
         .config(quicr::Config {
-            protocols,
+            protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
             keylog: options.keylog,
             ..quicr::Config::default()
@@ -124,15 +119,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut executor = CurrentThread::new_with_park(timer);
 
     executor.spawn(incoming.for_each(move |conn| {
-        let quicr::NewConnection { incoming, protocol, connection } = conn;
-        let address = connection.remote_address();
-        let local_id = connection.local_id();
-        let remote_id = connection.remote_id();
-        let log = log.new(o!("local_id" => format!("{}", local_id)));
+        let quicr::NewConnection { incoming, connection } = conn;
+        let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
         info!(log, "got connection";
-              "remote_id" => %remote_id,
-              "address" => %address,
-              "protocol" => protocol.map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
+              "remote_id" => %connection.remote_id(),
+              "address" => %connection.remote_address(),
+              "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
         let log2 = log.clone();
         let root = root.clone();
         current_thread::spawn(

@@ -79,8 +79,10 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    /// List of permissible protocols
-    pub protocols: Vec<u8>,
+    /// List of supported application protocols.
+    ///
+    /// If empty, application-layer protocol negotiation will not be preformed.
+    pub protocols: Vec<Box<[u8]>>,
 
     /// Whether to accept inauthentic or unverifiable peer certificates.
     ///
@@ -103,32 +105,38 @@ pub struct CertConfig<'a> {
 }
 
 impl Default for Config {
-    fn default() -> Self { Self {
-        max_remote_bi_streams: 0,
-        max_remote_uni_streams: 0,
-        idle_timeout: 10,
-        stream_receive_window: 64 * 1024,
-        receive_window: 1024 * 1024,
-        accept_buffer: 1024,
+    fn default() -> Self {
+        const EXPECTED_RTT: u32 = 100;                  // ms
+        const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
+        // Window size needed to avoid pipeline stalls
+        const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+        Self {
+            max_remote_bi_streams: 0,
+            max_remote_uni_streams: 0,
+            idle_timeout: 10,
+            stream_receive_window: STREAM_RWND,
+            receive_window: 8 * STREAM_RWND,
+            accept_buffer: 1024,
 
-        max_tlps: 2,
-        reordering_threshold: 3,
-        time_reordering_fraction: 0x2000, // 1/8
-        using_time_loss_detection: false,
-        min_tlp_timeout: 10 * 1000,
-        min_rto_timeout: 200 * 1000,
-        delayed_ack_timeout: 25 * 1000,
-        default_initial_rtt: 100 * 1000,
-        
-        default_mss: 1460,
-        initial_window: 10 * 1460,
-        minimum_window: 2 * 1460,
-        loss_reduction_factor: 0x8000, // 1/2
-        protocols: Vec::new(),
+            max_tlps: 2,
+            reordering_threshold: 3,
+            time_reordering_fraction: 0x2000, // 1/8
+            using_time_loss_detection: false,
+            min_tlp_timeout: 10 * 1000,
+            min_rto_timeout: 200 * 1000,
+            delayed_ack_timeout: 25 * 1000,
+            default_initial_rtt: EXPECTED_RTT as u64 * 1000,
 
-        accept_insecure_certs: true,
-        keylog: None,
-    }}
+            default_mss: 1460,
+            initial_window: 10 * 1460,
+            minimum_window: 2 * 1460,
+            loss_reduction_factor: 0x8000, // 1/2
+            protocols: Vec::new(),
+
+            accept_insecure_certs: true,
+            keylog: None,
+        }
+    }
 }
 
 /// The main entry point to the library
@@ -149,15 +157,8 @@ pub struct Endpoint {
     io: VecDeque<Io>,
     dirty_conns: FnvHashSet<ConnectionHandle>,
     readable_conns: FnvHashSet<ConnectionHandle>,
-    incoming: VecDeque<NewConnection>,
+    incoming: VecDeque<ConnectionHandle>,
     incoming_handshakes: usize,
-}
-
-/// Information about a new incoming connection
-#[derive(Debug)]
-pub struct NewConnection {
-    pub handle: ConnectionHandle,
-    pub protocol: Option<Box<[u8]>>,
 }
 
 const MIN_INITIAL_SIZE: usize = 1200;
@@ -215,6 +216,8 @@ pub enum EndpointError {
     Tls(ssl::Error),
     #[fail(display = "failed open keylog file: {}", _0)]
     Keylog(io::Error),
+    #[fail(display = "protocol ID longer than 255 bytes")]
+    ProtocolTooLong(Box<[u8]>),
 }
 
 impl From<ssl::Error> for EndpointError { fn from(x: ssl::Error) -> Self { EndpointError::Tls(x) } }
@@ -301,10 +304,15 @@ impl Endpoint {
         }
 
         if !config.protocols.is_empty() {
-            let config = config.clone();
-            tls.set_alpn_protos(&config.protocols)?;
+            let mut buf = Vec::new();
+            for protocol in &config.protocols {
+                if protocol.len() > 255 { return Err(EndpointError::ProtocolTooLong(protocol.clone())); }
+                buf.push(protocol.len() as u8);
+                buf.extend_from_slice(protocol);
+            }
+            tls.set_alpn_protos(&buf)?;
             tls.set_alpn_select_callback(move |_ssl, protos| {
-                if let Some(x) = ssl::select_next_proto(&config.protocols, protos) {
+                if let Some(x) = ssl::select_next_proto(&buf, protos) {
                     Ok(x)
                 } else {
                     Err(ssl::AlpnError::ALERT_FATAL)
@@ -752,10 +760,7 @@ impl Endpoint {
                                 }
                                 Side::Server => {
                                     self.incoming_handshakes -= 1;
-                                    self.incoming.push_back(NewConnection {
-                                        handle: conn,
-                                        protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
-                                    });
+                                    self.incoming.push_back(conn);
                                 }
                             }
                             self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
@@ -1453,8 +1458,13 @@ impl Endpoint {
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId { &self.connections[conn.0].remote_id }
     pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 { &self.connections[conn.0].remote }
+    pub fn get_protocol(&self, conn: ConnectionHandle) -> Option<&[u8]> {
+        if let State::Established(ref state) = *self.connections[conn.0].state.as_ref().unwrap() {
+            state.tls.ssl().selected_alpn_protocol()
+        } else { None }
+    }
 
-    pub fn accept(&mut self) -> Option<NewConnection> { self.incoming.pop_front() }
+    pub fn accept(&mut self) -> Option<ConnectionHandle> { self.incoming.pop_front() }
 }
 
 /// Protocol-level identifier for a connection.
@@ -2109,6 +2119,7 @@ impl Connection {
             }
 
             // ACK
+            // TODO: Don't ack protected packets in handshake packets
             if !self.pending_acks.is_empty() {
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>());
                 let delay = now - self.rx_packet_time;
