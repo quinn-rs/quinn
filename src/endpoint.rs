@@ -7,7 +7,7 @@ use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
 use packet::{Header, LongType, Packet};
 use tls::{ClientTls, QuicTls};
-use types::{ConnectionId, DRAFT_11, Side};
+use types::{ConnectionId, DRAFT_11, GENERATED_CID_LENGTH, Side};
 
 pub struct Endpoint<T> {
     side: Side,
@@ -79,6 +79,7 @@ where
             payload_len = 1200;
         }
 
+        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
         Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
@@ -95,6 +96,8 @@ where
     pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> Packet {
         let number = self.src_pn;
         self.src_pn += 1;
+
+        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
         Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,

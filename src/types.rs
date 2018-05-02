@@ -50,12 +50,11 @@ impl Deref for ConnectionId {
 
 impl Rand for ConnectionId {
     fn rand<R: Rng>(rng: &mut R) -> Self {
-        let len = rng.gen_range(4u8, 18u8);
         let mut res = ConnectionId {
-            len,
+            len: GENERATED_CID_LENGTH,
             bytes: [0; 18],
         };
-        rng.fill_bytes(&mut res.bytes[..len as usize]);
+        rng.fill_bytes(&mut res.bytes[..res.len as usize]);
         res
     }
 }
@@ -90,3 +89,4 @@ impl Side {
 impl Copy for Side {}
 
 pub const DRAFT_11: u32 = 0xff00000b;
+pub const GENERATED_CID_LENGTH: u8 = 8;
