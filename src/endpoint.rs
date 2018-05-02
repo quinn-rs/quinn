@@ -105,7 +105,12 @@ where
     }
 
     pub(crate) fn handle_handshake(&mut self, p: &Packet) -> Option<Packet> {
-        self.dst_cid = p.dst_cid();
+        match p.header {
+            Header::Long { src_cid, .. } => {
+                self.dst_cid = src_cid;
+            }
+        }
+
         let tls_frame = p.payload
             .iter()
             .filter_map(|f| match *f {
