@@ -161,6 +161,7 @@ impl Copy for ConnectionId {}
 
 impl ConnectionId {
     pub fn new(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.len() == 0 || (bytes.len() > 3 && bytes.len() < 19));
         let mut res = Self {
             len: bytes.len() as u8,
             bytes: [0; 18],
