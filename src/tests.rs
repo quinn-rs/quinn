@@ -5,13 +5,31 @@ use rustls::internal::pemfile;
 use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
+use codec::BufLen;
 use crypto::Secret;
+use packet::{Header, Packet};
 use tls::{ClientTls, ServerTls};
 use types::{ConnectionId, Endpoint, Side};
 
 use self::untrusted::Input;
 
 use webpki;
+
+#[test]
+fn test_encoded_handshake() {
+    let mut c = client_endpoint();
+    let initial = c.initial("example.com");
+    let mut buf = vec![0u8; 1600];
+    initial.encode(&c.encode_key(&initial.header), &mut buf);
+
+    let partial = Packet::start_decode(&mut buf);
+    assert_eq!(initial.header, partial.header);
+
+    let hs_cid = partial.dst_cid();
+    let s = server_endpoint(hs_cid);
+    let key = s.decode_key(&partial.header);
+    let req = partial.finish(&key);
+}
 
 #[test]
 fn test_handshake() {
