@@ -190,6 +190,26 @@ fn stateless_reset() {
 }
 
 #[test]
+fn finish_stream() {
+    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let (client_conn, server_conn) = pair.connect();
+
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+
+    const MSG: &[u8] = b"hello";
+    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.client.finish(client_conn, s);
+    pair.drive();
+
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
+    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Finished));
+}
+
+#[test]
 fn reset_stream() {
     let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
     let (client_conn, server_conn) = pair.connect();
