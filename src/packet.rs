@@ -3,7 +3,7 @@ use bytes::{BigEndian, Buf, BufMut};
 use codec::{BufLen, Codec, VarLen};
 use crypto::PacketKey;
 use frame::Frame;
-use types::ConnectionId;
+use types::{ConnectionId, GENERATED_CID_LENGTH};
 
 use std::io::Cursor;
 
@@ -118,24 +118,33 @@ pub enum Header {
         len: u64,
         number: u32,
     },
+    Short {
+        key_phase: bool,
+        ptype: ShortType,
+        dst_cid: ConnectionId,
+        number: u32,
+    },
 }
 
 impl Header {
     pub fn ptype(&self) -> Option<LongType> {
         match *self {
             Header::Long { ptype, .. } => Some(ptype),
+            Header::Short { .. } => None,
         }
     }
 
     fn dst_cid(&self) -> ConnectionId {
         match *self {
             Header::Long { dst_cid, .. } => dst_cid,
+            Header::Short { dst_cid, .. } => dst_cid,
         }
     }
 
     fn number(&self) -> u32 {
         match *self {
             Header::Long { number, .. } => number,
+            Header::Short { number, .. } => number,
         }
     }
 }
@@ -149,6 +158,7 @@ impl BufLen for Header {
                 len,
                 ..
             } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len(),
+            Header::Short { ptype, dst_cid, .. } => 1 + (dst_cid.len as usize) + ptype.buf_len(),
         }
     }
 }
@@ -171,6 +181,22 @@ impl Codec for Header {
                 buf.put_slice(&src_cid);
                 VarLen(len).encode(buf);
                 buf.put_u32::<BigEndian>(number);
+            }
+            Header::Short {
+                key_phase,
+                ptype,
+                dst_cid,
+                number,
+            } => {
+                let key_phase_bit = if key_phase { 0x40 } else { 0 };
+
+                buf.put_u8(key_phase_bit | 0x20 | 0x10 | ptype.to_byte());
+                buf.put_slice(&dst_cid);
+                match ptype {
+                    ShortType::One => buf.put_u8(number as u8),
+                    ShortType::Two => buf.put_u16::<BigEndian>(number as u16),
+                    ShortType::Four => buf.put_u32::<BigEndian>(number),
+                }
             }
         }
     }
@@ -206,7 +232,27 @@ impl Codec for Header {
                 number: buf.get_u32::<BigEndian>(),
             }
         } else {
-            panic!("short headers not implemented yet");
+            let key_phase = first & 0x40 == 0x40;
+            let dst_cid = {
+                let bytes = buf.bytes();
+                let cid = ConnectionId::new(&bytes[..GENERATED_CID_LENGTH as usize]);
+                cid
+            };
+            buf.advance(GENERATED_CID_LENGTH as usize);
+
+            let ptype = ShortType::from_byte(first & 3);
+            let number = match ptype {
+                ShortType::One => buf.get_u8() as u32,
+                ShortType::Two => buf.get_u16::<BigEndian>() as u32,
+                ShortType::Four => buf.get_u32::<BigEndian>(),
+            };
+
+            Header::Short {
+                key_phase,
+                ptype,
+                dst_cid,
+                number,
+            }
         }
     }
 }

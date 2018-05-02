@@ -116,6 +116,7 @@ where
             Header::Long { src_cid, .. } => {
                 self.dst_cid = src_cid;
             }
+            Header::Short { .. } => panic!("short packages not allowed for handshake"),
         }
 
         let tls_frame = p.payload
