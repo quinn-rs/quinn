@@ -1,8 +1,9 @@
 use rand::{Rand, Rng};
 
+use std::fmt;
 use std::ops::Deref;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub struct ConnectionId {
     pub len: u8,
     pub bytes: [u8; 18],
@@ -27,6 +28,16 @@ impl ConnectionId {
         } else {
             self.len
         }
+    }
+}
+
+impl fmt::Debug for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "0x")?;
+        for b in (&self.bytes[..self.len as usize]).iter() {
+            write!(f, "{:x}", b)?;
+        }
+        Ok(())
     }
 }
 
