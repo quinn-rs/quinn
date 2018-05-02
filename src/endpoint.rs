@@ -364,6 +364,7 @@ impl Endpoint {
         loop {
             if let Some(x) = self.io.pop_front() { return Some(x); }
             let &conn = self.dirty_conns.iter().next()?;
+            // TODO: Only pop once, only remove if that fails
             self.flush_pending(now, conn);
             self.dirty_conns.remove(&conn);
         }
@@ -1380,6 +1381,7 @@ impl Endpoint {
     /// - when applied to a stream that has not begin receiving data
     pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[conn.0].stop_sending(stream, error_code);
+        self.dirty_conns.insert(conn);
     }
 
     /// Create a new stream
@@ -2118,6 +2120,7 @@ impl Connection {
             if buf.len() + 9 < max_size {
                 // No need to retransmit these, so we don't save the value after encoding it.
                 if let Some((_, x)) = pending.path_response.take() {
+                    trace!(log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
                     buf.write(frame::Type::PATH_RESPONSE);
                     buf.write(x);
                 }
@@ -2127,6 +2130,7 @@ impl Connection {
             while buf.len() + 19 < max_size {
                 let (id, error_code) = if let Some(x) = pending.rst_stream.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x } else { continue; };
+                trace!(log, "RST_STREAM"; "stream" => id.0);
                 sent.rst_stream.push((id, error_code));
                 frame::RstStream {
                     id, error_code,
@@ -2139,6 +2143,7 @@ impl Connection {
                 let (id, error_code) = if let Some(x) = pending.stop_sending.pop() { x } else { break; };
                 let stream = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
                 if stream.is_finished() { continue; }
+                trace!(log, "STOP_SENDING"; "stream" => id.0);
                 sent.stop_sending.push((id, error_code));
                 buf.write(frame::Type::STOP_SENDING);
                 buf.write(id);
@@ -2412,11 +2417,15 @@ impl Connection {
         Ok(n)
     }
 
-    fn stop_sending(&mut self, stream: StreamId, error_code: u16) {
-        assert!(stream.directionality() == Directionality::Bi || stream.initiator() != self.side,
+    fn stop_sending(&mut self, id: StreamId, error_code: u16) {
+        assert!(id.directionality() == Directionality::Bi || id.initiator() != self.side,
                 "only streams supporting incoming data may be reset");
-        assert!(self.streams.contains_key(&stream), "stream must have begun sending to be stopped");
-        self.pending.stop_sending.push((stream, error_code));
+        let stream = self.streams.get(&id).expect("stream must have begun sending to be stopped")
+            .recv().unwrap();
+        // Only bother if there's data we haven't received yet
+        if !stream.is_finished() {
+            self.pending.stop_sending.push((id, error_code));
+        }
     }
 
     fn congestion_blocked(&self) -> bool {

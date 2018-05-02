@@ -75,7 +75,8 @@ struct Pair {
 }
 
 impl Pair {
-    fn new(log: Logger, server_config: Config, client_config: Config) -> Self {
+    fn new(server_config: Config, client_config: Config) -> Self {
+        let log = logger();
         let server_addr = "[::1]:42".parse().unwrap();
         let server = Endpoint::new(
             log.new(o!("peer" => "server")),
@@ -116,6 +117,15 @@ impl Pair {
             }
         }
     }
+
+    fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
+        info!(self.log, "connecting");
+        let client_conn = self.client.connect(self.server_addr, None);
+        self.drive();
+        let server_conn = if let Some(c) = self.server.accept() { c.handle } else { panic!("server didn't connect"); };
+        assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+        (client_conn, server_conn)
+    }
 }
 
 #[test]
@@ -148,15 +158,10 @@ fn version_negotiate() {
 
 #[test]
 fn connect() {
-    let log = logger();
-    let mut pair = Pair::new(log, Config::default(), Config::default());
-    info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server_addr, None);
-    pair.drive();
-    assert_matches!(pair.server.accept(), Some(_));
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
-    const REASON: &[u8] = b"whee";
+    let mut pair = Pair::new(Config::default(), Config::default());
+    let (client_conn, _) = pair.connect();
 
+    const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
     pair.client.close(0, client_conn, 42, REASON.into());
     pair.drive();
@@ -168,12 +173,8 @@ fn connect() {
 
 #[test]
 fn stateless_reset() {
-    let log = logger();
-    let mut pair = Pair::new(log, Config::default(), Config::default());
-    let client_conn = pair.client.connect(pair.server_addr, None);
-    info!(pair.log, "connecting");
-    pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    let mut pair = Pair::new(Config::default(), Config::default());
+    let (client_conn, _) = pair.connect();
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
@@ -190,20 +191,35 @@ fn stateless_reset() {
 
 #[test]
 fn reset_stream() {
-    let log = logger();
-    let mut pair = Pair::new(log, Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
-    info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server_addr, None);
-    pair.drive();
-    let server_conn = if let Some(c) = pair.server.accept() { c.handle } else { panic!("server didn't connect"); };
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     info!(pair.log, "resetting stream");
-    pair.client.reset(client_conn, s, 1);
+    pair.client.reset(client_conn, s, 42);
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code }) if error_code == 1);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: 42 }));
     assert_matches!(pair.client.poll(), None);
+}
+
+#[test]
+fn stop_stream() {
+    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let (client_conn, server_conn) = pair.connect();
+
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    pair.client.write(client_conn, s, b"hello").unwrap();
+    pair.drive();
+
+    info!(pair.log, "stopping stream");
+    pair.server.stop_sending(server_conn, s, 42);
+    pair.drive();
+
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if &data[..] == b"hello");
+    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: 0 }));
+
+    assert_matches!(pair.client.write(client_conn, s, b"foo"), Err(WriteError::Stopped { error_code }) if error_code == 42);
 }
