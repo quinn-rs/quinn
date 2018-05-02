@@ -5,9 +5,8 @@ use rustls::internal::pemfile;
 use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
-use codec::BufLen;
 use crypto::Secret;
-use packet::{Header, Packet};
+use packet::Packet;
 use tls::{ClientTls, ServerTls};
 use types::{ConnectionId, Endpoint, Side};
 
@@ -28,7 +27,7 @@ fn test_encoded_handshake() {
     let hs_cid = partial.dst_cid();
     let s = server_endpoint(hs_cid);
     let key = s.decode_key(&partial.header);
-    let req = partial.finish(&key);
+    let _ = partial.finish(&key);
 }
 
 #[test]
