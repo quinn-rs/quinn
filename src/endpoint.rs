@@ -2356,65 +2356,69 @@ impl Connection {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
         rs.unordered = true;
-        match rs.state {
-            stream::RecvState::ResetRecvd { error_code, .. } => {
-                rs.state = stream::RecvState::Closed;
-                return Err(ReadError::Reset { error_code });
-            }
-            stream::RecvState::Closed => {
-                unreachable!()
-            }
-            stream::RecvState::Recv { .. } | stream::RecvState::DataRecvd { .. } => {}
-        }
+        // TODO: Drain rs.assembler to handle ordered-then-unordered reads reliably
+
+        // Return data we already have buffered, regardless of state
         if let Some(x) = rs.buffered.pop_front() {
-            rs.max_data += x.0.len() as u64;
-            self.local_max_data += x.0.len() as u64;
             // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
-            self.pending.max_stream_data.insert(id);
+            self.local_max_data += x.0.len() as u64;
             self.pending.max_data = true;
+            // Only bother issuing stream credit if the peer wants to send more
+            if let stream::RecvState::Recv { size: None } = rs.state {
+                rs.max_data += x.0.len() as u64;
+                self.pending.max_stream_data.insert(id);
+            }
             Ok(x)
-        } else if let stream::RecvState::DataRecvd { .. } = rs.state {
-            rs.state = stream::RecvState::Closed;
-            Err(ReadError::Finished)
-        } else { Err(ReadError::Blocked) }
+        } else {
+            match rs.state {
+                stream::RecvState::ResetRecvd { error_code, .. } => {
+                    rs.state = stream::RecvState::Closed;
+                    Err(ReadError::Reset { error_code })
+                }
+                stream::RecvState::Closed => unreachable!(),
+                stream::RecvState::Recv { .. } => Err(ReadError::Blocked),
+                stream::RecvState::DataRecvd { .. } => {
+                    rs.state = stream::RecvState::Closed;
+                    Err(ReadError::Finished)
+                }
+            }
+        }
     }
 
     fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
         assert!(!rs.unordered, "cannot perform ordered reads following unordered reads on a stream");
-        match rs.state {
-            stream::RecvState::ResetRecvd { error_code, .. } => {
-                rs.state = stream::RecvState::Closed;
-                return Err(ReadError::Reset { error_code });
-            }
-            stream::RecvState::Closed => {
-                unreachable!()
-            }
-            stream::RecvState::Recv { .. } | stream::RecvState::DataRecvd { .. } => {}
-        }
 
         for (data, offset) in rs.buffered.drain(..) {
             rs.assembler.insert(offset, &data);
         }
 
-        if rs.assembler.blocked() {
-            if let stream::RecvState::DataRecvd { .. } = rs.state {
-                rs.state = stream::RecvState::Closed;
-                return Err(ReadError::Finished);
-            } else {
-                return Err(ReadError::Blocked);
+        if !rs.assembler.blocked() {
+            let n = rs.assembler.read(buf);
+            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
+            self.local_max_data += n as u64;
+            self.pending.max_data = true;
+            // Only bother issuing stream credit if the peer wants to send more
+            if let stream::RecvState::Recv { size: None } = rs.state {
+                rs.max_data += n as u64;
+                self.pending.max_stream_data.insert(id);
+            }
+            Ok(n)
+        } else {
+            match rs.state {
+                stream::RecvState::ResetRecvd { error_code, .. } => {
+                    rs.state = stream::RecvState::Closed;
+                    Err(ReadError::Reset { error_code })
+                }
+                stream::RecvState::Closed => unreachable!(),
+                stream::RecvState::Recv { .. } => Err(ReadError::Blocked),
+                stream::RecvState::DataRecvd { .. } => {
+                    rs.state = stream::RecvState::Closed;
+                    Err(ReadError::Finished)
+                }
             }
         }
-
-        let n = rs.assembler.read(buf);
-        rs.max_data += n as u64;
-        self.local_max_data += n as u64;
-        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
-        self.pending.max_stream_data.insert(id);
-        self.pending.max_data = true;
-
-        Ok(n)
     }
 
     fn stop_sending(&mut self, id: StreamId, error_code: u16) {

@@ -195,12 +195,20 @@ fn reset_stream() {
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+
+    const MSG: &[u8] = b"hello";
+    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.drive();
+
     info!(pair.log, "resetting stream");
-    pair.client.reset(client_conn, s, 42);
+    const ERROR: u16 = 42;
+    pair.client.reset(client_conn, s, ERROR);
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: 42 }));
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: ERROR }));
     assert_matches!(pair.client.poll(), None);
 }
 
@@ -210,16 +218,19 @@ fn stop_stream() {
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
-    pair.client.write(client_conn, s, b"hello").unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client.write(client_conn, s, MSG).unwrap();
     pair.drive();
 
     info!(pair.log, "stopping stream");
-    pair.server.stop_sending(server_conn, s, 42);
+    const ERROR: u16 = 42;
+    pair.server.stop_sending(server_conn, s, ERROR);
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if &data[..] == b"hello");
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: 0 }));
 
-    assert_matches!(pair.client.write(client_conn, s, b"foo"), Err(WriteError::Stopped { error_code }) if error_code == 42);
+    assert_matches!(pair.client.write(client_conn, s, b"foo"), Err(WriteError::Stopped { error_code: ERROR }));
 }
