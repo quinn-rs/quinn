@@ -104,9 +104,9 @@ where
         }
     }
 
-    pub(crate) fn handle_handshake(&mut self, rsp: &Packet) -> Option<Packet> {
-        self.dst_cid = rsp.dst_cid();
-        let tls_frame = rsp.payload
+    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> Option<Packet> {
+        self.dst_cid = p.dst_cid();
+        let tls_frame = p.payload
             .iter()
             .filter_map(|f| match *f {
                 Frame::Stream(ref f) => Some(f),
@@ -124,7 +124,7 @@ where
 
         Some(self.build_handshake_packet(vec![
             Frame::Ack(AckFrame {
-                largest: rsp.number(),
+                largest: p.number(),
                 ack_delay: 0,
                 blocks: vec![Ack::Ack(0)],
             }),
