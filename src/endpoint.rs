@@ -832,6 +832,10 @@ impl Endpoint {
         }
         State::Established(mut state) => {
             let id = self.connections[conn.0].local_id.clone();
+            if let Header::Long { .. } = packet.header {
+                trace!(self.log, "discarding unprotected packet"; "connection" => %id);
+                return State::Established(state);
+            }
             let (payload, number) = match self.connections[conn.0].decrypt_packet(false, packet) {
                 Ok(x) => x,
                 Err(None) => {
@@ -1302,7 +1306,11 @@ impl Endpoint {
                 trace!(self.log, "write"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0, "len" => n)
             }
             Err(WriteError::Blocked) => {
-                trace!(self.log, "write blocked"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0)
+                if self.connections[conn.0].congestion_blocked() {
+                    trace!(self.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].local_id);
+                } else {
+                    trace!(self.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0);
+                }
             }
             _ => {}
         }
