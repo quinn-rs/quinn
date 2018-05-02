@@ -168,6 +168,14 @@ impl ConnectionId {
         (&mut res.bytes[..bytes.len()]).clone_from_slice(bytes);
         res
     }
+
+    pub fn cil(&self) -> u8 {
+        if self.len > 0 {
+            self.len - 3
+        } else {
+            self.len
+        }
+    }
 }
 
 impl Deref for ConnectionId {

@@ -179,7 +179,7 @@ impl Codec for Header {
             } => {
                 buf.put_u8(128 | ptype.to_byte());
                 buf.put_u32::<BigEndian>(version);
-                buf.put_u8(dst_cid.len << 4 | src_cid.len);
+                buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
                 buf.put_slice(&dst_cid);
                 buf.put_slice(&src_cid);
                 VarLen(len).encode(buf);
@@ -195,7 +195,14 @@ impl Codec for Header {
             let cils = buf.get_u8();
 
             let (dst_cid, src_cid, used) = {
-                let (dcil, scil) = ((cils >> 4) as usize, (cils & 15) as usize);
+                let (mut dcil, mut scil) = ((cils >> 4) as usize, (cils & 15) as usize);
+                if dcil > 0 {
+                    dcil += 3;
+                }
+                if scil > 0 {
+                    scil += 3;
+                }
+
                 let bytes = buf.bytes();
                 let dst_cid = ConnectionId::new(&bytes[..dcil]);
                 let src_cid = ConnectionId::new(&bytes[dcil..dcil + scil]);
