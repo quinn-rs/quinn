@@ -6,9 +6,10 @@ use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
 use crypto::Secret;
+use endpoint::Endpoint;
 use packet::Packet;
 use tls::{ClientTls, ServerTls};
-use types::{ConnectionId, Endpoint, Side};
+use types::{ConnectionId, Side};
 
 use self::untrusted::Input;
 
