@@ -2600,6 +2600,7 @@ enum PacketNumber {
 
 impl PacketNumber {
     fn new(n: u64, largest_acked: u64) -> Self {
+        if largest_acked == 0 { return PacketNumber::U32(n as u32); }
         let range = (n - largest_acked) / 2;
         if range < 1 << 8 {
             PacketNumber::U8(n as u8)
