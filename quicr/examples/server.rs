@@ -1,5 +1,4 @@
 extern crate tokio;
-extern crate tokio_timer;
 extern crate quicr;
 #[macro_use]
 extern crate failure;
@@ -19,7 +18,8 @@ use std::rc::Rc;
 use std::ascii;
 
 use futures::{Future, Stream};
-use tokio::executor::current_thread::{self, CurrentThread};
+use tokio::executor::current_thread;
+use tokio::runtime::current_thread::Runtime;
 use failure::{ResultExt, Fail};
 use structopt::StructOpt;
 
@@ -84,14 +84,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let root = Rc::new(options.root);
     if !root.exists() { bail!("root path does not exist"); }
 
-    let reactor = tokio::reactor::Reactor::new()?;
-    let handle = reactor.handle();
-    let timer = tokio_timer::Timer::new(reactor);
+    let mut runtime = Runtime::new()?;
 
     let mut builder = quicr::Endpoint::new();
-    builder.reactor(&handle)
-        .timer(timer.handle())
-        .logger(log.clone())
+    builder.logger(log.clone())
         .config(quicr::Config {
             protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
@@ -116,9 +112,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
 
     let (_, driver, incoming) = builder.bind("[::]:4433")?;
-    let mut executor = CurrentThread::new_with_park(timer);
 
-    executor.spawn(incoming.for_each(move |conn| {
+    runtime.spawn(incoming.for_each(move |conn| {
         let quicr::NewConnection { incoming, connection } = conn;
         let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
         info!(log, "got connection";
@@ -168,7 +163,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         Ok(())
     }));
 
-    executor.block_on(driver).map_err(|e| e.into_inner().unwrap())?;
+    runtime.block_on(driver)?;
 
     Ok(())
 }

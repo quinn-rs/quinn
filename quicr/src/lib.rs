@@ -7,30 +7,21 @@
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
 //! The futures and streams defined in this crate are not `Send` because they necessarily share state with eachother. As
-//! a result, they must be spawned using an executor that operates on the same thread that they were constructed, such
-//! as with `tokio::executor::current_thread`. The standard tokio runtime offloads futures to a threadpool, so its
-//! components must instead be pieced together by hand as follows:
+//! a result, they must be spawned on a single-threaded tokio runtime.
 //!
 //! ```
 //! extern crate tokio;
-//! extern crate tokio_timer;
 //! extern crate quicr;
 //! extern crate futures;
 //!
 //! use futures::Future;
 //!
 //! fn main() {
-//!   let reactor = tokio::reactor::Reactor::new().unwrap();
-//!   let reactor_handle = reactor.handle();
-//!   let timer = tokio_timer::Timer::new(reactor);
-//!   let timer_handle = timer.handle();
-//!   let mut executor = tokio::executor::current_thread::CurrentThread::new_with_park(timer);
-//!
+//!   let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
 //!   let mut builder = quicr::Endpoint::new();
-//!   builder.reactor(&reactor_handle).timer(timer_handle);
+//!   // <configure builder>
 //!   let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
-//!
-//!   executor.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+//!   runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
 //!   // ...
 //! }
 //! ```
@@ -62,7 +53,7 @@ use std::borrow::Cow;
 
 use tokio_udp::UdpSocket;
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_timer::{Delay, timer};
+use tokio_timer::Delay;
 use slog::Logger;
 use futures::{Future, Poll, Async};
 use futures::Stream as FuturesStream;
@@ -111,7 +102,6 @@ impl From<quicr::EndpointError> for Error {
 
 struct EndpointInner {
     log: Logger,
-    timer: timer::Handle,
     socket: UdpSocket,
     inner: quicr::Endpoint,
     outgoing: VecDeque<(SocketAddrV6, Box<[u8]>)>,
@@ -202,7 +192,6 @@ pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
 /// A helper for constructing an `Endpoint`.
 pub struct EndpointBuilder<'a> {
     reactor: Option<&'a tokio_reactor::Handle>,
-    timer: Option<timer::Handle>,
     logger: Logger,
     listen: Option<ListenKeys>,
     config: Config,
@@ -213,7 +202,6 @@ pub struct EndpointBuilder<'a> {
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
     pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self { self.reactor = Some(handle); self }
-    pub fn timer(&mut self, handle: timer::Handle) -> &mut Self { self.timer = Some(handle); self }
     pub fn logger(&mut self, logger: Logger) -> &mut Self { self.logger = logger; self }
     pub fn config(&mut self, config: Config) -> &mut Self { self.config = config; self }
 
@@ -265,7 +253,6 @@ impl<'a> EndpointBuilder<'a> {
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
         let (send, recv) = mpsc::unbounded();
         let rc = Rc::new(RefCell::new(EndpointInner {
-            timer: self.timer.unwrap_or_else(|| timer::Handle::current()),
             log: self.logger.clone(),
             socket: socket,
             inner: quicr::Endpoint::new(self.logger, self.config, cert_config, self.listen)?,
@@ -293,7 +280,6 @@ impl Endpoint {
     /// Begin constructing an `Endpoint`
     pub fn new<'a>() -> EndpointBuilder<'a> { EndpointBuilder {
         reactor: None,
-        timer: None,
         logger: Logger::root(slog::Discard, o!()),
         listen: None,
         config: Config::default(),
@@ -451,7 +437,7 @@ impl Future for Driver {
                         endpoint.timers.push(Timer {
                             conn: connection,
                             ty: timer,
-                            delay: endpoint.timer.delay(instant),
+                            delay: Delay::new(instant),
                             cancel: None,
                         });
                     }
@@ -474,7 +460,7 @@ impl Future for Driver {
                         endpoint.timers.push(Timer {
                             conn: connection,
                             ty: timer,
-                            delay: endpoint.timer.delay(instant),
+                            delay: Delay::new(instant),
                             cancel: Some(recv),
                         });
                     }

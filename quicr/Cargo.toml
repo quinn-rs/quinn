@@ -28,7 +28,7 @@ bytes = "0.4.7"
 rand = "0.4"
 
 [dev-dependencies]
-tokio = "0.1.5"
+tokio = "0.1.6"
 slog-term = "2"
 url = "1.7"
 structopt = "0.2.7"

@@ -1,5 +1,4 @@
 extern crate tokio;
-extern crate tokio_timer;
 extern crate quicr;
 #[macro_use]
 extern crate failure;
@@ -17,7 +16,7 @@ use std::time::{Instant, Duration};
 use std::path::PathBuf;
 
 use futures::Future;
-use tokio::executor::current_thread::CurrentThread;
+use tokio::runtime::current_thread::Runtime;
 use url::Url;
 use structopt::StructOpt;
 
@@ -55,14 +54,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let url = options.url;
     let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
-    let reactor = tokio::reactor::Reactor::new()?;
-    let handle = reactor.handle();
-    let timer = tokio_timer::Timer::new(reactor);
+    let mut runtime = Runtime::new()?;
 
     let mut builder = quicr::Endpoint::new();
-    builder.reactor(&handle)
-        .timer(timer.handle())
-        .logger(log.clone())
+    builder.logger(log.clone())
         .config(quicr::Config {
             protocols: vec![b"hq-11"[..].into()],
             keylog: options.keylog,
@@ -70,13 +65,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             ..quicr::Config::default()
         });
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
+    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
-    let mut executor = CurrentThread::new_with_park(timer);
     let request = format!("GET {}\r\n", url.path());
-
     let start = Instant::now();
-    executor.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
-    executor.block_on(
+    runtime.block_on(
         endpoint.connect(&remote, url.host_str().map(|x| x.as_bytes()))
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |(conn, _)| {
@@ -84,6 +77,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let stream = conn.open_bi();
                 stream.map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| {
+                        eprintln!("stream opened at {}", duration_secs(&start.elapsed()));
                         tokio::io::write_all(stream, request.as_bytes().to_owned()).map_err(|e| format_err!("failed to send request: {}", e))
                     })
                     .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
@@ -102,7 +96,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     })
                     .map(|()| eprintln!("drained"))
             })
-    ).map_err(|e| e.into_inner().unwrap())?;
+    )?;
 
     Ok(())
 }
