@@ -444,7 +444,7 @@ impl Endpoint {
         if let Header::Long { ty, destination_id, source_id, number } = packet.header {
             // MAY buffer non-initial packets a little for better 0RTT behavior
             if ty == packet::INITIAL && datagram_len >= MIN_INITIAL_SIZE {
-                self.handle_initial(remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
+                self.handle_initial(now, remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
                 return;
             }
         }
@@ -508,7 +508,7 @@ impl Endpoint {
         ConnectionHandle(i)
     }
 
-    fn handle_initial(&mut self, remote: SocketAddrV6, dest_id: ConnectionId, source_id: ConnectionId,
+    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, dest_id: ConnectionId, source_id: ConnectionId,
                       packet_number: u32, header: &[u8], payload: &[u8])
     {
         let crypto = CryptoContext::handshake(&dest_id, Side::Server);
@@ -546,9 +546,8 @@ impl Endpoint {
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                                 tls, clienthello_packet: None, remote_id_set: true,
                             }));
-                            self.connections[conn.0].rx_packet = packet_number as u64;
                             self.connections[conn.0].set_params(&self.config, params);
-                            self.connections[conn.0].pending_acks.insert_one(packet_number as u64);
+                            self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                             self.dirty_conns.insert(conn);
                             self.incoming_handshakes += 1;
                         } else {
