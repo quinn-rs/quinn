@@ -254,3 +254,15 @@ fn stop_stream() {
 
     assert_matches!(pair.client.write(client_conn, s, b"foo"), Err(WriteError::Stopped { error_code: ERROR }));
 }
+
+#[test]
+fn reject_self_signed_cert() {
+    let mut pair = Pair::new(Config::default(), Config::default());
+    info!(pair.log, "connecting");
+    let client_conn = pair.client.connect(pair.server_addr, None);
+    pair.drive();
+    assert_matches!(pair.client.poll(),
+                    Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
+                        error_code: TransportError::TLS_HANDSHAKE_FAILED
+                    }})) if conn == client_conn);
+}

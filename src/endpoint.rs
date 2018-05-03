@@ -133,7 +133,7 @@ impl Default for Config {
             loss_reduction_factor: 0x8000, // 1/2
             protocols: Vec::new(),
 
-            accept_insecure_certs: true,
+            accept_insecure_certs: false,
             keylog: None,
         }
     }
