@@ -57,14 +57,10 @@ struct Context {
 impl Context {
     fn new(log: Logger, mut remote_host: String) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
-        let mut protocols = Vec::new();
-        const PROTO: &[u8] = b"hq-11";
-        protocols.push(PROTO.len() as u8);
-        protocols.extend_from_slice(PROTO);
         let remote = normalize(remote_host.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?);
         if let Some(x) = remote_host.rfind(':') { remote_host.truncate(x); }
         let config = Config {
-            protocols,
+            protocols: vec![b"hq-11"[..].into()],
             //receive_window: 256,
             //stream_receive_window: 256,
             ..Config::default()
