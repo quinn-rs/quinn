@@ -45,8 +45,16 @@ pub struct Config {
     /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's own idle timeout.
     pub idle_timeout: u16,
     /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum desired
+    /// throughput. Setting this smaller than `receive_window` helps ensure that a single stream doesn't monopolize
+    /// receive buffers, which may otherwise occur if the application chooses not to read from a large stream for a time
+    /// while still requiring data on other streams.
     pub stream_receive_window: u32,
     /// Maximum number of bytes the peer may transmit across all streams of a connection before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum desired
+    /// throughput. Larger values can be useful to allow maximum throughput within a stream while another is blocked.
     pub receive_window: u32,
     /// Maximum number of incoming connections to buffer.
     ///

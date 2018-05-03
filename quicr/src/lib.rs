@@ -10,22 +10,41 @@
 //! a result, they must be spawned on a single-threaded tokio runtime.
 //!
 //! ```
-//! extern crate tokio;
-//! extern crate quicr;
-//! extern crate futures;
-//!
-//! use futures::Future;
-//!
-//! fn main() {
-//!   let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-//!   let mut builder = quicr::Endpoint::new();
-//!   // <configure builder>
-//!   let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
-//!   runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-//!   // ...
-//! }
+//! # extern crate tokio;
+//! # extern crate quicr;
+//! # extern crate futures;
+//! # use futures::Future;
+//! # fn main() {
+//! let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+//! let mut builder = quicr::Endpoint::new();
+//! // <configure builder>
+//! let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
+//! runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+//! // ...
+//! # }
 //! ```
-
+//! # About QUIC
+//!
+//! A QUIC connection is an association between two endpoints. The endpoint which initiates the connection is termed the
+//! client, and the endpoint which accepts it is termed the server. A single endpoint may function as both client and
+//! server for different connections, for example in a peer-to-peer application. To communicate application data, each
+//! endpoint may open streams up to a limit dictated by its peer. Typically, that limit is increased as old streams are
+//! finished.
+//!
+//! Streams may be unidirectional or bidirectional, and are cheap to create and disposable. For example, a traditionally
+//! datagram-oriented application could use a new stream for every message it wants to send, no longer needing to worry
+//! about MTUs. Bidirectional streams behave much like a traditional TCP connection, and are useful for sending messages
+//! that have an immediate response, such as an HTTP request. Stream data is delivered reliably, and there is no
+//! ordering enforced between data on different streams.
+//!
+//! By avoiding head-of-line blocking and providing unified congestion control across all streams of a connection, QUIC
+//! is able to provide higher throughput and lower latency than one or multiple TCP connections between the same two
+//! hosts, while providing more useful behavior than raw UDP sockets.
+//!
+//! QUIC uses encryption and identity verification built directly on TLS 1.3. Just as with a TLS server, it is useful
+//! for a QUIC server to be identified by a certificate signed by a trusted authority. If this is infeasible--for
+//! example, if servers are short-lived or not associated with a domain name--then as with TLS, self-signed certificates
+//! can be used to provide encryption alone.
 #![warn(missing_docs)]
 
 extern crate quicr_core as quicr;
