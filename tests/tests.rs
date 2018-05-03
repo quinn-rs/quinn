@@ -74,20 +74,27 @@ struct Pair {
     client_addr: SocketAddrV6,
 }
 
+impl Default for Pair {
+    fn default() -> Self {
+        Pair::new(Config { max_remote_uni_streams: 32, max_remote_bi_streams: 32, ..Config::default() },
+                  Config { accept_insecure_certs: true, ..Config::default() })
+    }
+}
+
 impl Pair {
     fn new(server_config: Config, client_config: Config) -> Self {
         let log = logger();
         let server_addr = "[::1]:42".parse().unwrap();
         let server = Endpoint::new(
-            log.new(o!("peer" => "server")),
-            Config { accept_insecure_certs: true, ..server_config },
+            log.new(o!("side" => "Server")),
+            server_config,
             Some(CertConfig {
                 private_key: &KEY,
                 cert: &CERT,
             }),
             Some(*LISTEN_KEYS)).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("peer" => "client")), client_config, None, None).unwrap();
+        let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None, None).unwrap();
 
         Self { log, server_addr, server, client_addr, client }
     }
@@ -97,24 +104,34 @@ impl Pair {
             let s = self.server.poll_io(0);
             let c = self.client.poll_io(0);
             if s.is_none() && c.is_none() { break; }
-            match s {
-                None => {}
-                Some(Io::Transmit { destination, packet }) => {
-                    assert_eq!(destination, self.client_addr);
-                    trace!(self.log, "server -> client");
-                    self.client.handle(0, self.server_addr, Vec::from(packet).into());
-                }
-                Some(Io::TimerStart { .. }) | Some(Io::TimerStop { .. }) => {} // No time passes
+            if let Some(x) = s { self.handle(Side::Client, x); }
+            if let Some(x) = c { self.handle(Side::Server, x); }
+        }
+    }
+
+    fn handle(&mut self, side: Side, io: Io) {
+        let endpoint = match side { Side::Client => &mut self.client, Side::Server => &mut self.server };
+        let src =  match !side { Side::Client => self.client_addr, Side::Server => self.server_addr };
+        let dest = match  side { Side::Client => self.client_addr, Side::Server => self.server_addr };
+        match io {
+            Io::Transmit { destination, packet } => {
+                trace!(self.log, "recv"; "side" => ?!side);
+                assert_eq!(destination, dest);
+                endpoint.handle(0, src, Vec::from(packet).into())
             }
-            match c {
-                None => {}
-                Some(Io::Transmit { destination, packet }) => {
-                    assert_eq!(destination, self.server_addr);
-                    trace!(self.log, "client -> server");
-                    self.server.handle(0, self.client_addr, Vec::from(packet).into())
-                }
-                Some(Io::TimerStart { .. }) | Some(Io::TimerStop { .. }) => {} // No time passes
-            }
+            Io::TimerStart { .. } | Io::TimerStop { .. } => {} // No time passes
+        }
+    }
+
+    fn drive_cs(&mut self) {
+        while let Some(x) = self.client.poll_io(0) {
+            self.handle(Side::Server, x);
+        }
+    }
+
+    fn drive_sc(&mut self) {
+        while let Some(x) = self.server.poll_io(0) {
+            self.handle(Side::Client, x);
         }
     }
 
@@ -122,7 +139,7 @@ impl Pair {
         info!(self.log, "connecting");
         let client_conn = self.client.connect(self.server_addr, None);
         self.drive();
-        let server_conn = if let Some(c) = self.server.accept() { c.handle } else { panic!("server didn't connect"); };
+        let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
         (client_conn, server_conn)
     }
@@ -157,23 +174,24 @@ fn version_negotiate() {
 }
 
 #[test]
-fn connect() {
-    let mut pair = Pair::new(Config::default(), Config::default());
+fn lifecycle() {
+    let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
     pair.client.close(0, client_conn, 42, REASON.into());
     pair.drive();
-    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
-        reason: ApplicationClose { error_code: 42, ref reason }
-    } })) if reason == REASON);
+    assert_matches!(pair.server.poll(),
+                    Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
+                        reason: ApplicationClose { error_code: 42, ref reason }
+                    }})) if reason == REASON);
     assert_matches!(pair.client.poll(), None);
 }
 
 #[test]
 fn stateless_reset() {
-    let mut pair = Pair::new(Config::default(), Config::default());
+    let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
     pair.server = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
@@ -191,7 +209,7 @@ fn stateless_reset() {
 
 #[test]
 fn finish_stream() {
-    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
@@ -211,7 +229,7 @@ fn finish_stream() {
 
 #[test]
 fn reset_stream() {
-    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
@@ -234,7 +252,7 @@ fn reset_stream() {
 
 #[test]
 fn stop_stream() {
-    let mut pair = Pair::new(Config { max_remote_uni_streams: 1, ..Config::default()}, Config::default());
+    let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
@@ -265,4 +283,23 @@ fn reject_self_signed_cert() {
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
                         error_code: TransportError::TLS_HANDSHAKE_FAILED
                     }})) if conn == client_conn);
+}
+
+#[test]
+fn congestion() {
+    let mut pair = Pair::default();
+    let (client_conn, _) = pair.connect();
+
+    let initial_congestion_state = pair.client.get_congestion_state(client_conn);
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    loop {
+        match pair.client.write(client_conn, s, &[42; 1024]) {
+            Ok(n) => { assert!(n <= 1024); pair.drive_cs(); }
+            Err(WriteError::Blocked) => { break; }
+            Err(e) => { panic!("unexpected write error: {}", e); }
+        }
+    }
+    pair.drive_sc();
+    assert!(pair.client.get_congestion_state(client_conn) >= initial_congestion_state);
+    pair.client.write(client_conn, s, &[42; 1024]).unwrap();
 }

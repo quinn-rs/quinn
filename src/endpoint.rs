@@ -1472,6 +1472,12 @@ impl Endpoint {
         } else { None }
     }
 
+    /// Number of bytes worth of non-ack-only packets that may be sent
+    pub fn get_congestion_state(&self, conn: ConnectionHandle) -> u64 {
+        let c = &self.connections[conn.0];
+        c.congestion_window.saturating_sub(c.bytes_in_flight)
+    }
+
     pub fn accept(&mut self) -> Option<ConnectionHandle> { self.incoming.pop_front() }
 }
 
