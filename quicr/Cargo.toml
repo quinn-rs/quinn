@@ -1,6 +1,6 @@
 [package]
 name = "quicr"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/Ralith/quicr"
@@ -14,7 +14,7 @@ categories = [ "network-programming", "asynchronous" ]
 maintenance = { status = "experimental" }
 
 [dependencies]
-quicr-core = { path = "..", version = "0.2.0" }
+quicr-core = { path = "..", version = "0.3.0" }
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
 tokio-io = "0.1"
