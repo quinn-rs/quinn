@@ -59,16 +59,31 @@ impl Rand for ConnectionId {
     }
 }
 
-pub enum TransportParameter {
-    InitialMaxStreamData(u32),
-    InitialMaxData(u32),
-    InitialMaxStreamIdBidi(u32),
-    IdleTimeout(u16),
-    OmitConnectionId,
-    MaxPacketSize(u16),
-    StatelessResetToken(Vec<u8>),
-    AckDelayExponent(u8),
-    InitialMaxStreamIdUni(u32),
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransportParameters {
+    pub max_stream_data: u32,                    // 0x00
+    pub max_data: u32,                           // 0x01
+    pub max_streams_bidi: u32,                   // 0x02
+    pub idle_timeout: u16,                       // 0x03
+    pub max_packet_size: u16,                    // 0x05
+    pub stateless_reset_token: Option<[u8; 16]>, // 0x06
+    pub ack_delay_exponent: u8,                  // 0x07
+    pub max_stream_id_uni: u32,                  // 0x08
+}
+
+impl Default for TransportParameters {
+    fn default() -> Self {
+        Self {
+            max_stream_data: 131072,
+            max_data: 1048576,
+            max_streams_bidi: 0,
+            idle_timeout: 300,
+            max_packet_size: 65527,
+            stateless_reset_token: None,
+            ack_delay_exponent: 3,
+            max_stream_id_uni: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
