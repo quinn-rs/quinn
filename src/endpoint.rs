@@ -2135,9 +2135,9 @@ impl Connection {
             // ACK
             // TODO: Don't ack protected packets in handshake packets
             if !self.pending_acks.is_empty() {
-                trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>());
-                let delay = now - self.rx_packet_time;
-                frame::Ack::encode(delay >> ACK_DELAY_EXPONENT, &self.pending_acks, &mut buf);
+                let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
+                trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
+                frame::Ack::encode(delay, &self.pending_acks, &mut buf);
             }
             acks = self.pending_acks.clone();
 
