@@ -1,7 +1,8 @@
 use rustls::internal::msgs::codec::{self, Codec};
-use rustls::{ClientConfig, NoClientAuth, ProtocolVersion};
-use rustls::quic::{ClientSession, QuicSecret, ServerSession, TLSResult};
+use rustls::{ClientConfig, NoClientAuth, ProtocolVersion, TLSError};
 
+use std::io::Cursor;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use crypto::Secret;
@@ -10,106 +11,97 @@ use types::{DRAFT_11, TransportParameters};
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::{Certificate, PrivateKey, ServerConfig, SupportedCipherSuite, TLSError};
+pub use rustls::quic::{QuicClientTls, QuicServerTls};
+pub use rustls::{Certificate, PrivateKey, ServerConfig, Session};
 
-pub struct ClientTls {
-    pub session: ClientSession,
+pub fn client_session(config: Option<ClientConfig>) -> QuicClientTls {
+    QuicClientTls::new(&Arc::new(config.unwrap_or(build_client_config(None))))
 }
 
-impl ClientTls {
-    pub fn new() -> Self {
-        Self::with_config(Self::build_config(None))
-    }
+pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
+    let mut config = ClientConfig::new();
+    let anchors = anchors.unwrap_or(&webpki_roots::TLS_SERVER_ROOTS);
+    config.root_store.add_server_trust_anchors(anchors);
+    config.versions = vec![ProtocolVersion::TLSv1_3];
+    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+    config
+}
 
-    pub fn with_config(config: ClientConfig) -> Self {
-        Self {
-            session: ClientSession::new(&Arc::new(config)),
-        }
-    }
+pub fn start_handshake(tls: &mut QuicClientTls, hostname: &str) -> Result<TlsResult, TLSError> {
+    let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
+    let params = ClientTransportParameters {
+        initial_version: 1,
+        parameters: TransportParameters::default(),
+    };
+    tls.start_handshake(pki_server_name, to_vec(params));
+    process_handshake_messages(tls, None)
+}
 
-    pub fn build_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
-        let mut config = ClientConfig::new();
-        let anchors = anchors.unwrap_or(&webpki_roots::TLS_SERVER_ROOTS);
-        config.root_store.add_server_trust_anchors(anchors);
-        config.versions = vec![ProtocolVersion::TLSv1_3];
-        config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
-        config
-    }
-
-    pub fn get_handshake(&mut self, hostname: &str) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
-        let params = ClientTransportParameters {
-            initial_version: 1,
+pub fn server_session(config: &Arc<ServerConfig>) -> QuicServerTls {
+    QuicServerTls::new(
+        config,
+        to_vec(ServerTransportParameters {
+            negotiated_version: DRAFT_11,
+            supported_versions: vec![DRAFT_11],
             parameters: TransportParameters::default(),
-        };
-        Ok(process_tls_result(self.session.get_handshake(pki_server_name, to_vec(params))?))
+        }),
+    )
+}
+
+pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
+    let mut config = ServerConfig::new(NoClientAuth::new());
+    config.set_protocols(&[ALPN_PROTOCOL.into()]);
+    config.set_single_cert(cert_chain, key);
+    config
+}
+
+pub fn process_handshake_messages<T, S>(
+    session: &mut T,
+    msgs: Option<&[u8]>,
+) -> Result<TlsResult, TLSError>
+where
+    T: DerefMut + Deref<Target = S>,
+    S: Session,
+{
+    if let Some(data) = msgs {
+        let mut read = Cursor::new(data);
+        let did_read = session.read_tls(&mut read).unwrap();
+        debug_assert_eq!(did_read, data.len());
+        session.process_new_packets()?;
     }
-}
 
-impl QuicTls for ClientTls {
-    fn process_handshake_messages(
-        &mut self,
-        input: &[u8],
-    ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        Ok(process_tls_result(self.session.process_handshake_messages(input)?))
-    }
-}
+    let key_ready = if !session.is_handshaking() {
+        let suite = session
+            .get_negotiated_ciphersuite()
+            .ok_or(TLSError::HandshakeNotComplete)
+            .unwrap();
 
-pub struct ServerTls {
-    session: ServerSession,
-}
+        let mut secret = vec![0u8; suite.enc_key_len];
+        session.export_keying_material(&mut secret, b"EXPORTER-QUIC client 1rtt", None)?;
+        Some((suite, secret))
+    } else {
+        None
+    };
 
-impl ServerTls {
-    pub fn with_config(config: &Arc<ServerConfig>) -> Self {
-        Self {
-            session: ServerSession::new(
-                config,
-                to_vec(ServerTransportParameters {
-                    negotiated_version: DRAFT_11,
-                    supported_versions: vec![DRAFT_11],
-                    parameters: TransportParameters::default(),
-                }),
-            ),
+    let mut messages = Vec::new();
+    loop {
+        let size = session.write_tls(&mut messages).unwrap();
+        if size == 0 {
+            break;
         }
     }
 
-    pub fn build_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
-        let mut config = ServerConfig::new(NoClientAuth::new());
-        config.set_protocols(&[ALPN_PROTOCOL.into()]);
-        config.set_single_cert(cert_chain, key);
-        config
-    }
-}
-
-impl QuicTls for ServerTls {
-    fn process_handshake_messages(
-        &mut self,
-        input: &[u8],
-    ) -> Result<(Vec<u8>, Option<Secret>), TLSError> {
-        Ok(process_tls_result(self.session.get_handshake(input)?))
-    }
-}
-
-fn process_tls_result(res: TLSResult) -> (Vec<u8>, Option<Secret>) {
-    let TLSResult {
-        messages,
-        key_ready,
-    } = res;
-    let secret = if let Some((suite, QuicSecret::For1RTT(secret))) = key_ready {
+    let secret = if let Some((suite, secret)) = key_ready {
         let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
         Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
     } else {
         None
     };
-    (messages, secret)
+
+    Ok((messages, secret))
 }
 
-pub trait QuicTls {
-    fn process_handshake_messages(
-        &mut self,
-        input: &[u8],
-    ) -> Result<(Vec<u8>, Option<Secret>), TLSError>;
-}
+type TlsResult = (Vec<u8>, Option<Secret>);
 
 macro_rules! try_ret(
     ($e:expr) => (match $e { Some(e) => e, None => return None })

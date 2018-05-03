@@ -2,7 +2,7 @@ use futures::{Async, Future, Poll};
 
 use endpoint::Endpoint;
 use packet::Packet;
-use tls::ClientTls;
+use tls;
 use types::Side;
 
 use std::io;
@@ -14,7 +14,7 @@ pub struct QuicStream {}
 
 impl QuicStream {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let mut endpoint = Endpoint::new(ClientTls::new(), Side::Client, None);
+        let mut endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
         let packet = endpoint.initial(server);
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&endpoint.encode_key(&packet.header), &mut buf);
@@ -33,7 +33,7 @@ impl QuicStream {
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
-    endpoint: Endpoint<ClientTls>,
+    endpoint: Endpoint<tls::QuicClientTls>,
     socket: UdpSocket,
     buf: Vec<u8>,
     state: ConnectionState,

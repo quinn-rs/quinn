@@ -1,13 +1,14 @@
 use rand::{thread_rng, Rng};
 
 use std::mem;
+use std::ops::{Deref, DerefMut};
 
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
 use packet::{Header, LongType, Packet, ShortType};
-use tls::{ClientTls, QuicTls};
-use types::{ConnectionId, DRAFT_11, GENERATED_CID_LENGTH, Side};
+use tls;
+use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
 
 pub struct Endpoint<T> {
     side: Side,
@@ -19,9 +20,10 @@ pub struct Endpoint<T> {
     tls: T,
 }
 
-impl<T> Endpoint<T>
+impl<T, S> Endpoint<T>
 where
-    T: QuicTls,
+    T: DerefMut + Deref<Target = S>,
+    S: tls::Session,
 {
     pub fn new(tls: T, side: Side, secret: Option<Secret>) -> Self {
         let mut rng = thread_rng();
@@ -144,9 +146,8 @@ where
             .next()
             .unwrap();
 
-        let (handshake, new_secret) = self.tls
-            .process_handshake_messages(&tls_frame.data)
-            .unwrap();
+        let (handshake, new_secret) =
+            tls::process_handshake_messages(&mut self.tls, Some(&tls_frame.data)).unwrap();
         if let Some(secret) = new_secret {
             self.set_secret(secret);
         }
@@ -178,9 +179,9 @@ where
     }
 }
 
-impl Endpoint<ClientTls> {
+impl Endpoint<tls::QuicClientTls> {
     pub(crate) fn initial(&mut self, server: &str) -> Packet {
-        let (handshake, new_secret) = self.tls.get_handshake(server).unwrap();
+        let (handshake, new_secret) = tls::start_handshake(&mut self.tls, server).unwrap();
         if let Some(secret) = new_secret {
             self.set_secret(secret);
         }

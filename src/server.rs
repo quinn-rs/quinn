@@ -4,7 +4,7 @@ use crypto::Secret;
 use endpoint::Endpoint;
 use packet::{LongType, Packet};
 use types::{ConnectionId, Side};
-use tls::{self, ServerTls};
+use tls;
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io;
@@ -18,7 +18,7 @@ pub struct Server {
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<ServerTls>)>,
+    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<tls::QuicServerTls>)>,
 }
 
 impl Server {
@@ -50,7 +50,7 @@ impl Future for Server {
 
             let cid = if partial.header.ptype() == Some(LongType::Initial) {
                 let mut endpoint = Endpoint::new(
-                    ServerTls::with_config(&self.tls_config),
+                    tls::server_session(&self.tls_config),
                     Side::Server,
                     Some(Secret::Handshake(dst_cid)),
                 );
