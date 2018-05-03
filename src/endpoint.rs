@@ -2760,7 +2760,7 @@ impl Packet {
                     let len = buf.get_var()?;
                     let number = buf.get()?;
                     let header_data = packet.slice(0, buf.position() as usize);
-                    let payload = packet.slice(buf.position() as usize, (buf.position() + len) as usize);
+                    let payload = if len == 0 { Bytes::new() } else { packet.slice(buf.position() as usize, (buf.position() + len) as usize) };
                     (Packet {
                         header: Header::Long { ty, source_id, destination_id, number },
                         header_data, payload,
