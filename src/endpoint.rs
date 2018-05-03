@@ -2311,6 +2311,7 @@ impl Connection {
 
     fn set_params(&mut self, config: &Config, params: TransportParameters) {
         self.max_bi_streams = params.initial_max_streams_bidi as u64;
+        if self.side == Side::Client { self.max_bi_streams += 1; } // Account for TLS stream
         self.max_uni_streams = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
         for i in match self.side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 0..(config.max_remote_bi_streams+1) } {
