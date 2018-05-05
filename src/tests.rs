@@ -68,6 +68,14 @@ fn test_handshake() {
 }
 
 fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::QuicServerTls> {
+    Endpoint::new(
+        tls::server_session(&Arc::new(build_server_config())),
+        Side::Server,
+        Some(Secret::Handshake(hs_cid)),
+    )
+}
+
+fn build_server_config() -> tls::ServerConfig {
     let certs = {
         let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
         let mut reader = BufReader::new(f);
@@ -80,12 +88,7 @@ fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::QuicServerTls> {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let tls_config = Arc::new(tls::build_server_config(certs, keys[0].clone()));
-    Endpoint::new(
-        tls::server_session(&tls_config),
-        Side::Server,
-        Some(Secret::Handshake(hs_cid)),
-    )
+    tls::build_server_config(certs, keys[0].clone())
 }
 
 fn client_endpoint() -> Endpoint<tls::QuicClientTls> {
