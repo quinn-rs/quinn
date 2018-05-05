@@ -3,6 +3,7 @@ use rand::{thread_rng, Rng};
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
+use super::{QuicError, QuicResult};
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
@@ -136,7 +137,7 @@ where
         }
     }
 
-    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> Option<Packet> {
+    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<Option<Packet>> {
         match p.header {
             Header::Long { src_cid, .. } => {
                 self.dst_cid = src_cid;
@@ -151,25 +152,25 @@ where
                 _ => None,
             })
             .next()
-            .unwrap();
+            .ok_or_else(|| QuicError::General("no frame on stream 0 found in handshake".into()))?;
 
         let (handshake, new_secret) =
-            tls::process_handshake_messages(&mut self.tls, Some(&tls_frame.data)).unwrap();
+            tls::process_handshake_messages(&mut self.tls, Some(&tls_frame.data))?;
         if let Some(secret) = new_secret {
             self.set_secret(secret);
         }
 
         if handshake.is_empty() {
-            return Some(self.build_short_packet(vec![
+            return Ok(Some(self.build_short_packet(vec![
                 Frame::Ack(AckFrame {
                     largest: p.number(),
                     ack_delay: 0,
                     blocks: vec![Ack::Ack(0)],
                 }),
-            ]));
+            ])));
         }
 
-        Some(self.build_handshake_packet(vec![
+        Ok(Some(self.build_handshake_packet(vec![
             Frame::Ack(AckFrame {
                 largest: p.number(),
                 ack_delay: 0,
@@ -182,18 +183,18 @@ where
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
-        ]))
+        ])))
     }
 }
 
 impl Endpoint<tls::QuicClientTls> {
-    pub(crate) fn initial(&mut self, server: &str) -> Packet {
-        let (handshake, new_secret) = tls::start_handshake(&mut self.tls, server).unwrap();
+    pub(crate) fn initial(&mut self, server: &str) -> QuicResult<Packet> {
+        let (handshake, new_secret) = tls::start_handshake(&mut self.tls, server)?;
         if let Some(secret) = new_secret {
             self.set_secret(secret);
         }
 
-        self.build_initial_packet(vec![
+        Ok(self.build_initial_packet(vec![
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
@@ -201,6 +202,6 @@ impl Endpoint<tls::QuicClientTls> {
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
-        ])
+        ]))
     }
 }

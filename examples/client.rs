@@ -10,6 +10,7 @@ fn main() {
     println!(
         "RESULT: {:?}",
         quinn::Client::connect(&server, 4433)
+            .unwrap()
             .and_then(|_| {
                 println!("client is connected");
                 futures::future::ok(())

@@ -24,5 +24,8 @@ fn main() {
     };
 
     let tls_config = quinn::tls::build_server_config(certs, key[0].clone());
-    quinn::Server::new("0.0.0.0", 4433, tls_config).run();
+    quinn::Server::new("0.0.0.0", 4433, tls_config)
+        .unwrap()
+        .run()
+        .unwrap();
 }

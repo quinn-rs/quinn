@@ -1,5 +1,6 @@
 use bytes::{BigEndian, Buf, BufMut};
 
+use super::QuicResult;
 use codec::{BufLen, Codec, VarLen};
 use crypto::PacketKey;
 use frame::Frame;
@@ -26,7 +27,7 @@ impl Packet {
         self.header.number()
     }
 
-    pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) {
+    pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) -> QuicResult<()> {
         let tag_len = key.algorithm().tag_len();
         let len = self.buf_len() + tag_len;
         if len > buf.capacity() {
@@ -52,9 +53,10 @@ impl Packet {
 
         let out_len = {
             let (header_buf, mut payload) = buf.split_at_mut(payload_start);
-            key.encrypt(self.header.number(), &header_buf, &mut payload, tag_len)
+            key.encrypt(self.header.number(), &header_buf, &mut payload, tag_len)?
         };
         buf.truncate(payload_start + out_len);
+        Ok(())
     }
 
     pub fn start_decode(buf: &mut [u8]) -> PartialDecode {
@@ -82,14 +84,14 @@ impl<'a> PartialDecode<'a> {
         self.header.dst_cid()
     }
 
-    pub fn finish(self, key: &PacketKey) -> Packet {
+    pub fn finish(self, key: &PacketKey) -> QuicResult<Packet> {
         let PartialDecode {
             header,
             header_len,
             buf,
         } = self;
         let (header_buf, payload_buf) = buf.split_at_mut(header_len);
-        let decrypted = key.decrypt(header.number(), &header_buf, payload_buf);
+        let decrypted = key.decrypt(header.number(), &header_buf, payload_buf)?;
         let mut read = Cursor::new(decrypted);
 
         let mut payload = Vec::new();
@@ -98,7 +100,7 @@ impl<'a> PartialDecode<'a> {
             payload.push(frame);
         }
 
-        Packet { header, payload }
+        Ok(Packet { header, payload })
     }
 }
 

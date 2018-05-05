@@ -1,5 +1,6 @@
 use futures::{Future, Poll};
 
+use super::{QuicError, QuicResult};
 use crypto::Secret;
 use endpoint::Endpoint;
 use packet::{LongType, Packet};
@@ -7,7 +8,6 @@ use types::{ConnectionId, Side};
 use tls;
 
 use std::collections::{HashMap, hash_map::Entry};
-use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
@@ -22,27 +22,30 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(ip: &str, port: u16, tls_config: tls::ServerConfig) -> Self {
-        let addr = (ip, port).to_socket_addrs().unwrap().next().unwrap();
-        Server {
-            socket: UdpSocket::bind(&addr).unwrap(),
+    pub fn new(ip: &str, port: u16, tls_config: tls::ServerConfig) -> QuicResult<Self> {
+        let addr = (ip, port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| QuicError::General("no address found for host".into()))?;
+        Ok(Server {
+            socket: UdpSocket::bind(&addr)?,
             tls_config: Arc::new(tls_config),
             in_buf: vec![0u8; 65536],
             out_buf: vec![0u8; 65536],
             connections: HashMap::new(),
-        }
+        })
     }
 
-    pub fn run(&mut self) {
-        self.wait().unwrap();
+    pub fn run(&mut self) -> QuicResult<()> {
+        self.wait()
     }
 }
 
 impl Future for Server {
     type Item = ();
-    type Error = io::Error;
+    type Error = QuicError;
 
-    fn poll(&mut self) -> Poll<(), io::Error> {
+    fn poll(&mut self) -> Poll<(), QuicError> {
         loop {
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             let partial = Packet::start_decode(&mut self.in_buf[..len]);
@@ -70,17 +73,17 @@ impl Future for Server {
                 Entry::Occupied(mut inner) => {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
                     let key = endpoint.decode_key(&partial.header);
-                    let packet = partial.finish(&key);
+                    let packet = partial.finish(&key)?;
                     let rsp = match packet.ptype() {
                         Some(LongType::Initial) | Some(LongType::Handshake) => {
-                            endpoint.handle_handshake(&packet)
-                        },
+                            endpoint.handle_handshake(&packet)?
+                        }
                         _ => panic!("unhandled packet {:?}", packet),
                     };
 
                     if let Some(rsp) = rsp {
                         self.out_buf.truncate(0);
-                        rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf);
+                        rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
                         try_ready!(self.socket.poll_send_to(&self.out_buf, &addr));
                     }
                 }

@@ -8,6 +8,7 @@ pub use ring::aead::AES_128_GCM;
 pub use ring::digest::SHA256;
 pub use ring::hmac::SigningKey;
 
+use super::{QuicError, QuicResult};
 use types::{ConnectionId, Side};
 
 pub enum Secret {
@@ -96,20 +97,28 @@ impl PacketKey {
         ad: &[u8],
         in_out: &mut [u8],
         out_suffix_capacity: usize,
-    ) -> usize {
-        let key = SealingKey::new(self.alg, &self.data[..self.split]).unwrap();
+    ) -> QuicResult<usize> {
+        let key = SealingKey::new(self.alg, &self.data[..self.split])
+            .map_err(|_| QuicError::EncryptError)?;
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
         let nonce = &mut nonce_buf[..self.alg.nonce_len()];
         self.write_nonce(number, nonce);
-        aead::seal_in_place(&key, &*nonce, ad, in_out, out_suffix_capacity).unwrap()
+        aead::seal_in_place(&key, &*nonce, ad, in_out, out_suffix_capacity)
+            .map_err(|_| QuicError::EncryptError)
     }
 
-    pub fn decrypt<'a>(&self, number: u32, ad: &[u8], input: &'a mut [u8]) -> &'a [u8] {
-        let key = OpeningKey::new(self.alg, &self.data[..self.split]).unwrap();
+    pub fn decrypt<'a>(
+        &self,
+        number: u32,
+        ad: &[u8],
+        input: &'a mut [u8],
+    ) -> QuicResult<&'a mut [u8]> {
+        let key = OpeningKey::new(self.alg, &self.data[..self.split])
+            .map_err(|_| QuicError::DecryptError)?;
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
         let nonce = &mut nonce_buf[..self.alg.nonce_len()];
         self.write_nonce(number, nonce);
-        aead::open_in_place(&key, &*nonce, ad, 0, input).unwrap()
+        aead::open_in_place(&key, &*nonce, ad, 0, input).map_err(|_| QuicError::DecryptError)
     }
 }
 

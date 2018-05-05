@@ -5,6 +5,8 @@ authors = ["Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 
 [dependencies]
 bytes = "0.4"
+failure = "0.1"
+failure_derive = "0.1"
 futures = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"

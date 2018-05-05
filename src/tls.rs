@@ -5,6 +5,7 @@ use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use super::{QuicError, QuicResult};
 use crypto::Secret;
 use types::{DRAFT_11, TransportParameters};
 
@@ -27,8 +28,9 @@ pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientCon
     config
 }
 
-pub fn start_handshake(tls: &mut QuicClientTls, hostname: &str) -> Result<TlsResult, TLSError> {
-    let pki_server_name = DNSNameRef::try_from_ascii_str(hostname).unwrap();
+pub fn start_handshake(tls: &mut QuicClientTls, hostname: &str) -> QuicResult<TlsResult> {
+    let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
+        .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
     let params = ClientTransportParameters {
         initial_version: 1,
         parameters: TransportParameters::default(),
@@ -58,14 +60,14 @@ pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> Ser
 pub fn process_handshake_messages<T, S>(
     session: &mut T,
     msgs: Option<&[u8]>,
-) -> Result<TlsResult, TLSError>
+) -> QuicResult<TlsResult>
 where
     T: DerefMut + Deref<Target = S>,
     S: Session,
 {
     if let Some(data) = msgs {
         let mut read = Cursor::new(data);
-        let did_read = session.read_tls(&mut read).unwrap();
+        let did_read = session.read_tls(&mut read)?;
         debug_assert_eq!(did_read, data.len());
         session.process_new_packets()?;
     }
@@ -73,8 +75,7 @@ where
     let key_ready = if !session.is_handshaking() {
         let suite = session
             .get_negotiated_ciphersuite()
-            .ok_or(TLSError::HandshakeNotComplete)
-            .unwrap();
+            .ok_or(TLSError::HandshakeNotComplete)?;
 
         let mut secret = vec![0u8; suite.enc_key_len];
         session.export_keying_material(&mut secret, b"EXPORTER-QUIC client 1rtt", None)?;
@@ -85,7 +86,7 @@ where
 
     let mut messages = Vec::new();
     loop {
-        let size = session.write_tls(&mut messages).unwrap();
+        let size = session.write_tls(&mut messages)?;
         if size == 0 {
             break;
         }
