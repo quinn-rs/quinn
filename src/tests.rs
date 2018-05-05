@@ -1,19 +1,34 @@
 extern crate untrusted;
 
+use futures::Future;
+
 use rustls::internal::pemfile;
 
 use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
 
+use tokio::executor::current_thread::CurrentThread;
+
+use client::ConnectFuture;
 use crypto::Secret;
 use endpoint::Endpoint;
 use packet::Packet;
+use server::Server;
 use tls;
 use types::{ConnectionId, Side};
 
 use self::untrusted::Input;
 
 use webpki;
+
+#[test]
+fn test_client_connect_resolves() {
+    let server = Server::new("0.0.0.0", 4433, build_server_config());
+    let connector = ConnectFuture::new(client_endpoint(), "localhost", 4433);
+    let mut exec = CurrentThread::new();
+    exec.spawn(server.map_err(|_| ()));
+    exec.block_on(connector).unwrap();
+}
 
 #[test]
 fn test_encoded_handshake() {
