@@ -263,7 +263,7 @@ fn to_vec<T: Codec>(val: T) -> Vec<u8> {
     bytes
 }
 
-const ALPN_PROTOCOL: &'static str = "hq-10";
+const ALPN_PROTOCOL: &'static str = "hq-11";
 
 #[cfg(test)]
 mod tests {
