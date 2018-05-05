@@ -6,6 +6,7 @@ use tls;
 use types::Side;
 
 use std::io;
+use std::mem;
 use std::net::ToSocketAddrs;
 
 use tokio::net::UdpSocket;
@@ -26,60 +27,69 @@ impl Client {
         let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
         let socket = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         socket.connect(&addr).unwrap();
-        ConnectFuture {
-            client: Client {
+        ConnectFuture::Waiting(
+            Client {
                 endpoint,
                 socket,
                 buf,
             },
-            state: ConnectionState::Sending,
-        }
+            ConnectionState::Sending,
+        )
     }
 }
 
 #[must_use = "futures do nothing unless polled"]
-pub struct ConnectFuture {
-    client: Client,
-    state: ConnectionState,
+pub enum ConnectFuture {
+    Waiting(Client, ConnectionState),
+    Empty,
 }
 
 impl Future for ConnectFuture {
-    type Item = ();
+    type Item = Client;
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut waiting;
+        let mut done = false;
         loop {
             waiting = true;
-            if self.state == ConnectionState::Sending {
-                let len = try_ready!(self.client.socket.poll_send(&self.client.buf));
-                debug_assert_eq!(len, self.client.buf.len());
-                let size = self.client.buf.capacity();
-                self.client.buf.resize(size, 0);
-                self.state = ConnectionState::Receiving;
-                waiting = false;
-            }
+            if let ConnectFuture::Waiting(ref mut client, ref mut state) = *self {
+                if let ConnectionState::Sending = *state {
+                    let len = try_ready!(client.socket.poll_send(&client.buf));
+                    debug_assert_eq!(len, client.buf.len());
+                    let size = client.buf.capacity();
+                    client.buf.resize(size, 0);
 
-            if self.state == ConnectionState::Receiving {
-                let len = try_ready!(self.client.socket.poll_recv(&mut self.client.buf));
-                let packet = {
-                    let partial = Packet::start_decode(&mut self.client.buf[..len]);
-                    let key = self.client.endpoint.decode_key(&partial.header);
-                    partial.finish(&key)
-                };
-
-                let req = match self.client.endpoint.handle_handshake(&packet) {
-                    Some(p) => p,
-                    None => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "no response to packet",
-                        ));
+                    if !client.endpoint.is_handshaking() {
+                        done = true;
+                        break;
                     }
-                };
 
-                req.encode(&self.client.endpoint.encode_key(&req.header), &mut self.client.buf);
-                self.state = ConnectionState::Sending;
-                waiting = false;
+                    *state = ConnectionState::Receiving;
+                    waiting = false;
+                }
+
+                if let ConnectionState::Receiving = *state {
+                    let len = try_ready!(client.socket.poll_recv(&mut client.buf));
+                    let packet = {
+                        let partial = Packet::start_decode(&mut client.buf[..len]);
+                        let key = client.endpoint.decode_key(&partial.header);
+                        partial.finish(&key)
+                    };
+
+                    let req = match client.endpoint.handle_handshake(&packet) {
+                        Some(p) => p,
+                        None => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                "no response to packet",
+                            ));
+                        }
+                    };
+
+                    req.encode(&client.endpoint.encode_key(&req.header), &mut client.buf);
+                    *state = ConnectionState::Sending;
+                    waiting = false;
+                }
             }
 
             if waiting {
@@ -87,12 +97,18 @@ impl Future for ConnectFuture {
             }
         }
 
-        Ok(Async::NotReady)
+        if done {
+            match mem::replace(self, ConnectFuture::Empty) {
+                ConnectFuture::Waiting(client, _) => Ok(Async::Ready(client)),
+                _ => panic!("invalid future state"),
+            }
+        } else {
+            Ok(Async::NotReady)
+        }
     }
 }
 
-#[derive(PartialEq)]
-enum ConnectionState {
+pub enum ConnectionState {
     Sending,
     Receiving,
 }

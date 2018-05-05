@@ -49,6 +49,13 @@ where
         }
     }
 
+    pub fn is_handshaking(&self) -> bool {
+        match self.secret {
+            Secret::For1Rtt(_, _, _) => false,
+            Secret::Handshake(_) => true,
+        }
+    }
+
     pub fn update_src_cid(&mut self) {
         self.src_cid = thread_rng().gen();
     }
