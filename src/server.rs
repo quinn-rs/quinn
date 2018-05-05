@@ -72,7 +72,9 @@ impl Future for Server {
                     let key = endpoint.decode_key(&partial.header);
                     let packet = partial.finish(&key);
                     let rsp = match packet.ptype() {
-                        Some(LongType::Initial) => endpoint.handle_handshake(&packet),
+                        Some(LongType::Initial) | Some(LongType::Handshake) => {
+                            endpoint.handle_handshake(&packet)
+                        },
                         _ => panic!("unhandled packet {:?}", packet),
                     };
 
