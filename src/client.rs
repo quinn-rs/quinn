@@ -7,7 +7,7 @@ use types::Side;
 
 use std::io;
 use std::mem;
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 use tokio::net::UdpSocket;
 
@@ -24,9 +24,16 @@ impl Client {
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&endpoint.encode_key(&packet.header), &mut buf);
 
-        let addr = (server, port).to_socket_addrs().unwrap().next().unwrap();
+        let mut addr = None;
+        for a in (server, port).to_socket_addrs().unwrap() {
+            if let SocketAddr::V4(_) = a {
+                addr = Some(a);
+                break;
+            }
+        }
+
         let socket = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
-        socket.connect(&addr).unwrap();
+        socket.connect(&addr.unwrap()).unwrap();
         ConnectFuture::Waiting(
             Client {
                 endpoint,
