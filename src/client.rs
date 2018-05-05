@@ -10,9 +10,13 @@ use std::net::ToSocketAddrs;
 
 use tokio::net::UdpSocket;
 
-pub struct QuicStream {}
+pub struct Client {
+    endpoint: Endpoint<tls::QuicClientTls>,
+    socket: UdpSocket,
+    buf: Vec<u8>,
+}
 
-impl QuicStream {
+impl Client {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
         let mut endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
         let packet = endpoint.initial(server);
@@ -23,9 +27,11 @@ impl QuicStream {
         let socket = UdpSocket::bind(&"0.0.0.0:0".parse().unwrap()).unwrap();
         socket.connect(&addr).unwrap();
         ConnectFuture {
-            endpoint,
-            socket,
-            buf,
+            client: Client {
+                endpoint,
+                socket,
+                buf,
+            },
             state: ConnectionState::Sending,
         }
     }
@@ -33,9 +39,7 @@ impl QuicStream {
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ConnectFuture {
-    endpoint: Endpoint<tls::QuicClientTls>,
-    socket: UdpSocket,
-    buf: Vec<u8>,
+    client: Client,
     state: ConnectionState,
 }
 
@@ -47,23 +51,23 @@ impl Future for ConnectFuture {
         loop {
             waiting = true;
             if self.state == ConnectionState::Sending {
-                let len = try_ready!(self.socket.poll_send(&self.buf));
-                debug_assert_eq!(len, self.buf.len());
-                let size = self.buf.capacity();
-                self.buf.resize(size, 0);
+                let len = try_ready!(self.client.socket.poll_send(&self.client.buf));
+                debug_assert_eq!(len, self.client.buf.len());
+                let size = self.client.buf.capacity();
+                self.client.buf.resize(size, 0);
                 self.state = ConnectionState::Receiving;
                 waiting = false;
             }
 
             if self.state == ConnectionState::Receiving {
-                let len = try_ready!(self.socket.poll_recv(&mut self.buf));
+                let len = try_ready!(self.client.socket.poll_recv(&mut self.client.buf));
                 let packet = {
-                    let partial = Packet::start_decode(&mut self.buf[..len]);
-                    let key = self.endpoint.decode_key(&partial.header);
+                    let partial = Packet::start_decode(&mut self.client.buf[..len]);
+                    let key = self.client.endpoint.decode_key(&partial.header);
                     partial.finish(&key)
                 };
 
-                let req = match self.endpoint.handle_handshake(&packet) {
+                let req = match self.client.endpoint.handle_handshake(&packet) {
                     Some(p) => p,
                     None => {
                         return Err(io::Error::new(
@@ -73,7 +77,7 @@ impl Future for ConnectFuture {
                     }
                 };
 
-                req.encode(&self.endpoint.encode_key(&req.header), &mut self.buf);
+                req.encode(&self.client.endpoint.encode_key(&req.header), &mut self.client.buf);
                 self.state = ConnectionState::Sending;
                 waiting = false;
             }

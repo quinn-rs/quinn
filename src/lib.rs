@@ -9,7 +9,7 @@ extern crate tokio_io;
 extern crate webpki;
 extern crate webpki_roots;
 
-pub use client::QuicStream;
+pub use client::Client;
 pub use server::Server;
 
 mod client;
