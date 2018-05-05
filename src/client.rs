@@ -19,7 +19,19 @@ pub struct Client {
 
 impl Client {
     pub fn connect(server: &str, port: u16) -> ConnectFuture {
-        let mut endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
+        let endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
+        ConnectFuture::new(endpoint, server, port)
+    }
+}
+
+#[must_use = "futures do nothing unless polled"]
+pub enum ConnectFuture {
+    Waiting(Client, ConnectionState),
+    Empty,
+}
+
+impl ConnectFuture {
+    pub(crate) fn new(mut endpoint: Endpoint<tls::QuicClientTls>, server: &str, port: u16) -> Self {
         let packet = endpoint.initial(server);
         let mut buf = Vec::with_capacity(65536);
         packet.encode(&endpoint.encode_key(&packet.header), &mut buf);
@@ -43,12 +55,6 @@ impl Client {
             ConnectionState::Sending,
         )
     }
-}
-
-#[must_use = "futures do nothing unless polled"]
-pub enum ConnectFuture {
-    Waiting(Client, ConnectionState),
-    Empty,
 }
 
 impl Future for ConnectFuture {
