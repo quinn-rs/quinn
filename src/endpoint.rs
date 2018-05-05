@@ -62,8 +62,8 @@ where
 
     pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
         if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(Secret::Handshake(_)) = self.prev_secret {
-                return self.prev_secret.as_ref().unwrap().build_key(Side::Client);
+            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
+                return secret.build_key(Side::Client);
             }
         }
         self.secret.build_key(self.side)
