@@ -1,5 +1,6 @@
 use bytes::{BigEndian, Buf, BufMut};
 
+use std::fmt;
 use std::io::Cursor;
 
 use ring::{digest, hkdf, aead::{self, OpeningKey, SealingKey}};
@@ -44,6 +45,17 @@ impl Secret {
             }
             Secret::For1Rtt(aead_alg, hash_alg, ref secret) => {
                 PacketKey::new(aead_alg, hash_alg, secret)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Secret::Handshake(cid) => write!(f, "Handshake({:?})", cid),
+            Secret::For1Rtt(_, _, _) => {
+                write!(f, "For1Rtt(<secret>)")
             }
         }
     }
