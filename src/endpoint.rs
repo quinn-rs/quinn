@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 use super::{QuicError, QuicResult};
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
-use frame::{Ack, AckFrame, Frame, PaddingFrame, StreamFrame};
+use frame::{Ack, AckFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, ShortType};
 use tls;
 use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
@@ -169,46 +169,55 @@ where
             },
         }
 
-        let tls_frame = p.payload
-            .iter()
-            .filter_map(|f| match *f {
-                Frame::Stream(ref f) => Some(f),
-                _ => None,
-            })
-            .next()
-            .ok_or_else(|| QuicError::General("no frame on stream 0 found in handshake".into()))?;
-
-        let (handshake, new_secret) =
-            tls::process_handshake_messages(&mut self.tls, Some(&tls_frame.data))?;
-        if let Some(secret) = new_secret {
-            self.set_secret(secret);
-            self.state = State::Connected;
-        }
-
-        if handshake.is_empty() {
-            return Ok(Some(self.build_short_packet(vec![
-                Frame::Ack(AckFrame {
-                    largest: p.number(),
-                    ack_delay: 0,
-                    blocks: vec![Ack::Ack(0)],
-                }),
-            ])));
-        }
-
-        Ok(Some(self.build_handshake_packet(vec![
+        let mut payload = vec![
             Frame::Ack(AckFrame {
                 largest: p.number(),
                 ack_delay: 0,
                 blocks: vec![Ack::Ack(0)],
             }),
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ])))
+        ];
+
+        let mut found_stream_0 = false;
+        let mut wrote_handshake = false;
+        for frame in p.payload.iter() {
+            match *frame {
+                Frame::Stream(ref f) if f.id == 0 => {
+                    found_stream_0 = true;
+                    let (handshake, new_secret) =
+                        tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
+
+                    if !handshake.is_empty() {
+                        payload.push(Frame::Stream(StreamFrame {
+                            id: 0,
+                            fin: false,
+                            offset: 0,
+                            len: Some(handshake.len() as u64),
+                            data: handshake,
+                        }));
+                        wrote_handshake = true;
+                    }
+
+                    if let Some(secret) = new_secret {
+                        self.set_secret(secret);
+                        self.state = State::Connected;
+                    }
+                }
+                Frame::PathChallenge(PathFrame(token)) => {
+                    payload.push(Frame::PathResponse(PathFrame(token.clone())));
+                }
+                Frame::Ack(_) | Frame::Padding(_) | Frame::PathResponse(_) | Frame::Stream(_) => {}
+            }
+        }
+
+        if !found_stream_0 {
+            Err(QuicError::General(
+                "no frame on stream 0 found in handshake".into(),
+            ))
+        } else if !wrote_handshake {
+            Ok(Some(self.build_short_packet(payload)))
+        } else {
+            Ok(Some(self.build_handshake_packet(payload)))
+        }
     }
 }
 
