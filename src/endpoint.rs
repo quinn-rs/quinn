@@ -13,6 +13,7 @@ use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
 
 pub struct Endpoint<T> {
     side: Side,
+    state: State,
     pub dst_cid: ConnectionId,
     pub src_cid: ConnectionId,
     pub src_pn: u32,
@@ -42,6 +43,7 @@ where
         Endpoint {
             tls,
             side,
+            state: State::Start,
             dst_cid,
             src_cid: rng.gen(),
             src_pn: rng.gen(),
@@ -51,9 +53,9 @@ where
     }
 
     pub fn is_handshaking(&self) -> bool {
-        match self.secret {
-            Secret::For1Rtt(_, _, _) => false,
-            Secret::Handshake(_) => true,
+        match self.state {
+            State::Connected => false,
+            _ => true,
         }
     }
 
@@ -64,7 +66,7 @@ where
     pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
         if let Some(LongType::Handshake) = h.ptype() {
             if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
-                return secret.build_key(Side::Client);
+                return secret.build_key(self.side);
             }
         }
         self.secret.build_key(self.side)
@@ -125,6 +127,7 @@ where
         let number = self.src_pn;
         self.src_pn += 1;
 
+        debug_assert_eq!(self.state, State::Connected);
         debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
         Packet {
             header: Header::Short {
@@ -139,10 +142,31 @@ where
 
     pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<Option<Packet>> {
         match p.header {
-            Header::Long { src_cid, .. } => {
-                self.dst_cid = src_cid;
+            Header::Long {
+                dst_cid, src_cid, ..
+            } => {
+                match self.state {
+                    State::Start | State::InitialSent => {
+                        self.dst_cid = src_cid;
+                        self.state = State::Handshaking;
+                    }
+                    _ => if dst_cid != self.src_cid {
+                        return Err(QuicError::General(format!(
+                            "invalid destination CID {:?} received (expected {:?})",
+                            dst_cid, self.src_cid
+                        )))
+                    }
+                }
             }
-            Header::Short { .. } => panic!("short packages not allowed for handshake"),
+            Header::Short { .. } => match self.state {
+                State::Connected => {}
+                _ => {
+                    return Err(QuicError::General(format!(
+                        "short header received in {:?} state",
+                        self.state
+                    )));
+                }
+            },
         }
 
         let tls_frame = p.payload
@@ -158,6 +182,7 @@ where
             tls::process_handshake_messages(&mut self.tls, Some(&tls_frame.data))?;
         if let Some(secret) = new_secret {
             self.set_secret(secret);
+            self.state = State::Connected;
         }
 
         if handshake.is_empty() {
@@ -194,6 +219,7 @@ impl Endpoint<tls::QuicClientTls> {
             self.set_secret(secret);
         }
 
+        self.state = State::InitialSent;
         Ok(self.build_initial_packet(vec![
             Frame::Stream(StreamFrame {
                 id: 0,
@@ -204,4 +230,12 @@ impl Endpoint<tls::QuicClientTls> {
             }),
         ]))
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum State {
+    Start,
+    InitialSent,
+    Handshaking,
+    Connected,
 }
