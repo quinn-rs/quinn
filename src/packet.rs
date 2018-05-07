@@ -319,9 +319,9 @@ impl ShortType {
     pub fn to_byte(&self) -> u8 {
         use self::ShortType::*;
         match *self {
-            One => 1,
-            Two => 2,
-            Four => 4,
+            One => 0,
+            Two => 1,
+            Four => 2,
         }
     }
     pub fn from_byte(v: u8) -> Self {
