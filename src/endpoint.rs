@@ -19,6 +19,7 @@ pub struct Endpoint<T> {
     pub src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
+    s0_offset: u64,
     tls: T,
 }
 
@@ -49,6 +50,7 @@ where
             src_pn: rng.gen(),
             secret,
             prev_secret: None,
+            s0_offset: 0,
         }
     }
 
@@ -184,11 +186,13 @@ where
                     let (handshake, new_secret) =
                         tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
 
+                    let offset = self.s0_offset;
+                    self.s0_offset += handshake.len() as u64;
                     if !handshake.is_empty() {
                         payload.push(Frame::Stream(StreamFrame {
                             id: 0,
                             fin: false,
-                            offset: 0,
+                            offset,
                             len: Some(handshake.len() as u64),
                             data: handshake,
                         }));
@@ -232,12 +236,14 @@ impl Endpoint<tls::QuicClientTls> {
             self.set_secret(secret);
         }
 
+        let offset = self.s0_offset;
+        self.s0_offset = handshake.len() as u64;
         self.state = State::InitialSent;
         Ok(self.build_initial_packet(vec![
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
-                offset: 0,
+                offset,
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
