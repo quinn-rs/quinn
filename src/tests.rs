@@ -33,7 +33,8 @@ fn test_client_connect_resolves() {
 #[test]
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
-    let c_initial = c.initial("example.com").unwrap();
+    c.initial("example.com").unwrap();
+    let c_initial = c.queued().unwrap();
     let mut buf = vec![0u8; 16384];
     let len = c_initial
         .encode(&c.encode_key(&c_initial.header), &mut buf)
@@ -48,7 +49,8 @@ fn test_encoded_handshake() {
         partial.finish(&key).unwrap()
     };
 
-    let s_sh = s.handle_handshake(&s_initial).unwrap().unwrap();
+    s.handle_handshake(&s_initial).unwrap();
+    let s_sh = s.queued().unwrap();
     let len = s_sh.encode(&s.encode_key(&s_sh.header), &mut buf).unwrap();
 
     let c_sh = {
@@ -59,7 +61,8 @@ fn test_encoded_handshake() {
         partial.finish(&key).unwrap()
     };
 
-    let c_fin = c.handle_handshake(&c_sh).unwrap().unwrap();
+    c.handle_handshake(&c_sh).unwrap();
+    let c_fin = c.queued().unwrap();
     let len = c_fin
         .encode(&c.encode_key(&c_fin.header), &mut buf)
         .unwrap();
@@ -72,18 +75,23 @@ fn test_encoded_handshake() {
         partial.finish(&key).unwrap()
     };
 
-    let short = s.handle_handshake(&s_fin).unwrap().unwrap();
+    s.handle_handshake(&s_fin).unwrap();
+    let short = s.queued().unwrap();
     assert_eq!(short.ptype(), None);
 }
 
 #[test]
 fn test_handshake() {
     let mut c = client_endpoint();
-    let initial = c.initial("example.com").unwrap();
+    c.initial("example.com").unwrap();
+    let initial = c.queued().unwrap();
 
     let mut s = server_endpoint(initial.dst_cid());
-    let server_hello = s.handle_handshake(&initial).unwrap().unwrap();
-    assert!(c.handle_handshake(&server_hello).unwrap().is_some());
+    s.handle_handshake(&initial).unwrap();
+    let server_hello = s.queued().unwrap();
+
+    c.handle_handshake(&server_hello).unwrap();
+    assert!(c.queued().is_some());
 }
 
 fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::QuicServerTls> {

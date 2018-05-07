@@ -37,7 +37,8 @@ impl ConnectFuture {
         server: &str,
         port: u16,
     ) -> QuicResult<Self> {
-        let packet = endpoint.initial(server)?;
+        endpoint.initial(server)?;
+        let packet = endpoint.queued().unwrap();
         let mut buf = vec![0u8; 65536];
         let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);
 
@@ -91,19 +92,18 @@ impl Future for ConnectFuture {
                         let key = client.endpoint.decode_key(&partial.header);
                         partial.finish(&key)?
                     };
-
-                    let req = match client.endpoint.handle_handshake(&packet)? {
-                        Some(p) => p,
-                        None => {
-                            return Err(QuicError::General("no response to packet".into()));
-                        }
-                    };
-
-                    client.msg_len = Some(req.encode(
-                        &client.endpoint.encode_key(&req.header),
-                        &mut client.buf,
-                    )?);
+                    client.endpoint.handle_handshake(&packet)?;
                     waiting = false;
+                }
+
+                if let None = client.msg_len {
+                    if let Some(p) = client.endpoint.queued() {
+                        client.msg_len = Some(p.encode(
+                            &client.endpoint.encode_key(&p.header),
+                            &mut client.buf,
+                        )?);
+                        waiting = false;
+                    }
                 }
             }
 

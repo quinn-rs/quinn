@@ -1,5 +1,6 @@
 use rand::{thread_rng, Rng};
 
+use std::collections::VecDeque;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
@@ -20,6 +21,7 @@ pub struct Endpoint<T> {
     secret: Secret,
     prev_secret: Option<Secret>,
     s0_offset: u64,
+    queue: VecDeque<Packet>,
     tls: T,
 }
 
@@ -51,6 +53,7 @@ where
             secret,
             prev_secret: None,
             s0_offset: 0,
+            queue: VecDeque::new(),
         }
     }
 
@@ -59,6 +62,10 @@ where
             State::Connected => false,
             _ => true,
         }
+    }
+
+    pub fn queued(&mut self) -> Option<Packet> {
+        self.queue.pop_front()
     }
 
     pub fn update_src_cid(&mut self) {
@@ -83,7 +90,7 @@ where
         self.prev_secret = Some(old);
     }
 
-    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> Packet {
+    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) {
         let number = self.src_pn;
         self.src_pn += 1;
 
@@ -94,7 +101,7 @@ where
         }
 
         debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
-        Packet {
+        self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
                 version: DRAFT_11,
@@ -104,15 +111,15 @@ where
                 number,
             },
             payload,
-        }
+        });
     }
 
-    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> Packet {
+    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) {
         let number = self.src_pn;
         self.src_pn += 1;
 
         debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
-        Packet {
+        self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
                 version: DRAFT_11,
@@ -122,16 +129,16 @@ where
                 number,
             },
             payload,
-        }
+        });
     }
 
-    fn build_short_packet(&mut self, payload: Vec<Frame>) -> Packet {
+    fn build_short_packet(&mut self, payload: Vec<Frame>) {
         let number = self.src_pn;
         self.src_pn += 1;
 
         debug_assert_eq!(self.state, State::Connected);
         debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
-        Packet {
+        self.queue.push_back(Packet {
             header: Header::Short {
                 key_phase: false,
                 ptype: ShortType::Four,
@@ -139,10 +146,10 @@ where
                 number: number,
             },
             payload,
-        }
+        });
     }
 
-    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<Option<Packet>> {
+    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<()> {
         match p.header {
             Header::Long {
                 dst_cid, src_cid, ..
@@ -221,16 +228,19 @@ where
             Err(QuicError::General(
                 "no frame on stream 0 found in handshake".into(),
             ))
-        } else if !wrote_handshake {
-            Ok(Some(self.build_short_packet(payload)))
         } else {
-            Ok(Some(self.build_handshake_packet(payload)))
+            if self.state == State::Connected && !wrote_handshake {
+                self.build_short_packet(payload)
+            } else {
+                self.build_handshake_packet(payload)
+            }
+            Ok(())
         }
     }
 }
 
 impl Endpoint<tls::QuicClientTls> {
-    pub(crate) fn initial(&mut self, server: &str) -> QuicResult<Packet> {
+    pub(crate) fn initial(&mut self, server: &str) -> QuicResult<()> {
         let (handshake, new_secret) = tls::start_handshake(&mut self.tls, server)?;
         if let Some(secret) = new_secret {
             self.set_secret(secret);
@@ -239,7 +249,7 @@ impl Endpoint<tls::QuicClientTls> {
         let offset = self.s0_offset;
         self.s0_offset = handshake.len() as u64;
         self.state = State::InitialSent;
-        Ok(self.build_initial_packet(vec![
+        self.build_initial_packet(vec![
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
@@ -247,7 +257,8 @@ impl Endpoint<tls::QuicClientTls> {
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
-        ]))
+        ]);
+        Ok(())
     }
 }
 
