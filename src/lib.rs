@@ -33,6 +33,10 @@ pub enum QuicError {
     AddrParse(#[cause] std::net::AddrParseError),
     #[fail(display = "needed slice of size {}, found {}", _0, _1)]
     AllocationError(usize, usize),
+    #[fail(display = "application close ({}): '{}'", _0, _1)]
+    ApplicationClose(u16, String),
+    #[fail(display = "connection close ({}): '{}'", _0, _1)]
+    ConnectionClose(u16, String),
     #[fail(display = "")]
     DecryptError,
     #[fail(display = "")]

@@ -1,10 +1,14 @@
-use bytes::{Buf, BufMut};
+use bytes::{BigEndian, Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
+
+use std::str;
 
 #[derive(Debug, PartialEq)]
 pub enum Frame {
     Ack(AckFrame),
+    ApplicationClose(CloseFrame),
+    ConnectionClose(CloseFrame),
     Padding(PaddingFrame),
     PathChallenge(PathFrame),
     PathResponse(PathFrame),
@@ -15,6 +19,8 @@ impl BufLen for Frame {
     fn buf_len(&self) -> usize {
         match *self {
             Frame::Ack(ref f) => f.buf_len(),
+            Frame::ApplicationClose(ref f) => 1 + f.buf_len(),
+            Frame::ConnectionClose(ref f) => 1 + f.buf_len(),
             Frame::Padding(ref f) => f.buf_len(),
             Frame::PathChallenge(ref f) => 1 + f.buf_len(),
             Frame::PathResponse(ref f) => 1 + f.buf_len(),
@@ -27,6 +33,14 @@ impl Codec for Frame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match *self {
             Frame::Ack(ref f) => f.encode(buf),
+            Frame::ApplicationClose(ref f) => {
+                buf.put_u8(0x03);
+                f.encode(buf)
+            }
+            Frame::ConnectionClose(ref f) => {
+                buf.put_u8(0x02);
+                f.encode(buf)
+            }
             Frame::Padding(ref f) => f.encode(buf),
             Frame::PathChallenge(ref f) => {
                 buf.put_u8(0x0e);
@@ -43,9 +57,23 @@ impl Codec for Frame {
     fn decode<T: Buf>(buf: &mut T) -> Self {
         match buf.bytes()[0] {
             v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)),
+            0x02 => Frame::ConnectionClose({
+                buf.get_u8();
+                CloseFrame::decode(buf)
+            }),
+            0x03 => Frame::ApplicationClose({
+                buf.get_u8();
+                CloseFrame::decode(buf)
+            }),
             0x0d => Frame::Ack(AckFrame::decode(buf)),
-            0x0e => Frame::PathChallenge(PathFrame::decode(buf)),
-            0x0f => Frame::PathResponse(PathFrame::decode(buf)),
+            0x0e => Frame::PathChallenge({
+                buf.get_u8();
+                PathFrame::decode(buf)
+            }),
+            0x0f => Frame::PathResponse({
+                buf.get_u8();
+                PathFrame::decode(buf)
+            }),
             0 => Frame::Padding(PaddingFrame::decode(buf)),
             v => panic!("unimplemented decoding for frame type {}", v),
         }
@@ -178,6 +206,40 @@ impl Ack {
         match *self {
             Ack::Ack(v) => v,
             Ack::Gap(v) => v,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct CloseFrame {
+    pub(crate) code: u16,
+    pub(crate) reason: String,
+}
+
+impl BufLen for CloseFrame {
+    fn buf_len(&self) -> usize {
+        2 + VarLen(self.reason.len() as u64).buf_len() + self.reason.len()
+    }
+}
+
+impl Codec for CloseFrame {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        buf.put_u16::<BigEndian>(self.code);
+        VarLen(self.reason.len() as u64).encode(buf);
+        buf.put_slice(self.reason.as_bytes());
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let code = buf.get_u16::<BigEndian>();
+        let len = VarLen::decode(buf).0 as usize;
+        let reason = {
+            let bytes = buf.bytes();
+            str::from_utf8(&bytes[..len]).unwrap()
+        }.to_string();
+        buf.advance(len);
+        CloseFrame {
+            code,
+            reason,
         }
     }
 }

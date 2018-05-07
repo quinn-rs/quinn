@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 use super::{QuicError, QuicResult};
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
-use frame::{Ack, AckFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
+use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, ShortType};
 use tls;
 use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
@@ -202,6 +202,12 @@ where
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
                     payload.push(Frame::PathResponse(PathFrame(token.clone())));
+                }
+                Frame::ApplicationClose(CloseFrame { code, ref reason }) => {
+                    return Err(QuicError::ApplicationClose(code, reason.clone()));
+                }
+                Frame::ConnectionClose(CloseFrame { code, ref reason }) => {
+                    return Err(QuicError::ConnectionClose(code, reason.clone()));
                 }
                 Frame::Ack(_) | Frame::Padding(_) | Frame::PathResponse(_) | Frame::Stream(_) => {}
             }
