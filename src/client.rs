@@ -15,6 +15,7 @@ pub struct Client {
     endpoint: Endpoint<tls::QuicClientTls>,
     socket: UdpSocket,
     buf: Vec<u8>,
+    msg_len: Option<usize>,
 }
 
 impl Client {
@@ -26,7 +27,7 @@ impl Client {
 
 #[must_use = "futures do nothing unless polled"]
 pub enum ConnectFuture {
-    Waiting(Client, ConnectionState),
+    Waiting(Client),
     Empty,
 }
 
@@ -37,8 +38,8 @@ impl ConnectFuture {
         port: u16,
     ) -> QuicResult<Self> {
         let packet = endpoint.initial(server)?;
-        let mut buf = Vec::with_capacity(65536);
-        packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?;
+        let mut buf = vec![0u8; 65536];
+        let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);
 
         let mut addr = None;
         for a in (server, port).to_socket_addrs()? {
@@ -52,14 +53,12 @@ impl ConnectFuture {
         socket.connect(&addr.ok_or_else(|| {
             QuicError::General("no IPv4 address found for host".into())
         })?)?;
-        Ok(ConnectFuture::Waiting(
-            Client {
-                endpoint,
-                socket,
-                buf,
-            },
-            ConnectionState::Sending,
-        ))
+        Ok(ConnectFuture::Waiting(Client {
+            endpoint,
+            socket,
+            buf,
+            msg_len,
+        }))
     }
 }
 
@@ -71,23 +70,21 @@ impl Future for ConnectFuture {
         let mut done = false;
         loop {
             waiting = true;
-            if let ConnectFuture::Waiting(ref mut client, ref mut state) = *self {
-                if let ConnectionState::Sending = *state {
-                    let len = try_ready!(client.socket.poll_send(&client.buf));
-                    debug_assert_eq!(len, client.buf.len());
-                    let size = client.buf.capacity();
-                    client.buf.resize(size, 0);
-
+            if let ConnectFuture::Waiting(ref mut client) = *self {
+                if let Some(ref msg_len) = client.msg_len {
+                    let len = try_ready!(client.socket.poll_send(&client.buf[..*msg_len]));
+                    debug_assert_eq!(len, *msg_len);
                     if !client.endpoint.is_handshaking() {
                         done = true;
                         break;
                     }
-
-                    *state = ConnectionState::Receiving;
                     waiting = false;
                 }
+                if !waiting {
+                    client.msg_len.take();
+                }
 
-                if let ConnectionState::Receiving = *state {
+                if let None = client.msg_len {
                     let len = try_ready!(client.socket.poll_recv(&mut client.buf));
                     let packet = {
                         let partial = Packet::start_decode(&mut client.buf[..len]);
@@ -102,8 +99,10 @@ impl Future for ConnectFuture {
                         }
                     };
 
-                    req.encode(&client.endpoint.encode_key(&req.header), &mut client.buf)?;
-                    *state = ConnectionState::Sending;
+                    client.msg_len = Some(req.encode(
+                        &client.endpoint.encode_key(&req.header),
+                        &mut client.buf,
+                    )?);
                     waiting = false;
                 }
             }
@@ -115,16 +114,11 @@ impl Future for ConnectFuture {
 
         if done {
             match mem::replace(self, ConnectFuture::Empty) {
-                ConnectFuture::Waiting(client, _) => Ok(Async::Ready(client)),
+                ConnectFuture::Waiting(client) => Ok(Async::Ready(client)),
                 _ => panic!("invalid future state"),
             }
         } else {
             Ok(Async::NotReady)
         }
     }
-}
-
-pub enum ConnectionState {
-    Sending,
-    Receiving,
 }

@@ -31,6 +31,8 @@ mod types;
 pub enum QuicError {
     #[fail(display = "{}", _0)]
     AddrParse(#[cause] std::net::AddrParseError),
+    #[fail(display = "needed slice of size {}, found {}", _0, _1)]
+    AllocationError(usize, usize),
     #[fail(display = "")]
     DecryptError,
     #[fail(display = "")]

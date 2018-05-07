@@ -34,14 +34,14 @@ fn test_client_connect_resolves() {
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
     let c_initial = c.initial("example.com").unwrap();
-    let mut buf = vec![0u8; 1600];
-    c_initial
+    let mut buf = vec![0u8; 16384];
+    let len = c_initial
         .encode(&c.encode_key(&c_initial.header), &mut buf)
         .unwrap();
 
     let mut s = server_endpoint(c_initial.dst_cid());
     let s_initial = {
-        let partial = Packet::start_decode(&mut buf);
+        let partial = Packet::start_decode(&mut buf[..len]);
         assert_eq!(c_initial.header, partial.header);
 
         let key = s.decode_key(&partial.header);
@@ -49,10 +49,10 @@ fn test_encoded_handshake() {
     };
 
     let s_sh = s.handle_handshake(&s_initial).unwrap().unwrap();
-    s_sh.encode(&s.encode_key(&s_sh.header), &mut buf).unwrap();
+    let len = s_sh.encode(&s.encode_key(&s_sh.header), &mut buf).unwrap();
 
     let c_sh = {
-        let partial = Packet::start_decode(&mut buf);
+        let partial = Packet::start_decode(&mut buf[..len]);
         assert_eq!(s_sh.header, partial.header);
 
         let key = c.decode_key(&partial.header);
@@ -60,12 +60,12 @@ fn test_encoded_handshake() {
     };
 
     let c_fin = c.handle_handshake(&c_sh).unwrap().unwrap();
-    c_fin
+    let len = c_fin
         .encode(&c.encode_key(&c_fin.header), &mut buf)
         .unwrap();
 
     let s_fin = {
-        let partial = Packet::start_decode(&mut buf);
+        let partial = Packet::start_decode(&mut buf[..len]);
         assert_eq!(c_fin.header, partial.header);
 
         let key = s.decode_key(&partial.header);

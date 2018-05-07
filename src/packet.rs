@@ -1,6 +1,6 @@
 use bytes::{BigEndian, Buf, BufMut};
 
-use super::QuicResult;
+use super::{QuicError, QuicResult};
 use codec::{BufLen, Codec, VarLen};
 use crypto::PacketKey;
 use frame::Frame;
@@ -27,16 +27,14 @@ impl Packet {
         self.header.number()
     }
 
-    pub fn encode(&self, key: &PacketKey, buf: &mut Vec<u8>) -> QuicResult<()> {
+    pub fn encode(&self, key: &PacketKey, buf: &mut [u8]) -> QuicResult<usize> {
         let tag_len = key.algorithm().tag_len();
         let len = self.buf_len() + tag_len;
-        if len > buf.capacity() {
-            let diff = len - buf.capacity();
-            buf.reserve(diff);
+        if len > buf.len() {
+            return Err(QuicError::AllocationError(len, buf.len()));
         }
 
-        buf.resize(len, 0);
-        let (payload_start, buf) = {
+        let (payload_start, msg_len, buf) = {
             let mut write = Cursor::new(buf);
             self.header.encode(&mut write);
             let payload_start = write.position() as usize;
@@ -48,15 +46,16 @@ impl Packet {
                 expected += frame.buf_len();
             }
             debug_assert_eq!(expected, write.position() as usize);
-            (payload_start, write.into_inner())
+            let msg_len = write.position() as usize;
+            (payload_start, msg_len, write.into_inner())
         };
 
         let out_len = {
             let (header_buf, mut payload) = buf.split_at_mut(payload_start);
-            key.encrypt(self.header.number(), &header_buf, &mut payload, tag_len)?
+            let mut in_out = &mut payload[..msg_len - payload_start + tag_len];
+            key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
         };
-        buf.truncate(payload_start + out_len);
-        Ok(())
+        Ok(payload_start + out_len)
     }
 
     pub fn start_decode(buf: &mut [u8]) -> PartialDecode {

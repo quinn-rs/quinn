@@ -82,9 +82,8 @@ impl Future for Server {
                     };
 
                     if let Some(rsp) = rsp {
-                        self.out_buf.truncate(0);
-                        rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
-                        try_ready!(self.socket.poll_send_to(&self.out_buf, &addr));
+                        let len = rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
+                        try_ready!(self.socket.poll_send_to(&self.out_buf[..len], &addr));
                     }
                 }
                 Entry::Vacant(_) => panic!("connection ID {:?} unknown", dst_cid),
