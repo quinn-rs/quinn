@@ -55,6 +55,11 @@ impl Packet {
             let mut in_out = &mut payload[..msg_len - header_len + tag_len];
             key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
         };
+
+        match self.header {
+            Header::Long { len, .. } => debug_assert_eq!(len, out_len as u64),
+            _ => {}
+        }
         Ok(header_len + out_len)
     }
 
