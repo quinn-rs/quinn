@@ -219,7 +219,16 @@ impl Codec for PaddingFrame {
     }
 
     fn decode<T: Buf>(buf: &mut T) -> Self {
-        let size = buf.remaining();
+        let size = {
+            let mut size = 0;
+            for (i, b) in buf.bytes().iter().enumerate() {
+                if *b != 0 {
+                    size = i - 1;
+                    break;
+                }
+            }
+            size + 1
+        };
         buf.advance(size);
         PaddingFrame(size)
     }
@@ -227,8 +236,25 @@ impl Codec for PaddingFrame {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Buf;
     use codec::{BufLen, Codec};
     use std::io::Cursor;
+
+    #[test]
+    fn test_padding_roundtrip() {
+        let bytes = b"\x00\x00\x00\x00\x01";
+        let frame = {
+            let mut read = Cursor::new(&bytes);
+            let frame = super::Frame::decode(&mut read);
+            assert_eq!(read.bytes(), b"\x01");
+            frame
+        };
+        assert_eq!(frame, super::Frame::Padding(super::PaddingFrame(4)));
+
+        let mut buf = vec![0u8; 16];
+        frame.encode(&mut buf);
+        assert_eq!(&bytes[..4], &buf[..4]);
+    }
 
     #[test]
     fn test_ack_round_trip() {
