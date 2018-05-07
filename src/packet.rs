@@ -34,28 +34,28 @@ impl Packet {
             return Err(QuicError::AllocationError(len, buf.len()));
         }
 
-        let (payload_start, msg_len, buf) = {
+        let (header_len, msg_len, buf) = {
             let mut write = Cursor::new(buf);
             self.header.encode(&mut write);
-            let payload_start = write.position() as usize;
-            debug_assert_eq!(payload_start, self.header.buf_len());
+            let header_len = write.position() as usize;
+            debug_assert_eq!(header_len, self.header.buf_len());
 
-            let mut expected = payload_start;
+            let mut expected = header_len;
             for frame in self.payload.iter() {
                 frame.encode(&mut write);
                 expected += frame.buf_len();
             }
             debug_assert_eq!(expected, write.position() as usize);
             let msg_len = write.position() as usize;
-            (payload_start, msg_len, write.into_inner())
+            (header_len, msg_len, write.into_inner())
         };
 
         let out_len = {
-            let (header_buf, mut payload) = buf.split_at_mut(payload_start);
-            let mut in_out = &mut payload[..msg_len - payload_start + tag_len];
+            let (header_buf, mut payload) = buf.split_at_mut(header_len);
+            let mut in_out = &mut payload[..msg_len - header_len + tag_len];
             key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
         };
-        Ok(payload_start + out_len)
+        Ok(header_len + out_len)
     }
 
     pub fn start_decode(buf: &mut [u8]) -> PartialDecode {
