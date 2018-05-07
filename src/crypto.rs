@@ -54,9 +54,7 @@ impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Secret::Handshake(cid) => write!(f, "Handshake({:?})", cid),
-            Secret::For1Rtt(_, _, _) => {
-                write!(f, "For1Rtt(<secret>)")
-            }
+            Secret::For1Rtt(_, _, _) => write!(f, "For1Rtt(<secret>)"),
         }
     }
 }

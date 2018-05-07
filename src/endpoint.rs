@@ -144,20 +144,18 @@ where
         match p.header {
             Header::Long {
                 dst_cid, src_cid, ..
-            } => {
-                match self.state {
-                    State::Start | State::InitialSent => {
-                        self.dst_cid = src_cid;
-                        self.state = State::Handshaking;
-                    }
-                    _ => if dst_cid != self.src_cid {
-                        return Err(QuicError::General(format!(
-                            "invalid destination CID {:?} received (expected {:?})",
-                            dst_cid, self.src_cid
-                        )))
-                    }
+            } => match self.state {
+                State::Start | State::InitialSent => {
+                    self.dst_cid = src_cid;
+                    self.state = State::Handshaking;
                 }
-            }
+                _ => if dst_cid != self.src_cid {
+                    return Err(QuicError::General(format!(
+                        "invalid destination CID {:?} received (expected {:?})",
+                        dst_cid, self.src_cid
+                    )));
+                },
+            },
             Header::Short { .. } => match self.state {
                 State::Connected => {}
                 _ => {
