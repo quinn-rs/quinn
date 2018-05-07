@@ -6,6 +6,8 @@ use codec::{BufLen, Codec, VarLen};
 pub enum Frame {
     Ack(AckFrame),
     Padding(PaddingFrame),
+    PathChallenge(PathFrame),
+    PathResponse(PathFrame),
     Stream(StreamFrame),
 }
 
@@ -14,6 +16,8 @@ impl BufLen for Frame {
         match *self {
             Frame::Ack(ref f) => f.buf_len(),
             Frame::Padding(ref f) => f.buf_len(),
+            Frame::PathChallenge(ref f) => 1 + f.buf_len(),
+            Frame::PathResponse(ref f) => 1 + f.buf_len(),
             Frame::Stream(ref f) => f.buf_len(),
         }
     }
@@ -24,6 +28,14 @@ impl Codec for Frame {
         match *self {
             Frame::Ack(ref f) => f.encode(buf),
             Frame::Padding(ref f) => f.encode(buf),
+            Frame::PathChallenge(ref f) => {
+                buf.put_u8(0x0e);
+                f.encode(buf)
+            }
+            Frame::PathResponse(ref f) => {
+                buf.put_u8(0x0f);
+                f.encode(buf)
+            }
             Frame::Stream(ref f) => f.encode(buf),
         }
     }
@@ -32,6 +44,8 @@ impl Codec for Frame {
         match buf.bytes()[0] {
             v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)),
             0x0d => Frame::Ack(AckFrame::decode(buf)),
+            0x0e => Frame::PathChallenge(PathFrame::decode(buf)),
+            0x0f => Frame::PathResponse(PathFrame::decode(buf)),
             0 => Frame::Padding(PaddingFrame::decode(buf)),
             v => panic!("unimplemented decoding for frame type {}", v),
         }
@@ -165,6 +179,27 @@ impl Ack {
             Ack::Ack(v) => v,
             Ack::Gap(v) => v,
         }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PathFrame(pub [u8; 8]);
+
+impl BufLen for PathFrame {
+    fn buf_len(&self) -> usize {
+        8
+    }
+}
+
+impl Codec for PathFrame {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        buf.put_slice(&self.0);
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        let mut bytes = [0; 8];
+        buf.copy_to_slice(&mut bytes);
+        PathFrame(bytes)
     }
 }
 
