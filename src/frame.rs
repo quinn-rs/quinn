@@ -244,10 +244,7 @@ impl Codec for CloseFrame {
             str::from_utf8(&bytes[..len]).unwrap()
         }.to_string();
         buf.advance(len);
-        CloseFrame {
-            code,
-            reason,
-        }
+        CloseFrame { code, reason }
     }
 }
 
