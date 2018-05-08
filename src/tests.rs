@@ -76,8 +76,19 @@ fn test_encoded_handshake() {
     };
 
     s.handle_handshake(&s_fin).unwrap();
-    let short = s.queued().unwrap();
-    assert_eq!(short.ptype(), None);
+    let s_short = s.queued().unwrap();
+    assert_eq!(s_short.ptype(), None);
+    let len = s_short
+        .encode(&s.encode_key(&s_short.header), &mut buf)
+        .unwrap();
+
+    let c_short = {
+        let partial = Packet::start_decode(&mut buf[..len]);
+        assert_eq!(s_short.header, partial.header);
+
+        let key = c.decode_key(&partial.header);
+        partial.finish(&key).unwrap()
+    };
 }
 
 #[test]
