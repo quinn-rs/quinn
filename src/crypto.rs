@@ -18,6 +18,7 @@ pub enum Secret {
         &'static aead::Algorithm,
         &'static digest::Algorithm,
         Vec<u8>,
+        Vec<u8>,
     ),
 }
 
@@ -25,7 +26,7 @@ impl Secret {
     pub fn tag_len(&self) -> usize {
         match *self {
             Secret::Handshake(_) => AES_128_GCM.tag_len(),
-            Secret::For1Rtt(aead_alg, _, _) => aead_alg.tag_len(),
+            Secret::For1Rtt(aead_alg, _, _, _) => aead_alg.tag_len(),
         }
     }
 
@@ -43,8 +44,15 @@ impl Secret {
                     &expanded_handshake_secret(cid, label),
                 )
             }
-            Secret::For1Rtt(aead_alg, hash_alg, ref secret) => {
-                PacketKey::new(aead_alg, hash_alg, secret)
+            Secret::For1Rtt(aead_alg, hash_alg, ref client_secret, ref server_secret) => {
+                PacketKey::new(
+                    aead_alg,
+                    hash_alg,
+                    match side {
+                        Side::Client => client_secret,
+                        Side::Server => server_secret,
+                    },
+                )
             }
         }
     }
@@ -54,7 +62,7 @@ impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Secret::Handshake(cid) => write!(f, "Handshake({:?})", cid),
-            Secret::For1Rtt(_, _, _) => write!(f, "For1Rtt(<secret>)"),
+            Secret::For1Rtt(_, _, _, _) => write!(f, "For1Rtt(<secret>)"),
         }
     }
 }

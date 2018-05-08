@@ -73,13 +73,9 @@ where
     }
 
     let key_ready = if !session.is_handshaking() {
-        let suite = session
+        Some(session
             .get_negotiated_ciphersuite()
-            .ok_or(TLSError::HandshakeNotComplete)?;
-
-        let mut secret = vec![0u8; suite.enc_key_len];
-        session.export_keying_material(&mut secret, b"EXPORTER-QUIC client 1rtt", None)?;
-        Some((suite, secret))
+            .ok_or(TLSError::HandshakeNotComplete)?)
     } else {
         None
     };
@@ -92,9 +88,19 @@ where
         }
     }
 
-    let secret = if let Some((suite, secret)) = key_ready {
+    let secret = if let Some(suite) = key_ready {
+        let mut client_secret = vec![0u8; suite.enc_key_len];
+        session.export_keying_material(&mut client_secret, b"EXPORTER-QUIC client 1rtt", None)?;
+        let mut server_secret = vec![0u8; suite.enc_key_len];
+        session.export_keying_material(&mut server_secret, b"EXPORTER-QUIC server 1rtt", None)?;
+
         let (aead_alg, hash_alg) = (suite.get_aead_alg(), suite.get_hash());
-        Some(Secret::For1Rtt(aead_alg, hash_alg, secret))
+        Some(Secret::For1Rtt(
+            aead_alg,
+            hash_alg,
+            client_secret,
+            server_secret,
+        ))
     } else {
         None
     };
