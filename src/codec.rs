@@ -1,4 +1,4 @@
-use bytes::{BigEndian, Buf, BufMut};
+use bytes::{Buf, BufMut};
 
 pub struct VarLen(pub u64);
 
@@ -18,9 +18,9 @@ impl Codec for VarLen {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         match self.buf_len() {
             1 => buf.put_u8(self.0 as u8),
-            2 => buf.put_u16::<BigEndian>(self.0 as u16 | 16384),
-            4 => buf.put_u32::<BigEndian>(self.0 as u32 | 2_147_483_648),
-            8 => buf.put_u64::<BigEndian>(self.0 | 13_835_058_055_282_163_712),
+            2 => buf.put_u16_be(self.0 as u16 | 16384),
+            4 => buf.put_u32_be(self.0 as u32 | 2_147_483_648),
+            8 => buf.put_u64_be(self.0 | 13_835_058_055_282_163_712),
             _ => panic!("impossible variable-length encoding"),
         }
     }
@@ -33,12 +33,12 @@ impl Codec for VarLen {
             1 => (be_val as u64) << 8 | (buf.get_u8() as u64),
             2 => {
                 (be_val as u64) << 24 | (buf.get_u8() as u64) << 16
-                    | (buf.get_u16::<BigEndian>() as u64)
+                    | (buf.get_u16_be() as u64)
             }
             3 => {
                 (be_val as u64) << 56 | (buf.get_u8() as u64) << 48
-                    | (buf.get_u16::<BigEndian>() as u64) << 32
-                    | (buf.get_u32::<BigEndian>() as u64)
+                    | (buf.get_u16_be() as u64) << 32
+                    | (buf.get_u32_be() as u64)
             }
             v => panic!("impossible variable length encoding: {}", v),
         };

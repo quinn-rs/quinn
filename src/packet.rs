@@ -1,4 +1,4 @@
-use bytes::{BigEndian, Buf, BufMut};
+use bytes::{Buf, BufMut};
 
 use super::{QuicError, QuicResult};
 use codec::{BufLen, Codec, VarLen};
@@ -181,12 +181,12 @@ impl Codec for Header {
                 number,
             } => {
                 buf.put_u8(128 | ptype.to_byte());
-                buf.put_u32::<BigEndian>(version);
+                buf.put_u32_be(version);
                 buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
                 buf.put_slice(&dst_cid);
                 buf.put_slice(&src_cid);
                 VarLen(len).encode(buf);
-                buf.put_u32::<BigEndian>(number);
+                buf.put_u32_be(number);
             }
             Header::Short {
                 key_phase,
@@ -200,8 +200,8 @@ impl Codec for Header {
                 buf.put_slice(&dst_cid);
                 match ptype {
                     ShortType::One => buf.put_u8(number as u8),
-                    ShortType::Two => buf.put_u16::<BigEndian>(number as u16),
-                    ShortType::Four => buf.put_u32::<BigEndian>(number),
+                    ShortType::Two => buf.put_u16_be(number as u16),
+                    ShortType::Four => buf.put_u32_be(number),
                 }
             }
         }
@@ -210,7 +210,7 @@ impl Codec for Header {
     fn decode<T: Buf>(buf: &mut T) -> Self {
         let first = buf.get_u8();
         if first & 128 == 128 {
-            let version = buf.get_u32::<BigEndian>();
+            let version = buf.get_u32_be();
             let cils = buf.get_u8();
 
             let (dst_cid, src_cid, used) = {
@@ -235,7 +235,7 @@ impl Codec for Header {
                 dst_cid,
                 src_cid,
                 len: VarLen::decode(buf).0,
-                number: buf.get_u32::<BigEndian>(),
+                number: buf.get_u32_be(),
             }
         } else {
             let key_phase = first & 0x40 == 0x40;
@@ -249,8 +249,8 @@ impl Codec for Header {
             let ptype = ShortType::from_byte(first & 3);
             let number = match ptype {
                 ShortType::One => buf.get_u8() as u32,
-                ShortType::Two => buf.get_u16::<BigEndian>() as u32,
-                ShortType::Four => buf.get_u32::<BigEndian>(),
+                ShortType::Two => buf.get_u16_be() as u32,
+                ShortType::Four => buf.get_u32_be(),
             };
 
             Header::Short {

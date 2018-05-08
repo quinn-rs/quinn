@@ -1,4 +1,4 @@
-use bytes::{BigEndian, Buf, BufMut};
+use bytes::{Buf, BufMut};
 
 use std::fmt;
 use std::io::Cursor;
@@ -98,8 +98,8 @@ impl PacketKey {
         debug_assert_eq!(out.len(), self.alg.nonce_len());
         let out = {
             let mut write = Cursor::new(out);
-            write.put_u32::<BigEndian>(0);
-            write.put_u64::<BigEndian>(number as u64);
+            write.put_u32_be(0);
+            write.put_u64_be(number as u64);
             debug_assert_eq!(write.remaining(), 0);
             write.into_inner()
         };
@@ -149,7 +149,7 @@ pub fn expanded_handshake_secret(conn_id: ConnectionId, label: &[u8]) -> Vec<u8>
 
 pub fn qhkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
     let mut info = Vec::with_capacity(2 + 1 + 5 + out.len());
-    info.put_u16::<BigEndian>(out.len() as u16);
+    info.put_u16_be(out.len() as u16);
     info.put_u8(5 + (label.len() as u8));
     info.extend_from_slice(b"QUIC ");
     info.extend_from_slice(&label);

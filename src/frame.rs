@@ -1,4 +1,4 @@
-use bytes::{BigEndian, Buf, BufMut};
+use bytes::{Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
 
@@ -231,13 +231,13 @@ impl BufLen for CloseFrame {
 
 impl Codec for CloseFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
-        buf.put_u16::<BigEndian>(self.code);
+        buf.put_u16_be(self.code);
         VarLen(self.reason.len() as u64).encode(buf);
         buf.put_slice(self.reason.as_bytes());
     }
 
     fn decode<T: Buf>(buf: &mut T) -> Self {
-        let code = buf.get_u16::<BigEndian>();
+        let code = buf.get_u16_be();
         let len = VarLen::decode(buf).0 as usize;
         let reason = {
             let bytes = buf.bytes();
