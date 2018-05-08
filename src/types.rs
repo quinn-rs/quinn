@@ -35,7 +35,7 @@ impl fmt::Debug for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "0x")?;
         for b in (&self.bytes[..self.len as usize]).iter() {
-            write!(f, "{:x}", b)?;
+            write!(f, "{:02x}", b)?;
         }
         Ok(())
     }
