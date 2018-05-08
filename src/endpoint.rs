@@ -220,7 +220,11 @@ where
                 Frame::ConnectionClose(CloseFrame { code, ref reason }) => {
                     return Err(QuicError::ConnectionClose(code, reason.clone()));
                 }
-                Frame::Ack(_) | Frame::Padding(_) | Frame::PathResponse(_) | Frame::Stream(_) => {}
+                Frame::Ack(_)
+                | Frame::Padding(_)
+                | Frame::PathResponse(_)
+                | Frame::Stream(_)
+                | Frame::Ping => {}
             }
         }
 

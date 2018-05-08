@@ -12,6 +12,7 @@ pub enum Frame {
     Padding(PaddingFrame),
     PathChallenge(PathFrame),
     PathResponse(PathFrame),
+    Ping,
     Stream(StreamFrame),
 }
 
@@ -24,6 +25,7 @@ impl BufLen for Frame {
             Frame::Padding(ref f) => f.buf_len(),
             Frame::PathChallenge(ref f) => 1 + f.buf_len(),
             Frame::PathResponse(ref f) => 1 + f.buf_len(),
+            Frame::Ping => 1,
             Frame::Stream(ref f) => f.buf_len(),
         }
     }
@@ -50,6 +52,7 @@ impl Codec for Frame {
                 buf.put_u8(0x0f);
                 f.encode(buf)
             }
+            Frame::Ping => buf.put_u8(0x07),
             Frame::Stream(ref f) => f.encode(buf),
         }
     }
@@ -65,6 +68,10 @@ impl Codec for Frame {
                 buf.get_u8();
                 CloseFrame::decode(buf)
             }),
+            0x07 => {
+                buf.get_u8();
+                Frame::Ping
+            }
             0x0d => Frame::Ack(AckFrame::decode(buf)),
             0x0e => Frame::PathChallenge({
                 buf.get_u8();
