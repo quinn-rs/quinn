@@ -4,8 +4,8 @@ use futures::Future;
 
 use rustls::internal::pemfile;
 
-use std::{fs::File, io::{BufReader, Read}};
 use std::sync::Arc;
+use std::{fs::File, io::{BufReader, Read}};
 
 use tokio::executor::current_thread::CurrentThread;
 

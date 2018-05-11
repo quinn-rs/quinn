@@ -1,8 +1,8 @@
 extern crate quinn;
 extern crate rustls;
 
-use std::{fs::File, io::BufReader};
 use rustls::internal::pemfile;
+use std::{fs::File, io::BufReader};
 
 fn main() {
     let mut certs = {

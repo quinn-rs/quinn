@@ -4,8 +4,8 @@ use super::{QuicError, QuicResult};
 use crypto::Secret;
 use endpoint::Endpoint;
 use packet::{LongType, Packet};
-use types::{ConnectionId, Side};
 use tls;
+use types::{ConnectionId, Side};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::net::{SocketAddr, ToSocketAddrs};

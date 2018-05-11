@@ -31,14 +31,10 @@ impl Codec for VarLen {
         let val = match first >> 6 {
             0 => be_val as u64,
             1 => (be_val as u64) << 8 | (buf.get_u8() as u64),
-            2 => {
-                (be_val as u64) << 24 | (buf.get_u8() as u64) << 16
-                    | (buf.get_u16_be() as u64)
-            }
+            2 => (be_val as u64) << 24 | (buf.get_u8() as u64) << 16 | (buf.get_u16_be() as u64),
             3 => {
                 (be_val as u64) << 56 | (buf.get_u8() as u64) << 48
-                    | (buf.get_u16_be() as u64) << 32
-                    | (buf.get_u32_be() as u64)
+                    | (buf.get_u16_be() as u64) << 32 | (buf.get_u32_be() as u64)
             }
             v => panic!("impossible variable length encoding: {}", v),
         };

@@ -274,8 +274,8 @@ const ALPN_PROTOCOL: &'static str = "hq-11";
 
 #[cfg(test)]
 mod tests {
-    use super::{codec, ClientTransportParameters, Codec, ServerTransportParameters};
     use super::TransportParameters;
+    use super::{codec, ClientTransportParameters, Codec, ServerTransportParameters};
 
     fn round_trip<T: Codec + PartialEq>(t: T) {
         let buf = {
