@@ -9,8 +9,7 @@ extern crate futures;
 #[macro_use]
 extern crate structopt;
 
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 use std::fmt;
 use std::path::{self, Path, PathBuf};
 use std::str;
@@ -97,15 +96,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .listen();
 
     if let Some(key_path) = options.key {
-        let mut key = Vec::new();
-        File::open(&key_path).context("failed to open private key")?
-        .read_to_end(&mut key).context("failed to read private key")?;
+        let key = fs::read(&key_path).context("failed to read private key")?;;
         builder.private_key_pem(&key).context("failed to load private key")?;
 
         let cert_path = options.cert.unwrap(); // Ensured present by option parsing
-        let mut cert = Vec::new();
-        File::open(&cert_path).context("failed to open certificate")?
-        .read_to_end(&mut cert).context("failed to read certificate")?;
+        let cert = fs::read(&cert_path).context("failed to read certificate")?;
         builder.certificate_pem(&cert).context("failed to load certificate")?;
     } else {
         builder.generate_insecure_certificate().context("failed to generate certificate")?;
@@ -185,8 +180,6 @@ fn process_request(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
             x => { bail!("illegal component in path: {:?}", x); }
         }
     }
-    let mut file = File::open(real_path)?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data).context("failed reading file")?;
+    let data = fs::read(&real_path).context("failed reading file")?;
     Ok(data.into())
 }

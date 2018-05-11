@@ -309,7 +309,7 @@ impl Endpoint {
     /// Connect to a remote endpoint.
     ///
     /// `hostname` is used by the remote endpoint for disambiguation if `addr` hosts multiple services.
-    pub fn connect(&self, addr: &SocketAddr, hostname: Option<&[u8]>) -> Box<Future<Item=(Connection, IncomingStreams), Error=ConnectionError>> {
+    pub fn connect(&self, addr: &SocketAddr, hostname: Option<&[u8]>) -> impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError> {
         let (send, recv) = oneshot::channel();
         let conn = {
             let mut endpoint = self.0.borrow_mut();
@@ -319,12 +319,10 @@ impl Endpoint {
         };
         let endpoint = Endpoint(self.0.clone());
         let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn, side: Side::Client });
-        Box::new(
-            recv.map_err(|_| unreachable!())
-                .and_then(move |err| if let Some(err) = err { Err(err) } else {
-                    Ok((Connection(conn.clone()), IncomingStreams { endpoint, conn }))
-                })
-        )
+        recv.map_err(|_| unreachable!())
+            .and_then(move |err| if let Some(err) = err { Err(err) } else {
+                Ok((Connection(conn.clone()), IncomingStreams { endpoint, conn }))
+            })
     }
 }
 
@@ -543,7 +541,7 @@ pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
     /// Initite a new outgoing unidirectional stream.
-    pub fn open_uni(&self) -> Box<Future<Item=SendStream, Error=ConnectionError>> {
+    pub fn open_uni(&self) -> impl Future<Item=SendStream, Error=ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.0.borrow_mut();
@@ -556,15 +554,13 @@ impl Connection {
             }
         }
         let conn = self.0.clone();
-        Box::new(
-            recv.map_err(|_| unreachable!())
-                .and_then(|result| result)
-                .map(move |stream| SendStream(Stream::new(conn, stream)))
-        )
+        recv.map_err(|_| unreachable!())
+            .and_then(|result| result)
+            .map(move |stream| SendStream(Stream::new(conn, stream)))
     }
 
     /// Initiate a new outgoing bidirectional stream.
-    pub fn open_bi(&self) -> Box<Future<Item=Stream, Error=ConnectionError>> {
+    pub fn open_bi(&self) -> impl Future<Item=Stream, Error=ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.0.borrow_mut();
@@ -577,13 +573,11 @@ impl Connection {
             }
         }
         let conn = self.0.clone();
-        Box::new(
-            recv.map_err(|_| unreachable!())
-                .and_then(|result| result)
-                .map(move |stream| {
-                    Stream::new(conn.clone(), stream)
-                })
-        )
+        recv.map_err(|_| unreachable!())
+            .and_then(|result| result)
+            .map(move |stream| {
+                Stream::new(conn.clone(), stream)
+            })
     }
 
     /// Close the connection immediately.
@@ -596,7 +590,7 @@ impl Connection {
     /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
     /// should be kept under 1KiB.
     // FIXME: Infallible
-    pub fn close(self, error_code: u16, reason: &[u8]) -> Box<Future<Item=(), Error=()>> {
+    pub fn close(self, error_code: u16, reason: &[u8]) -> impl Future<Item=(), Error=()> {
         let (send, recv) = oneshot::channel();
         {
             let endpoint = &mut *self.0.endpoint.0.borrow_mut();
@@ -604,7 +598,7 @@ impl Connection {
             let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
             pending.draining = Some(send);
         }
-        Box::new(recv.then(move |_| { let _ = self; Ok(()) }))
+        recv.then(move |_| { let _ = self; Ok(()) })
     }
 
     /// The peer's UDP address.
