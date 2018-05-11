@@ -22,6 +22,7 @@ pub struct Endpoint<T> {
     prev_secret: Option<Secret>,
     s0_offset: u64,
     queue: VecDeque<Packet>,
+    received: VecDeque<Packet>,
     tls: T,
 }
 
@@ -54,6 +55,7 @@ where
             prev_secret: None,
             s0_offset: 0,
             queue: VecDeque::new(),
+            received: VecDeque::new(),
         }
     }
 
@@ -155,15 +157,17 @@ where
 
     pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
         let key = self.decode_key(&partial.header);
-        self.handle_packet(&partial.finish(&key)?)
+        self.handle_packet(partial.finish(&key)?)
     }
 
-    fn handle_packet(&mut self, p: &Packet) -> QuicResult<()> {
+    fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
         match p.ptype() {
             Some(LongType::Initial) | Some(LongType::Handshake) => {
-                self.handle_handshake(p)
+                self.handle_handshake(&p)
+            },
+            _ => {
+                Ok(self.received.push_back(p))
             }
-            _ => panic!("unhandled packet {:?}", p),
         }
     }
 
