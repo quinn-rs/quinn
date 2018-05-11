@@ -247,7 +247,6 @@ impl Endpoint {
             SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
         );
         tls.set_default_verify_paths()?;
-        if !config.accept_insecure_certs { tls.set_verify(ssl::SslVerifyMode::PEER); }
         if let Some(ref listen) = listen {
             let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
             {
@@ -489,6 +488,7 @@ impl Endpoint {
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
+        if !self.config.accept_insecure_certs { tls.set_verify(ssl::SslVerifyMode::PEER); }
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
         if let Some(hostname) = hostname { tls.set_hostname(str::from_utf8(hostname).expect("malformed hostname")).unwrap(); }
         let mut tls = match tls.connect(MemoryStream::new()) {
