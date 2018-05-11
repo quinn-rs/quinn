@@ -41,41 +41,18 @@ fn test_encoded_handshake() {
         .unwrap();
 
     let mut s = server_endpoint(c_initial.dst_cid());
-    let s_initial = {
-        let partial = Packet::start_decode(&mut buf[..len]);
-        assert_eq!(c_initial.header, partial.header);
+    s.handle(&mut buf[..len]).unwrap();
 
-        let key = s.decode_key(&partial.header);
-        partial.finish(&key).unwrap()
-    };
-
-    s.handle_handshake(&s_initial).unwrap();
     let s_sh = s.queued().unwrap();
     let len = s_sh.encode(&s.encode_key(&s_sh.header), &mut buf).unwrap();
+    c.handle(&mut buf[..len]).unwrap();
 
-    let c_sh = {
-        let partial = Packet::start_decode(&mut buf[..len]);
-        assert_eq!(s_sh.header, partial.header);
-
-        let key = c.decode_key(&partial.header);
-        partial.finish(&key).unwrap()
-    };
-
-    c.handle_handshake(&c_sh).unwrap();
     let c_fin = c.queued().unwrap();
     let len = c_fin
         .encode(&c.encode_key(&c_fin.header), &mut buf)
         .unwrap();
+    s.handle(&mut buf[..len]).unwrap();
 
-    let s_fin = {
-        let partial = Packet::start_decode(&mut buf[..len]);
-        assert_eq!(c_fin.header, partial.header);
-
-        let key = s.decode_key(&partial.header);
-        partial.finish(&key).unwrap()
-    };
-
-    s.handle_handshake(&s_fin).unwrap();
     let s_short = s.queued().unwrap();
     assert_eq!(s_short.ptype(), None);
     let len = s_short
