@@ -149,6 +149,15 @@ where
         });
     }
 
+    pub(crate) fn handle(&mut self, p: &Packet) -> QuicResult<()> {
+        match p.ptype() {
+            Some(LongType::Initial) | Some(LongType::Handshake) => {
+                self.handle_handshake(p)
+            }
+            _ => panic!("unhandled packet {:?}", p),
+        }
+    }
+
     pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<()> {
         match p.header {
             Header::Long {

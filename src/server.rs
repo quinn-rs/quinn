@@ -74,13 +74,7 @@ impl Future for Server {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
                     let key = endpoint.decode_key(&partial.header);
                     let packet = partial.finish(&key)?;
-                    match packet.ptype() {
-                        Some(LongType::Initial) | Some(LongType::Handshake) => {
-                            endpoint.handle_handshake(&packet)?
-                        }
-                        _ => panic!("unhandled packet {:?}", packet),
-                    }
-
+                    endpoint.handle(&packet)?;
                     if let Some(rsp) = endpoint.queued() {
                         let len = rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
                         try_ready!(self.socket.poll_send_to(&self.out_buf[..len], &addr));

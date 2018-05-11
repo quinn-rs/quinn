@@ -92,7 +92,7 @@ impl Future for ClientFuture {
                         let key = client.endpoint.decode_key(&partial.header);
                         partial.finish(&key)?
                     };
-                    client.endpoint.handle_handshake(&packet)?;
+                    client.endpoint.handle(&packet)?;
                     waiting = false;
                 }
 
