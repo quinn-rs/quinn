@@ -24,14 +24,14 @@ pub enum Secret {
 
 impl Secret {
     pub fn tag_len(&self) -> usize {
-        match *self {
+        match self {
             Secret::Handshake(_) => AES_128_GCM.tag_len(),
             Secret::For1Rtt(aead_alg, _, _, _) => aead_alg.tag_len(),
         }
     }
 
     pub fn build_key(&self, side: Side) -> PacketKey {
-        match *self {
+        match self {
             Secret::Handshake(cid) => {
                 let label = if side == Side::Client {
                     b"client hs"
@@ -41,7 +41,7 @@ impl Secret {
                 PacketKey::new(
                     &AES_128_GCM,
                     &SHA256,
-                    &expanded_handshake_secret(cid, label),
+                    &expanded_handshake_secret(*cid, label),
                 )
             }
             Secret::For1Rtt(aead_alg, hash_alg, ref client_secret, ref server_secret) => {
@@ -60,7 +60,7 @@ impl Secret {
 
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
+        match self {
             Secret::Handshake(cid) => write!(f, "Handshake({:?})", cid),
             Secret::For1Rtt(_, _, _, _) => write!(f, "For1Rtt(<secret>)"),
         }

@@ -94,7 +94,7 @@ pub enum Side {
 
 impl Side {
     pub fn other(&self) -> Side {
-        match *self {
+        match self {
             Side::Client => Side::Server,
             Side::Server => Side::Client,
         }

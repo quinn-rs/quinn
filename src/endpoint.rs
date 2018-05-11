@@ -187,8 +187,8 @@ where
         let mut found_stream_0 = false;
         let mut wrote_handshake = false;
         for frame in p.payload.iter() {
-            match *frame {
-                Frame::Stream(ref f) if f.id == 0 => {
+            match frame {
+                Frame::Stream(f) if f.id == 0 => {
                     found_stream_0 = true;
                     let (handshake, new_secret) =
                         tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
@@ -214,11 +214,11 @@ where
                 Frame::PathChallenge(PathFrame(token)) => {
                     payload.push(Frame::PathResponse(PathFrame(token.clone())));
                 }
-                Frame::ApplicationClose(CloseFrame { code, ref reason }) => {
-                    return Err(QuicError::ApplicationClose(code, reason.clone()));
+                Frame::ApplicationClose(CloseFrame { code, reason }) => {
+                    return Err(QuicError::ApplicationClose(*code, reason.clone()));
                 }
-                Frame::ConnectionClose(CloseFrame { code, ref reason }) => {
-                    return Err(QuicError::ConnectionClose(code, reason.clone()));
+                Frame::ConnectionClose(CloseFrame { code, reason }) => {
+                    return Err(QuicError::ConnectionClose(*code, reason.clone()));
                 }
                 Frame::Ack(_)
                 | Frame::Padding(_)

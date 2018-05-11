@@ -18,42 +18,42 @@ pub enum Frame {
 
 impl BufLen for Frame {
     fn buf_len(&self) -> usize {
-        match *self {
-            Frame::Ack(ref f) => f.buf_len(),
-            Frame::ApplicationClose(ref f) => 1 + f.buf_len(),
-            Frame::ConnectionClose(ref f) => 1 + f.buf_len(),
-            Frame::Padding(ref f) => f.buf_len(),
-            Frame::PathChallenge(ref f) => 1 + f.buf_len(),
-            Frame::PathResponse(ref f) => 1 + f.buf_len(),
+        match self {
+            Frame::Ack(f) => f.buf_len(),
+            Frame::ApplicationClose(f) => 1 + f.buf_len(),
+            Frame::ConnectionClose(f) => 1 + f.buf_len(),
+            Frame::Padding(f) => f.buf_len(),
+            Frame::PathChallenge(f) => 1 + f.buf_len(),
+            Frame::PathResponse(f) => 1 + f.buf_len(),
             Frame::Ping => 1,
-            Frame::Stream(ref f) => f.buf_len(),
+            Frame::Stream(f) => f.buf_len(),
         }
     }
 }
 
 impl Codec for Frame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
-        match *self {
-            Frame::Ack(ref f) => f.encode(buf),
-            Frame::ApplicationClose(ref f) => {
+        match self {
+            Frame::Ack(f) => f.encode(buf),
+            Frame::ApplicationClose(f) => {
                 buf.put_u8(0x03);
                 f.encode(buf)
             }
-            Frame::ConnectionClose(ref f) => {
+            Frame::ConnectionClose(f) => {
                 buf.put_u8(0x02);
                 f.encode(buf)
             }
-            Frame::Padding(ref f) => f.encode(buf),
-            Frame::PathChallenge(ref f) => {
+            Frame::Padding(f) => f.encode(buf),
+            Frame::PathChallenge(f) => {
                 buf.put_u8(0x0e);
                 f.encode(buf)
             }
-            Frame::PathResponse(ref f) => {
+            Frame::PathResponse(f) => {
                 buf.put_u8(0x0f);
                 f.encode(buf)
             }
             Frame::Ping => buf.put_u8(0x07),
-            Frame::Stream(ref f) => f.encode(buf),
+            Frame::Stream(f) => f.encode(buf),
         }
     }
 

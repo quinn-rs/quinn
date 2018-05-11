@@ -276,7 +276,7 @@ impl Copy for LongType {}
 impl LongType {
     pub fn to_byte(&self) -> u8 {
         use self::LongType::*;
-        match *self {
+        match self {
             Initial => 0x7f,
             Retry => 0x7e,
             Handshake => 0x7d,
@@ -307,7 +307,7 @@ impl Copy for ShortType {}
 impl BufLen for ShortType {
     fn buf_len(&self) -> usize {
         use self::ShortType::*;
-        match *self {
+        match self {
             One => 1,
             Two => 2,
             Four => 4,
@@ -318,7 +318,7 @@ impl BufLen for ShortType {
 impl ShortType {
     pub fn to_byte(&self) -> u8 {
         use self::ShortType::*;
-        match *self {
+        match self {
             One => 0,
             Two => 1,
             Four => 2,

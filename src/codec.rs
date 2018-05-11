@@ -51,8 +51,8 @@ where
     T: BufLen,
 {
     fn buf_len(&self) -> usize {
-        match *self {
-            Some(ref v) => v.buf_len(),
+        match self {
+            Some(v) => v.buf_len(),
             None => 0,
         }
     }
