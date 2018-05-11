@@ -6,7 +6,6 @@ use packet::Packet;
 use tls;
 use types::Side;
 
-use std::mem;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use tokio::net::UdpSocket;
@@ -19,51 +18,52 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
+    pub fn connect(server: &str, port: u16) -> QuicResult<ClientFuture> {
         let endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
-        ConnectFuture::new(endpoint, server, port)
+        connect(endpoint, server, port)
     }
 }
 
-#[must_use = "futures do nothing unless polled"]
-pub enum ConnectFuture {
-    Waiting(Client),
-    Empty,
-}
+pub(crate) fn connect(
+    mut endpoint: Endpoint<tls::QuicClientTls>,
+    server: &str,
+    port: u16,
+) -> QuicResult<ClientFuture> {
+    endpoint.initial(server)?;
+    let packet = endpoint.queued().unwrap();
+    let mut buf = vec![0u8; 65536];
+    let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);
 
-impl ConnectFuture {
-    pub(crate) fn new(
-        mut endpoint: Endpoint<tls::QuicClientTls>,
-        server: &str,
-        port: u16,
-    ) -> QuicResult<Self> {
-        endpoint.initial(server)?;
-        let packet = endpoint.queued().unwrap();
-        let mut buf = vec![0u8; 65536];
-        let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);
-
-        let mut addr = None;
-        for a in (server, port).to_socket_addrs()? {
-            if let SocketAddr::V4(_) = a {
-                addr = Some(a);
-                break;
-            }
+    let mut addr = None;
+    for a in (server, port).to_socket_addrs()? {
+        if let SocketAddr::V4(_) = a {
+            addr = Some(a);
+            break;
         }
+    }
 
-        let socket = UdpSocket::bind(&"0.0.0.0:0".parse()?)?;
-        socket.connect(&addr.ok_or_else(|| {
-            QuicError::General("no IPv4 address found for host".into())
-        })?)?;
-        Ok(ConnectFuture::Waiting(Client {
+    let socket = UdpSocket::bind(&"0.0.0.0:0".parse()?)?;
+    socket.connect(&addr.ok_or_else(|| {
+        QuicError::General("no IPv4 address found for host".into())
+    })?)?;
+    Ok(ClientFuture {
+        client: Some(Client {
             endpoint,
             socket,
             buf,
             msg_len,
-        }))
-    }
+        }),
+        check: Box::new(|c: Client| !c.endpoint.is_handshaking()),
+    })
 }
 
-impl Future for ConnectFuture {
+#[must_use = "futures do nothing unless polled"]
+pub struct ClientFuture {
+    client: Option<Client>,
+    check: Box<Fn(Client) -> bool>,
+}
+
+impl Future for ClientFuture {
     type Item = Client;
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -71,7 +71,7 @@ impl Future for ConnectFuture {
         let mut done = false;
         loop {
             waiting = true;
-            if let ConnectFuture::Waiting(ref mut client) = *self {
+            if let Some(ref mut client) = self.client {
                 if let Some(ref msg_len) = client.msg_len {
                     let len = try_ready!(client.socket.poll_send(&client.buf[..*msg_len]));
                     debug_assert_eq!(len, *msg_len);
@@ -113,8 +113,8 @@ impl Future for ConnectFuture {
         }
 
         if done {
-            match mem::replace(self, ConnectFuture::Empty) {
-                ConnectFuture::Waiting(client) => Ok(Async::Ready(client)),
+            match self.client.take() {
+                Some(client) => Ok(Async::Ready(client)),
                 _ => panic!("invalid future state"),
             }
         } else {
