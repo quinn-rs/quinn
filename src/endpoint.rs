@@ -1485,6 +1485,17 @@ impl Endpoint {
         c.congestion_window.saturating_sub(c.bytes_in_flight)
     }
 
+    /// The name a client supplied via SNI.
+    ///
+    /// None if no name was supplied or if this connection was locally-initiated.
+    pub fn get_servername(&self, conn: ConnectionHandle) -> Option<&str> {
+        match *self.connections[conn.0].state.as_ref().unwrap() {
+            State::Handshake(ref state) => state.tls.ssl().servername(ssl::NameType::HOST_NAME),
+            State::Established(ref state) => state.tls.ssl().servername(ssl::NameType::HOST_NAME),
+            _ => None,
+        }
+    }
+
     pub fn accept(&mut self) -> Option<ConnectionHandle> { self.incoming.pop_front() }
 }
 
