@@ -2,7 +2,6 @@ use futures::{Async, Future, Poll};
 
 use super::{QuicError, QuicResult};
 use endpoint::Endpoint;
-use packet::Packet;
 use tls;
 use types::Side;
 
@@ -87,12 +86,7 @@ impl Future for ClientFuture {
 
                 if let None = client.msg_len {
                     let len = try_ready!(client.socket.poll_recv(&mut client.buf));
-                    let packet = {
-                        let partial = Packet::start_decode(&mut client.buf[..len]);
-                        let key = client.endpoint.decode_key(&partial.header);
-                        partial.finish(&key)?
-                    };
-                    client.endpoint.handle(&packet)?;
+                    client.endpoint.handle(&mut client.buf[..len])?;
                     waiting = false;
                 }
 

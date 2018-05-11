@@ -8,7 +8,7 @@ use super::{QuicError, QuicResult};
 use codec::BufLen;
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
-use packet::{Header, LongType, Packet, ShortType};
+use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use tls;
 use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
 
@@ -149,7 +149,16 @@ where
         });
     }
 
-    pub(crate) fn handle(&mut self, p: &Packet) -> QuicResult<()> {
+    pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
+        self.handle_partial(Packet::start_decode(buf))
+    }
+
+    pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
+        let key = self.decode_key(&partial.header);
+        self.handle_packet(&partial.finish(&key)?)
+    }
+
+    fn handle_packet(&mut self, p: &Packet) -> QuicResult<()> {
         match p.ptype() {
             Some(LongType::Initial) | Some(LongType::Handshake) => {
                 self.handle_handshake(p)

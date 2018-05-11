@@ -72,9 +72,7 @@ impl Future for Server {
             match self.connections.entry(cid) {
                 Entry::Occupied(mut inner) => {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
-                    let key = endpoint.decode_key(&partial.header);
-                    let packet = partial.finish(&key)?;
-                    endpoint.handle(&packet)?;
+                    endpoint.handle_partial(partial)?;
                     if let Some(rsp) = endpoint.queued() {
                         let len = rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
                         try_ready!(self.socket.poll_send_to(&self.out_buf[..len], &addr));
