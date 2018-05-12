@@ -108,62 +108,69 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let (_, driver, incoming) = builder.bind("[::]:4433")?;
 
-    runtime.spawn(incoming.for_each(move |conn| {
-        let quicr::NewConnection { incoming, connection } = conn;
-        let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
-        info!(log, "got connection";
-              "remote_id" => %connection.remote_id(),
-              "address" => %connection.remote_address(),
-              "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
-        let log2 = log.clone();
-        let root = root.clone();
-        current_thread::spawn(
-            incoming
-                .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
-                .for_each(move |stream| {
-                    let stream = match stream {
-                        quicr::NewStream::Bi(stream) => stream,
-                        quicr::NewStream::Uni(_) => {
-                            error!(log, "client opened unidirectional stream");
-                            return Ok(());
-                        }
-                    };
-                    let root = root.clone();
-                    let log = log.clone();
-                    let log2 = log.clone();
-                    let log3 = log.clone();
-                    current_thread::spawn(
-                        quicr::read_to_end(stream, 64 * 1024)
-                            .map_err(|e| format_err!("failed reading request: {}", e))
-                            .and_then(move |(stream, req)| {
-                                let mut escaped = String::new();
-                                for &x in &req[..] {
-                                    let part = ascii::escape_default(x).collect::<Vec<_>>();
-                                    escaped.push_str(str::from_utf8(&part).unwrap());
-                                }
-                                info!(log, "got request"; "content" => escaped);
-                                let resp = process_request(&root, &req).unwrap_or_else(move |e| {
-                                    error!(log, "failed to process request"; "reason" => %e.pretty());
-                                    format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
-                                });
-                                tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
-                            })
-                            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
-                            .map(move |_| info!(log3, "request complete"))
-                            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
-                    );
-                    Ok(())
-                })
-        );
-        Ok(())
-    }));
-
+    runtime.spawn(incoming.for_each(move |conn| { handle_connection(&root, &log, conn); Ok(()) }));
     runtime.block_on(driver)?;
 
     Ok(())
 }
 
-fn process_request(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
+fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
+    let quicr::NewConnection { incoming, connection } = conn;
+    let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
+    info!(log, "got connection";
+          "remote_id" => %connection.remote_id(),
+          "address" => %connection.remote_address(),
+          "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
+    let log2 = log.clone();
+    let root = root.clone();
+
+    // Each stream initiated by the client constitutes a new request.
+    current_thread::spawn(
+        incoming
+            .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
+            .for_each(move |stream| { handle_request(&root, &log, stream); Ok(()) })
+    );
+}
+
+fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
+    let stream = match stream {
+        quicr::NewStream::Bi(stream) => stream,
+        quicr::NewStream::Uni(_) => {
+            error!(log, "client opened unidirectional stream");
+            return;
+        }
+    };
+    let root = root.clone();
+    let log = log.clone();
+    let log2 = log.clone();
+    let log3 = log.clone();
+
+    current_thread::spawn(
+        quicr::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
+            .map_err(|e| format_err!("failed reading request: {}", e))
+            .and_then(move |(stream, req)| {
+                let mut escaped = String::new();
+                for &x in &req[..] {
+                    let part = ascii::escape_default(x).collect::<Vec<_>>();
+                    escaped.push_str(str::from_utf8(&part).unwrap());
+                }
+                info!(log, "got request"; "content" => escaped);
+                // Execute the request
+                let resp = process_get(&root, &req).unwrap_or_else(move |e| {
+                    error!(log, "failed to process request"; "reason" => %e.pretty());
+                    format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
+                });
+                // Write the response
+                tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
+            })
+            // Gracefully terminate the stream
+            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+            .map(move |_| info!(log3, "request complete"))
+            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
+    )
+}
+
+fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
     if x.len() < 4 || &x[0..4] != b"GET " { bail!("missing GET"); }
     if x[4..].len() < 2 || &x[x.len()-2..] != b"\r\n" { bail!("missing \\r\\n"); }
     let path = str::from_utf8(&x[4..x.len()-2]).context("path is malformed UTF-8")?;
