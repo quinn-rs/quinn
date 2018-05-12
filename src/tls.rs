@@ -232,8 +232,8 @@ impl Codec for TransportParameters {
                     params.max_data = try_ret!(u32::read(&mut sub));
                 }
                 2 => {
-                    debug_assert_eq!(size, 4);
-                    params.max_streams_bidi = try_ret!(u32::read(&mut sub));
+                    debug_assert_eq!(size, 2);
+                    params.max_streams_bidi = try_ret!(u16::read(&mut sub));
                 }
                 3 => {
                     debug_assert_eq!(size, 2);
@@ -254,8 +254,8 @@ impl Codec for TransportParameters {
                     params.ack_delay_exponent = try_ret!(u8::read(&mut sub));
                 }
                 8 => {
-                    debug_assert_eq!(size, 4);
-                    params.max_stream_id_uni = try_ret!(u32::read(&mut sub));
+                    debug_assert_eq!(size, 2);
+                    params.max_stream_id_uni = try_ret!(u16::read(&mut sub));
                 }
                 t => panic!("invalid transport parameter tag {}", t),
             }

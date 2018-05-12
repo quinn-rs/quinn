@@ -63,12 +63,12 @@ impl Rand for ConnectionId {
 pub struct TransportParameters {
     pub max_stream_data: u32,                    // 0x00
     pub max_data: u32,                           // 0x01
-    pub max_streams_bidi: u32,                   // 0x02
+    pub max_streams_bidi: u16,                   // 0x02
     pub idle_timeout: u16,                       // 0x03
     pub max_packet_size: u16,                    // 0x05
     pub stateless_reset_token: Option<[u8; 16]>, // 0x06
     pub ack_delay_exponent: u8,                  // 0x07
-    pub max_stream_id_uni: u32,                  // 0x08
+    pub max_stream_id_uni: u16,                  // 0x08
 }
 
 impl Default for TransportParameters {
