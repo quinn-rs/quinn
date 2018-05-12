@@ -52,14 +52,14 @@ pub(crate) fn connect(
             buf,
             msg_len,
         }),
-        check: Box::new(|c: Client| !c.endpoint.is_handshaking()),
+        check: Box::new(|c: &mut Client| !c.endpoint.is_handshaking()),
     })
 }
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ClientFuture {
     client: Option<Client>,
-    check: Box<Fn(Client) -> bool>,
+    check: Box<Fn(&mut Client) -> bool>,
 }
 
 impl Future for ClientFuture {
@@ -74,10 +74,6 @@ impl Future for ClientFuture {
                 if let Some(ref msg_len) = client.msg_len {
                     let len = try_ready!(client.socket.poll_send(&client.buf[..*msg_len]));
                     debug_assert_eq!(len, *msg_len);
-                    if !client.endpoint.is_handshaking() {
-                        done = true;
-                        break;
-                    }
                     waiting = false;
                 }
                 if !waiting {
@@ -98,6 +94,11 @@ impl Future for ClientFuture {
                         )?);
                         waiting = false;
                     }
+                }
+
+                if (self.check)(client) {
+                    done = true;
+                    break;
                 }
             }
 
