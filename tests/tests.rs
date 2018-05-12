@@ -15,6 +15,7 @@ extern crate byteorder;
 use std::net::SocketAddrV6;
 use std::{fmt, str};
 use std::io::{self, Write};
+use std::collections::VecDeque;
 
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
@@ -68,10 +69,10 @@ lazy_static! {
 
 struct Pair {
     log: Logger,
-    server: Endpoint,
-    server_addr: SocketAddrV6,
-    client: Endpoint,
-    client_addr: SocketAddrV6,
+    server: TestEndpoint,
+    client: TestEndpoint,
+    time: u64,
+    latency: u64,
 }
 
 impl Default for Pair {
@@ -96,53 +97,139 @@ impl Pair {
         let client_addr = "[::2]:7890".parse().unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None, None).unwrap();
 
-        Self { log, server_addr, server, client_addr, client }
-    }
-
-    fn drive(&mut self) {
-        loop {
-            let s = self.server.poll_io(0);
-            let c = self.client.poll_io(0);
-            if s.is_none() && c.is_none() { break; }
-            if let Some(x) = s { self.handle(Side::Client, x); }
-            if let Some(x) = c { self.handle(Side::Server, x); }
+        Self {
+            log,
+            server: TestEndpoint::new(server, server_addr),
+            client: TestEndpoint::new(client, client_addr),
+            time: 0,
+            latency: 0,
         }
     }
 
-    fn handle(&mut self, side: Side, io: Io) {
-        let endpoint = match side { Side::Client => &mut self.client, Side::Server => &mut self.server };
-        let src =  match !side { Side::Client => self.client_addr, Side::Server => self.server_addr };
-        let dest = match  side { Side::Client => self.client_addr, Side::Server => self.server_addr };
-        match io {
-            Io::Transmit { destination, packet } => {
-                trace!(self.log, "recv"; "side" => ?!side);
-                assert_eq!(destination, dest);
-                endpoint.handle(0, src, Vec::from(packet).into())
-            }
-            Io::TimerStart { .. } | Io::TimerStop { .. } => {} // No time passes
+    // returns whether the connection is not idle
+    fn step(&mut self) -> bool {
+        self.drive_client();
+        self.drive_server();
+        let client_t = self.client.next_wakeup();
+        let server_t = self.server.next_wakeup();
+        if client_t == self.client.idle && server_t == self.server.idle { return false; }
+        if client_t < server_t {
+            self.time = self.time.max(client_t);
+            trace!(self.log, "advancing to {time} for client", time=self.time);
+        } else {
+            self.time = self.time.max(server_t);
+            trace!(self.log, "advancing to {time} for server", time=self.time);
+        }
+        true
+    }
+
+    fn drive(&mut self) { while self.step() {} }
+
+    fn drive_client(&mut self) {
+        trace!(self.log, "client running");
+        self.client.drive(&self.log, self.time, self.server.addr);
+        for packet in self.client.outbound.drain(..) {
+            self.server.inbound.push_back((self.time + self.latency, packet));
         }
     }
 
-    fn drive_cs(&mut self) {
-        while let Some(x) = self.client.poll_io(0) {
-            self.handle(Side::Server, x);
-        }
-    }
-
-    fn drive_sc(&mut self) {
-        while let Some(x) = self.server.poll_io(0) {
-            self.handle(Side::Client, x);
+    fn drive_server(&mut self) {
+        trace!(self.log, "server running");
+        self.server.drive(&self.log, self.time, self.client.addr);
+        for packet in self.server.outbound.drain(..) {
+            self.client.inbound.push_back((self.time + self.latency, packet));
         }
     }
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server_addr, None);
+        let client_conn = self.client.connect(self.server.addr, None);
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
         (client_conn, server_conn)
     }
+}
+
+struct TestEndpoint {
+    endpoint: Endpoint,
+    addr: SocketAddrV6,
+    idle: u64,
+    loss: u64,
+    close: u64,
+    conn: Option<ConnectionHandle>,
+    outbound: VecDeque<Box<[u8]>>,
+    inbound: VecDeque<(u64, Box<[u8]>)>,
+}
+
+impl TestEndpoint {
+    fn new(endpoint: Endpoint, addr: SocketAddrV6) -> Self { Self {
+        endpoint, addr,
+        idle: u64::max_value(),
+        loss: u64::max_value(),
+        close: u64::max_value(),
+        conn: None,
+        outbound: VecDeque::new(),
+        inbound: VecDeque::new(),
+    }}
+
+    fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
+        if let Some(conn) = self.conn {
+            if self.loss <= now {
+                trace!(log, "timeout"; "timer" => ?Timer::LossDetection);
+                self.loss = u64::max_value();
+                self.endpoint.timeout(now, conn, Timer::LossDetection);
+            }
+            if self.idle <= now {
+                trace!(log, "timeout"; "timer" => ?Timer::Idle);
+                self.idle = u64::max_value();
+                self.endpoint.timeout(now, conn, Timer::Idle);
+            }
+            if self.close <= now {
+                trace!(log, "timeout"; "timer" => ?Timer::Close);
+                self.close = u64::max_value();
+                self.endpoint.timeout(now, conn, Timer::Close);
+            }
+        }
+        while self.inbound.front().map_or(false, |x| x.0 <= now) {
+            self.endpoint.handle(now, remote, Vec::from(self.inbound.pop_front().unwrap().1).into());
+        }
+        while let Some(x) = self.endpoint.poll_io(now) { match x {
+            Io::Transmit { packet, .. } => {
+                self.outbound.push_back(packet);
+            }
+            Io::TimerStart { timer, time, connection } => {
+                self.conn = Some(connection);
+                trace!(log, "timer start"; "timer" => ?timer, "dt" => time - now);
+                match timer {
+                    Timer::LossDetection => { self.loss = time; }
+                    Timer::Idle => { self.idle = time; }
+                    Timer::Close => { self.close = time; }
+                }
+            }
+            Io::TimerStop { timer, .. } => {
+                trace!(log, "timer stop"; "timer" => ?timer);
+                match timer {
+                    Timer::LossDetection => { self.loss = u64::max_value(); }
+                    Timer::Idle => { self.idle = u64::max_value(); }
+                    Timer::Close => { self.close = u64::max_value(); }
+                }
+            }
+        }}
+    }
+
+    fn next_wakeup(&self) -> u64 {
+        self.idle.min(self.loss).min(self.close).min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
+    }
+}
+
+impl ::std::ops::Deref for TestEndpoint {
+    type Target = Endpoint;
+    fn deref(&self) -> &Endpoint { &self.endpoint }
+}
+
+impl ::std::ops::DerefMut for TestEndpoint {
+    fn deref_mut(&mut self) -> &mut Endpoint { &mut self.endpoint }
 }
 
 #[test]
@@ -186,14 +273,14 @@ fn lifecycle() {
                     Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
                         reason: ApplicationClose { error_code: 42, ref reason }
                     }})) if reason == REASON);
-    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionDrained)) if conn == client_conn);
 }
 
 #[test]
 fn stateless_reset() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
-    pair.server = Endpoint::new(
+    pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
         Some(CertConfig {
@@ -277,7 +364,7 @@ fn stop_stream() {
 fn reject_self_signed_cert() {
     let mut pair = Pair::new(Config::default(), Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server_addr, None);
+    let client_conn = pair.client.connect(pair.server.addr, None);
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
@@ -294,12 +381,13 @@ fn congestion() {
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     loop {
         match pair.client.write(client_conn, s, &[42; 1024]) {
-            Ok(n) => { assert!(n <= 1024); pair.drive_cs(); }
+            Ok(n) => { assert!(n <= 1024); pair.drive_client(); }
             Err(WriteError::Blocked) => { break; }
             Err(e) => { panic!("unexpected write error: {}", e); }
         }
     }
-    pair.drive_sc();
+    pair.drive_server();
+    pair.drive_client();
     assert!(pair.client.get_congestion_state(client_conn) >= initial_congestion_state);
     pair.client.write(client_conn, s, &[42; 1024]).unwrap();
 }
