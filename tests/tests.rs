@@ -72,6 +72,7 @@ struct Pair {
     server: TestEndpoint,
     client: TestEndpoint,
     time: u64,
+    // One-way
     latency: u64,
 }
 
@@ -99,14 +100,14 @@ impl Pair {
 
         Self {
             log,
-            server: TestEndpoint::new(server, server_addr),
-            client: TestEndpoint::new(client, client_addr),
+            server: TestEndpoint::new(Side::Server, server, server_addr),
+            client: TestEndpoint::new(Side::Client, client, client_addr),
             time: 0,
             latency: 0,
         }
     }
 
-    // returns whether the connection is not idle
+    /// Returns whether the connection is not idle
     fn step(&mut self) -> bool {
         self.drive_client();
         self.drive_server();
@@ -123,6 +124,7 @@ impl Pair {
         true
     }
 
+    /// Advance time until both connections are idle
     fn drive(&mut self) { while self.step() {} }
 
     fn drive_client(&mut self) {
@@ -152,6 +154,7 @@ impl Pair {
 }
 
 struct TestEndpoint {
+    side: Side,
     endpoint: Endpoint,
     addr: SocketAddrV6,
     idle: u64,
@@ -163,8 +166,8 @@ struct TestEndpoint {
 }
 
 impl TestEndpoint {
-    fn new(endpoint: Endpoint, addr: SocketAddrV6) -> Self { Self {
-        endpoint, addr,
+    fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self { Self {
+        side, endpoint, addr,
         idle: u64::max_value(),
         loss: u64::max_value(),
         close: u64::max_value(),
@@ -176,17 +179,17 @@ impl TestEndpoint {
     fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
         if let Some(conn) = self.conn {
             if self.loss <= now {
-                trace!(log, "timeout"; "timer" => ?Timer::LossDetection);
+                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::LossDetection);
                 self.loss = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::LossDetection);
             }
             if self.idle <= now {
-                trace!(log, "timeout"; "timer" => ?Timer::Idle);
+                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::Idle);
                 self.idle = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::Idle);
             }
             if self.close <= now {
-                trace!(log, "timeout"; "timer" => ?Timer::Close);
+                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::Close);
                 self.close = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::Close);
             }
@@ -200,7 +203,7 @@ impl TestEndpoint {
             }
             Io::TimerStart { timer, time, connection } => {
                 self.conn = Some(connection);
-                trace!(log, "timer start"; "timer" => ?timer, "dt" => time - now);
+                trace!(log, "{side:?} {timer:?} start: {dt}", side=self.side, timer=timer, dt=(time - now));
                 match timer {
                     Timer::LossDetection => { self.loss = time; }
                     Timer::Idle => { self.idle = time; }
@@ -208,7 +211,7 @@ impl TestEndpoint {
                 }
             }
             Io::TimerStop { timer, .. } => {
-                trace!(log, "timer stop"; "timer" => ?timer);
+                trace!(log, "{side:?} {timer:?} stop", side=self.side, timer=timer);
                 match timer {
                     Timer::LossDetection => { self.loss = u64::max_value(); }
                     Timer::Idle => { self.idle = u64::max_value(); }
@@ -267,7 +270,7 @@ fn lifecycle() {
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
-    pair.client.close(0, client_conn, 42, REASON.into());
+    pair.client.close(pair.time, client_conn, 42, REASON.into());
     pair.drive();
     assert_matches!(pair.server.poll(),
                     Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
@@ -386,8 +389,17 @@ fn congestion() {
             Err(e) => { panic!("unexpected write error: {}", e); }
         }
     }
-    pair.drive_server();
-    pair.drive_client();
+    pair.drive();
     assert!(pair.client.get_congestion_state(client_conn) >= initial_congestion_state);
     pair.client.write(client_conn, s, &[42; 1024]).unwrap();
+}
+
+#[test]
+fn high_latency_handshake() {
+    let mut pair = Pair::default();
+    pair.latency = 123 * 1000;
+    let client_conn = pair.client.connect(pair.server.addr, None);
+    pair.drive();
+    assert_matches!(pair.server.accept(), Some(_));
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 }

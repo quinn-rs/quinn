@@ -21,7 +21,7 @@ digest = "0.7"
 blake2 = "0.7"
 constant_time_eq = "0.1"
 lazy_static = "1"
-slog = "2.1"
+slog = "2.2"
 arrayvec = "0.4.7"
 fnv = "1.0.6"
 openssl = { version = "0.10.6", features = ["v111"] }

@@ -18,7 +18,7 @@ use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
 use blake2::Blake2b;
 use digest::{Input, VariableOutput};
 use constant_time_eq::constant_time_eq;
-use slog::Logger;
+use slog::{self, Logger};
 use arrayvec::ArrayVec;
 use fnv::{FnvHashMap, FnvHashSet};
 
@@ -379,7 +379,7 @@ impl Endpoint {
         loop {
             if let Some(x) = self.io.pop_front() { return Some(x); }
             let &conn = self.dirty_conns.iter().next()?;
-            // TODO: Only pop once, only remove if that fails
+            // TODO: Only determine a single operation; only remove from dirty set if that fails
             self.flush_pending(now, conn);
             self.dirty_conns.remove(&conn);
         }
@@ -550,12 +550,12 @@ impl Endpoint {
                         if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                             let params = params.expect("transport parameter errors should have aborted the handshake");
                             let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
+                            self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                             self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                                 tls, clienthello_packet: None, remote_id_set: true,
                             }));
                             self.connections[conn.0].set_params(&self.config, params);
-                            self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                             self.dirty_conns.insert(conn);
                             self.incoming_handshakes += 1;
                         } else {
@@ -632,7 +632,6 @@ impl Endpoint {
         State::Handshake(mut state) => {
             match packet.header {
                 Header::Long { ty: packet::RETRY, number, destination_id: conn_id, source_id: remote_id, .. } => {
-                    trace!(self.log, "retry packet"; "connection" => %conn_id, "pn" => number);
                     // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
                     if state.clienthello_packet.is_none() {
                         // Received Retry as a server
@@ -657,8 +656,8 @@ impl Endpoint {
                         *state.tls.get_mut() = new_stream;
                         match state.tls.handshake() {
                             Err(HandshakeError::WouldBlock(mut tls)) => {
-                                trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
                                 self.on_packet_authenticated(now, conn, number as u64);
+                                trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
                                 let local_id = self.connections[conn.0].local_id.clone();
                                 // The server sees the next Initial packet as our first, so we update our keys to match the new remote_id
                                 let crypto = CryptoContext::handshake(&remote_id, Side::Client);
@@ -758,6 +757,7 @@ impl Endpoint {
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             } else {
                                 self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into());
+                                self.connections[conn.0].handshake_cleanup(&self.config);
                             }
                             match self.connections[conn.0].side {
                                 Side::Client => {
@@ -807,8 +807,12 @@ impl Endpoint {
                         }
                     }
                 }
+                Header::Long { ty: packet::INITIAL, .. } if self.connections[conn.0].side == Side::Server => {
+                    trace!(self.log, "dropping duplicate Initial");
+                    State::Handshake(state)
+                }
                 Header::Long { ty, .. } => {
-                    debug!(self.log, "unexpected packet type"; "type" => ty);
+                    debug!(self.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
                     State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                 }
@@ -855,8 +859,11 @@ impl Endpoint {
                     return State::closed(e);
                 }
             };
-            trace!(self.log, "packet authenticated"; "pn" => number);
             self.on_packet_authenticated(now, conn, number);
+            if self.connections[conn.0].awaiting_handshake {
+                assert_eq!(self.connections[conn.0].side, Side::Client);
+                self.connections[conn.0].handshake_cleanup(&self.config);
+            }
             for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Padding => {}
@@ -1232,15 +1239,15 @@ impl Endpoint {
                 self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
             }
             Timer::LossDetection => {
-                if self.connections[conn.0].handshake_sent != 0 {
+                if self.connections[conn.0].awaiting_handshake {
                     trace!(self.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
-                    self.connections[conn.0].handshake_sent = 0;
                     let packets = self.connections[conn.0].sent_packets.iter()
                         .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
                         .collect::<Vec<_>>();
                     for number in packets {
                         let mut info = self.connections[conn.0].sent_packets.remove(&number).unwrap();
                         self.connections[conn.0].handshake_pending += info.retransmits;
+                        self.connections[conn.0].bytes_in_flight -= info.bytes as u64;
                     }
                     self.connections[conn.0].handshake_count += 1;
                 } else if self.connections[conn.0].loss_time != 0 {
@@ -1248,7 +1255,11 @@ impl Endpoint {
                     let largest = self.connections[conn.0].largest_acked_packet;
                     self.connections[conn.0].detect_lost_packets(&self.config, now, largest);
                 } else if self.connections[conn.0].tlp_count < self.config.max_tlps {
-                    trace!(self.log, "sending TLP"; "pn" => self.connections[conn.0].largest_sent_packet + 1);
+                    trace!(self.log, "sending TLP {number} in {pn}",
+                           number=self.connections[conn.0].tlp_count,
+                           pn=self.connections[conn.0].largest_sent_packet + 1;
+                           "outstanding" => ?self.connections[conn.0].sent_packets.keys().collect::<Vec<_>>(),
+                           "in flight" => self.connections[conn.0].bytes_in_flight);
                     // Tail Loss Probe.
                     self.io.push_back(Io::Transmit {
                         destination: self.connections[conn.0].remote,
@@ -1257,7 +1268,9 @@ impl Endpoint {
                     self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].tlp_count += 1;
                 } else {
-                    trace!(self.log, "RTO fired, retransmitting"; "pn" => self.connections[conn.0].largest_sent_packet + 1);
+                    trace!(self.log, "RTO fired, retransmitting"; "pn" => self.connections[conn.0].largest_sent_packet + 1,
+                           "outstanding" => ?self.connections[conn.0].sent_packets.keys().collect::<Vec<_>>(),
+                           "in flight" => self.connections[conn.0].bytes_in_flight);
                     // RTO
                     if self.connections[conn.0].rto_count == 0 {
                         self.connections[conn.0].largest_sent_before_rto = self.connections[conn.0].largest_sent_packet;
@@ -1286,6 +1299,7 @@ impl Endpoint {
             x
         };
         self.connections[conn.0].handshake_pending.stream.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
+        self.connections[conn.0].awaiting_handshake = true;
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
@@ -1461,6 +1475,7 @@ impl Endpoint {
     }
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
+        trace!(self.log, "packet authenticated"; "connection" => %self.connections[conn.0].local_id, "pn" => packet);
         self.reset_idle_timeout(now, conn);
         self.connections[conn.0].on_packet_authenticated(now, packet);
     }
@@ -1479,7 +1494,7 @@ impl Endpoint {
         } else { None }
     }
 
-    /// Number of bytes worth of non-ack-only packets that may be sent
+    /// Number of bytes worth of non-ack-only packets that may be sent.
     pub fn get_congestion_state(&self, conn: ConnectionHandle) -> u64 {
         let c = &self.connections[conn.0];
         c.congestion_window.saturating_sub(c.bytes_in_flight)
@@ -1622,7 +1637,10 @@ struct Connection {
     // Handshake retransmit state
     //
 
-    handshake_sent: u64,
+    /// Whether we've sent handshake packets that have not been either explicitly acknowledged or rendered moot by
+    /// handshake completion, i.e. whether we're waiting for proof that the peer has advanced their handshake state
+    /// machine.
+    awaiting_handshake: bool,
     handshake_pending: Retransmits,
     handshake_crypto: CryptoContext,
 
@@ -1794,7 +1812,7 @@ impl Connection {
             end_of_recovery: 0,
             ssthresh: u64::max_value(),
 
-            handshake_sent: 0,
+            awaiting_handshake: false,
             handshake_pending: Retransmits::default(),
             handshake_crypto,
 
@@ -1823,13 +1841,12 @@ impl Connection {
         self.largest_sent_packet
     }
 
-    /// Returns new loss detection alarm time, if applicable
     fn on_packet_sent(&mut self, config: &Config, now: u64, packet_number: u64, packet: SentPacket) {
         self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
         let handshake = packet.handshake;
         if handshake {
-            self.handshake_sent += 1;
+            self.awaiting_handshake = true;
         }
         self.sent_packets.insert(packet_number, packet);
         if bytes != 0 {
@@ -1854,9 +1871,7 @@ impl Connection {
             // Avoid DoS from unreasonably huge ack ranges
             let packets = self.sent_packets.range(range).map(|(&n, _)| n).collect::<Vec<_>>();
             for packet in packets {
-                if let Some(bytes) = self.sent_packets.get(&packet).map(|x| x.bytes) {
-                    self.on_packet_acked(config, packet, bytes)
-                }
+                self.on_packet_acked(config, packet);
             }
         }
         self.detect_lost_packets(config, now, ack.largest);
@@ -1881,18 +1896,20 @@ impl Connection {
         }
     }
 
-    fn on_packet_acked(&mut self, config: &Config, packet: u64, bytes: u16) {
-        if bytes != 0 {
+    // Not timing-aware, so it's safe to call this for inferred acks, such as arise from high-latency handshakes
+    fn on_packet_acked(&mut self, config: &Config, packet: u64) {
+        let info = if let Some(x) = self.sent_packets.remove(&packet) { x } else { return; };
+        if info.bytes != 0 {
             // Congestion control
-            self.bytes_in_flight -= bytes as u64;
+            self.bytes_in_flight -= info.bytes as u64;
             // Do not increase congestion window in recovery period.
             if !self.in_recovery(packet) {
                 if self.congestion_window < self.ssthresh {
                     // Slow start.
-                    self.congestion_window += bytes as u64;
+                    self.congestion_window += info.bytes as u64;
                 } else {
                     // Congestion avoidance.
-                    self.congestion_window += config.default_mss * bytes as u64 / self.congestion_window;
+                    self.congestion_window += config.default_mss * info.bytes as u64 / self.congestion_window;
                 }
             }
         }
@@ -1908,10 +1925,8 @@ impl Connection {
         self.handshake_count = 0;
         self.tlp_count = 0;
         self.rto_count = 0;
-        let info = self.sent_packets.remove(&packet).unwrap();
 
         // Update state for confirmed delivery of frames
-        self.handshake_sent -= info.handshake as u64;
         for (id, _) in info.retransmits.rst_stream {
             if let stream::SendState::ResetSent { stop_reason } = self.streams.get_mut(&id).unwrap().send_mut().unwrap().state {
                 self.streams.get_mut(&id).unwrap().send_mut().unwrap().state = stream::SendState::ResetRecvd { stop_reason };
@@ -1994,7 +2009,7 @@ impl Connection {
         }
 
         let mut alarm_duration: u64;
-        if self.handshake_sent != 0 || !self.handshake_pending.is_empty() {
+        if self.awaiting_handshake {
             // Handshake retransmission alarm.
             if self.smoothed_rtt == 0 {
                 alarm_duration = 2 * config.default_initial_rtt;
@@ -2041,6 +2056,20 @@ impl Connection {
         }
     }
 
+    fn handshake_cleanup(&mut self, config: &Config) {
+        assert!(self.awaiting_handshake);
+        self.awaiting_handshake = false;
+        self.handshake_pending = Retransmits::default();
+        let mut packets = Vec::new();
+        for (&packet, info) in &self.sent_packets {
+            if info.handshake { packets.push(packet); }
+        }
+        for packet in packets {
+            self.on_packet_acked(config, packet);
+        }
+        self.set_loss_detection_alarm(config);
+    }
+
     fn update_keys(&mut self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
         let new = self.crypto.as_mut().unwrap().update(self.side);
         let data = new.decrypt(packet, header, payload)?;
@@ -2079,11 +2108,10 @@ impl Connection {
     }
 
     fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
-        let is_handshake;
-        match *self.state.as_ref().unwrap() {
+        let is_handshake = match *self.state.as_ref().unwrap() {
             ref x if x.is_closed() => { return None; }
-            State::Handshake(_) => { is_handshake = true; }
-            _ => is_handshake = !self.handshake_pending.is_empty()
+            State::Handshake(_) => { true }
+            _ => self.awaiting_handshake
         };
 
         let mut buf = Vec::new();
@@ -2405,7 +2433,7 @@ impl Connection {
         // Return data we already have buffered, regardless of state
         if let Some(x) = rs.buffered.pop_front() {
             // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
-            self.local_max_data += x.0.len() as u64;
+            self.local_max_data += x.0.len() as u64; // FIXME: Don't issue credit for already-received data!
             self.pending.max_data = true;
             // Only bother issuing stream credit if the peer wants to send more
             if let stream::RecvState::Recv { size: None } = rs.state {
@@ -3016,6 +3044,12 @@ pub enum Timer {
     Close,
     LossDetection,
     Idle,
+}
+
+impl slog::Value for Timer {
+    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
 }
 
 /// Reasons why a connection might be lost.

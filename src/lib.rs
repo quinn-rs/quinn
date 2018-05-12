@@ -60,6 +60,12 @@ impl ::std::ops::Not for Side {
     fn not(self) -> Side { match self { Side::Client => Side::Server, Side::Server => Side::Client } }
 }
 
+impl slog::Value for Side {
+    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
 /// Whether a stream communicates data in both directions or only from the initiator
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Directionality {
