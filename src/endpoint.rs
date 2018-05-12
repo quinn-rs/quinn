@@ -211,12 +211,10 @@ where
             }),
         ];
 
-        let mut found_stream_0 = false;
         let mut wrote_handshake = false;
         for frame in p.payload.iter() {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
-                    found_stream_0 = true;
                     let (handshake, new_secret) =
                         tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
 
@@ -255,18 +253,12 @@ where
             }
         }
 
-        if !found_stream_0 {
-            Err(QuicError::General(
-                "no frame on stream 0 found in handshake".into(),
-            ))
+        if self.state == State::Connected && !wrote_handshake {
+            self.build_short_packet(payload)
         } else {
-            if self.state == State::Connected && !wrote_handshake {
-                self.build_short_packet(payload)
-            } else {
-                self.build_handshake_packet(payload)
-            }
-            Ok(())
+            self.build_handshake_packet(payload)
         }
+        Ok(())
     }
 }
 
