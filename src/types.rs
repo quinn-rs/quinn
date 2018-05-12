@@ -76,12 +76,12 @@ impl Default for TransportParameters {
         Self {
             max_stream_data: 131072,
             max_data: 1048576,
-            max_streams_bidi: 0,
+            max_streams_bidi: 4,
             idle_timeout: 300,
             max_packet_size: 65527,
             stateless_reset_token: None,
             ack_delay_exponent: 3,
-            max_stream_id_uni: 0,
+            max_stream_id_uni: 20,
         }
     }
 }
