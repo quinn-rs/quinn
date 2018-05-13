@@ -1,11 +1,21 @@
 use bytes::{Buf, BufMut};
 
+use super::QUIC_VERSION;
 use codec::Codec;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClientTransportParameters {
     pub initial_version: u32,
     pub parameters: TransportParameters,
+}
+
+impl Default for ClientTransportParameters {
+    fn default() -> Self {
+        Self {
+            initial_version: QUIC_VERSION,
+            parameters: TransportParameters::default(),
+        }
+    }
 }
 
 impl Codec for ClientTransportParameters {
@@ -27,6 +37,16 @@ pub struct ServerTransportParameters {
     pub negotiated_version: u32,
     pub supported_versions: Vec<u32>,
     pub parameters: TransportParameters,
+}
+
+impl Default for ServerTransportParameters {
+    fn default() -> Self {
+        Self {
+            negotiated_version: QUIC_VERSION,
+            supported_versions: vec![QUIC_VERSION],
+            parameters: TransportParameters::default(),
+        }
+    }
 }
 
 impl Codec for ServerTransportParameters {

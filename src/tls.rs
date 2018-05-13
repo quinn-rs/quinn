@@ -4,10 +4,10 @@ use rustls::{ClientConfig, NoClientAuth, ProtocolVersion, TLSError};
 use std::io::Cursor;
 use std::sync::Arc;
 
-use super::{QuicError, QuicResult, QUIC_VERSION};
+use super::{QuicError, QuicResult};
 use codec::Codec;
 use crypto::Secret;
-use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
+use parameters::{ClientTransportParameters, ServerTransportParameters};
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
@@ -17,14 +17,10 @@ pub use rustls::{Certificate, ClientSession, PrivateKey, ServerConfig, ServerSes
 pub fn client_session(config: Option<ClientConfig>, hostname: &str) -> QuicResult<ClientSession> {
     let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
         .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
-    let params = ClientTransportParameters {
-        initial_version: QUIC_VERSION,
-        parameters: TransportParameters::default(),
-    };
     Ok(ClientSession::new_quic(
         &Arc::new(config.unwrap_or(build_client_config(None))),
         pki_server_name,
-        to_vec(params),
+        to_vec(ClientTransportParameters::default()),
     ))
 }
 
@@ -38,14 +34,7 @@ pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientCon
 }
 
 pub fn server_session(config: &Arc<ServerConfig>) -> ServerSession {
-    ServerSession::new_quic(
-        config,
-        to_vec(ServerTransportParameters {
-            negotiated_version: QUIC_VERSION,
-            supported_versions: vec![QUIC_VERSION],
-            parameters: TransportParameters::default(),
-        }),
-    )
+    ServerSession::new_quic(config, to_vec(ServerTransportParameters::default()))
 }
 
 pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
