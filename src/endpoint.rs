@@ -70,8 +70,14 @@ where
         self.queue.pop_front()
     }
 
-    pub fn update_src_cid(&mut self) {
-        self.src_cid = thread_rng().gen();
+    pub fn pick_unused_cid<F>(&mut self, is_used: F) -> ConnectionId
+    where
+        F: Fn(ConnectionId) -> bool,
+    {
+        while is_used(self.src_cid) {
+            self.src_cid = thread_rng().gen();
+        }
+        self.src_cid
     }
 
     pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {

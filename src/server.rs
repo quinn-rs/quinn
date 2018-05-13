@@ -47,6 +47,7 @@ impl Future for Server {
 
     fn poll(&mut self) -> Poll<(), QuicError> {
         loop {
+            let connections = &mut self.connections;
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             let partial = Packet::start_decode(&mut self.in_buf[..len]);
             let dst_cid = partial.dst_cid();
@@ -58,18 +59,14 @@ impl Future for Server {
                     Some(Secret::Handshake(dst_cid)),
                 );
 
-                while self.connections.contains_key(&endpoint.src_cid) {
-                    endpoint.update_src_cid();
-                }
-
-                let cid = endpoint.src_cid;
-                self.connections.insert(endpoint.src_cid, (addr, endpoint));
+                let cid = endpoint.pick_unused_cid(|cid| connections.contains_key(&cid));
+                connections.insert(cid, (addr, endpoint));
                 cid
             } else {
                 dst_cid
             };
 
-            match self.connections.entry(cid) {
+            match connections.entry(cid) {
                 Entry::Occupied(mut inner) => {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
                     endpoint.handle_partial(partial)?;
