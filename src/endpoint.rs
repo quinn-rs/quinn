@@ -173,12 +173,8 @@ where
 
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
         match p.ptype() {
-            Some(LongType::Initial) | Some(LongType::Handshake) => {
-                self.handle_handshake(&p)
-            },
-            _ => {
-                Ok(self.received.push_back(p))
-            }
+            Some(LongType::Initial) | Some(LongType::Handshake) => self.handle_handshake(&p),
+            _ => Ok(self.received.push_back(p)),
         }
     }
 
