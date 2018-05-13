@@ -10,13 +10,13 @@ use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use tls;
-use types::{ConnectionId, DRAFT_11, Side, GENERATED_CID_LENGTH};
+use types::{ConnectionId, DRAFT_11, PeerData, Side, GENERATED_CID_LENGTH};
 
 pub struct Endpoint<T> {
     side: Side,
     state: State,
-    pub dst_cid: ConnectionId,
-    pub src_cid: ConnectionId,
+    local: PeerData,
+    remote: PeerData,
     pub src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
@@ -48,8 +48,8 @@ where
             tls,
             side,
             state: State::Start,
-            dst_cid,
-            src_cid: rng.gen(),
+            remote: PeerData::new(dst_cid),
+            local: PeerData::new(rng.gen()),
             src_pn: rng.gen(),
             secret,
             prev_secret: None,
@@ -74,10 +74,10 @@ where
     where
         F: Fn(ConnectionId) -> bool,
     {
-        while is_used(self.src_cid) {
-            self.src_cid = thread_rng().gen();
+        while is_used(self.local.cid) {
+            self.local.cid = thread_rng().gen();
         }
-        self.src_cid
+        self.local.cid
     }
 
     pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
@@ -113,13 +113,13 @@ where
             payload_len = 1200;
         }
 
-        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
+        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
         self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
                 version: DRAFT_11,
-                dst_cid: self.dst_cid,
-                src_cid: self.src_cid,
+                dst_cid: self.remote.cid,
+                src_cid: self.local.cid,
                 len: payload_len as u64,
                 number,
             },
@@ -131,13 +131,13 @@ where
         let number = self.src_pn;
         self.src_pn += 1;
 
-        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
+        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
         self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
                 version: DRAFT_11,
-                dst_cid: self.dst_cid,
-                src_cid: self.src_cid,
+                dst_cid: self.remote.cid,
+                src_cid: self.local.cid,
                 len: (payload.buf_len() + self.secret.tag_len()) as u64,
                 number,
             },
@@ -150,12 +150,12 @@ where
         self.src_pn += 1;
 
         debug_assert_eq!(self.state, State::Connected);
-        debug_assert_eq!(self.src_cid.len, GENERATED_CID_LENGTH);
+        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
         self.queue.push_back(Packet {
             header: Header::Short {
                 key_phase: false,
                 ptype: ShortType::Four,
-                dst_cid: self.dst_cid,
+                dst_cid: self.remote.cid,
                 number: number,
             },
             payload,
@@ -184,13 +184,13 @@ where
                 dst_cid, src_cid, ..
             } => match self.state {
                 State::Start | State::InitialSent => {
-                    self.dst_cid = src_cid;
+                    self.remote.cid = src_cid;
                     self.state = State::Handshaking;
                 }
-                _ => if dst_cid != self.src_cid {
+                _ => if dst_cid != self.local.cid {
                     return Err(QuicError::General(format!(
                         "invalid destination CID {:?} received (expected {:?})",
-                        dst_cid, self.src_cid
+                        dst_cid, self.local.cid
                     )));
                 },
             },
