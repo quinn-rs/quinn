@@ -16,7 +16,7 @@ pub struct Endpoint<T> {
     state: State,
     local: PeerData,
     remote: PeerData,
-    pub src_pn: u32,
+    src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
     s0_offset: u64,
