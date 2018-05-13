@@ -21,6 +21,7 @@ mod crypto;
 mod endpoint;
 mod frame;
 mod packet;
+mod parameters;
 mod server;
 #[cfg(test)]
 mod tests;

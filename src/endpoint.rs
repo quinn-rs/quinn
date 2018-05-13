@@ -9,6 +9,7 @@ use codec::{BufLen, Codec};
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
+use parameters::{ClientTransportParameters, ServerTransportParameters};
 use tls;
 use types::{ConnectionId, DRAFT_11, PeerData, Side, GENERATED_CID_LENGTH};
 
@@ -245,9 +246,9 @@ where
                             Some(bytes) => {
                                 let mut read = Cursor::new(bytes);
                                 if self.side == Side::Client {
-                                    tls::ServerTransportParameters::decode(&mut read).parameters
+                                    ServerTransportParameters::decode(&mut read).parameters
                                 } else {
-                                    tls::ClientTransportParameters::decode(&mut read).parameters
+                                    ClientTransportParameters::decode(&mut read).parameters
                                 }
                             }
                         };

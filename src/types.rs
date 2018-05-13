@@ -3,6 +3,8 @@ use rand::{Rand, Rng};
 use std::fmt;
 use std::ops::Deref;
 
+use parameters::TransportParameters;
+
 pub struct PeerData {
     pub cid: ConnectionId,
     pub params: TransportParameters,
@@ -70,33 +72,6 @@ impl Rand for ConnectionId {
         };
         rng.fill_bytes(&mut res.bytes[..res.len as usize]);
         res
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TransportParameters {
-    pub max_stream_data: u32,                    // 0x00
-    pub max_data: u32,                           // 0x01
-    pub max_streams_bidi: u16,                   // 0x02
-    pub idle_timeout: u16,                       // 0x03
-    pub max_packet_size: u16,                    // 0x05
-    pub stateless_reset_token: Option<[u8; 16]>, // 0x06
-    pub ack_delay_exponent: u8,                  // 0x07
-    pub max_stream_id_uni: u16,                  // 0x08
-}
-
-impl Default for TransportParameters {
-    fn default() -> Self {
-        Self {
-            max_stream_data: 131072,
-            max_data: 1048576,
-            max_streams_bidi: 4,
-            idle_timeout: 300,
-            max_packet_size: 65527,
-            stateless_reset_token: None,
-            ack_delay_exponent: 3,
-            max_stream_id_uni: 20,
-        }
     }
 }
 
