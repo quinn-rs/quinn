@@ -1,11 +1,13 @@
-use rustls::internal::msgs::codec::{self, Codec};
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion, TLSError};
 
 use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use bytes::{Buf, BufMut};
+
 use super::{QuicError, QuicResult};
+use codec::Codec;
 use crypto::Secret;
 use types::{DRAFT_11, TransportParameters};
 
@@ -110,27 +112,23 @@ where
 
 type TlsResult = (Vec<u8>, Option<Secret>);
 
-macro_rules! try_ret(
-    ($e:expr) => (match $e { Some(e) => e, None => return None })
-);
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClientTransportParameters {
     pub initial_version: u32,
     pub parameters: TransportParameters,
 }
 
-impl codec::Codec for ClientTransportParameters {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.initial_version.encode(bytes);
-        self.parameters.encode(bytes);
+impl Codec for ClientTransportParameters {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        buf.put_u32_be(self.initial_version);
+        self.parameters.encode(buf);
     }
 
-    fn read(r: &mut codec::Reader) -> Option<Self> {
-        Some(ClientTransportParameters {
-            initial_version: try_ret!(u32::read(r)),
-            parameters: try_ret!(TransportParameters::read(r)),
-        })
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        ClientTransportParameters {
+            initial_version: buf.get_u32_be(),
+            parameters: TransportParameters::decode(buf),
+        }
     }
 }
 
@@ -141,126 +139,144 @@ pub struct ServerTransportParameters {
     pub parameters: TransportParameters,
 }
 
-impl codec::Codec for ServerTransportParameters {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.negotiated_version.encode(bytes);
-        codec::encode_vec_u8(bytes, &self.supported_versions);
-        self.parameters.encode(bytes);
+impl Codec for ServerTransportParameters {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        buf.put_u32_be(self.negotiated_version);
+        buf.put_u8((4 * self.supported_versions.len()) as u8);
+        for v in self.supported_versions.iter() {
+            buf.put_u32_be(*v);
+        }
+        self.parameters.encode(buf);
     }
 
-    fn read(r: &mut codec::Reader) -> Option<Self> {
-        Some(ServerTransportParameters {
-            negotiated_version: try_ret!(u32::read(r)),
-            supported_versions: try_ret!(codec::read_vec_u8(r)),
-            parameters: try_ret!(TransportParameters::read(r)),
-        })
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        ServerTransportParameters {
+            negotiated_version: buf.get_u32_be(),
+            supported_versions: {
+                let mut supported_versions = vec![];
+                let supported_bytes = buf.get_u8() as usize;
+                let mut sub = buf.take(supported_bytes);
+                while sub.has_remaining() {
+                    supported_versions.push(sub.get_u32_be());
+                }
+                supported_versions
+            },
+            parameters: TransportParameters::decode(buf),
+        }
     }
 }
 
 impl Codec for TransportParameters {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        let mut tmp = Vec::new();
-        let mut buf = Vec::new();
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        let mut tmp = vec![];
+        let mut val = vec![];
 
-        0u16.encode(&mut tmp);
-        self.max_stream_data.encode(&mut buf);
-        (buf.len() as u16).encode(&mut tmp);
-        tmp.append(&mut buf);
+        tmp.put_u16_be(0);
+        val.put_u32_be(self.max_stream_data);
+        tmp.put_u16_be(val.len() as u16);
+        tmp.append(&mut val);
+        val.truncate(0);
 
-        1u16.encode(&mut tmp);
-        self.max_data.encode(&mut buf);
-        (buf.len() as u16).encode(&mut tmp);
-        tmp.append(&mut buf);
+        tmp.put_u16_be(1);
+        val.put_u32_be(self.max_data);
+        tmp.put_u16_be(val.len() as u16);
+        tmp.append(&mut val);
+        val.truncate(0);
 
-        3u16.encode(&mut tmp);
-        self.idle_timeout.encode(&mut buf);
-        (buf.len() as u16).encode(&mut tmp);
-        tmp.append(&mut buf);
+        tmp.put_u16_be(3);
+        val.put_u16_be(self.idle_timeout);
+        tmp.put_u16_be(val.len() as u16);
+        tmp.append(&mut val);
+        val.truncate(0);
 
         if self.max_streams_bidi > 0 {
-            2u16.encode(&mut tmp);
-            self.max_streams_bidi.encode(&mut buf);
-            (buf.len() as u16).encode(&mut tmp);
-            tmp.append(&mut buf);
+            tmp.put_u16_be(2);
+            val.put_u16_be(self.max_streams_bidi);
+            tmp.put_u16_be(val.len() as u16);
+            tmp.append(&mut val);
+            val.truncate(0);
         }
 
         if self.max_packet_size != 65527 {
-            5u16.encode(&mut tmp);
-            self.max_packet_size.encode(&mut buf);
-            (buf.len() as u16).encode(&mut tmp);
-            tmp.append(&mut buf);
+            tmp.put_u16_be(5);
+            val.put_u16_be(self.max_packet_size);
+            tmp.put_u16_be(val.len() as u16);
+            tmp.append(&mut val);
+            val.truncate(0);
         }
 
         if self.ack_delay_exponent != 3 {
-            7u16.encode(&mut tmp);
-            self.ack_delay_exponent.encode(&mut buf);
-            (buf.len() as u16).encode(&mut tmp);
-            tmp.append(&mut buf);
+            tmp.put_u16_be(7);
+            val.put_u8(self.ack_delay_exponent);
+            tmp.put_u16_be(val.len() as u16);
+            tmp.append(&mut val);
+            val.truncate(0);
         }
 
         if self.max_stream_id_uni > 0 {
-            8u16.encode(&mut tmp);
-            self.max_stream_id_uni.encode(&mut buf);
-            (buf.len() as u16).encode(&mut tmp);
-            tmp.append(&mut buf);
+            tmp.put_u16_be(8);
+            val.put_u16_be(self.max_stream_id_uni);
+            tmp.put_u16_be(val.len() as u16);
+            tmp.append(&mut val);
+            val.truncate(0);
         }
 
         if let Some(token) = self.stateless_reset_token {
-            6u16.encode(&mut tmp);
-            16u16.encode(&mut tmp);
+            tmp.put_u16_be(6);
+            tmp.put_u16_be(16);
             tmp.extend_from_slice(&token);
         }
 
-        (tmp.len() as u16).encode(bytes);
-        bytes.append(&mut tmp);
+        buf.put_u16_be(tmp.len() as u16);
+        buf.put_slice(&tmp);
     }
 
-    fn read(r: &mut codec::Reader) -> Option<Self> {
+    fn decode<T: Buf>(buf: &mut T) -> Self {
         let mut params = TransportParameters::default();
-        let num = try_ret!(u16::read(r));
-        let mut sub = try_ret!(r.sub(num as usize));
-        while sub.any_left() {
-            let tag = try_ret!(u16::read(&mut sub));
-            let size = try_ret!(u16::read(&mut sub));
+        let num = buf.get_u16_be();
+        let mut sub = buf.take(num as usize);
+        while sub.has_remaining() {
+            let tag = sub.get_u16_be();
+            let size = sub.get_u16_be();
             match tag {
                 0 => {
                     debug_assert_eq!(size, 4);
-                    params.max_stream_data = try_ret!(u32::read(&mut sub));
+                    params.max_stream_data = sub.get_u32_be();
                 }
                 1 => {
                     debug_assert_eq!(size, 4);
-                    params.max_data = try_ret!(u32::read(&mut sub));
+                    params.max_data = sub.get_u32_be();
                 }
                 2 => {
                     debug_assert_eq!(size, 2);
-                    params.max_streams_bidi = try_ret!(u16::read(&mut sub));
+                    params.max_streams_bidi = sub.get_u16_be();
                 }
                 3 => {
                     debug_assert_eq!(size, 2);
-                    params.idle_timeout = try_ret!(u16::read(&mut sub));
+                    params.idle_timeout = sub.get_u16_be();
                 }
                 5 => {
                     debug_assert_eq!(size, 2);
-                    params.max_packet_size = try_ret!(u16::read(&mut sub));
+                    params.max_packet_size = sub.get_u16_be();
                 }
                 6 => {
                     debug_assert_eq!(size, 16);
                     let mut token = [0; 16];
-                    token.as_mut().copy_from_slice(try_ret!(sub.take(16)));
+                    sub.copy_to_slice(&mut token);
                     params.stateless_reset_token = Some(token);
                 }
                 7 => {
                     debug_assert_eq!(size, 1);
-                    params.ack_delay_exponent = try_ret!(u8::read(&mut sub));
+                    params.ack_delay_exponent = sub.get_u8();
                 }
                 8 => {
                     debug_assert_eq!(size, 2);
-                    params.max_stream_id_uni = try_ret!(u16::read(&mut sub));
+                    params.max_stream_id_uni = sub.get_u16_be();
                 }
                 t => panic!("invalid transport parameter tag {}", t),
             }
         }
-        Some(params)
+        params
     }
 }
 
@@ -275,16 +291,18 @@ const ALPN_PROTOCOL: &'static str = "hq-11";
 #[cfg(test)]
 mod tests {
     use super::TransportParameters;
-    use super::{codec, ClientTransportParameters, Codec, ServerTransportParameters};
+    use super::{ClientTransportParameters, Codec, ServerTransportParameters};
+    use std::fmt::Debug;
+    use std::io::Cursor;
 
-    fn round_trip<T: Codec + PartialEq>(t: T) {
+    fn round_trip<T: Codec + PartialEq + Debug>(t: T) {
         let buf = {
             let mut ret = Vec::new();
             t.encode(&mut ret);
             ret
         };
-        let mut r = codec::Reader::init(&buf);
-        assert_eq!(Some(t), T::read(&mut r));
+        let mut read = Cursor::new(&buf);
+        assert_eq!(t, T::decode(&mut read));
     }
 
     #[test]
