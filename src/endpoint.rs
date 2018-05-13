@@ -1,10 +1,11 @@
 use rand::{thread_rng, Rng};
 
 use std::collections::VecDeque;
+use std::io::Cursor;
 use std::mem;
 
 use super::{QuicError, QuicResult};
-use codec::BufLen;
+use codec::{BufLen, Codec};
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
@@ -234,6 +235,24 @@ where
                     if let Some(secret) = new_secret {
                         self.set_secret(secret);
                         self.state = State::Connected;
+
+                        let params = match self.tls.get_quic_transport_parameters() {
+                            None => {
+                                return Err(QuicError::General(
+                                    "no transport parameters received".into(),
+                                ));
+                            }
+                            Some(bytes) => {
+                                let mut read = Cursor::new(bytes);
+                                if self.side == Side::Client {
+                                    tls::ServerTransportParameters::decode(&mut read).parameters
+                                } else {
+                                    tls::ClientTransportParameters::decode(&mut read).parameters
+                                }
+                            }
+                        };
+
+                        mem::replace(&mut self.remote.params, params);
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
