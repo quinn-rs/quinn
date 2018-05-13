@@ -33,7 +33,7 @@ fn test_client_connect_resolves() {
 #[test]
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
-    c.initial("example.com").unwrap();
+    c.initial().unwrap();
     let c_initial = c.queued().unwrap();
     let mut buf = vec![0u8; 16384];
     let len = c_initial
@@ -72,7 +72,7 @@ fn test_encoded_handshake() {
 #[test]
 fn test_handshake() {
     let mut c = client_endpoint();
-    c.initial("example.com").unwrap();
+    c.initial().unwrap();
     let initial = c.queued().unwrap();
 
     let mut s = server_endpoint(initial.dst_cid());
@@ -83,7 +83,7 @@ fn test_handshake() {
     assert!(c.queued().is_some());
 }
 
-fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::QuicServerTls> {
+fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {
     Endpoint::new(
         tls::server_session(&Arc::new(build_server_config())),
         Side::Server,
@@ -107,7 +107,7 @@ fn build_server_config() -> tls::ServerConfig {
     tls::build_server_config(certs, keys[0].clone())
 }
 
-fn client_endpoint() -> Endpoint<tls::QuicClientTls> {
+fn client_endpoint() -> Endpoint<tls::ClientSession> {
     let tls = {
         let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
         let mut bytes = Vec::new();
@@ -117,7 +117,7 @@ fn client_endpoint() -> Endpoint<tls::QuicClientTls> {
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
         let config = tls::build_client_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
-        tls::client_session(Some(config))
+        tls::client_session(Some(config), "localhost").unwrap()
     };
 
     Endpoint::new(tls, Side::Client, None)

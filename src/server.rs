@@ -18,7 +18,7 @@ pub struct Server {
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<tls::QuicServerTls>)>,
+    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<tls::ServerSession>)>,
 }
 
 impl Server {

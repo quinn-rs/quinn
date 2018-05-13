@@ -10,7 +10,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use tokio::net::UdpSocket;
 
 pub struct Client {
-    endpoint: Endpoint<tls::QuicClientTls>,
+    endpoint: Endpoint<tls::ClientSession>,
     socket: UdpSocket,
     buf: Vec<u8>,
     msg_len: Option<usize>,
@@ -18,17 +18,18 @@ pub struct Client {
 
 impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ClientFuture> {
-        let endpoint = Endpoint::new(tls::client_session(None), Side::Client, None);
+        let tls = tls::client_session(None, server)?;
+        let endpoint = Endpoint::new(tls, Side::Client, None);
         connect(endpoint, server, port)
     }
 }
 
 pub(crate) fn connect(
-    mut endpoint: Endpoint<tls::QuicClientTls>,
+    mut endpoint: Endpoint<tls::ClientSession>,
     server: &str,
     port: u16,
 ) -> QuicResult<ClientFuture> {
-    endpoint.initial(server)?;
+    endpoint.initial()?;
     let packet = endpoint.queued().unwrap();
     let mut buf = vec![0u8; 65536];
     let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);

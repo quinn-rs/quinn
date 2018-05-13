@@ -2,7 +2,6 @@ use rand::{thread_rng, Rng};
 
 use std::collections::VecDeque;
 use std::mem;
-use std::ops::{Deref, DerefMut};
 
 use super::{QuicError, QuicResult};
 use codec::BufLen;
@@ -26,10 +25,9 @@ pub struct Endpoint<T> {
     tls: T,
 }
 
-impl<T, S> Endpoint<T>
+impl<T> Endpoint<T>
 where
-    T: DerefMut + Deref<Target = S>,
-    S: tls::Session,
+    T: tls::Session,
 {
     pub fn new(tls: T, side: Side, secret: Option<Secret>) -> Self {
         let mut rng = thread_rng();
@@ -264,9 +262,9 @@ where
     }
 }
 
-impl Endpoint<tls::QuicClientTls> {
-    pub(crate) fn initial(&mut self, server: &str) -> QuicResult<()> {
-        let (handshake, new_secret) = tls::start_handshake(&mut self.tls, server)?;
+impl Endpoint<tls::ClientSession> {
+    pub(crate) fn initial(&mut self) -> QuicResult<()> {
+        let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, None)?;
         if let Some(secret) = new_secret {
             self.set_secret(secret);
         }

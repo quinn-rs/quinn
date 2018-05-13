@@ -1,7 +1,7 @@
+use rustls::quic::{ClientQuicExt, ServerQuicExt};
 use rustls::{ClientConfig, NoClientAuth, ProtocolVersion, TLSError};
 
 use std::io::Cursor;
-use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use bytes::{Buf, BufMut};
@@ -14,11 +14,20 @@ use types::{DRAFT_11, TransportParameters};
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::quic::{QuicClientTls, QuicServerTls};
-pub use rustls::{Certificate, PrivateKey, ServerConfig, Session};
+pub use rustls::{Certificate, ClientSession, PrivateKey, ServerConfig, ServerSession, Session};
 
-pub fn client_session(config: Option<ClientConfig>) -> QuicClientTls {
-    QuicClientTls::new(&Arc::new(config.unwrap_or(build_client_config(None))))
+pub fn client_session(config: Option<ClientConfig>, hostname: &str) -> QuicResult<ClientSession> {
+    let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
+        .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
+    let params = ClientTransportParameters {
+        initial_version: 1,
+        parameters: TransportParameters::default(),
+    };
+    Ok(ClientSession::new_quic(
+        &Arc::new(config.unwrap_or(build_client_config(None))),
+        pki_server_name,
+        to_vec(params),
+    ))
 }
 
 pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientConfig {
@@ -30,19 +39,8 @@ pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientCon
     config
 }
 
-pub fn start_handshake(tls: &mut QuicClientTls, hostname: &str) -> QuicResult<TlsResult> {
-    let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
-        .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
-    let params = ClientTransportParameters {
-        initial_version: 1,
-        parameters: TransportParameters::default(),
-    };
-    tls.start_handshake(pki_server_name, to_vec(params));
-    process_handshake_messages(tls, None)
-}
-
-pub fn server_session(config: &Arc<ServerConfig>) -> QuicServerTls {
-    QuicServerTls::new(
+pub fn server_session(config: &Arc<ServerConfig>) -> ServerSession {
+    ServerSession::new_quic(
         config,
         to_vec(ServerTransportParameters {
             negotiated_version: DRAFT_11,
@@ -59,13 +57,9 @@ pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> Ser
     config
 }
 
-pub fn process_handshake_messages<T, S>(
-    session: &mut T,
-    msgs: Option<&[u8]>,
-) -> QuicResult<TlsResult>
+pub fn process_handshake_messages<T>(session: &mut T, msgs: Option<&[u8]>) -> QuicResult<TlsResult>
 where
-    T: DerefMut + Deref<Target = S>,
-    S: Session,
+    T: Session,
 {
     if let Some(data) = msgs {
         let mut read = Cursor::new(data);
