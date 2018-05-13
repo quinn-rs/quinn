@@ -92,5 +92,4 @@ impl Side {
 
 impl Copy for Side {}
 
-pub const DRAFT_11: u32 = 0xff00000b;
 pub const GENERATED_CID_LENGTH: u8 = 8;

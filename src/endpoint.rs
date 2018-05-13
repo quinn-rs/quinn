@@ -4,14 +4,14 @@ use std::collections::VecDeque;
 use std::io::Cursor;
 use std::mem;
 
-use super::{QuicError, QuicResult};
+use super::{QuicError, QuicResult, QUIC_VERSION};
 use codec::{BufLen, Codec};
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters};
 use tls;
-use types::{ConnectionId, DRAFT_11, PeerData, Side, GENERATED_CID_LENGTH};
+use types::{ConnectionId, PeerData, Side, GENERATED_CID_LENGTH};
 
 pub struct Endpoint<T> {
     side: Side,
@@ -117,7 +117,7 @@ where
         self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
-                version: DRAFT_11,
+                version: QUIC_VERSION,
                 dst_cid: self.remote.cid,
                 src_cid: self.local.cid,
                 len: payload_len as u64,
@@ -135,7 +135,7 @@ where
         self.queue.push_back(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
-                version: DRAFT_11,
+                version: QUIC_VERSION,
                 dst_cid: self.remote.cid,
                 src_cid: self.local.cid,
                 len: (payload.buf_len() + self.secret.tag_len()) as u64,
