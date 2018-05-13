@@ -397,9 +397,11 @@ fn congestion() {
 #[test]
 fn high_latency_handshake() {
     let mut pair = Pair::default();
-    pair.latency = 123 * 1000;
+    pair.latency = 200 * 1000;
     let client_conn = pair.client.connect(pair.server.addr, None);
     pair.drive();
-    assert_matches!(pair.server.accept(), Some(_));
+    let server_conn = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    assert_eq!(pair.client.get_bytes_in_flight(client_conn), 0);
+    assert_eq!(pair.server.get_bytes_in_flight(server_conn), 0);
 }

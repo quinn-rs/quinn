@@ -860,10 +860,6 @@ impl Endpoint {
                 }
             };
             self.on_packet_authenticated(now, conn, number);
-            if self.connections[conn.0].awaiting_handshake {
-                assert_eq!(self.connections[conn.0].side, Side::Client);
-                self.connections[conn.0].handshake_cleanup(&self.config);
-            }
             for frame in frame::Iter::new(payload.into()) {
                 match frame {
                     Frame::Padding => {}
@@ -1063,6 +1059,12 @@ impl Endpoint {
                             stream::SendState::ResetSent { stop_reason: Some(error_code) };
                     }
                 }
+            }
+            if self.connections[conn.0].awaiting_handshake {
+                assert_eq!(self.connections[conn.0].side, Side::Client,
+                           "only the client confirms handshake completion based on a protected packet");
+                // Forget about unacknowledged handshake packets
+                self.connections[conn.0].handshake_cleanup(&self.config);
             }
             if !state.tls.get_ref().read_blocked() {
                 let prev_offset = state.tls.get_ref().read_offset();
@@ -1493,6 +1495,8 @@ impl Endpoint {
             state.tls.ssl().selected_alpn_protocol()
         } else { None }
     }
+    /// The number of bytes of packets containing retransmittable frames that have not been acknowleded or declared lost
+    pub fn get_bytes_in_flight(&self, conn: ConnectionHandle) -> u64 { self.connections[conn.0].bytes_in_flight }
 
     /// Number of bytes worth of non-ack-only packets that may be sent.
     pub fn get_congestion_state(&self, conn: ConnectionHandle) -> u64 {
@@ -2179,7 +2183,8 @@ impl Connection {
             }
 
             // ACK
-            // TODO: Don't ack protected packets in handshake packets
+            // We will never ack protected packets in handshake packets because handshake_cleanup ensures we never send
+            // handshake packets after receiving protected packets.
             if !self.pending_acks.is_empty() {
                 let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
@@ -2433,7 +2438,7 @@ impl Connection {
         // Return data we already have buffered, regardless of state
         if let Some(x) = rs.buffered.pop_front() {
             // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
-            self.local_max_data += x.0.len() as u64; // FIXME: Don't issue credit for already-received data!
+            self.local_max_data += x.0.len() as u64; // BUG: Don't issue credit for already-received data!
             self.pending.max_data = true;
             // Only bother issuing stream credit if the peer wants to send more
             if let stream::RecvState::Recv { size: None } = rs.state {
