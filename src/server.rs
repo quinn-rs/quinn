@@ -4,6 +4,7 @@ use super::{QuicError, QuicResult};
 use crypto::Secret;
 use endpoint::Endpoint;
 use packet::{LongType, Packet};
+use parameters::ServerTransportParameters;
 use tls;
 use types::{ConnectionId, Side};
 
@@ -54,7 +55,7 @@ impl Future for Server {
 
             let cid = if partial.header.ptype() == Some(LongType::Initial) {
                 let mut endpoint = Endpoint::new(
-                    tls::server_session(&self.tls_config),
+                    tls::server_session(&self.tls_config, &ServerTransportParameters::default()),
                     Side::Server,
                     Some(Secret::Handshake(dst_cid)),
                 );

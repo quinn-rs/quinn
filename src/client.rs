@@ -2,6 +2,7 @@ use futures::{Async, Future, Poll};
 
 use super::{QuicError, QuicResult};
 use endpoint::Endpoint;
+use parameters::ClientTransportParameters;
 use tls;
 use types::Side;
 
@@ -18,7 +19,7 @@ pub struct Client {
 
 impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ClientFuture> {
-        let tls = tls::client_session(None, server)?;
+        let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
         let endpoint = Endpoint::new(tls, Side::Client, None);
         connect(endpoint, server, port)
     }

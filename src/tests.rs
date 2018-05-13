@@ -13,6 +13,7 @@ use client;
 use crypto::Secret;
 use endpoint::Endpoint;
 use packet::Packet;
+use parameters::{ClientTransportParameters, ServerTransportParameters};
 use server::Server;
 use tls;
 use types::{ConnectionId, Side};
@@ -85,7 +86,10 @@ fn test_handshake() {
 
 fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {
     Endpoint::new(
-        tls::server_session(&Arc::new(build_server_config())),
+        tls::server_session(
+            &Arc::new(build_server_config()),
+            &ServerTransportParameters::default(),
+        ),
         Side::Server,
         Some(Secret::Handshake(hs_cid)),
     )
@@ -117,7 +121,11 @@ fn client_endpoint() -> Endpoint<tls::ClientSession> {
             webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
         let anchor_vec = vec![anchor];
         let config = tls::build_client_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)));
-        tls::client_session(Some(config), "localhost").unwrap()
+        tls::client_session(
+            Some(config),
+            "localhost",
+            &ClientTransportParameters::default(),
+        ).unwrap()
     };
 
     Endpoint::new(tls, Side::Client, None)

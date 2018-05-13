@@ -14,13 +14,17 @@ use webpki_roots;
 
 pub use rustls::{Certificate, ClientSession, PrivateKey, ServerConfig, ServerSession, Session};
 
-pub fn client_session(config: Option<ClientConfig>, hostname: &str) -> QuicResult<ClientSession> {
+pub fn client_session(
+    config: Option<ClientConfig>,
+    hostname: &str,
+    params: &ClientTransportParameters,
+) -> QuicResult<ClientSession> {
     let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
         .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
     Ok(ClientSession::new_quic(
         &Arc::new(config.unwrap_or(build_client_config(None))),
         pki_server_name,
-        to_vec(ClientTransportParameters::default()),
+        to_vec(params),
     ))
 }
 
@@ -33,8 +37,11 @@ pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientCon
     config
 }
 
-pub fn server_session(config: &Arc<ServerConfig>) -> ServerSession {
-    ServerSession::new_quic(config, to_vec(ServerTransportParameters::default()))
+pub fn server_session(
+    config: &Arc<ServerConfig>,
+    params: &ServerTransportParameters,
+) -> ServerSession {
+    ServerSession::new_quic(config, to_vec(params))
 }
 
 pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
@@ -93,7 +100,7 @@ where
 
 type TlsResult = (Vec<u8>, Option<Secret>);
 
-fn to_vec<T: Codec>(val: T) -> Vec<u8> {
+fn to_vec<T: Codec>(val: &T) -> Vec<u8> {
     let mut bytes = Vec::new();
     val.encode(&mut bytes);
     bytes
