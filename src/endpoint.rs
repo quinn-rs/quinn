@@ -555,7 +555,7 @@ impl Endpoint {
                             self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                                 tls, clienthello_packet: None, remote_id_set: true,
                             }));
-                            self.connections[conn.0].set_params(&self.config, params);
+                            self.connections[conn.0].set_params(params);
                             self.dirty_conns.insert(conn);
                             self.incoming_handshakes += 1;
                         } else {
@@ -744,7 +744,7 @@ impl Endpoint {
                         Ok(mut tls) => {
                             if self.connections[conn.0].side == Side::Client {
                                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                                    self.connections[conn.0].set_params(&self.config, params.expect("transport param errors should fail the handshake"));
+                                    self.connections[conn.0].set_params(params.expect("transport param errors should fail the handshake"));
                                 } else {
                                     debug!(self.log, "server didn't send transport params");
                                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TRANSPORT_PARAMETER_ERROR.into() }));
@@ -1672,8 +1672,8 @@ struct Connection {
     max_uni_streams: u64,
     max_bi_streams: u64,
     // Remotely initiated
-    max_remote_uni_stream: u64,
-    max_remote_bi_stream: u64,
+    max_remote_uni_streams: u64,
+    max_remote_bi_streams: u64,
     finished_streams: Vec<StreamId>,
 }
 
@@ -1770,12 +1770,13 @@ impl Connection {
            initial_packet_number: u64, side: Side, config: &Config) -> Self
     {
         let mut streams = FnvHashMap::default();
-        streams.insert(StreamId(0), Stream::new_bi(config.stream_receive_window as u64));
         for i in 0..config.max_remote_uni_streams {
             streams.insert(StreamId::new(!side, Directionality::Uni, i as u64), stream::Recv::new(config.stream_receive_window as u64).into());
         }
-        for i in match side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 1..(config.max_remote_bi_streams+1) } {
-            streams.insert(StreamId::new(!side, Directionality::Bi, i as u64), Stream::new_bi(config.stream_receive_window as u64).into());
+        streams.insert(StreamId(0), Stream::new_bi(config.stream_receive_window as u64));
+        let max_remote_bi_streams = config.max_remote_bi_streams as u64 + match side { Side::Server => 1, _ => 0 };
+        for i in match side { Side::Server => 1, _ => 0 }..max_remote_bi_streams {
+            streams.insert(StreamId::new(!side, Directionality::Bi, i as u64), Stream::new_bi(config.stream_receive_window as u64));
         }
         Self {
             local_id, remote_id, remote, side,
@@ -1832,8 +1833,8 @@ impl Connection {
             next_bi_stream: match side { Side::Client => 1, Side::Server => 0 },
             max_uni_streams: 0,
             max_bi_streams: 0,
-            max_remote_uni_stream: config.max_remote_uni_streams as u64,
-            max_remote_bi_stream: config.max_remote_bi_streams as u64,
+            max_remote_uni_streams: config.max_remote_uni_streams as u64,
+            max_remote_bi_streams,
             finished_streams: Vec::new(),
         }
     }
@@ -2254,7 +2255,7 @@ impl Connection {
                 sent.max_uni_stream_id = true;
                 trace!(log, "MAX_STREAM_ID (unidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(!self.side, Directionality::Uni, self.max_remote_uni_stream));
+                buf.write(StreamId::new(!self.side, Directionality::Uni, self.max_remote_uni_streams - 1));
             }
 
             // MAX_STREAM_ID bi
@@ -2263,7 +2264,7 @@ impl Connection {
                 sent.max_bi_stream_id = true;
                 trace!(log, "MAX_STREAM_ID (bidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(!self.side, Directionality::Bi, self.max_remote_bi_stream));
+                buf.write(StreamId::new(!self.side, Directionality::Bi, self.max_remote_bi_streams - 1));
             }
 
             // STREAM
@@ -2360,12 +2361,12 @@ impl Connection {
         buf.into()
     }
 
-    fn set_params(&mut self, config: &Config, params: TransportParameters) {
+    fn set_params(&mut self, params: TransportParameters) {
         self.max_bi_streams = params.initial_max_streams_bidi as u64;
         if self.side == Side::Client { self.max_bi_streams += 1; } // Account for TLS stream
         self.max_uni_streams = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
-        for i in match self.side { Side::Client => 0..config.max_remote_bi_streams, Side::Server => 0..(config.max_remote_bi_streams+1) } {
+        for i in 0..self.max_remote_bi_streams {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
             self.streams.get_mut(&id).unwrap().send_mut().unwrap().max_data = params.initial_max_stream_data as u64;
         }
@@ -2402,11 +2403,11 @@ impl Connection {
                     if id.initiator() != self.side {
                         match id.directionality() {
                             Directionality::Uni => {
-                                self.max_remote_uni_stream += 1;
+                                self.max_remote_uni_streams += 1;
                                 self.pending.max_uni_stream_id = true;
                             }
                             Directionality::Bi => {
-                                self.max_remote_bi_stream += 1;
+                                self.max_remote_bi_streams += 1;
                                 self.pending.max_bi_stream_id = true;
                             }
                         }
@@ -2552,10 +2553,10 @@ impl Connection {
             };
         } else {
             let limit = match id.directionality() {
-                Directionality::Bi => self.max_remote_bi_stream,
-                Directionality::Uni => self.max_remote_uni_stream,
+                Directionality::Bi => self.max_remote_bi_streams,
+                Directionality::Uni => self.max_remote_uni_streams,
             };
-            if id.index() > limit {
+            if id.index() >= limit {
                 return Err(TransportError::STREAM_ID_ERROR);
             }
         }
