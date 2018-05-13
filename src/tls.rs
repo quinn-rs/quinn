@@ -19,7 +19,7 @@ pub fn client_session(config: Option<ClientConfig>, hostname: &str) -> QuicResul
     let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
         .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
     let params = ClientTransportParameters {
-        initial_version: 1,
+        initial_version: DRAFT_11,
         parameters: TransportParameters::default(),
     };
     Ok(ClientSession::new_quic(
