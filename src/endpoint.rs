@@ -10,6 +10,7 @@ use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters};
+use streams::{Dir, Streams};
 use tls;
 use types::{ConnectionId, PeerData, Side, GENERATED_CID_LENGTH};
 
@@ -21,7 +22,7 @@ pub struct Endpoint<T> {
     src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
-    s0_offset: u64,
+    streams: Streams,
     queue: VecDeque<Packet>,
     received: VecDeque<Packet>,
     tls: T,
@@ -53,7 +54,7 @@ where
             src_pn: rng.gen(),
             secret,
             prev_secret: None,
-            s0_offset: 0,
+            streams: Streams::new(side),
             queue: VecDeque::new(),
             received: VecDeque::new(),
         }
@@ -220,8 +221,12 @@ where
                     let (handshake, new_secret) =
                         tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
 
-                    let offset = self.s0_offset;
-                    self.s0_offset += handshake.len() as u64;
+                    let mut stream = self.streams.received(f.id).ok_or_else(|| {
+                        QuicError::General(format!("no incoming packets allowed on stream {}", f.id))
+                    })?;
+                    let offset = stream.get_offset();
+                    stream.set_offset(offset + handshake.len() as u64);
+
                     if !handshake.is_empty() {
                         payload.push(Frame::Stream(StreamFrame {
                             id: 0,
@@ -289,14 +294,17 @@ impl Endpoint<tls::ClientSession> {
             self.set_secret(secret);
         }
 
-        let offset = self.s0_offset;
-        self.s0_offset = handshake.len() as u64;
+        let mut stream = self.streams.init_send(Dir::Bidi).ok_or_else(|| {
+            QuicError::General("no bidirectional stream available for initial packet".into())
+        })?;
+        stream.set_offset(handshake.len() as u64);
+
         self.state = State::InitialSent;
         self.build_initial_packet(vec![
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
-                offset,
+                offset: 0,
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
