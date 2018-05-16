@@ -27,7 +27,7 @@ impl Streams {
                 next_recv_uni: None,
                 next_send_bidi,
                 next_recv_bidi,
-            }))
+            })),
         }
     }
 
@@ -60,12 +60,10 @@ impl Streams {
     pub fn received(&mut self, id: u64) -> Option<StreamRef> {
         let mut me = self.inner.lock().unwrap();
         match me.streams.get(&id) {
-            Some(_) => {
-                Some(StreamRef {
-                    inner: self.inner.clone(),
-                    id,
-                })
-            }
+            Some(_) => Some(StreamRef {
+                inner: self.inner.clone(),
+                id,
+            }),
             None => {
                 let dir = Dir::from_id(id);
                 if Dir::Bidi == dir && id > me.max_recv_bidi {

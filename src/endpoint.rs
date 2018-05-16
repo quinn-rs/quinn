@@ -220,7 +220,10 @@ where
                         tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
 
                     let mut stream = self.streams.received(f.id).ok_or_else(|| {
-                        QuicError::General(format!("no incoming packets allowed on stream {}", f.id))
+                        QuicError::General(format!(
+                            "no incoming packets allowed on stream {}",
+                            f.id
+                        ))
                     })?;
                     let offset = stream.get_offset();
                     stream.set_offset(offset + handshake.len() as u64);
