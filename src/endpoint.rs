@@ -22,7 +22,7 @@ pub struct Endpoint<T> {
     src_pn: u32,
     secret: Secret,
     prev_secret: Option<Secret>,
-    streams: Streams,
+    pub streams: Streams,
     queue: VecDeque<Vec<u8>>,
     tls: T,
 }

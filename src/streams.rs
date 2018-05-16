@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use types::Side;
 
+#[derive(Clone)]
 pub struct Streams {
     inner: Arc<Mutex<Inner>>,
 }

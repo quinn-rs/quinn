@@ -3,6 +3,7 @@ use futures::{Async, Future, Poll};
 use super::{QuicError, QuicResult};
 use endpoint::Endpoint;
 use parameters::ClientTransportParameters;
+use streams::Streams;
 use tls;
 use types::Side;
 
@@ -88,7 +89,7 @@ impl ConnectFuture {
 }
 
 impl Future for ConnectFuture {
-    type Item = Client;
+    type Item = (Client, Streams);
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let done = if let Some(ref mut client) = self.client {
@@ -104,7 +105,10 @@ impl Future for ConnectFuture {
 
         if done {
             match self.client.take() {
-                Some(client) => Ok(Async::Ready(client)),
+                Some(client) => {
+                    let streams = client.endpoint.streams.clone();
+                    Ok(Async::Ready((client, streams)))
+                }
                 _ => panic!("invalid future state"),
             }
         } else {
