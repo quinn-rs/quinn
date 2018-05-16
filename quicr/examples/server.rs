@@ -135,10 +135,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
 fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
     let stream = match stream {
         quicr::NewStream::Bi(stream) => stream,
-        quicr::NewStream::Uni(_) => {
-            error!(log, "client opened unidirectional stream");
-            return;
-        }
+        quicr::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
     };
     let root = root.clone();
     let log = log.clone();
