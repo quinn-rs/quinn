@@ -169,7 +169,7 @@ where
         })
     }
 
-    #[allow(needless_pass_by_value)]
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
     pub fn queue_packet(&mut self, packet: Packet) -> QuicResult<()> {
         let key = self.encode_key(&packet.header);
         let len = packet.buf_len() + key.algorithm().tag_len();
@@ -188,7 +188,7 @@ where
         self.handle_packet(partial.finish(&key)?)
     }
 
-    #[allow(needless_pass_by_value)]
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
         match p.ptype() {
             Some(LongType::Initial) | Some(LongType::Handshake) => self.handle_handshake(&p),
