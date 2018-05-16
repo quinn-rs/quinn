@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use std::str;
 
 use failure::Error;
-use quicr::{Endpoint, Config, Io, Timer, Event, Directionality, ReadError};
+use quicr::{Endpoint, Config, Io, Timer, Event, Directionality, ReadError, ClientConfig};
 use slog::{Logger, Drain};
 
 fn main() {
@@ -77,7 +77,7 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(self.remote, Some(self.remote_host.as_bytes()));
+        let c = self.client.connect(self.remote, ClientConfig { server_name: Some(&self.remote_host), ..ClientConfig::default() });
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;

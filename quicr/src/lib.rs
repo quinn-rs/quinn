@@ -89,7 +89,7 @@ use bytes::Bytes;
 
 use quicr::{Directionality, StreamId, ConnectionHandle, Side, CertConfig};
 
-pub use quicr::{Config, ConnectionError, ConnectionId, ListenKeys};
+pub use quicr::{Config, ClientConfig, ConnectionError, ConnectionId, ListenKeys};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -307,13 +307,11 @@ impl Endpoint {
     }}
 
     /// Connect to a remote endpoint.
-    ///
-    /// `hostname` is used by the remote endpoint for disambiguation if `addr` hosts multiple services.
-    pub fn connect(&self, addr: &SocketAddr, hostname: Option<&[u8]>) -> impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError> {
+    pub fn connect(&self, addr: &SocketAddr, config: ClientConfig) -> impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError> {
         let (send, recv) = oneshot::channel();
         let conn = {
             let mut endpoint = self.0.borrow_mut();
-            let conn = endpoint.inner.connect(normalize(*addr), hostname);
+            let conn = endpoint.inner.connect(normalize(*addr), config);
             endpoint.pending.insert(conn, Pending::new(Some(send)));
             conn
         };

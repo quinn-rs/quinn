@@ -79,7 +79,7 @@ struct Pair {
 impl Default for Pair {
     fn default() -> Self {
         Pair::new(Config { max_remote_uni_streams: 32, max_remote_bi_streams: 32, ..Config::default() },
-                  Config { accept_insecure_certs: true, ..Config::default() })
+                  Config::default())
     }
 }
 
@@ -145,7 +145,7 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, None);
+        let client_conn = self.client.connect(self.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() });
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
@@ -367,7 +367,7 @@ fn stop_stream() {
 fn reject_self_signed_cert() {
     let mut pair = Pair::new(Config::default(), Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server.addr, None);
+    let client_conn = pair.client.connect(pair.server.addr, ClientConfig::default());
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
@@ -398,7 +398,7 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair.client.connect(pair.server.addr, None);
+    let client_conn = pair.client.connect(pair.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() });
     pair.drive();
     let server_conn = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);

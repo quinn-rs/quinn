@@ -14,6 +14,7 @@ use std::net::ToSocketAddrs;
 use std::io::{self, Write};
 use std::time::{Instant, Duration};
 use std::path::PathBuf;
+use std::fs;
 
 use futures::Future;
 use tokio::runtime::current_thread::Runtime;
@@ -31,10 +32,16 @@ struct Opt {
     /// file to log TLS keys to for debugging
     #[structopt(parse(from_os_str), long = "keylog")]
     keylog: Option<PathBuf>,
+
     url: Url,
+
     /// whether to accept invalid (e.g. self-signed) TLS certificates
     #[structopt(long = "accept-insecure-certs")]
     accept_insecure_certs: bool,
+
+    /// file to read/write session tickets to
+    #[structopt(long = "session-cache", parse(from_os_str))]
+    session_cache: Option<PathBuf>,
 }
 
 fn main() {
@@ -50,27 +57,48 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger, options: Opt) -> Result<()> {
+fn run(log: Logger, mut options: Opt) -> Result<()> {
     let url = options.url;
     let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
 
     let mut runtime = Runtime::new()?;
 
+    let mut config = quicr::Config {
+        protocols: vec![b"hq-11"[..].into()],
+        keylog: options.keylog,
+        ..quicr::Config::default()
+    };
+
+    let ticket;
+    if let Some(path) = options.session_cache.take() {
+        ticket = match fs::read(&path) {
+            Ok(x) => Some(x),
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => { return Err(e.into()); }
+        };
+        config.session_cache = Some(Box::new(move |_, _, data| {
+            fs::write(&path, data).unwrap();
+        }));
+    } else {
+        ticket = None;
+    }
+
     let mut builder = quicr::Endpoint::new();
     builder.logger(log.clone())
-        .config(quicr::Config {
-            protocols: vec![b"hq-11"[..].into()],
-            keylog: options.keylog,
-            accept_insecure_certs: options.accept_insecure_certs,
-            ..quicr::Config::default()
-        });
+        .config(config);
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
     runtime.block_on(
-        endpoint.connect(&remote, url.host_str().map(|x| x.as_bytes()))
+        endpoint.connect(&remote,
+                         quicr::ClientConfig {
+                             server_name: Some(url.host_str().ok_or(format_err!("URL missing host"))?),
+                             accept_insecure_certs: options.accept_insecure_certs,
+                             session_ticket: ticket.as_ref().map(|x| &x[..]),
+                             ..quicr::ClientConfig::default()
+                         })
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |(conn, _)| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));

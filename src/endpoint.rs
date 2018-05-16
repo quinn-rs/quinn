@@ -10,9 +10,10 @@ use rand::distributions::Sample;
 use slab::Slab;
 use openssl::{self, ex_data};
 use openssl::ssl::{self, SslContext, SslMethod, SslOptions, SslVersion, SslMode, Ssl, SslStream, HandshakeError, MidHandshakeSslStream,
-                   SslStreamBuilder, SslAlert, SslRef};
+                   SslStreamBuilder, SslAlert, SslRef, SslSession};
 use openssl::pkey::{PKeyRef, Private};
 use openssl::x509::X509Ref;
+use openssl::x509::verify::X509CheckFlags;
 use openssl::hash::MessageDigest;
 use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
 use blake2::Blake2b;
@@ -92,17 +93,14 @@ pub struct Config {
     /// If empty, application-layer protocol negotiation will not be preformed.
     pub protocols: Vec<Box<[u8]>>,
 
-    /// Whether to accept inauthentic or unverifiable peer certificates.
-    ///
-    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
-    /// connection, but allows them to connect to servers that are using self-signed certificates.
-    pub accept_insecure_certs: bool,
-
     /// Path to write NSS SSLKEYLOGFILE-compatible key log.
     ///
     /// Enabling this compromises security by committing secret information to disk. Useful for debugging communications
     /// when using tools like Wireshark.
     pub keylog: Option<PathBuf>,
+
+    /// Function to store session tickets transmitted by the server for fast resumption.
+    pub session_cache: Option<Box<Fn(Option<&str>, &SocketAddrV6, &[u8]) + Send + Sync + 'static>>,
 }
 
 pub struct CertConfig<'a> {
@@ -141,10 +139,35 @@ impl Default for Config {
             loss_reduction_factor: 0x8000, // 1/2
             protocols: Vec::new(),
 
-            accept_insecure_certs: false,
             keylog: None,
+            session_cache: None,
         }
     }
+}
+
+pub struct ClientConfig<'a> {
+    /// The name of the server the client intends to connect to.
+    ///
+    /// Used for both certificate validation, and for disambiguating between multiple domains hosted by the same IP
+    /// address (using SNI).
+    pub server_name: Option<&'a str>,
+
+    /// A ticket to resume a previous session faster than performing a full handshake.
+    pub session_ticket: Option<&'a [u8]>,
+
+    /// Whether to accept inauthentic or unverifiable peer certificates.
+    ///
+    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
+    /// connection, but allows them to connect to servers that are using self-signed certificates.
+    pub accept_insecure_certs: bool,
+}
+
+impl<'a> Default for ClientConfig<'a> {
+    fn default() -> Self { Self {
+        server_name: None,
+        session_ticket: None,
+        accept_insecure_certs: false,
+    }}
 }
 
 /// The main entry point to the library
@@ -338,6 +361,16 @@ impl Endpoint {
             });
         }
 
+        if config.session_cache.is_some() {
+            let config = config.clone();
+            tls.set_session_cache_mode(ssl::SslSessionCacheMode::CLIENT | ssl::SslSessionCacheMode::NO_INTERNAL_STORE);
+            tls.set_new_session_callback(move |tls, session| {
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
+                let name = tls.servername(ssl::NameType::HOST_NAME);
+                (config.session_cache.as_ref().unwrap())(name, &conn.remote, &session.to_der().expect("failed to serialize session ticket"));
+            });
+        }
+
         let tls = tls.build();
 
         Ok(Self {
@@ -482,15 +515,30 @@ impl Endpoint {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, remote: SocketAddrV6, hostname: Option<&[u8]>) -> ConnectionHandle {
+    pub fn connect(&mut self, remote: SocketAddrV6, config: ClientConfig) -> ConnectionHandle {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
-        if !self.config.accept_insecure_certs { tls.set_verify(ssl::SslVerifyMode::PEER); }
+        if !config.accept_insecure_certs {
+            tls.set_verify(ssl::SslVerifyMode::PEER);
+            let param = tls.param_mut();
+            if let Some(name) = config.server_name {
+                param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
+                match name.parse() {
+                    Ok(ip) => { param.set_ip(ip).expect("failed to inform TLS of remote ip"); }
+                    Err(_) => { param.set_host(name).expect("failed to inform TLS of remote hostname"); }
+                }
+            }
+        }
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
-        if let Some(hostname) = hostname { tls.set_hostname(str::from_utf8(hostname).expect("malformed hostname")).unwrap(); }
+        if let Some(name) = config.server_name { tls.set_hostname(name).unwrap(); }
+        if let Some(session) = config.session_ticket {
+            if let Err(e) = SslSession::from_der(session).and_then(|x| unsafe { tls.set_session(&x) }) {
+                error!(self.log, "failed to set TLS session"; "reason" => %e);
+            }
+        }
         let mut tls = match tls.connect(MemoryStream::new()) {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
