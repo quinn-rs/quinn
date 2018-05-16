@@ -6,7 +6,7 @@ use endpoint::Endpoint;
 use packet::{LongType, Packet};
 use parameters::ServerTransportParameters;
 use tls;
-use types::{ConnectionId, Side};
+use types::ConnectionId;
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -54,7 +54,6 @@ impl Future for Server {
             let cid = if partial.header.ptype() == Some(LongType::Initial) {
                 let mut endpoint = Endpoint::new(
                     tls::server_session(&self.tls_config, &ServerTransportParameters::default()),
-                    Side::Server,
                     Some(Secret::Handshake(dst_cid)),
                 );
 

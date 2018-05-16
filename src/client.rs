@@ -5,7 +5,6 @@ use endpoint::Endpoint;
 use parameters::ClientTransportParameters;
 use streams::Streams;
 use tls;
-use types::Side;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -20,7 +19,7 @@ pub struct Client {
 impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
-        let endpoint = Endpoint::new(tls, Side::Client, None);
+        let endpoint = Endpoint::new(tls, None);
         ConnectFuture::new(endpoint, server, port)
     }
 }

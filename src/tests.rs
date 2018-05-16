@@ -16,7 +16,7 @@ use packet::Packet;
 use parameters::{ClientTransportParameters, ServerTransportParameters};
 use server::Server;
 use tls;
-use types::{ConnectionId, Side};
+use types::ConnectionId;
 
 use self::untrusted::Input;
 
@@ -80,7 +80,6 @@ fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {
             &Arc::new(build_server_config()),
             &ServerTransportParameters::default(),
         ),
-        Side::Server,
         Some(Secret::Handshake(hs_cid)),
     )
 }
@@ -118,5 +117,5 @@ fn client_endpoint() -> Endpoint<tls::ClientSession> {
         ).unwrap()
     };
 
-    Endpoint::new(tls, Side::Client, None)
+    Endpoint::new(tls, None)
 }

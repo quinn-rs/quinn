@@ -29,11 +29,12 @@ pub struct Endpoint<T> {
 
 impl<T> Endpoint<T>
 where
-    T: tls::Session,
+    T: tls::Session + tls::QuicSide,
 {
-    pub fn new(tls: T, side: Side, secret: Option<Secret>) -> Self {
+    pub fn new(tls: T, secret: Option<Secret>) -> Self {
         let mut rng = thread_rng();
         let dst_cid = rng.gen();
+        let side = tls.side();
 
         let secret = if side == Side::Client {
             debug_assert!(secret.is_none());

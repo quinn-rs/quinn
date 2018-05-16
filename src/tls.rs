@@ -8,6 +8,7 @@ use super::{QuicError, QuicResult};
 use codec::Codec;
 use crypto::Secret;
 use parameters::{ClientTransportParameters, ServerTransportParameters};
+use types::Side;
 
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
@@ -96,6 +97,22 @@ where
     };
 
     Ok((messages, secret))
+}
+
+pub trait QuicSide {
+    fn side(&self) -> Side;
+}
+
+impl QuicSide for ClientSession {
+    fn side(&self) -> Side {
+        Side::Client
+    }
+}
+
+impl QuicSide for ServerSession {
+    fn side(&self) -> Side {
+        Side::Server
+    }
 }
 
 type TlsResult = (Vec<u8>, Option<Secret>);
