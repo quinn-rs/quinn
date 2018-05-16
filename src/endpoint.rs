@@ -47,13 +47,13 @@ where
 
         let local = PeerData::new(rng.gen());
         let (num_recv_bidi, num_recv_uni) = (
-            local.params.max_streams_bidi as u64,
-            local.params.max_stream_id_uni as u64,
+            u64::from(local.params.max_streams_bidi),
+            u64::from(local.params.max_stream_id_uni),
         );
         let (max_recv_bidi, max_recv_uni) = if side == Side::Client {
             (1 + 4 * num_recv_bidi, 3 + 4 * num_recv_uni)
         } else {
-            (0 + 4 * num_recv_bidi, 1 + 4 * num_recv_uni)
+            (4 * num_recv_bidi, 1 + 4 * num_recv_uni)
         };
 
         let mut streams = Streams::new(side);
@@ -297,13 +297,13 @@ where
                         mem::replace(&mut self.remote.params, params);
 
                         let (num_send_bidi, num_send_uni) = (
-                            self.remote.params.max_streams_bidi as u64,
-                            self.remote.params.max_stream_id_uni as u64,
+                            u64::from(self.remote.params.max_streams_bidi),
+                            u64::from(self.remote.params.max_stream_id_uni),
                         );
                         let (max_send_bidi, max_send_uni) = if self.side == Side::Server {
                             (1 + 4 * num_send_bidi, 3 + 4 * num_send_uni)
                         } else {
-                            (0 + 4 * num_send_bidi, 1 + 4 * num_send_uni)
+                            (4 * num_send_bidi, 1 + 4 * num_send_uni)
                         };
                         self.streams.update_max_id(max_send_bidi);
                         self.streams.update_max_id(max_send_uni);
