@@ -88,6 +88,13 @@ impl Side {
             Side::Server => Side::Client,
         }
     }
+
+    pub fn to_bit(&self) -> u64 {
+        match self {
+            Side::Client => 0,
+            Side::Server => 1,
+        }
+    }
 }
 
 impl Copy for Side {}

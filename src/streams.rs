@@ -9,43 +9,31 @@ pub struct Streams {
 
 impl Streams {
     pub fn new(side: Side) -> Self {
-        let (next_send_bidi, next_recv_bidi) = if let Side::Client = side {
-            (Some(0), None)
-        } else {
-            (None, Some(0))
-        };
+        let mut open = [OpenStreams::new(); 4];
+        if let Side::Client = side {
+            open[0].next = Some(0);
+        }
 
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 side,
                 streams: HashMap::new(),
-                max_send_uni: 0,
-                max_recv_uni: 0,
-                max_send_bidi: 0,
-                max_recv_bidi: 0,
-                next_send_uni: None,
-                next_recv_uni: None,
-                next_send_bidi,
-                next_recv_bidi,
+                open,
             })),
         }
     }
 
     pub fn init_send(&mut self, dir: Dir) -> Option<StreamRef> {
         let mut me = self.inner.lock().unwrap();
-
-        let next = if let Dir::Bidi = dir {
-            me.next_send_bidi
-        } else {
-            me.next_send_uni
-        };
+        let stype = (me.side.to_bit() + dir.to_bit()) as usize;
+        let next = me.open[stype].next;
 
         if let Some(id) = next {
-            if Dir::Bidi == dir && id + 4 < me.max_send_bidi {
-                me.next_send_bidi = Some(id + 4);
-            } else if Dir::Bidi != dir && id + 4 < me.max_send_uni {
-                me.next_send_uni = Some(id + 4);
-            }
+            me.open[stype].next = if id + 4 < me.open[stype].max {
+                Some(id + 4)
+            } else {
+                None
+            };
         }
 
         next.map(|id| {
@@ -65,10 +53,8 @@ impl Streams {
                 id,
             }),
             None => {
-                let dir = Dir::from_id(id);
-                if (Dir::Bidi == dir && id > me.max_recv_bidi)
-                    || (Dir::Uni == dir && id > me.max_recv_uni)
-                {
+                let stype = (id % 4) as usize;
+                if id > me.open[stype].max {
                     None
                 } else {
                     me.streams.insert(id, Stream::new());
@@ -103,14 +89,7 @@ impl StreamRef {
 struct Inner {
     side: Side,
     streams: HashMap<u64, Stream>,
-    max_send_uni: u64,
-    max_recv_uni: u64,
-    max_send_bidi: u64,
-    max_recv_bidi: u64,
-    next_send_uni: Option<u64>,
-    next_recv_uni: Option<u64>,
-    next_send_bidi: Option<u64>,
-    next_recv_bidi: Option<u64>,
+    open: [OpenStreams; 4],
 }
 
 struct Stream {
@@ -129,6 +108,18 @@ impl Stream {
     }
 }
 
+#[derive(Clone, Copy)]
+struct OpenStreams {
+    next: Option<u64>,
+    max: u64,
+}
+
+impl OpenStreams {
+    fn new() -> Self {
+        Self { next: None, max: 0 }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Dir {
     Bidi,
@@ -136,11 +127,10 @@ pub enum Dir {
 }
 
 impl Dir {
-    pub fn from_id(id: u64) -> Self {
-        if id & 2 == 2 {
-            Dir::Uni
-        } else {
-            Dir::Bidi
+    fn to_bit(&self) -> u64 {
+        match self {
+            Dir::Bidi => 0,
+            Dir::Uni => 2,
         }
     }
 }
