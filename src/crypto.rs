@@ -99,7 +99,7 @@ impl PacketKey {
         let out = {
             let mut write = Cursor::new(out);
             write.put_u32_be(0);
-            write.put_u64_be(number as u64);
+            write.put_u64_be(u64::from(number));
             debug_assert_eq!(write.remaining(), 0);
             write.into_inner()
         };

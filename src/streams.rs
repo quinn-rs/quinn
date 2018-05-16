@@ -66,9 +66,9 @@ impl Streams {
             }),
             None => {
                 let dir = Dir::from_id(id);
-                if Dir::Bidi == dir && id > me.max_recv_bidi {
-                    None
-                } else if Dir::Uni == dir && id > me.max_recv_uni {
+                if (Dir::Bidi == dir && id > me.max_recv_bidi)
+                    || (Dir::Uni == dir && id > me.max_recv_uni)
+                {
                     None
                 } else {
                     me.streams.insert(id, Stream::new());
@@ -90,7 +90,7 @@ pub struct StreamRef {
 impl StreamRef {
     pub fn get_offset(&self) -> u64 {
         let me = self.inner.lock().unwrap();
-        me.streams.get(&self.id).unwrap().offset
+        me.streams[&self.id].offset
     }
 
     pub fn set_offset(&mut self, new: u64) {
@@ -137,9 +137,10 @@ pub enum Dir {
 
 impl Dir {
     pub fn from_id(id: u64) -> Self {
-        match id & 2 == 2 {
-            true => Dir::Uni,
-            false => Dir::Bidi,
+        if id & 2 == 2 {
+            Dir::Uni
+        } else {
+            Dir::Bidi
         }
     }
 }

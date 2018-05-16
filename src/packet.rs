@@ -41,7 +41,7 @@ impl Packet {
             debug_assert_eq!(header_len, self.header.buf_len());
 
             let mut expected = header_len;
-            for frame in self.payload.iter() {
+            for frame in &self.payload {
                 frame.encode(&mut write);
                 expected += frame.buf_len();
             }
@@ -56,9 +56,8 @@ impl Packet {
             key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
         };
 
-        match self.header {
-            Header::Long { len, .. } => debug_assert_eq!(len, out_len as u64),
-            _ => {}
+        if let Header::Long { len, .. } = self.header {
+            debug_assert_eq!(len, out_len as u64);
         }
         Ok(header_len + out_len)
     }
@@ -241,15 +240,14 @@ impl Codec for Header {
             let key_phase = first & 0x40 == 0x40;
             let dst_cid = {
                 let bytes = buf.bytes();
-                let cid = ConnectionId::new(&bytes[..GENERATED_CID_LENGTH as usize]);
-                cid
+                ConnectionId::new(&bytes[..GENERATED_CID_LENGTH as usize])
             };
             buf.advance(GENERATED_CID_LENGTH as usize);
 
             let ptype = ShortType::from_byte(first & 3);
             let number = match ptype {
-                ShortType::One => buf.get_u8() as u32,
-                ShortType::Two => buf.get_u16_be() as u32,
+                ShortType::One => u32::from(buf.get_u8()),
+                ShortType::Two => u32::from(buf.get_u16_be()),
                 ShortType::Four => buf.get_u32_be(),
             };
 

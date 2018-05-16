@@ -22,7 +22,7 @@ pub fn client_session(
     let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
         .map_err(|_| QuicError::InvalidDnsName(hostname.into()))?;
     Ok(ClientSession::new_quic(
-        &Arc::new(config.unwrap_or(build_client_config(None))),
+        &Arc::new(config.unwrap_or_else(|| build_client_config(None))),
         pki_server_name,
         to_vec(params),
     ))
@@ -106,4 +106,4 @@ fn to_vec<T: Codec>(val: &T) -> Vec<u8> {
     bytes
 }
 
-const ALPN_PROTOCOL: &'static str = "hq-11";
+const ALPN_PROTOCOL: &str = "hq-11";

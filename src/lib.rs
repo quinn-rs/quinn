@@ -73,4 +73,4 @@ impl From<rustls::TLSError> for QuicError {
 
 pub type QuicResult<O> = std::result::Result<O, QuicError>;
 
-pub const QUIC_VERSION: u32 = 0xff00000b;
+pub const QUIC_VERSION: u32 = 0xff00_000b;

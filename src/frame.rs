@@ -140,7 +140,7 @@ impl Codec for StreamFrame {
         buf.copy_to_slice(&mut data);
 
         StreamFrame {
-            id: id,
+            id,
             fin: first & 0x01 > 0,
             offset,
             len: if first & 0x02 > 0 { Some(len) } else { None },
@@ -158,7 +158,7 @@ pub struct AckFrame {
 
 impl BufLen for AckFrame {
     fn buf_len(&self) -> usize {
-        1 + VarLen(self.largest as u64).buf_len() + VarLen(self.ack_delay).buf_len()
+        1 + VarLen(u64::from(self.largest)).buf_len() + VarLen(self.ack_delay).buf_len()
             + VarLen((self.blocks.len() - 1) as u64).buf_len()
             + self.blocks
                 .iter()
@@ -170,10 +170,10 @@ impl BufLen for AckFrame {
 impl Codec for AckFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         buf.put_u8(0x0d);
-        VarLen(self.largest as u64).encode(buf);
+        VarLen(u64::from(self.largest)).encode(buf);
         VarLen(self.ack_delay).encode(buf);
         VarLen((self.blocks.len() - 1) as u64).encode(buf);
-        for ack in self.blocks.iter() {
+        for ack in &self.blocks {
             VarLen(ack.value()).encode(buf);
         }
     }

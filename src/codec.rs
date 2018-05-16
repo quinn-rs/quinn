@@ -29,12 +29,16 @@ impl Codec for VarLen {
         let first = buf.get_u8();
         let be_val = first & 0x3f;
         let val = match first >> 6 {
-            0 => be_val as u64,
-            1 => (be_val as u64) << 8 | (buf.get_u8() as u64),
-            2 => (be_val as u64) << 24 | (buf.get_u8() as u64) << 16 | (buf.get_u16_be() as u64),
+            0 => u64::from(be_val),
+            1 => u64::from(be_val) << 8 | u64::from(buf.get_u8()),
+            2 => {
+                u64::from(be_val) << 24 | u64::from(buf.get_u8()) << 16
+                    | u64::from(buf.get_u16_be())
+            }
             3 => {
-                (be_val as u64) << 56 | (buf.get_u8() as u64) << 48
-                    | (buf.get_u16_be() as u64) << 32 | (buf.get_u32_be() as u64)
+                u64::from(be_val) << 56 | u64::from(buf.get_u8()) << 48
+                    | u64::from(buf.get_u16_be()) << 32
+                    | u64::from(buf.get_u32_be())
             }
             v => panic!("impossible variable length encoding: {}", v),
         };

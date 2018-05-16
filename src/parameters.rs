@@ -53,7 +53,7 @@ impl Codec for ServerTransportParameters {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         buf.put_u32_be(self.negotiated_version);
         buf.put_u8((4 * self.supported_versions.len()) as u8);
-        for v in self.supported_versions.iter() {
+        for v in &self.supported_versions {
             buf.put_u32_be(*v);
         }
         self.parameters.encode(buf);
@@ -205,11 +205,11 @@ pub struct TransportParameters {
 impl Default for TransportParameters {
     fn default() -> Self {
         Self {
-            max_stream_data: 131072,
-            max_data: 1048576,
+            max_stream_data: 131_072,
+            max_data: 1_048_576,
             max_streams_bidi: 4,
             idle_timeout: 300,
-            max_packet_size: 65527,
+            max_packet_size: 65_527,
             stateless_reset_token: None,
             ack_delay_exponent: 3,
             max_stream_id_uni: 20,

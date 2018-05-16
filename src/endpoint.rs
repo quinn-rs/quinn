@@ -169,6 +169,7 @@ where
         })
     }
 
+    #[allow(needless_pass_by_value)]
     pub fn queue_packet(&mut self, packet: Packet) -> QuicResult<()> {
         let key = self.encode_key(&packet.header);
         let len = packet.buf_len() + key.algorithm().tag_len();
@@ -187,6 +188,7 @@ where
         self.handle_packet(partial.finish(&key)?)
     }
 
+    #[allow(needless_pass_by_value)]
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
         match p.ptype() {
             Some(LongType::Initial) | Some(LongType::Handshake) => self.handle_handshake(&p),
@@ -230,7 +232,7 @@ where
         ];
 
         let mut wrote_handshake = false;
-        for frame in p.payload.iter() {
+        for frame in &p.payload {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
                     let (handshake, new_secret) =
@@ -280,7 +282,7 @@ where
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
-                    payload.push(Frame::PathResponse(PathFrame(token.clone())));
+                    payload.push(Frame::PathResponse(PathFrame(*token)));
                 }
                 Frame::ApplicationClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ApplicationClose(*code, reason.clone()));
