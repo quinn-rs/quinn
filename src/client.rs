@@ -68,8 +68,7 @@ impl Future for ClientFuture {
         loop {
             waiting = true;
             if let Some(ref mut client) = self.client {
-                if let Some(p) = client.endpoint.queued() {
-                    let buf = client.endpoint.encode_packet(p)?;
+                if let Some(buf) = client.endpoint.queued() {
                     let len = try_ready!(client.socket.poll_send(&buf));
                     debug_assert_eq!(len, buf.len());
                     waiting = false;

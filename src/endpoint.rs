@@ -23,7 +23,7 @@ pub struct Endpoint<T> {
     secret: Secret,
     prev_secret: Option<Secret>,
     streams: Streams,
-    queue: VecDeque<Packet>,
+    queue: VecDeque<Vec<u8>>,
     tls: T,
 }
 
@@ -65,7 +65,7 @@ where
         }
     }
 
-    pub fn queued(&self) -> Option<&Packet> {
+    pub fn queued(&self) -> Option<&Vec<u8>> {
         self.queue.front()
     }
 
@@ -106,7 +106,7 @@ where
         self.prev_secret = Some(old);
     }
 
-    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) {
+    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
@@ -116,61 +116,66 @@ where
             payload_len = 1200;
         }
 
-        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
-        self.queue.push_back(Packet {
+        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
+        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
+        self.queue_packet(Packet {
             header: Header::Long {
                 ptype: LongType::Initial,
                 version: QUIC_VERSION,
-                dst_cid: self.remote.cid,
-                src_cid: self.local.cid,
+                dst_cid,
+                src_cid,
                 len: payload_len as u64,
                 number,
             },
             payload,
-        });
+        })
     }
 
-    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) {
+    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
-        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
-        self.queue.push_back(Packet {
+        let len = (payload.buf_len() + self.secret.tag_len()) as u64;
+        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
+        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
+        self.queue_packet(Packet {
             header: Header::Long {
                 ptype: LongType::Handshake,
                 version: QUIC_VERSION,
-                dst_cid: self.remote.cid,
-                src_cid: self.local.cid,
-                len: (payload.buf_len() + self.secret.tag_len()) as u64,
+                dst_cid,
+                src_cid,
+                len,
                 number,
             },
             payload,
-        });
+        })
     }
 
-    fn build_short_packet(&mut self, payload: Vec<Frame>) {
+    fn build_short_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
+        let dst_cid = self.remote.cid;
         debug_assert_eq!(self.state, State::Connected);
         debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
-        self.queue.push_back(Packet {
+        self.queue_packet(Packet {
             header: Header::Short {
                 key_phase: false,
                 ptype: ShortType::Four,
-                dst_cid: self.remote.cid,
-                number: number,
+                dst_cid,
+                number,
             },
             payload,
-        });
+        })
     }
 
-    pub fn encode_packet(&self, packet: &Packet) -> QuicResult<Vec<u8>> {
+    pub fn queue_packet(&mut self, packet: Packet) -> QuicResult<()> {
         let key = self.encode_key(&packet.header);
         let len = packet.buf_len() + key.algorithm().tag_len();
         let mut buf = vec![0u8; len];
         packet.encode(&key, &mut buf)?;
-        Ok(buf)
+        self.queue.push_back(buf);
+        Ok(())
     }
 
     pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
@@ -296,7 +301,6 @@ where
         } else {
             self.build_handshake_packet(payload)
         }
-        Ok(())
     }
 }
 
@@ -321,8 +325,7 @@ impl Endpoint<tls::ClientSession> {
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
-        ]);
-        Ok(())
+        ])
     }
 }
 

@@ -71,8 +71,7 @@ impl Future for Server {
                     endpoint.handle_partial(partial)?;
 
                     let mut sent = false;
-                    if let Some(rsp) = endpoint.queued() {
-                        let buf = endpoint.encode_packet(rsp)?;
+                    if let Some(buf) = endpoint.queued() {
                         try_ready!(self.socket.poll_send_to(&buf, &addr));
                         sent = true;
                     }
