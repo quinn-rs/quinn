@@ -231,7 +231,12 @@ impl Assembler {
         if !buf.is_empty() { Some(buf.into()) } else { None }
     }
 
-    pub fn insert(&mut self, offset: u64, data: &[u8]) {
+    pub fn insert(&mut self, mut offset: u64, mut data: &[u8]) {
+        if let Some(advance) = self.offset.checked_sub(offset) {
+            if advance >= data.len() as u64 { return; }
+            data = &data[advance as usize..];
+            offset += advance;
+        }
         let start = (offset - self.offset) as usize;
         let end = start + data.len();
         if end > self.data.len() {
@@ -320,6 +325,15 @@ mod test {
         x.insert(4, (&b"5"[..]).into());
         x.insert(0, (&b"123456"[..]).into());
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(x.next(), None);
+    }
+
+    #[test]
+    fn assemble_old() {
+        let mut x = Assembler::new();
+        x.insert(0, b"1234");
+        assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
+        x.insert(0, b"1234");
         assert_matches!(x.next(), None);
     }
 }
