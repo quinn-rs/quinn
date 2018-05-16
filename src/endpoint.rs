@@ -321,7 +321,8 @@ where
                 | Frame::Padding(_)
                 | Frame::PathResponse(_)
                 | Frame::Stream(_)
-                | Frame::Ping => {}
+                | Frame::Ping
+                | Frame::StreamIdBlocked(_) => {}
             }
         }
 

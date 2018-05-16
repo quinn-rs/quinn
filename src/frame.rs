@@ -14,6 +14,7 @@ pub enum Frame {
     PathResponse(PathFrame),
     Ping,
     Stream(StreamFrame),
+    StreamIdBlocked(StreamIdBlockedFrame),
 }
 
 impl BufLen for Frame {
@@ -27,6 +28,7 @@ impl BufLen for Frame {
             Frame::PathResponse(f) => 1 + f.buf_len(),
             Frame::Ping => 1,
             Frame::Stream(f) => f.buf_len(),
+            Frame::StreamIdBlocked(f) => 1 + f.buf_len(),
         }
     }
 }
@@ -54,6 +56,10 @@ impl Codec for Frame {
             }
             Frame::Ping => buf.put_u8(0x07),
             Frame::Stream(f) => f.encode(buf),
+            Frame::StreamIdBlocked(f) => {
+                buf.put_u8(0x0a);
+                f.encode(buf)
+            }
         }
     }
 
@@ -72,6 +78,10 @@ impl Codec for Frame {
                 buf.get_u8();
                 Frame::Ping
             }
+            0x0a => Frame::StreamIdBlocked({
+                buf.get_u8();
+                StreamIdBlockedFrame::decode(buf)
+            }),
             0x0d => Frame::Ack(AckFrame::decode(buf)),
             0x0e => Frame::PathChallenge({
                 buf.get_u8();
@@ -266,6 +276,25 @@ impl Codec for PathFrame {
         let mut bytes = [0; 8];
         buf.copy_to_slice(&mut bytes);
         PathFrame(bytes)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StreamIdBlockedFrame(pub u64);
+
+impl BufLen for StreamIdBlockedFrame {
+    fn buf_len(&self) -> usize {
+        VarLen(self.0).buf_len()
+    }
+}
+
+impl Codec for StreamIdBlockedFrame {
+    fn encode<T: BufMut>(&self, buf: &mut T) {
+        VarLen(self.0).encode(buf)
+    }
+
+    fn decode<T: Buf>(buf: &mut T) -> Self {
+        StreamIdBlockedFrame(VarLen::decode(buf).0)
     }
 }
 
