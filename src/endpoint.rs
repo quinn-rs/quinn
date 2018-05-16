@@ -24,7 +24,6 @@ pub struct Endpoint<T> {
     prev_secret: Option<Secret>,
     streams: Streams,
     queue: VecDeque<Packet>,
-    received: VecDeque<Packet>,
     tls: T,
 }
 
@@ -56,7 +55,6 @@ where
             prev_secret: None,
             streams: Streams::new(side),
             queue: VecDeque::new(),
-            received: VecDeque::new(),
         }
     }
 
@@ -175,7 +173,7 @@ where
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
         match p.ptype() {
             Some(LongType::Initial) | Some(LongType::Handshake) => self.handle_handshake(&p),
-            _ => Ok(self.received.push_back(p)),
+            _ => Ok(()),
         }
     }
 
