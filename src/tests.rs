@@ -25,7 +25,7 @@ use webpki;
 #[test]
 fn test_client_connect_resolves() {
     let server = Server::new("0.0.0.0", 4433, build_server_config()).unwrap();
-    let connector = client::connect(client_endpoint(), "localhost", 4433).unwrap();
+    let connector = client::ConnectFuture::new(client_endpoint(), "localhost", 4433).unwrap();
     let mut exec = CurrentThread::new();
     exec.spawn(server.map_err(|_| ()));
     exec.block_on(connector).unwrap();

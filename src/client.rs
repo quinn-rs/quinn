@@ -17,80 +17,90 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(server: &str, port: u16) -> QuicResult<ClientFuture> {
+    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
         let endpoint = Endpoint::new(tls, Side::Client, None);
-        connect(endpoint, server, port)
+        ConnectFuture::new(endpoint, server, port)
     }
 }
 
-pub(crate) fn connect(
-    mut endpoint: Endpoint<tls::ClientSession>,
-    server: &str,
-    port: u16,
-) -> QuicResult<ClientFuture> {
-    endpoint.initial()?;
-
-    let mut addr = None;
-    for a in (server, port).to_socket_addrs()? {
-        if let SocketAddr::V4(_) = a {
-            addr = Some(a);
-            break;
-        }
-    }
-
-    let socket = UdpSocket::bind(&"0.0.0.0:0".parse()?)?;
-    socket.connect(&addr.ok_or_else(|| {
-        QuicError::General("no IPv4 address found for host".into())
-    })?)?;
-    Ok(ClientFuture {
-        client: Some(Client {
-            endpoint,
-            socket,
-            buf: vec![0u8; 65536],
-        }),
-        check: Box::new(|c: &mut Client| !c.endpoint.is_handshaking()),
-    })
-}
-
-#[must_use = "futures do nothing unless polled"]
-pub struct ClientFuture {
-    client: Option<Client>,
-    check: Box<Fn(&mut Client) -> bool>,
-}
-
-impl Future for ClientFuture {
-    type Item = Client;
+impl Future for Client {
+    type Item = ();
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut waiting;
-        let mut done = false;
         loop {
             waiting = true;
-            if let Some(ref mut client) = self.client {
-                if let Some(buf) = client.endpoint.queued() {
-                    let len = try_ready!(client.socket.poll_send(&buf));
-                    debug_assert_eq!(len, buf.len());
-                    waiting = false;
-                }
-                if !waiting {
-                    client.endpoint.pop_queue();
-                }
-
-                let len = try_ready!(client.socket.poll_recv(&mut client.buf));
-                client.endpoint.handle(&mut client.buf[..len])?;
+            if let Some(buf) = self.endpoint.queued() {
+                let len = try_ready!(self.socket.poll_send(&buf));
+                debug_assert_eq!(len, buf.len());
                 waiting = false;
-
-                if (self.check)(client) {
-                    done = true;
-                    break;
-                }
             }
+            if !waiting {
+                self.endpoint.pop_queue();
+            }
+
+            let len = try_ready!(self.socket.poll_recv(&mut self.buf));
+            self.endpoint.handle(&mut self.buf[..len])?;
+            waiting = false;
 
             if waiting {
                 break;
             }
         }
+        Ok(Async::NotReady)
+    }
+}
+
+#[must_use = "futures do nothing unless polled"]
+pub struct ConnectFuture {
+    client: Option<Client>,
+}
+
+impl ConnectFuture {
+    pub(crate) fn new(
+        mut endpoint: Endpoint<tls::ClientSession>,
+        server: &str,
+        port: u16,
+    ) -> QuicResult<ConnectFuture> {
+        endpoint.initial()?;
+
+        let mut addr = None;
+        for a in (server, port).to_socket_addrs()? {
+            if let SocketAddr::V4(_) = a {
+                addr = Some(a);
+                break;
+            }
+        }
+
+        let socket = UdpSocket::bind(&"0.0.0.0:0".parse()?)?;
+        socket.connect(&addr.ok_or_else(|| {
+            QuicError::General("no IPv4 address found for host".into())
+        })?)?;
+        Ok(ConnectFuture {
+            client: Some(Client {
+                endpoint,
+                socket,
+                buf: vec![0u8; 65536],
+            }),
+        })
+    }
+}
+
+impl Future for ConnectFuture {
+    type Item = Client;
+    type Error = QuicError;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let done = if let Some(ref mut client) = self.client {
+            match client.poll() {
+                Err(e) => {
+                    return Err(e);
+                }
+                _ => !client.endpoint.is_handshaking(),
+            }
+        } else {
+            panic!("invalid state for ConnectFuture");
+        };
 
         if done {
             match self.client.take() {
