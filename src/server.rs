@@ -18,7 +18,6 @@ pub struct Server {
     socket: UdpSocket,
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
-    out_buf: Vec<u8>,
     connections: HashMap<ConnectionId, (SocketAddr, Endpoint<tls::ServerSession>)>,
 }
 
@@ -32,7 +31,6 @@ impl Server {
             socket: UdpSocket::bind(&addr)?,
             tls_config: Arc::new(tls_config),
             in_buf: vec![0u8; 65536],
-            out_buf: vec![0u8; 65536],
             connections: HashMap::new(),
         })
     }
@@ -71,9 +69,16 @@ impl Future for Server {
                 Entry::Occupied(mut inner) => {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
                     endpoint.handle_partial(partial)?;
+
+                    let mut sent = false;
                     if let Some(rsp) = endpoint.queued() {
-                        let len = rsp.encode(&endpoint.encode_key(&rsp.header), &mut self.out_buf)?;
-                        try_ready!(self.socket.poll_send_to(&self.out_buf[..len], &addr));
+                        let buf = endpoint.encode_packet(rsp)?;
+                        try_ready!(self.socket.poll_send_to(&buf, &addr));
+                        sent = true;
+                    }
+
+                    if sent {
+                        endpoint.pop_queue();
                     }
                 }
                 Entry::Vacant(_) => panic!("connection ID {:?} unknown", dst_cid),

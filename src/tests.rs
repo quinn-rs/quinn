@@ -35,35 +35,24 @@ fn test_client_connect_resolves() {
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
     c.initial().unwrap();
-    let c_initial = c.queued().unwrap();
-    let mut buf = vec![0u8; 16384];
-    let len = c_initial
-        .encode(&c.encode_key(&c_initial.header), &mut buf)
-        .unwrap();
+    let mut c_initial = c.encode_packet(c.queued().unwrap()).unwrap();
+    c.pop_queue();
 
-    let mut s = server_endpoint(c_initial.dst_cid());
-    s.handle(&mut buf[..len]).unwrap();
+    let mut s = server_endpoint(Packet::start_decode(&mut c_initial).dst_cid());
+    s.handle(&mut c_initial).unwrap();
 
-    let s_sh = s.queued().unwrap();
-    let len = s_sh.encode(&s.encode_key(&s_sh.header), &mut buf).unwrap();
-    c.handle(&mut buf[..len]).unwrap();
+    let mut s_sh = s.encode_packet(s.queued().unwrap()).unwrap();
+    s.pop_queue();
+    c.handle(&mut s_sh).unwrap();
 
-    let c_fin = c.queued().unwrap();
-    let len = c_fin
-        .encode(&c.encode_key(&c_fin.header), &mut buf)
-        .unwrap();
-    s.handle(&mut buf[..len]).unwrap();
+    let mut c_fin = c.encode_packet(c.queued().unwrap()).unwrap();
+    c.pop_queue();
+    s.handle(&mut c_fin).unwrap();
 
-    let s_short = s.queued().unwrap();
-    assert_eq!(s_short.ptype(), None);
-    let len = s_short
-        .encode(&s.encode_key(&s_short.header), &mut buf)
-        .unwrap();
-
+    let mut s_short = s.encode_packet(s.queued().unwrap()).unwrap();
+    s.pop_queue();
     let c_short = {
-        let partial = Packet::start_decode(&mut buf[..len]);
-        assert_eq!(s_short.header, partial.header);
-
+        let partial = Packet::start_decode(&mut s_short);
         let key = c.decode_key(&partial.header);
         partial.finish(&key).unwrap()
     };
@@ -74,13 +63,14 @@ fn test_encoded_handshake() {
 fn test_handshake() {
     let mut c = client_endpoint();
     c.initial().unwrap();
-    let initial = c.queued().unwrap();
+    let mut initial = c.encode_packet(&c.queued().unwrap()).unwrap();
+    c.pop_queue();
 
-    let mut s = server_endpoint(initial.dst_cid());
-    s.handle_handshake(&initial).unwrap();
-    let server_hello = s.queued().unwrap();
+    let mut s = server_endpoint(Packet::start_decode(&mut initial).dst_cid());
+    s.handle(&mut initial).unwrap();
+    let mut server_hello = s.encode_packet(s.queued().unwrap()).unwrap();
 
-    c.handle_handshake(&server_hello).unwrap();
+    c.handle(&mut server_hello).unwrap();
     assert!(c.queued().is_some());
 }
 

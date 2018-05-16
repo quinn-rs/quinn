@@ -65,8 +65,12 @@ where
         }
     }
 
-    pub fn queued(&mut self) -> Option<Packet> {
-        self.queue.pop_front()
+    pub fn queued(&self) -> Option<&Packet> {
+        self.queue.front()
+    }
+
+    pub fn pop_queue(&mut self) {
+        self.queue.pop_front();
     }
 
     pub fn pick_unused_cid<F>(&mut self, is_used: F) -> ConnectionId
@@ -79,7 +83,7 @@ where
         self.local.cid
     }
 
-    pub(crate) fn encode_key(&self, h: &Header) -> PacketKey {
+    fn encode_key(&self, h: &Header) -> PacketKey {
         if let Some(LongType::Handshake) = h.ptype() {
             if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
                 return secret.build_key(self.side);
@@ -161,6 +165,14 @@ where
         });
     }
 
+    pub fn encode_packet(&self, packet: &Packet) -> QuicResult<Vec<u8>> {
+        let key = self.encode_key(&packet.header);
+        let len = packet.buf_len() + key.algorithm().tag_len();
+        let mut buf = vec![0u8; len];
+        packet.encode(&key, &mut buf)?;
+        Ok(buf)
+    }
+
     pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
         self.handle_partial(Packet::start_decode(buf))
     }
@@ -177,7 +189,7 @@ where
         }
     }
 
-    pub(crate) fn handle_handshake(&mut self, p: &Packet) -> QuicResult<()> {
+    fn handle_handshake(&mut self, p: &Packet) -> QuicResult<()> {
         match p.header {
             Header::Long {
                 dst_cid, src_cid, ..

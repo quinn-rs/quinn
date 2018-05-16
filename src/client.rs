@@ -14,7 +14,6 @@ pub struct Client {
     endpoint: Endpoint<tls::ClientSession>,
     socket: UdpSocket,
     buf: Vec<u8>,
-    msg_len: Option<usize>,
 }
 
 impl Client {
@@ -31,9 +30,6 @@ pub(crate) fn connect(
     port: u16,
 ) -> QuicResult<ClientFuture> {
     endpoint.initial()?;
-    let packet = endpoint.queued().unwrap();
-    let mut buf = vec![0u8; 65536];
-    let msg_len = Some(packet.encode(&endpoint.encode_key(&packet.header), &mut buf)?);
 
     let mut addr = None;
     for a in (server, port).to_socket_addrs()? {
@@ -51,8 +47,7 @@ pub(crate) fn connect(
         client: Some(Client {
             endpoint,
             socket,
-            buf,
-            msg_len,
+            buf: vec![0u8; 65536],
         }),
         check: Box::new(|c: &mut Client| !c.endpoint.is_handshaking()),
     })
@@ -73,30 +68,19 @@ impl Future for ClientFuture {
         loop {
             waiting = true;
             if let Some(ref mut client) = self.client {
-                if let Some(ref msg_len) = client.msg_len {
-                    let len = try_ready!(client.socket.poll_send(&client.buf[..*msg_len]));
-                    debug_assert_eq!(len, *msg_len);
+                if let Some(p) = client.endpoint.queued() {
+                    let buf = client.endpoint.encode_packet(p)?;
+                    let len = try_ready!(client.socket.poll_send(&buf));
+                    debug_assert_eq!(len, buf.len());
                     waiting = false;
                 }
                 if !waiting {
-                    client.msg_len.take();
+                    client.endpoint.pop_queue();
                 }
 
-                if let None = client.msg_len {
-                    let len = try_ready!(client.socket.poll_recv(&mut client.buf));
-                    client.endpoint.handle(&mut client.buf[..len])?;
-                    waiting = false;
-                }
-
-                if let None = client.msg_len {
-                    if let Some(p) = client.endpoint.queued() {
-                        client.msg_len = Some(p.encode(
-                            &client.endpoint.encode_key(&p.header),
-                            &mut client.buf,
-                        )?);
-                        waiting = false;
-                    }
-                }
+                let len = try_ready!(client.socket.poll_recv(&mut client.buf));
+                client.endpoint.handle(&mut client.buf[..len])?;
+                waiting = false;
 
                 if (self.check)(client) {
                     done = true;
