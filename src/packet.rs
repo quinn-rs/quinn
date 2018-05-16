@@ -19,10 +19,6 @@ impl Packet {
         self.header.ptype()
     }
 
-    pub fn dst_cid(&self) -> ConnectionId {
-        self.header.dst_cid()
-    }
-
     pub fn number(&self) -> u32 {
         self.header.number()
     }
