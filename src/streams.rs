@@ -45,6 +45,11 @@ impl Streams {
         })
     }
 
+    pub fn update_max_id(&mut self, id: u64) {
+        let mut me = self.inner.lock().unwrap();
+        me.open[(id % 4) as usize].max = id;
+    }
+
     pub fn received(&mut self, id: u64) -> Option<StreamRef> {
         let mut me = self.inner.lock().unwrap();
         match me.streams.get(&id) {

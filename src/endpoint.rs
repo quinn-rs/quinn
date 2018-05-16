@@ -44,16 +44,31 @@ where
             panic!("need secret for client endpoint");
         };
 
+        let local = PeerData::new(rng.gen());
+        let (num_recv_bidi, num_recv_uni) = (
+            local.params.max_streams_bidi as u64,
+            local.params.max_stream_id_uni as u64,
+        );
+        let (max_recv_bidi, max_recv_uni) = if side == Side::Client {
+            (1 + 4 * num_recv_bidi, 3 + 4 * num_recv_uni)
+        } else {
+            (0 + 4 * num_recv_bidi, 1 + 4 * num_recv_uni)
+        };
+
+        let mut streams = Streams::new(side);
+        streams.update_max_id(max_recv_bidi);
+        streams.update_max_id(max_recv_uni);
+
         Endpoint {
             tls,
             side,
             state: State::Start,
             remote: PeerData::new(dst_cid),
-            local: PeerData::new(rng.gen()),
+            local,
             src_pn: rng.gen(),
             secret,
             prev_secret: None,
-            streams: Streams::new(side),
+            streams,
             queue: VecDeque::new(),
         }
     }
@@ -279,6 +294,18 @@ where
                         };
 
                         mem::replace(&mut self.remote.params, params);
+
+                        let (num_send_bidi, num_send_uni) = (
+                            self.remote.params.max_streams_bidi as u64,
+                            self.remote.params.max_stream_id_uni as u64,
+                        );
+                        let (max_send_bidi, max_send_uni) = if self.side == Side::Server {
+                            (1 + 4 * num_send_bidi, 3 + 4 * num_send_uni)
+                        } else {
+                            (0 + 4 * num_send_bidi, 1 + 4 * num_send_uni)
+                        };
+                        self.streams.update_max_id(max_send_bidi);
+                        self.streams.update_max_id(max_send_uni);
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
