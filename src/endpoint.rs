@@ -2928,7 +2928,7 @@ impl Packet {
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
             let id = ConnectionId::new(cid_stage, dest_id_len);
             let key_phase = ty & KEY_PHASE_BIT != 0;
-            let number = match ty & 0b0111 {
+            let number = match ty & 0b11 {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
                 0x2 => PacketNumber::U32(buf.get()?),
