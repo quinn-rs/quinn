@@ -375,7 +375,11 @@ impl Future for Driver {
                             .send(None);
                     }
                     ConnectionLost { reason } => {
-                        endpoint.pending.get_mut(&connection).unwrap().fail(reason);
+                        // HACK HACK HACK: Handshake currently emits ConnectionLost, which means we might not know about
+                        // this connection yet. This should probably be made more consistent.
+                        if let Some(x) = endpoint.pending.get_mut(&connection) {
+                            x.fail(reason);
+                        }
                     }
                     ConnectionDrained => {
                         if let Some(x) = endpoint.pending.get_mut(&connection).and_then(|p| { p.drained = true; p.draining.take() }) {
