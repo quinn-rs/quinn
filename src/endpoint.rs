@@ -268,6 +268,7 @@ impl Endpoint {
 
         let mut tls = SslContext::builder(SslMethod::tls())?;
         tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
+        tls.set_max_proto_version(Some(SslVersion::TLS1_3))?;
         tls.set_options(
             SslOptions::NO_COMPRESSION | SslOptions::NO_SSLV2 | SslOptions::NO_SSLV3 | SslOptions::NO_TLSV1 |
             SslOptions::NO_TLSV1_1 | SslOptions::NO_TLSV1_2 | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS
