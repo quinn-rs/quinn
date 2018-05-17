@@ -1,4 +1,4 @@
-use futures::{Async, Future, Poll};
+use futures::{task, Async, Future, Poll};
 
 use super::{QuicError, QuicResult};
 use endpoint::Endpoint;
@@ -28,6 +28,7 @@ impl Future for Client {
     type Item = ();
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.endpoint.streams.set_task(task::current());
         let mut waiting;
         loop {
             waiting = true;

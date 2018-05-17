@@ -1,3 +1,5 @@
+use futures::task;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -20,11 +22,17 @@ impl Streams {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 side,
+                task: None,
                 queue: VecDeque::new(),
                 streams: HashMap::new(),
                 open,
             })),
         }
+    }
+
+    pub fn set_task(&mut self, task: task::Task) {
+        let mut me = self.inner.lock().unwrap();
+        me.task = Some(task);
     }
 
     pub fn queued(&mut self) -> Option<Frame> {
@@ -102,6 +110,7 @@ impl StreamRef {
 
 struct Inner {
     side: Side,
+    task: Option<task::Task>,
     queue: VecDeque<Frame>,
     streams: HashMap<u64, Stream>,
     open: [OpenStreams; 4],
