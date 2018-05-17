@@ -276,14 +276,6 @@ impl<T> Stream<T>
         if length { varint::write(self.data.as_ref().len() as u64, out).unwrap(); }
         out.put_slice(self.data.as_ref());
     }
-
-    pub fn len(&self, length: bool) -> usize {
-        let mut result = varint::size(self.id.0).unwrap();
-        if self.offset != 0 { result += varint::size(self.offset).unwrap(); }
-        if length { result += varint::size(self.data.as_ref().len() as u64).unwrap(); }
-        result += self.data.as_ref().len();
-        result
-    }
 }
 
 pub struct Iter {
