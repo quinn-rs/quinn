@@ -577,11 +577,10 @@ impl Endpoint {
 
     fn gen_initial_packet_num(&mut self) -> u32 { self.initial_packet_number.sample(&mut self.rng) as u32 }
 
-    fn add_connection(&mut self, crypto_id: ConnectionId, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6, side: Side) -> ConnectionHandle {
+    fn add_connection(&mut self, initial_id: ConnectionId, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6, side: Side) -> ConnectionHandle {
         debug_assert!(!local_id.is_empty());
         let packet_num = self.gen_initial_packet_num();
-        let crypto = CryptoContext::handshake(&crypto_id, side);
-        let i = self.connections.insert(Connection::new(crypto, local_id.clone(), remote_id, remote, packet_num.into(), side, &self.config));
+        let i = self.connections.insert(Connection::new(initial_id, local_id.clone(), remote_id, remote, packet_num.into(), side, &self.config));
         self.connection_ids.insert(local_id, ConnectionHandle(i));
         self.connection_remotes.insert(remote, ConnectionHandle(i));
         ConnectionHandle(i)
@@ -662,7 +661,8 @@ impl Endpoint {
                 trace!(self.log, "performing handshake"; "connection" => %local_id);
                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                     let params = params.expect("transport parameter errors should have aborted the handshake");
-                    let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
+                    let conn = self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
+                    self.connection_ids.insert(dest_id, conn);
                     self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                     self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
@@ -736,11 +736,10 @@ impl Endpoint {
                                 self.on_packet_authenticated(now, conn, number as u64);
                                 trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
                                 let local_id = self.connections[conn.0].local_id.clone();
-                                // The server sees the next Initial packet as our first, so we update our keys to match the new remote_id
-                                let crypto = CryptoContext::handshake(&remote_id, Side::Client);
                                 // Discard transport state
                                 self.connections[conn.0] = Connection::new(
-                                    crypto, local_id, remote_id, remote, self.initial_packet_number.sample(&mut self.rng).into(), Side::Client, &self.config
+                                    remote_id.clone(), local_id, remote_id, remote,
+                                    self.initial_packet_number.sample(&mut self.rng).into(), Side::Client, &self.config
                                 );
                                 // Send updated ClientHello
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
@@ -1292,6 +1291,9 @@ impl Endpoint {
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
+        if self.connections[conn.0].side == Side::Server {
+            self.connection_ids.remove(&self.connections[conn.0].initial_id);
+        }
         self.connection_ids.remove(&self.connections[conn.0].local_id);
         self.connection_remotes.remove(&self.connections[conn.0].remote);
         self.dirty_conns.remove(&conn);
@@ -1652,6 +1654,8 @@ impl slog::Value for ConnectionId {
 }
 
 struct Connection {
+    /// DCID of Initial packet
+    initial_id: ConnectionId,
     local_id: ConnectionId,
     remote_id: ConnectionId,
     remote: SocketAddrV6,
@@ -1864,9 +1868,10 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
 }
 
 impl Connection {
-    fn new(handshake_crypto: CryptoContext, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6,
+    fn new(initial_id: ConnectionId, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6,
            initial_packet_number: u64, side: Side, config: &Config) -> Self
     {
+        let handshake_crypto = CryptoContext::handshake(&initial_id, side);
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
             streams.insert(StreamId::new(!side, Directionality::Uni, i as u64), stream::Recv::new(config.stream_receive_window as u64).into());
@@ -1877,7 +1882,7 @@ impl Connection {
             streams.insert(StreamId::new(!side, Directionality::Bi, i as u64), Stream::new_bi(config.stream_receive_window as u64));
         }
         Self {
-            local_id, remote_id, remote, side,
+            initial_id, local_id, remote_id, remote, side,
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
