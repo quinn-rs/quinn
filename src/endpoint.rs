@@ -135,7 +135,7 @@ where
         self.prev_secret = Some(old);
     }
 
-    pub fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
+    fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
@@ -160,7 +160,7 @@ where
         })
     }
 
-    pub fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
+    fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
