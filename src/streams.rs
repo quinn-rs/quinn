@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use super::QuicError;
+use frame::Frame;
 use types::Side;
 
 #[derive(Clone)]
@@ -18,10 +20,16 @@ impl Streams {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 side,
+                queue: VecDeque::new(),
                 streams: HashMap::new(),
                 open,
             })),
         }
+    }
+
+    pub fn queued(&mut self) -> Option<Frame> {
+        let mut me = self.inner.lock().unwrap();
+        me.queue.pop_front()
     }
 
     pub fn init_send(&mut self, dir: Dir) -> Option<StreamRef> {
@@ -94,6 +102,7 @@ impl StreamRef {
 
 struct Inner {
     side: Side,
+    queue: VecDeque<Frame>,
     streams: HashMap<u64, Stream>,
     open: [OpenStreams; 4],
 }

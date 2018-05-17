@@ -31,7 +31,7 @@ impl Future for Client {
         let mut waiting;
         loop {
             waiting = true;
-            if let Some(buf) = self.endpoint.queued() {
+            if let Some(buf) = self.endpoint.queued()? {
                 let len = try_ready!(self.socket.poll_send(&buf));
                 debug_assert_eq!(len, buf.len());
                 waiting = false;

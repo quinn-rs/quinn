@@ -35,21 +35,21 @@ fn test_client_connect_resolves() {
 fn test_encoded_handshake() {
     let mut c = client_endpoint();
     c.initial().unwrap();
-    let mut c_initial = c.queued().unwrap().clone();
+    let mut c_initial = c.queued().unwrap().unwrap().clone();
     c.pop_queue();
 
     let mut s = server_endpoint(Packet::start_decode(&mut c_initial).dst_cid());
     s.handle(&mut c_initial).unwrap();
 
-    let mut s_sh = s.queued().unwrap().clone();
+    let mut s_sh = s.queued().unwrap().unwrap().clone();
     s.pop_queue();
     c.handle(&mut s_sh).unwrap();
 
-    let mut c_fin = c.queued().unwrap().clone();
+    let mut c_fin = c.queued().unwrap().unwrap().clone();
     c.pop_queue();
     s.handle(&mut c_fin).unwrap();
 
-    let mut s_short = s.queued().unwrap().clone();
+    let mut s_short = s.queued().unwrap().unwrap().clone();
     s.pop_queue();
     let c_short = {
         let partial = Packet::start_decode(&mut s_short);
@@ -63,15 +63,15 @@ fn test_encoded_handshake() {
 fn test_handshake() {
     let mut c = client_endpoint();
     c.initial().unwrap();
-    let mut initial = c.queued().unwrap().clone();
+    let mut initial = c.queued().unwrap().unwrap().clone();
     c.pop_queue();
 
     let mut s = server_endpoint(Packet::start_decode(&mut initial).dst_cid());
     s.handle(&mut initial).unwrap();
-    let mut server_hello = s.queued().unwrap().clone();
+    let mut server_hello = s.queued().unwrap().unwrap().clone();
 
     c.handle(&mut server_hello).unwrap();
-    assert!(c.queued().is_some());
+    assert!(c.queued().unwrap().is_some());
 }
 
 fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {

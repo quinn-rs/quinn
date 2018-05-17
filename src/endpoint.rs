@@ -81,8 +81,21 @@ where
         }
     }
 
-    pub fn queued(&self) -> Option<&Vec<u8>> {
-        self.queue.front()
+    pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
+        let mut frames = vec![];
+        loop {
+            match self.streams.queued() {
+                Some(frame) => frames.push(frame),
+                None => {
+                    break;
+                }
+            }
+        }
+
+        if !frames.is_empty() {
+            self.build_short_packet(frames)?
+        }
+        Ok(self.queue.front())
     }
 
     pub fn pop_queue(&mut self) {
