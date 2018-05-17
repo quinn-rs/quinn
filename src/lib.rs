@@ -20,7 +20,6 @@ mod codec;
 mod crypto;
 mod endpoint;
 mod frame;
-pub mod http;
 mod packet;
 mod parameters;
 mod server;
