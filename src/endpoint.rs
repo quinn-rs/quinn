@@ -214,37 +214,31 @@ where
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
-        match p.ptype() {
-            Some(LongType::Initial) | Some(LongType::Handshake) => self.handle_handshake(&p),
-            _ => Ok(()),
-        }
-    }
-
-    fn handle_handshake(&mut self, p: &Packet) -> QuicResult<()> {
-        match p.header {
+        let dst_cid = match p.header {
             Header::Long {
                 dst_cid, src_cid, ..
             } => match self.state {
                 State::Start | State::InitialSent => {
                     self.remote.cid = src_cid;
-                    self.state = State::Handshaking;
+                    dst_cid
                 }
-                _ => if dst_cid != self.local.cid {
-                    return Err(QuicError::General(format!(
-                        "invalid destination CID {:?} received (expected {:?})",
-                        dst_cid, self.local.cid
-                    )));
-                },
+                _ => dst_cid,
             },
-            Header::Short { .. } => match self.state {
-                State::Connected => {}
-                _ => {
-                    return Err(QuicError::General(format!(
-                        "short header received in {:?} state",
-                        self.state
-                    )));
-                }
+            Header::Short { dst_cid, .. } => if let State::Connected = self.state {
+                dst_cid
+            } else {
+                return Err(QuicError::General(format!(
+                    "short header received in {:?} state",
+                    self.state
+                )));
             },
+        };
+
+        if self.state != State::Start && dst_cid != self.local.cid {
+            return Err(QuicError::General(format!(
+                "invalid destination CID {:?} received (expected {:?})",
+                dst_cid, self.local.cid
+            )));
         }
 
         let mut payload = vec![
@@ -333,6 +327,13 @@ where
                 | Frame::Ping
                 | Frame::StreamIdBlocked(_) => {}
             }
+        }
+
+        match self.state {
+            State::Start | State::InitialSent => {
+                self.state = State::Handshaking;
+            }
+            _ => {}
         }
 
         if self.state == State::Connected && !wrote_handshake {
