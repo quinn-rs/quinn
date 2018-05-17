@@ -1120,6 +1120,12 @@ impl Endpoint {
                             stream::SendState::ResetSent { stop_reason: Some(error_code) };
                     }
                     Frame::NewConnectionId { .. } => {
+                        if self.connections[conn.0].remote_id.is_empty() {
+                            debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
+                                   connection=self.connections[conn.0].local_id.clone());
+                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                            return State::closed(TransportError::PROTOCOL_VIOLATION);
+                        }
                         trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
                     }
                 }
