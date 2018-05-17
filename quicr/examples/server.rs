@@ -64,6 +64,9 @@ struct Opt {
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
+    /// Enable stateless retries
+    #[structopt(long = "stateless-retry")]
+    stateless_retry: bool,
 }
 
 fn main() {
@@ -91,6 +94,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
             keylog: options.keylog,
+            use_stateless_retry: options.stateless_retry,
             ..quicr::Config::default()
         })
         .listen();
