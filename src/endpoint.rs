@@ -850,7 +850,6 @@ impl Endpoint {
                             self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
                                 .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
                             self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
-                            self.connections[conn.0].pending.max_data = true;
                             State::Established(state::Established { tls })
                         }
                         Err(HandshakeError::WouldBlock(mut tls)) => {
