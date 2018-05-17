@@ -1,5 +1,5 @@
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
-use rustls::{ClientConfig, NoClientAuth, ProtocolVersion, TLSError};
+use rustls::{ClientConfig, KeyLogFile, NoClientAuth, ProtocolVersion, TLSError};
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -35,6 +35,7 @@ pub fn build_client_config(anchors: Option<&TLSServerTrustAnchors>) -> ClientCon
     config.root_store.add_server_trust_anchors(anchors);
     config.versions = vec![ProtocolVersion::TLSv1_3];
     config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+    config.key_log = Arc::new(KeyLogFile::new());
     config
 }
 
@@ -49,6 +50,7 @@ pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> Ser
     let mut config = ServerConfig::new(NoClientAuth::new());
     config.set_protocols(&[ALPN_PROTOCOL.into()]);
     config.set_single_cert(cert_chain, key);
+    config.key_log = Arc::new(KeyLogFile::new());
     config
 }
 
