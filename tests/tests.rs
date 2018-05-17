@@ -16,6 +16,7 @@ use std::net::SocketAddrV6;
 use std::{fmt, str};
 use std::io::{self, Write};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
@@ -410,4 +411,23 @@ fn high_latency_handshake() {
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     assert_eq!(pair.client.get_bytes_in_flight(client_conn), 0);
     assert_eq!(pair.server.get_bytes_in_flight(server_conn), 0);
+}
+
+#[test]
+fn resumption() {
+    let cache = Arc::new(Mutex::new(None));
+    let cache2 = cache.clone();
+    let mut pair = Pair::new(Config::default(), Config {
+        session_cache: Some(Box::new(move |_, _, ticket| { *cache2.lock().unwrap() = Some(ticket.to_owned()); })),
+        ..Config::default()
+    });
+    let (c, _) = pair.connect();
+    let ticket = if let Some(x) = cache.lock().unwrap().clone() { x } else { panic!("no session ticket supplied"); };
+    info!(pair.log, "closing");
+    pair.client.close(pair.time, c, 42, (&[][..]).into());
+    pair.drive();
+    info!(pair.log, "resuming");
+    pair.client.connect(pair.server.addr, ClientConfig { session_ticket: Some(&ticket), ..ClientConfig::default() });
+    pair.drive();
+    // TODO: Check that resumption occurred
 }
