@@ -830,11 +830,11 @@ impl Endpoint {
                                 }
                             }
                             trace!(self.log, "established"; "connection" => %id);
+                            self.connections[conn.0].handshake_cleanup(&self.config);
                             if self.connections[conn.0].side == Side::Client {
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                             } else {
                                 self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into());
-                                self.connections[conn.0].handshake_cleanup(&self.config);
                             }
                             match self.connections[conn.0].side {
                                 Side::Client => {
@@ -856,6 +856,7 @@ impl Endpoint {
                         }
                         Err(HandshakeError::WouldBlock(mut tls)) => {
                             trace!(self.log, "handshake ongoing"; "connection" => %id);
+                            self.connections[conn.0].handshake_cleanup(&self.config);
                             self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
                                 .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
                             {
@@ -2158,8 +2159,9 @@ impl Connection {
         }
     }
 
+    /// Consider all previously transmitted handshake packets to be delivered. Called when we receive a new handshake packet.
     fn handshake_cleanup(&mut self, config: &Config) {
-        assert!(self.awaiting_handshake);
+        if !self.awaiting_handshake { return; }
         self.awaiting_handshake = false;
         self.handshake_pending = Retransmits::default();
         let mut packets = Vec::new();
