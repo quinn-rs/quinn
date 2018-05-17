@@ -1,10 +1,12 @@
+use futures::future::{self, Future};
+use futures::sync::oneshot;
 use futures::task;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use super::QuicError;
-use frame::Frame;
+use frame::{Frame, StreamIdBlockedFrame};
 use types::Side;
 
 #[derive(Clone)]
@@ -14,7 +16,12 @@ pub struct Streams {
 
 impl Streams {
     pub fn new(side: Side) -> Self {
-        let mut open = [OpenStreams::new(); 4];
+        let mut open = [
+            OpenStreams::new(),
+            OpenStreams::new(),
+            OpenStreams::new(),
+            OpenStreams::new(),
+        ];
         if let Side::Client = side {
             open[0].next = Some(0);
         }
@@ -88,6 +95,38 @@ impl Streams {
             }
         }
     }
+
+    pub fn request_stream(self, id: u64) -> Box<Future<Item = Streams, Error = QuicError>> {
+        let consumer = {
+            let mut me = self.inner.lock().unwrap();
+            let consumer = {
+                let open = me.open.get_mut((id % 4) as usize).unwrap();
+                if id > open.max {
+                    let (p, c) = oneshot::channel::<u64>();
+                    open.updates.push(p);
+                    Some(c)
+                } else {
+                    None
+                }
+            };
+            if consumer.is_some() {
+                me.queue
+                    .push_back(Frame::StreamIdBlocked(StreamIdBlockedFrame(id)));
+                if let Some(ref mut task) = me.task {
+                    task.notify();
+                }
+            }
+            consumer
+        };
+
+        match consumer {
+            Some(c) => Box::new(
+                c.map(|_| self)
+                    .map_err(|_| QuicError::General("StreamIdBlocked future canceled".into())),
+            ),
+            None => Box::new(future::ok(self)),
+        }
+    }
 }
 
 pub struct StreamRef {
@@ -132,15 +171,19 @@ impl Stream {
     }
 }
 
-#[derive(Clone, Copy)]
 struct OpenStreams {
     next: Option<u64>,
     max: u64,
+    updates: Vec<oneshot::Sender<u64>>,
 }
 
 impl OpenStreams {
     fn new() -> Self {
-        Self { next: None, max: 0 }
+        Self {
+            next: None,
+            max: 0,
+            updates: Vec::new(),
+        }
     }
 }
 
