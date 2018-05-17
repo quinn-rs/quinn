@@ -83,13 +83,8 @@ where
 
     pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
         let mut frames = vec![];
-        loop {
-            match self.streams.queued() {
-                Some(frame) => frames.push(frame),
-                None => {
-                    break;
-                }
-            }
+        while let Some(frame) = self.streams.queued() {
+            frames.push(frame);
         }
 
         if !frames.is_empty() {
