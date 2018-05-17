@@ -870,7 +870,7 @@ impl Endpoint {
                                 debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
                                 TransportError::TRANSPORT_PARAMETER_ERROR
                             } else {
-                                debug!(self.log, "accept failed"; "reason" => %tls.error());
+                                debug!(self.log, "handshake failed"; "reason" => %tls.error());
                                 TransportError::TLS_HANDSHAKE_FAILED
                             };
                             self.events.push_back((conn, Event::ConnectionLost { reason: code.into() }));
@@ -2874,12 +2874,12 @@ struct Packet {
 enum HeaderError {
     #[fail(display = "unsupported version")]
     UnsupportedVersion { source: ConnectionId, destination: ConnectionId },
-    #[fail(display = "invalid header")]
-    InvalidHeader,
+    #[fail(display = "invalid header: {}", _0)]
+    InvalidHeader(&'static str),
 }
 
 impl From<coding::UnexpectedEnd> for HeaderError {
-    fn from(_: coding::UnexpectedEnd) -> Self { HeaderError::InvalidHeader }
+    fn from(_: coding::UnexpectedEnd) -> Self { HeaderError::InvalidHeader("unexpected end of packet") }
 }
 
 impl Packet {
@@ -2896,7 +2896,7 @@ impl Packet {
             if dcil > 0 { dcil += 3 };
             let mut scil = ci_lengths & 0xF;
             if scil > 0 { scil += 3 };
-            if buf.remaining() < (dcil + scil) as usize { return Err(HeaderError::InvalidHeader); }
+            if buf.remaining() < (dcil + scil) as usize { return Err(HeaderError::InvalidHeader("connection IDs longer than packet")); }
             buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
             let destination_id = ConnectionId::new(cid_stage, dcil as usize);
             buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
@@ -2914,7 +2914,7 @@ impl Packet {
                     let len = buf.get_var()?;
                     let number = buf.get()?;
                     let header_data = packet.slice(0, buf.position() as usize);
-                    if buf.position() + len > packet.len() as u64 { return Err(HeaderError::InvalidHeader); }
+                    if buf.position() + len > packet.len() as u64 { return Err(HeaderError::InvalidHeader("payload longer than packet")); }
                     let payload = if len == 0 { Bytes::new() } else { packet.slice(buf.position() as usize, (buf.position() + len) as usize) };
                     (Packet {
                         header: Header::Long { ty, source_id, destination_id, number },
@@ -2924,7 +2924,7 @@ impl Packet {
                 _ => return Err(HeaderError::UnsupportedVersion { source: source_id, destination: destination_id }),
             })
         } else {
-            if buf.remaining() < dest_id_len { return Err(HeaderError::InvalidHeader); }
+            if buf.remaining() < dest_id_len { return Err(HeaderError::InvalidHeader("destination connection ID longer than packet")); }
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
             let id = ConnectionId::new(cid_stage, dest_id_len);
             let key_phase = ty & KEY_PHASE_BIT != 0;
@@ -2932,7 +2932,7 @@ impl Packet {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
                 0x2 => PacketNumber::U32(buf.get()?),
-                _ => { return Err(HeaderError::InvalidHeader); }
+                _ => { return Err(HeaderError::InvalidHeader("unknown packet type")); }
             };
             let header_data = packet.slice(0, buf.position() as usize);
             let payload = packet.slice(buf.position() as usize, packet.len());
