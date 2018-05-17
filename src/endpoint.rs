@@ -101,6 +101,14 @@ pub struct Config {
 
     /// Function to store session tickets transmitted by the server for fast resumption.
     pub session_cache: Option<Box<Fn(Option<&str>, &SocketAddrV6, &[u8]) + Send + Sync + 'static>>,
+
+    /// Whether to force clients to prove they can receive responses before allocating resources for them.
+    ///
+    /// This adds a round trip to the handshake, increasing connection establishment latency, in exchange for improved
+    /// resistance to denial of service attacks.
+    ///
+    /// Only meaningful for endpoints that accept incoming connections.
+    pub use_stateless_retry: bool,
 }
 
 pub struct CertConfig<'a> {
@@ -141,6 +149,7 @@ impl Default for Config {
 
             keylog: None,
             session_cache: None,
+            use_stateless_retry: false,
         }
     }
 }
@@ -592,98 +601,103 @@ impl Endpoint {
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
-        match tls.stateless() {
-            Ok(true) => {
-                match tls.accept() {
-                    Ok(_) => unreachable!(),
-                    Err(HandshakeError::WouldBlock(mut tls)) => {
-                        if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
-                            debug!(self.log, "rejecting connection due to full accept buffer");
-                            let n = self.gen_initial_packet_num();
-                            self.io.push_back(Io::Transmit {
-                                destination: remote,
-                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY),
-                            });
-                            return;
-                        }
 
-                        trace!(self.log, "performing handshake"; "connection" => %local_id);
-                        if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                            let params = params.expect("transport parameter errors should have aborted the handshake");
-                            let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
-                            self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
-                            self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                            self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                                tls, clienthello_packet: None, remote_id_set: true,
-                            }));
-                            self.connections[conn.0].set_params(params);
-                            self.dirty_conns.insert(conn);
-                            self.incoming_handshakes += 1;
-                        } else {
-                            debug!(self.log, "ClientHello missing transport params extension");
-                            let n = self.gen_initial_packet_num();
-                            self.io.push_back(Io::Transmit {
-                                destination: remote,
-                                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR),
-                            });
-                        }
-                    }
-                    Err(HandshakeError::Failure(tls)) => {
-                        let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
-                            debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
-                            TransportError::TRANSPORT_PARAMETER_ERROR
-                        } else {
-                            debug!(self.log, "accept failed"; "reason" => %tls.error());
-                            TransportError::TLS_HANDSHAKE_FAILED
-                        };
-                        let n = self.gen_initial_packet_num();
-                        self.io.push_back(Io::Transmit {
-                            destination: remote,
-                            packet: handshake_close(&crypto, &source_id, &local_id, n, code),
-                        });
-                    }
-                    Err(HandshakeError::SetupFailure(e)) => {
-                        error!(self.log, "accept setup failed"; "reason" => %e);
-                        let n = self.gen_initial_packet_num();
-                        self.io.push_back(Io::Transmit {
-                            destination: remote,
-                            packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR),
-                        });
-                    }
+        if self.config.use_stateless_retry {
+            match tls.stateless() {
+                Ok(true) => {}  // Continue on to the below accept call
+                Ok(false) => {
+                    let data = tls.get_mut().take_outgoing();
+                    trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
+                    let mut buf = Vec::<u8>::new();
+                    Header::Long {
+                        ty: packet::RETRY,
+                        number: packet_number,
+                        destination_id: source_id, source_id: local_id,
+                    }.encode(&mut buf);
+                    let header_len = buf.len();
+                    let mut ack = RangeSet::new();
+                    ack.insert_one(packet_number as u64);
+                    frame::Ack::encode(0, &ack, &mut buf);
+                    frame::Stream {
+                        id: StreamId(0),
+                        offset: 0,
+                        fin: false,
+                        data: data,
+                    }.encode(false, &mut buf);
+                    set_payload_length(&mut buf, header_len);
+                    let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
+                    debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
+                    buf.truncate(header_len);
+                    buf.extend_from_slice(&payload);
+                    self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+                    return;
+                }
+                Err(e) => {
+                    debug!(self.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
+                    let n = self.gen_initial_packet_num();
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED),
+                    });
+                    return;
                 }
             }
-            Ok(false) => {
-                let data = tls.get_mut().take_outgoing();
-                trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
-                let mut buf = Vec::<u8>::new();
-                Header::Long {
-                    ty: packet::RETRY,
-                    number: packet_number,
-                    destination_id: source_id, source_id: local_id,
-                }.encode(&mut buf);
-                let header_len = buf.len();
-                let mut ack = RangeSet::new();
-                ack.insert_one(packet_number as u64);
-                frame::Ack::encode(0, &ack, &mut buf);
-                frame::Stream {
-                    id: StreamId(0),
-                    offset: 0,
-                    fin: false,
-                    data: data,
-                }.encode(false, &mut buf);
-                set_payload_length(&mut buf, header_len);
-                let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
-                debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
-                buf.truncate(header_len);
-                buf.extend_from_slice(&payload);
-                self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+        }
+
+        match tls.accept() {
+            Ok(_) => unreachable!(),
+            Err(HandshakeError::WouldBlock(mut tls)) => {
+                if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
+                    debug!(self.log, "rejecting connection due to full accept buffer");
+                    let n = self.gen_initial_packet_num();
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY),
+                    });
+                    return;
+                }
+
+                trace!(self.log, "performing handshake"; "connection" => %local_id);
+                if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
+                    let params = params.expect("transport parameter errors should have aborted the handshake");
+                    let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
+                    self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
+                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                    self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
+                        tls, clienthello_packet: None, remote_id_set: true,
+                    }));
+                    self.connections[conn.0].set_params(params);
+                    self.dirty_conns.insert(conn);
+                    self.incoming_handshakes += 1;
+                } else {
+                    debug!(self.log, "ClientHello missing transport params extension");
+                    let n = self.gen_initial_packet_num();
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR),
+                    });
+                }
             }
-            Err(e) => {
-                debug!(self.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
+            Err(HandshakeError::Failure(tls)) => {
+                let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
+                    debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
+                    TransportError::TRANSPORT_PARAMETER_ERROR
+                } else {
+                    debug!(self.log, "accept failed"; "reason" => %tls.error());
+                    TransportError::TLS_HANDSHAKE_FAILED
+                };
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED),
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, code),
+                });
+            }
+            Err(HandshakeError::SetupFailure(e)) => {
+                error!(self.log, "accept setup failed"; "reason" => %e);
+                let n = self.gen_initial_packet_num();
+                self.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR),
                 });
             }
         }

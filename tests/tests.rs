@@ -280,6 +280,12 @@ fn lifecycle() {
 }
 
 #[test]
+fn stateless_retry() {
+    let mut pair = Pair::new(Config { use_stateless_retry: true, ..Config::default() }, Config::default());
+    pair.connect();
+}
+
+#[test]
 fn stateless_reset() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
