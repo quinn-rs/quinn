@@ -107,3 +107,11 @@ impl coding::Value for StreamId {
         varint::write(self.0, buf).unwrap()
     }
 }
+
+//
+// Useful internal constants
+//
+
+const RESET_TOKEN_SIZE: usize = 16;
+const MAX_CID_SIZE: usize = 18;
+const MIN_CID_SIZE: usize = 4;

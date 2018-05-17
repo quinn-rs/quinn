@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use bytes::{Bytes, Buf, BufMut};
 
-use {varint, TransportError, StreamId};
+use {varint, TransportError, StreamId, ConnectionId, MIN_CID_SIZE, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 use range_set::RangeSet;
 use coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 
@@ -105,6 +105,11 @@ pub enum Frame {
     Stream(Stream),
     PathChallenge(u64),
     PathResponse(u64),
+    NewConnectionId {
+        sequence: u64,
+        id: ConnectionId,
+        reset_token: [u8; 16],
+    },
     Invalid(Type),
 }
 
@@ -133,6 +138,7 @@ impl Frame {
             }
             PathChallenge(_) => Type::PATH_CHALLENGE,
             PathResponse(_) => Type::PATH_RESPONSE,
+            NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
             Invalid(ty) => ty,
         }
     }
@@ -289,6 +295,7 @@ pub struct Iter {
 enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
+    Malformed,
 }
 
 impl From<UnexpectedEnd> for IterErr { fn from(_: UnexpectedEnd) -> Self { IterErr::UnexpectedEnd } }
@@ -357,6 +364,21 @@ impl Iter {
             }
             Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
             Type::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
+            Type::NEW_CONNECTION_ID => {
+                let sequence = self.bytes.get_var()?;
+                let length = self.bytes.get::<u8>()? as usize;
+                if length < MIN_CID_SIZE || length > MAX_CID_SIZE { return Err(IterErr::Malformed); }
+                if length > self.bytes.remaining() { return Err(IterErr::UnexpectedEnd); }
+                let mut stage = [0; MAX_CID_SIZE];
+                self.bytes.copy_to_slice(&mut stage[0..length]);
+                let id = ConnectionId::new(stage, length);
+                if self.bytes.remaining() < 16 { return Err(IterErr::UnexpectedEnd); }
+                let mut reset_token = [0; RESET_TOKEN_SIZE];
+                self.bytes.copy_to_slice(&mut reset_token);
+                Frame::NewConnectionId {
+                    sequence, id, reset_token
+                }
+            }
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
                     id: self.bytes.get()?,

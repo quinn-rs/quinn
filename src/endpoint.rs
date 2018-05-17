@@ -26,7 +26,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use memory_stream::MemoryStream;
 use transport_parameters::TransportParameters;
 use coding::{self, BufExt, BufMutExt};
-use {hkdf, frame, Frame, TransportError, StreamId, Side, Directionality, VERSION};
+use {hkdf, frame, Frame, TransportError, StreamId, Side, Directionality, VERSION, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 use range_set::RangeSet;
 use stream::{self, Stream};
 
@@ -199,8 +199,6 @@ const LOCAL_ID_LEN: usize = 8;
 const MAX_ACK_BLOCKS: usize = 64;
 /// Value used in ACKs we transmit
 const ACK_DELAY_EXPONENT: u8 = 3;
-const RESET_TOKEN_SIZE: usize = 16;
-const MAX_CID_SIZE: usize = 18;
 
 fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
@@ -1121,6 +1119,9 @@ impl Endpoint {
                         self.connections[conn.0].streams.get_mut(&id).unwrap().send_mut().unwrap().state =
                             stream::SendState::ResetSent { stop_reason: Some(error_code) };
                     }
+                    Frame::NewConnectionId { .. } => {
+                        trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                    }
                 }
             }
             if self.connections[conn.0].awaiting_handshake {
@@ -1597,6 +1598,12 @@ impl ::std::ops::DerefMut for ConnectionId {
 }
 
 impl ConnectionId {
+    pub(crate) fn new(data: [u8; MAX_CID_SIZE], len: usize) -> Self {
+        let mut x = ConnectionId(data.into());
+        x.0.truncate(len);
+        x
+    }
+
     fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
         debug_assert!(len as usize <= MAX_CID_SIZE);
         let mut v = ArrayVec::from([0; MAX_CID_SIZE]);
@@ -2863,11 +2870,9 @@ impl Packet {
             if scil > 0 { scil += 3 };
             if buf.remaining() < (dcil + scil) as usize { return Err(HeaderError::InvalidHeader); }
             buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-            let mut destination_id = ConnectionId(cid_stage.into());
-            destination_id.0.truncate(dcil as usize);
+            let destination_id = ConnectionId::new(cid_stage, dcil as usize);
             buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-            let mut source_id = ConnectionId(cid_stage.into());
-            source_id.0.truncate(scil as usize);
+            let source_id = ConnectionId::new(cid_stage, scil as usize);
             Ok(match version {
                 0 => {
                     let header_data = packet.slice(0, buf.position() as usize);
@@ -2893,8 +2898,7 @@ impl Packet {
         } else {
             if buf.remaining() < dest_id_len { return Err(HeaderError::InvalidHeader); }
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
-            let mut id = ConnectionId(cid_stage.into());
-            id.0.truncate(dest_id_len);
+            let id = ConnectionId::new(cid_stage, dest_id_len);
             let key_phase = ty & KEY_PHASE_BIT != 0;
             let number = match ty & 0b0111 {
                 0x0 => PacketNumber::U8(buf.get()?),
