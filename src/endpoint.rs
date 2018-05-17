@@ -483,9 +483,24 @@ impl Endpoint {
         let key_phase = packet.header.key_phase();
         if let Header::Long { ty, destination_id, source_id, number } = packet.header {
             // MAY buffer non-initial packets a little for better 0RTT behavior
-            if ty == packet::INITIAL && datagram_len >= MIN_INITIAL_SIZE {
-                self.handle_initial(now, remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
-                return;
+            match ty {
+                packet::INITIAL => {
+                    if datagram_len >= MIN_INITIAL_SIZE {
+                        self.handle_initial(now, remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
+                    } else {
+                        debug!(self.log, "ignoring short initial on {connection}", connection=destination_id.clone());
+                    }
+                    return;
+                }
+                packet::ZERO_RTT => {
+                    debug!(self.log, "ignoring 0-RTT packet (unimplemented)");
+                    return;
+                }
+                _ => {
+                    debug!(self.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
+                           connection=destination_id.clone(), type=ty);
+                    return;
+                }
             }
         }
 
@@ -1600,6 +1615,11 @@ impl fmt::Display for ConnectionId {
     }
 }
 
+impl slog::Value for ConnectionId {
+    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{}", self))
+    }
+}
 
 struct Connection {
     local_id: ConnectionId,
@@ -3151,6 +3171,7 @@ impl From<ConnectionError> for io::Error {
 mod packet {
     pub const INITIAL: u8 = 0x7F;
     pub const RETRY: u8 = 0x7E;
+    pub const ZERO_RTT: u8 = 0x7C;
     pub const HANDSHAKE: u8 = 0x7D;
 }
 
