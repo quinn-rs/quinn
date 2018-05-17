@@ -638,7 +638,8 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED),
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, 
+                                                Some(&tls.get_mut().take_outgoing())),
                     });
                     return;
                 }
@@ -653,7 +654,7 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY),
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY, None),
                     });
                     return;
                 }
@@ -675,11 +676,11 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR),
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR, None),
                     });
                 }
             }
-            Err(HandshakeError::Failure(tls)) => {
+            Err(HandshakeError::Failure(mut tls)) => {
                 let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
                     debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
                     TransportError::TRANSPORT_PARAMETER_ERROR
@@ -690,7 +691,7 @@ impl Endpoint {
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, code),
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, code, Some(&tls.get_mut().take_outgoing())),
                 });
             }
             Err(HandshakeError::SetupFailure(e)) => {
@@ -698,7 +699,7 @@ impl Endpoint {
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR),
+                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR, None),
                 });
             }
         }
@@ -1235,7 +1236,7 @@ impl Endpoint {
                     packet: handshake_close(&self.connections[conn.0].handshake_crypto,
                                             &self.connections[conn.0].remote_id,
                                             &self.connections[conn.0].local_id,
-                                            n as u32, state.reason.clone()),
+                                            n as u32, state.reason.clone(), None),
                 });
                 self.reset_idle_timeout(now, conn);
             }
@@ -3220,7 +3221,7 @@ fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) -> boo
 
 fn handshake_close<R>(crypto: &CryptoContext,
                       remote_id: &ConnectionId, local_id: &ConnectionId, packet_number: u32,
-                      reason: R) -> Box<[u8]>
+                      reason: R, tls_alert: Option<&[u8]>) -> Box<[u8]>
     where R: Into<state::CloseReason>
 {
     let mut buf = Vec::<u8>::new();
@@ -3232,6 +3233,11 @@ fn handshake_close<R>(crypto: &CryptoContext,
     match reason.into() {
         state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
+    }
+    if let Some(data) = tls_alert {
+        if !data.is_empty() {
+            frame::Stream { id: StreamId(0), fin: false, offset: 0, data }.encode(false, &mut buf);
+        }
     }
     set_payload_length(&mut buf, header_len);
     let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
