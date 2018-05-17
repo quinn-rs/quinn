@@ -47,5 +47,6 @@ in stdenv.mkDerivation {
   buildInputs = with pkgs; [ rustChannels.stable.rust pkgconfig openssl-pre ];
   shellHook = ''
     export CARGO_INCREMENTAL=1
+    export RUST_BACKTRACE=1
   '';
 }
