@@ -15,6 +15,7 @@ use std::path::{self, Path, PathBuf};
 use std::str;
 use std::rc::Rc;
 use std::ascii;
+use std::net::SocketAddr;
 
 use futures::{Future, Stream};
 use tokio::executor::current_thread;
@@ -67,6 +68,9 @@ struct Opt {
     /// Enable stateless retries
     #[structopt(long = "stateless-retry")]
     stateless_retry: bool,
+    /// Address to listen on
+    #[structopt(long = "listen", default_value = "[::]:4433")]
+    listen: SocketAddr,
 }
 
 fn main() {
@@ -110,7 +114,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         builder.generate_insecure_certificate().context("failed to generate certificate")?;
     }
 
-    let (_, driver, incoming) = builder.bind("[::]:4433")?;
+    let (_, driver, incoming) = builder.bind(options.listen)?;
 
     runtime.spawn(incoming.for_each(move |conn| { handle_connection(&root, &log, conn); Ok(()) }));
     runtime.block_on(driver)?;
