@@ -77,7 +77,7 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(self.remote, ClientConfig { server_name: Some(&self.remote_host), ..ClientConfig::default() });
+        let c = self.client.connect(self.remote, ClientConfig { server_name: Some(&self.remote_host), ..ClientConfig::default() })?;
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;

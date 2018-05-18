@@ -146,7 +146,7 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() });
+        let client_conn = self.client.connect(self.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() }).unwrap();
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
@@ -374,7 +374,7 @@ fn stop_stream() {
 fn reject_self_signed_cert() {
     let mut pair = Pair::new(Config::default(), Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server.addr, ClientConfig::default());
+    let client_conn = pair.client.connect(pair.server.addr, ClientConfig::default()).unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
@@ -405,7 +405,7 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair.client.connect(pair.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() });
+    let client_conn = pair.client.connect(pair.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() }).unwrap();
     pair.drive();
     let server_conn = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);

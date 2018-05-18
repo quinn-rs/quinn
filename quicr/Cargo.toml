@@ -22,7 +22,7 @@ tokio-timer = "0.2.1"
 slog = "2.1"
 futures = "0.1.21"
 fnv = "1.0.6"
-openssl = "0.10.6"
+openssl = { git = "https://github.com/Ralith/rust-openssl", branch = "max-early-data-accessors", features = ["v111"] }
 failure = "0.1"
 bytes = "0.4.7"
 rand = "0.4"

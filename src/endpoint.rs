@@ -162,6 +162,9 @@ pub struct ClientConfig<'a> {
     pub server_name: Option<&'a str>,
 
     /// A ticket to resume a previous session faster than performing a full handshake.
+    ///
+    /// Required for transmitting 0-RTT data.
+    // Encoding: u16 length, DER-encoded OpenSSL session ticket, transport params
     pub session_ticket: Option<&'a [u8]>,
 
     /// Whether to accept inauthentic or unverifiable peer certificates.
@@ -208,6 +211,8 @@ const LOCAL_ID_LEN: usize = 8;
 const MAX_ACK_BLOCKS: usize = 64;
 /// Value used in ACKs we transmit
 const ACK_DELAY_EXPONENT: u8 = 3;
+/// Magic value used to indicate 0-RTT support in NewSessionTicket
+const TLS_MAX_EARLY_DATA: u32 = 0xffffffff;
 
 fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
@@ -278,6 +283,9 @@ impl Endpoint {
             SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
         );
         tls.set_default_verify_paths()?;
+        if !config.use_stateless_retry {
+            tls.set_max_early_data(TLS_MAX_EARLY_DATA)?;
+        }
         if let Some(ref listen) = listen {
             let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
             {
@@ -369,13 +377,30 @@ impl Endpoint {
             });
         }
 
-        if config.session_cache.is_some() {
+        {
             let config = config.clone();
             tls.set_session_cache_mode(ssl::SslSessionCacheMode::CLIENT | ssl::SslSessionCacheMode::NO_INTERNAL_STORE);
             tls.set_new_session_callback(move |tls, session| {
-                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
-                let name = tls.servername(ssl::NameType::HOST_NAME);
-                (config.session_cache.as_ref().unwrap())(name, &conn.remote, &session.to_der().expect("failed to serialize session ticket"));
+                match session.max_early_data() {
+                    0 | TLS_MAX_EARLY_DATA => {}
+                    _ => {
+                        // TODO: report illegal max early data
+                    }
+                }
+                if let Some(ref f) = config.session_cache {
+                    let params = tls.ex_data(*TRANSPORT_PARAMS_INDEX).cloned().expect("missing transport params")
+                        .unwrap();
+                    let session = session.to_der().expect("failed to serialize session ticket");
+
+                    let mut buf = Vec::new();
+                    buf.put_u16_be(session.len() as u16);
+                    buf.extend_from_slice(&session);
+                    params.write(&mut buf);
+
+                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
+                    let name = tls.servername(ssl::NameType::HOST_NAME);
+                    f(name, &conn.remote, &buf);
+                }
             });
         }
 
@@ -490,7 +515,6 @@ impl Endpoint {
         }
         let key_phase = packet.header.key_phase();
         if let Header::Long { ty, destination_id, source_id, number } = packet.header {
-            // MAY buffer non-initial packets a little for better 0RTT behavior
             match ty {
                 packet::INITIAL => {
                     if datagram_len >= MIN_INITIAL_SIZE {
@@ -501,7 +525,8 @@ impl Endpoint {
                     return;
                 }
                 packet::ZERO_RTT => {
-                    debug!(self.log, "ignoring 0-RTT packet (unimplemented)");
+                    // MAY buffer a limited amount
+                    trace!(self.log, "dropping 0-RTT packet for unknown connection {connection}", connection=destination_id.clone());
                     return;
                 }
                 _ => {
@@ -538,12 +563,12 @@ impl Endpoint {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, remote: SocketAddrV6, config: ClientConfig) -> ConnectionHandle {
+    pub fn connect(&mut self, remote: SocketAddrV6, config: ClientConfig) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
-        let mut tls = Ssl::new(&self.tls).unwrap(); // Is this fallible?
+        let mut tls = Ssl::new(&self.tls)?;
         if !config.accept_insecure_certs {
             tls.set_verify(ssl::SslVerifyMode::PEER);
             let param = tls.param_mut();
@@ -556,13 +581,28 @@ impl Endpoint {
             }
         }
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
-        if let Some(name) = config.server_name { tls.set_hostname(name).unwrap(); }
-        if let Some(session) = config.session_ticket {
-            if let Err(e) = SslSession::from_der(session).and_then(|x| unsafe { tls.set_session(&x) }) {
-                error!(self.log, "failed to set TLS session"; "reason" => %e);
+        if let Some(name) = config.server_name { tls.set_hostname(name)?; }
+        let result = if let Some(session) = config.session_ticket {
+            if session.len() < 2 { return Err(ConnectError::MalformedSession); }
+            let mut buf = io::Cursor::new(session);
+            let len = buf.get::<u16>().map_err(|_| ConnectError::MalformedSession)? as usize;
+            if buf.remaining() < len { return Err(ConnectError::MalformedSession); }
+            let session = SslSession::from_der(&buf.bytes()[0..len]).map_err(|_| ConnectError::MalformedSession)?;
+            buf.advance(len);
+            let params = TransportParameters::read(Side::Client, &mut buf).map_err(|_| ConnectError::MalformedSession)?;
+            self.connections[conn.0].set_params(params);
+            unsafe { tls.set_session(&session) }?;
+            let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
+            tls.set_connect_state();
+            if session.max_early_data() == TLS_MAX_EARLY_DATA {
+                tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
+                self.connections[conn.0].zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
             }
-        }
-        let mut tls = match tls.connect(MemoryStream::new()) {
+            tls.handshake()
+        } else {
+            tls.connect(MemoryStream::new())
+        };
+        let mut tls = match result {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(tls)) => tls,
             Err(e) => panic!("unexpected TLS error: {}", e),
@@ -572,7 +612,7 @@ impl Endpoint {
             tls, clienthello_packet: None, remote_id_set: false
         }));
         self.dirty_conns.insert(conn);
-        conn
+        Ok(conn)
     }
 
     fn gen_initial_packet_num(&mut self) -> u32 { self.initial_packet_number.sample(&mut self.rng) as u32 }
@@ -601,8 +641,11 @@ impl Endpoint {
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
+        tls.set_accept_state();
 
+        let zero_rtt_crypto;
         if self.config.use_stateless_retry {
+            zero_rtt_crypto = None;
             match tls.stateless() {
                 Ok(true) => {}  // Continue on to the below accept call
                 Ok(false) => {
@@ -643,9 +686,34 @@ impl Endpoint {
                     return;
                 }
             }
+        } else {
+            match tls.read_early_data(&mut [0; 1]) {
+                Ok(Some(_)) => {
+                    debug!(self.log, "got TLS early data"; "connection" => local_id.clone());
+                    let n = self.gen_initial_packet_num();
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::PROTOCOL_VIOLATION, None),
+                    });
+                    return;
+                }
+                Ok(None) => { zero_rtt_crypto = None; }
+                Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
+                    zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
+                }
+                Err(e) => {
+                    debug!(self.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
+                    let n = self.gen_initial_packet_num();
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, None),
+                    });
+                    return;
+                }
+            }
         }
 
-        match tls.accept() {
+        match tls.handshake() {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(mut tls)) => {
                 if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
@@ -663,6 +731,7 @@ impl Endpoint {
                     let params = params.expect("transport parameter errors should have aborted the handshake");
                     let conn = self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
                     self.connection_ids.insert(dest_id, conn);
+                    self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
                     self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                     self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
@@ -703,6 +772,264 @@ impl Endpoint {
                 });
             }
         }
+    }
+
+    fn process_payload(&mut self, now: u64, conn: ConnectionHandle, number: u64, payload: Bytes, mut tls: Option<&mut SslStream<MemoryStream>>) -> Result<bool, state::CloseReason> {
+        let cid = self.connections[conn.0].local_id.clone();
+        for frame in frame::Iter::new(payload) {
+            match frame {
+                Frame::Padding => {}
+                _ => {
+                    trace!(self.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
+                }
+            }
+            match frame {
+                Frame::Ack(_) => {}
+                _ => { self.connections[conn.0].permit_ack_only = true; }
+            }
+            match frame {
+                Frame::Stream(frame) => {
+                    trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
+                    let data_recvd = self.connections[conn.0].data_recvd;
+                    let max_data = self.connections[conn.0].local_max_data;
+                    let new_bytes = match self.connections[conn.0].get_recv_stream(frame.id) {
+                        Err(e) => {
+                            debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
+                            self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            return Err(e.into());
+                        }
+                        Ok(None) => {
+                            trace!(self.log, "dropping frame for closed stream");
+                            continue;
+                        }
+                        Ok(Some(stream)) => {
+                            let end = frame.offset + frame.data.len() as u64;
+                            let rs = stream.recv_mut().unwrap();
+                            if let Some(final_offset) = rs.final_offset() {
+                                if end > final_offset || (frame.fin && end != final_offset) {
+                                    debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
+                                    return Err(TransportError::FINAL_OFFSET_ERROR.into());
+                                }
+                            }
+                            let prev_end = rs.limit();
+                            let new_bytes = end.saturating_sub(prev_end);
+                            if end > rs.max_data || data_recvd + new_bytes > max_data {
+                                debug!(self.log, "flow control error";
+                                       "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
+                                       "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
+                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FLOW_CONTROL_ERROR.into() }));
+                                return Err(TransportError::FLOW_CONTROL_ERROR.into());
+                            }
+                            if frame.fin {
+                                match rs.state {
+                                    stream::RecvState::Recv { ref mut size } => { *size = Some(end); }
+                                    _ => {}
+                                }
+                            }
+                            rs.recvd.insert(frame.offset..end);
+                            if frame.id == StreamId(0) {
+                                if let Some(ref mut tls) = tls {
+                                    if frame.fin {
+                                        debug!(self.log, "got fin on stream 0"; "connection" => cid);
+                                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                                    }
+                                    tls.get_mut().insert(frame.offset, &frame.data);
+                                } else {
+                                    debug!(self.log, "stream 0 frame in 0-RTT packet"; "connection" => cid);
+                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
+                                }
+                            } else {
+                                rs.buffer(frame.data, frame.offset);
+                            }
+                            if let stream::RecvState::Recv { size: Some(size) } = rs.state {
+                                if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
+                                    rs.state = stream::RecvState::DataRecvd { size };
+                                }
+                            }
+                            new_bytes
+                        }
+                    };
+                    if frame.id != StreamId(0) {
+                        self.connections[conn.0].readable_streams.insert(frame.id);
+                        self.readable_conns.insert(conn);
+                    }
+                    self.connections[conn.0].data_recvd += new_bytes;
+                }
+                Frame::Ack(ack) => {
+                    self.on_ack_received(now, conn, ack);
+                    for stream in self.connections[conn.0].finished_streams.drain(..) {
+                        self.events.push_back((conn, Event::StreamFinished { stream }));
+                    }
+                }
+                Frame::Padding | Frame::Ping => {}
+                Frame::ConnectionClose(reason) => {
+                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ConnectionClosed { reason } }));
+                    return Ok(true);
+                }
+                Frame::ApplicationClose(reason) => {
+                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed { reason } }));
+                    return Ok(true);
+                }
+                Frame::Invalid(ty) => {
+                    debug!(self.log, "received malformed frame"; "type" => %ty);
+                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::frame(ty).into() }));
+                    return Err(TransportError::frame(ty).into());
+                }
+                Frame::PathChallenge(x) => {
+                    self.connections[conn.0].pending.path_challenge(number, x);
+                }
+                Frame::PathResponse(_) => {
+                    debug!(self.log, "unsolicited PATH_RESPONSE");
+                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::UNSOLICITED_PATH_RESPONSE.into() }));
+                    return Err(TransportError::UNSOLICITED_PATH_RESPONSE.into());
+                }
+                Frame::MaxData(bytes) => {
+                    let was_blocked = self.connections[conn.0].blocked();
+                    self.connections[conn.0].max_data = cmp::max(bytes, self.connections[conn.0].max_data);
+                    if was_blocked && !self.connections[conn.0].blocked() {
+                        for stream in self.connections[conn.0].blocked_streams.drain() {
+                            self.events.push_back((conn, Event::StreamWritable { stream }));
+                        }
+                    }
+                }
+                Frame::MaxStreamData { id, offset } => {
+                    if id.initiator() != self.connections[conn.0].side && id.directionality() == Directionality::Uni {
+                        debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
+                        let ss = stream.send_mut().unwrap();
+                        if offset > ss.max_data {
+                            trace!(self.log, "stream limit increased"; "stream" => id.0,
+                                   "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
+                            if ss.offset == ss.max_data {
+                                self.events.push_back((conn, Event::StreamWritable { stream: id }));
+                            }
+                            ss.max_data = offset;
+                        }
+                    } else {
+                        debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                }
+                Frame::MaxStreamId(id) => {
+                    let limit = match id.directionality() {
+                        Directionality::Uni => &mut self.connections[conn.0].max_uni_streams,
+                        Directionality::Bi => &mut self.connections[conn.0].max_bi_streams,
+                    };
+                    if id.index() > *limit {
+                        *limit = id.index();
+                        self.events.push_back((conn, Event::StreamAvailable { directionality: id.directionality() }));
+                    }
+                }
+                Frame::RstStream(frame::RstStream { id, error_code, final_offset }) => {
+                    if id == StreamId(0) {
+                        debug!(self.log, "got RST_STREAM on stream 0");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    let offset = match self.connections[conn.0].get_recv_stream(id) {
+                        Err(e) => {
+                            debug!(self.log, "received illegal RST_STREAM");
+                            self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            return Err(e.into());
+                        }
+                        Ok(None) => {
+                            trace!(self.log, "received RST_STREAM on closed stream");
+                            continue;
+                        }
+                        Ok(Some(stream)) => {
+                            let rs = stream.recv_mut().unwrap();
+                            if let Some(offset) = rs.final_offset() {
+                                if offset != final_offset {
+                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
+                                    return Err(TransportError::FINAL_OFFSET_ERROR.into());
+                                }
+                            }
+                            if !rs.is_closed() {
+                                rs.state = stream::RecvState::ResetRecvd { size: final_offset, error_code };
+                            }
+                            rs.limit()
+                        }
+                    };
+                    self.connections[conn.0].data_recvd += final_offset.saturating_sub(offset);
+                    self.connections[conn.0].readable_streams.insert(id);
+                    self.readable_conns.insert(conn);
+                }
+                Frame::Blocked { offset } => {
+                    debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
+                }
+                Frame::StreamBlocked { id, offset } => {
+                    debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
+                }
+                Frame::StreamIdBlocked { id } => {
+                    debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => id);
+                }
+                Frame::StopSending { id, error_code } => {
+                    if self.connections[conn.0].streams.get(&id).map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0)) {
+                        debug!(self.log, "got STOP_SENDING on invalid stream");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    self.reset(conn, id, 0);
+                    self.connections[conn.0].streams.get_mut(&id).unwrap().send_mut().unwrap().state =
+                        stream::SendState::ResetSent { stop_reason: Some(error_code) };
+                }
+                Frame::NewConnectionId { .. } => {
+                    if self.connections[conn.0].remote_id.is_empty() {
+                        debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
+                               connection=self.connections[conn.0].local_id.clone());
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                }
+            }
+        }
+        if self.connections[conn.0].awaiting_handshake {
+            assert_eq!(self.connections[conn.0].side, Side::Client,
+                       "only the client confirms handshake completion based on a protected packet");
+            // Forget about unacknowledged handshake packets
+            self.connections[conn.0].handshake_cleanup(&self.config);
+        }
+        if let Some(ref mut tls) = tls {
+            if !tls.get_ref().read_blocked() {
+                let prev_offset = tls.get_ref().read_offset();
+                let status = tls.ssl_read(&mut [0; 1]);
+                self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
+                    .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
+                self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+                match status {
+                    Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {}
+                    Ok(_) => {
+                        debug!(self.log, "got TLS application data");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
+                        debug!(self.log, "TLS error"; "error" => %e);
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() }));
+                        return Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into());
+                    }
+                    Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
+                        debug!(self.log, "TLS session terminated unexpectedly");
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    Err(e) => {
+                        error!(self.log, "unexpected TLS error"; "error" => %e);
+                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
+                        return Err(TransportError::INTERNAL_ERROR.into());
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 
     fn handle_connected_inner(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet, state: State) -> State { match state {
@@ -828,7 +1155,7 @@ impl Endpoint {
                                                                    Some(tls.get_mut().take_outgoing().to_owned().into()));
                                 }
                             }
-                            trace!(self.log, "established"; "connection" => %id);
+                            trace!(self.log, "established"; "connection" => %id, "session reused" => tls.ssl().session_reused());
                             self.connections[conn.0].handshake_cleanup(&self.config);
                             if self.connections[conn.0].side == Side::Client {
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
@@ -887,6 +1214,24 @@ impl Endpoint {
                     trace!(self.log, "dropping duplicate Initial");
                     State::Handshake(state)
                 }
+                Header::Long { ty: packet::ZERO_RTT, number, .. } if self.connections[conn.0].side == Side::Server => {
+                    let payload = if let Some(ref crypto) = self.connections[conn.0].zero_rtt_crypto {
+                        if let Some(x) = crypto.decrypt(number as u64, &packet.header_data, &packet.payload) { x }
+                        else {
+                            debug!(self.log, "failed to authenticate 0-RTT packet");
+                            return State::Handshake(state);
+                        }
+                    } else {
+                        debug!(self.log, "ignoring unsupported 0-RTT packet");
+                        return State::Handshake(state);
+                    };
+                    self.on_packet_authenticated(now, conn, number as u64);
+                    match self.process_payload(now, conn, number as u64, payload.into(), None) {
+                        Err(e) => State::HandshakeFailed(state::HandshakeFailed { reason: e, app_closed: false, alert: None }),
+                        Ok(true) => State::Draining(state.into()),
+                        Ok(false) => State::Handshake(state),
+                    }
+                }
                 Header::Long { ty, .. } => {
                     debug!(self.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
@@ -936,248 +1281,11 @@ impl Endpoint {
                 }
             };
             self.on_packet_authenticated(now, conn, number);
-            for frame in frame::Iter::new(payload.into()) {
-                match frame {
-                    Frame::Padding => {}
-                    _ => {
-                        trace!(self.log, "got frame"; "connection" => %self.connections[conn.0].local_id, "type" => %frame.ty());
-                    }
-                }
-                match frame {
-                    Frame::Ack(_) => {}
-                    _ => { self.connections[conn.0].permit_ack_only = true; }
-                }
-                match frame {
-                    Frame::Stream(frame) => {
-                        trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
-                        let data_recvd = self.connections[conn.0].data_recvd;
-                        let max_data = self.connections[conn.0].local_max_data;
-                        let new_bytes = match self.connections[conn.0].get_recv_stream(frame.id) {
-                            Err(e) => {
-                                debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
-                                self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
-                                return State::closed(e);
-                            }
-                            Ok(None) => {
-                                trace!(self.log, "dropping frame for closed stream");
-                                return State::Established(state);
-                            }
-                            Ok(Some(stream)) => {
-                                let end = frame.offset + frame.data.len() as u64;
-                                let rs = stream.recv_mut().unwrap();
-                                if let Some(final_offset) = rs.final_offset() {
-                                    if end > final_offset || (frame.fin && end != final_offset) {
-                                        debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
-                                        return State::closed(TransportError::FINAL_OFFSET_ERROR);
-                                    }
-                                }
-                                let prev_end = rs.limit();
-                                let new_bytes = end.saturating_sub(prev_end);
-                                if end > rs.max_data || data_recvd + new_bytes > max_data {
-                                    debug!(self.log, "flow control error";
-                                           "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
-                                           "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
-                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FLOW_CONTROL_ERROR.into() }));
-                                    return State::closed(TransportError::FLOW_CONTROL_ERROR);
-                                }
-                                if frame.fin {
-                                    match rs.state {
-                                        stream::RecvState::Recv { ref mut size } => { *size = Some(end); }
-                                        _ => {}
-                                    }
-                                }
-                                rs.recvd.insert(frame.offset..end);
-                                if frame.id == StreamId(0) {
-                                    if frame.fin {
-                                        debug!(self.log, "got fin on stream 0"; "connection" => %id);
-                                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                                        return State::closed(TransportError::PROTOCOL_VIOLATION);
-                                    }
-                                    state.tls.get_mut().insert(frame.offset, &frame.data);
-                                } else {
-                                    rs.buffer(frame.data, frame.offset);
-                                }
-                                if let stream::RecvState::Recv { size: Some(size) } = rs.state {
-                                    if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
-                                        rs.state = stream::RecvState::DataRecvd { size };
-                                    }
-                                }
-                                new_bytes
-                            }
-                        };
-                        if frame.id != StreamId(0) {
-                            self.connections[conn.0].readable_streams.insert(frame.id);
-                            self.readable_conns.insert(conn);
-                        }
-                        self.connections[conn.0].data_recvd += new_bytes;
-                    }
-                    Frame::Ack(ack) => {
-                        self.on_ack_received(now, conn, ack);
-                        for stream in self.connections[conn.0].finished_streams.drain(..) {
-                            self.events.push_back((conn, Event::StreamFinished { stream }));
-                        }
-                    }
-                    Frame::Padding | Frame::Ping => {}
-                    Frame::ConnectionClose(reason) => {
-                        self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ConnectionClosed { reason } }));
-                        return State::Draining(state.into());
-                    }
-                    Frame::ApplicationClose(reason) => {
-                        self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed { reason } }));
-                        return State::Draining(state.into());
-                    }
-                    Frame::Invalid(ty) => {
-                        debug!(self.log, "received malformed frame"; "type" => %ty);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::frame(ty).into() }));
-                        return State::closed(TransportError::frame(ty));
-                    }
-                    Frame::PathChallenge(x) => {
-                        self.connections[conn.0].pending.path_challenge(number, x);
-                    }
-                    Frame::PathResponse(_) => {
-                        debug!(self.log, "unsolicited PATH_RESPONSE");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::UNSOLICITED_PATH_RESPONSE.into() }));
-                        return State::closed(TransportError::UNSOLICITED_PATH_RESPONSE);
-                    }
-                    Frame::MaxData(bytes) => {
-                        let was_blocked = self.connections[conn.0].blocked();
-                        self.connections[conn.0].max_data = cmp::max(bytes, self.connections[conn.0].max_data);
-                        if was_blocked && !self.connections[conn.0].blocked() {
-                            for stream in self.connections[conn.0].blocked_streams.drain() {
-                                self.events.push_back((conn, Event::StreamWritable { stream }));
-                            }
-                        }
-                    }
-                    Frame::MaxStreamData { id, offset } => {
-                        if id.initiator() != self.connections[conn.0].side && id.directionality() == Directionality::Uni {
-                            debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                        if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
-                            let ss = stream.send_mut().unwrap();
-                            if offset > ss.max_data {
-                                trace!(self.log, "stream limit increased"; "stream" => id.0,
-                                       "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
-                                if ss.offset == ss.max_data {
-                                    self.events.push_back((conn, Event::StreamWritable { stream: id }));
-                                }
-                                ss.max_data = offset;
-                            }
-                        } else {
-                            debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                    }
-                    Frame::MaxStreamId(id) => {
-                        let limit = match id.directionality() {
-                            Directionality::Uni => &mut self.connections[conn.0].max_uni_streams,
-                            Directionality::Bi => &mut self.connections[conn.0].max_bi_streams,
-                        };
-                        if id.index() > *limit {
-                            *limit = id.index();
-                            self.events.push_back((conn, Event::StreamAvailable { directionality: id.directionality() }));
-                        }
-                    }
-                    Frame::RstStream(frame::RstStream { id, error_code, final_offset }) => {
-                        if id == StreamId(0) {
-                            debug!(self.log, "got RST_STREAM on stream 0");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                        let offset = match self.connections[conn.0].get_recv_stream(id) {
-                            Err(e) => {
-                                debug!(self.log, "received illegal RST_STREAM");
-                                self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
-                                return State::closed(e);
-                            }
-                            Ok(None) => {
-                                trace!(self.log, "received RST_STREAM on closed stream");
-                                return State::Established(state);
-                            }
-                            Ok(Some(stream)) => {
-                                let rs = stream.recv_mut().unwrap();
-                                if let Some(offset) = rs.final_offset() {
-                                    if offset != final_offset {
-                                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
-                                        return State::closed(TransportError::FINAL_OFFSET_ERROR);
-                                    }
-                                }
-                                if !rs.is_closed() {
-                                    rs.state = stream::RecvState::ResetRecvd { size: final_offset, error_code };
-                                }
-                                rs.limit()
-                            }
-                        };
-                        self.connections[conn.0].data_recvd += final_offset.saturating_sub(offset);
-                        self.connections[conn.0].readable_streams.insert(id);
-                        self.readable_conns.insert(conn);
-                    }
-                    Frame::Blocked { offset } => {
-                        debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
-                    }
-                    Frame::StreamBlocked { id, offset } => {
-                        debug!(self.log, "peer claims to be blocked at stream level"; "stream" => %id, "offset" => offset);
-                    }
-                    Frame::StreamIdBlocked { id } => {
-                        debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => %id);
-                    }
-                    Frame::StopSending { id, error_code } => {
-                        if self.connections[conn.0].streams.get(&id).map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0)) {
-                            debug!(self.log, "got STOP_SENDING on invalid stream");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                        self.reset(conn, id, 0);
-                        self.connections[conn.0].streams.get_mut(&id).unwrap().send_mut().unwrap().state =
-                            stream::SendState::ResetSent { stop_reason: Some(error_code) };
-                    }
-                    Frame::NewConnectionId { .. } => {
-                        if self.connections[conn.0].remote_id.is_empty() {
-                            debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
-                                   connection=self.connections[conn.0].local_id.clone());
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::closed(TransportError::PROTOCOL_VIOLATION);
-                        }
-                        trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
-                    }
-                }
+            match self.process_payload(now, conn, number, payload.into(), Some(&mut state.tls)) {
+                Err(e) => State::closed(e),
+                Ok(true) => State::Draining(state.into()),
+                Ok(false) => State::Established(state),
             }
-            if self.connections[conn.0].awaiting_handshake {
-                assert_eq!(self.connections[conn.0].side, Side::Client,
-                           "only the client confirms handshake completion based on a protected packet");
-                // Forget about unacknowledged handshake packets
-                self.connections[conn.0].handshake_cleanup(&self.config);
-            }
-            if !state.tls.get_ref().read_blocked() {
-                let prev_offset = state.tls.get_ref().read_offset();
-                let status = state.tls.ssl_read(&mut [0; 2048]);
-                self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-                    .recv_mut().unwrap().max_data += state.tls.get_ref().read_offset() - prev_offset;
-                self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
-                match status {
-                    Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {}
-                    Ok(_) => {} // Padding; illegal but harmless(?)
-                    Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
-                        debug!(self.log, "TLS error"; "error" => %e);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() }));
-                        return State::closed(TransportError::TLS_FATAL_ALERT_RECEIVED);
-                    }
-                    Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
-                        debug!(self.log, "TLS session terminated unexpectedly");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        return State::closed(TransportError::PROTOCOL_VIOLATION);
-                    }
-                    Err(e) => {
-                        error!(self.log, "unexpected TLS error"; "error" => %e);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
-                        return State::closed(TransportError::INTERNAL_ERROR);
-                    }
-                }
-            }
-            State::Established(state)
         }
         State::HandshakeFailed(state) => {
             if let Ok((payload, _)) = self.connections[conn.0].decrypt_packet(true, packet) {
@@ -1665,6 +1773,7 @@ struct Connection {
     rx_packet_time: u64,
     crypto: Option<CryptoContext>,
     prev_crypto: Option<(u64, CryptoContext)>,
+    zero_rtt_crypto: Option<ZeroRttCrypto>,
     key_phase: bool,
     params: TransportParameters,
     /// Streams with data buffered for reading by the application
@@ -1888,6 +1997,7 @@ impl Connection {
             rx_packet_time: 0,
             crypto: None,
             prev_crypto: None,
+            zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
             readable_streams: FnvHashSet::default(),
@@ -2722,6 +2832,17 @@ pub enum WriteError {
     Stopped { error_code: u16 },
 }
 
+#[derive(Debug, Fail)]
+pub enum ConnectError {
+    #[fail(display = "session ticket was malformed")]
+    MalformedSession,
+    #[fail(display = "TLS error: {}", _0)]
+    Tls(ssl::Error),
+}
+
+impl From<ssl::Error> for ConnectError { fn from(x: ssl::Error) -> Self { ConnectError::Tls(x) } }
+impl From<openssl::error::ErrorStack> for ConnectError { fn from(x: openssl::error::ErrorStack) -> Self { ConnectError::Tls(x.into()) } }
+
 #[derive(Debug, Clone)]
 enum Header {
     Long {
@@ -3278,6 +3399,51 @@ impl CryptoState {
     fn update(&self, digest: MessageDigest, cipher: Cipher, side: Side) -> CryptoState {
         let secret = hkdf::qexpand(digest, &self.secret, if side == Side::Client { b"client 1rtt" } else { b"server 1rtt" }, digest.size() as u16);
         Self::new(digest, cipher, secret)
+    }
+}
+
+pub struct ZeroRttCrypto {
+    state: CryptoState,
+    cipher: Cipher,
+}
+
+impl ZeroRttCrypto {
+    fn new(tls: &SslRef) -> Self {
+        let tls_cipher = tls.current_cipher().unwrap();
+        let digest = tls_cipher.handshake_digest().unwrap();
+        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
+
+        const LABEL: &str = "EXPORTER-QUIC 0rtt";
+
+        let mut secret = vec![0; digest.size()];
+        tls.export_keying_material_early(&mut secret, &LABEL, b"").unwrap();
+        Self {
+            state: CryptoState::new(digest, cipher, secret.into()),
+            cipher
+        }
+    }
+
+    fn encrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Vec<u8> {
+        let mut tag = [0; AEAD_TAG_SIZE];
+        let mut nonce = [0; 12];
+        BigEndian::write_u64(&mut nonce[4..12], packet);
+        for i in 0..12 {
+            nonce[i] ^= self.state.iv[i];
+        }
+        let mut buf = encrypt_aead(self.cipher, &self.state.key, Some(&nonce), header, payload, &mut tag).unwrap();
+        buf.extend_from_slice(&tag);
+        buf
+    }
+
+    fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+        let mut nonce = [0; 12];
+        BigEndian::write_u64(&mut nonce[4..12], packet);
+        for i in 0..12 {
+            nonce[i] ^= self.state.iv[i];
+        }
+        if payload.len() < AEAD_TAG_SIZE { return None; }
+        let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
+        decrypt_aead(self.cipher, &self.state.key, Some(&nonce), header, payload, tag).ok()
     }
 }
 

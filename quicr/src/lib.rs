@@ -89,7 +89,7 @@ use bytes::Bytes;
 
 use quicr::{Directionality, StreamId, ConnectionHandle, Side, CertConfig};
 
-pub use quicr::{Config, ClientConfig, ConnectionError, ConnectionId, ListenKeys};
+pub use quicr::{Config, ClientConfig, ConnectionError, ConnectionId, ListenKeys, ConnectError};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -307,20 +307,22 @@ impl Endpoint {
     }}
 
     /// Connect to a remote endpoint.
-    pub fn connect(&self, addr: &SocketAddr, config: ClientConfig) -> impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError> {
+    pub fn connect(&self, addr: &SocketAddr, config: ClientConfig)
+        -> Result<impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError>, ConnectError>
+    {
         let (send, recv) = oneshot::channel();
         let conn = {
             let mut endpoint = self.0.borrow_mut();
-            let conn = endpoint.inner.connect(normalize(*addr), config);
+            let conn = endpoint.inner.connect(normalize(*addr), config)?;
             endpoint.pending.insert(conn, Pending::new(Some(send)));
             conn
         };
         let endpoint = Endpoint(self.0.clone());
         let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn, side: Side::Client });
-        recv.map_err(|_| unreachable!())
+        Ok(recv.map_err(|_| unreachable!())
             .and_then(move |err| if let Some(err) = err { Err(err) } else {
                 Ok((Connection(conn.clone()), IncomingStreams { endpoint, conn }))
-            })
+            }))
     }
 }
 

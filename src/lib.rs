@@ -36,7 +36,7 @@ use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, CertConfig, ListenKeys, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError,
+pub use endpoint::{Endpoint, Config, CertConfig, ListenKeys, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError, ConnectError,
                    ConnectionId, EndpointError, ClientConfig};
 
 mod transport_error;
@@ -84,6 +84,12 @@ impl fmt::Display for StreamId {
         let initiator = match self.initiator() { Side::Client => "client", Side::Server => "server" };
         let directionality = match self.directionality() { Directionality::Uni => "uni", Directionality::Bi => "bi" };
         write!(f, "{} {}directional stream {}", initiator, directionality, self.index())
+    }
+}
+
+impl slog::Value for StreamId {
+    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 

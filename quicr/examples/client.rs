@@ -76,8 +76,10 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => { return Err(e.into()); }
         };
+        let log = log.clone();
         config.session_cache = Some(Box::new(move |_, _, data| {
             fs::write(&path, data).unwrap();
+            info!(log, "wrote {bytes}B session", bytes=data.len());
         }));
     } else {
         ticket = None;
@@ -98,7 +100,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
                              accept_insecure_certs: options.accept_insecure_certs,
                              session_ticket: ticket.as_ref().map(|x| &x[..]),
                              ..quicr::ClientConfig::default()
-                         })
+                         })?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |(conn, _)| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));
