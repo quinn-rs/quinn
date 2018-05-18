@@ -49,6 +49,7 @@ impl Future for Server {
             let connections = &mut self.connections;
             let (len, addr) = try_ready!(self.socket.poll_recv_from(&mut self.in_buf));
             let partial = Packet::start_decode(&mut self.in_buf[..len]);
+            debug!("incoming packet: {:?} {:?}", addr, partial.header);
             let dst_cid = partial.dst_cid();
 
             let cid = if partial.header.ptype() == Some(LongType::Initial) {
@@ -67,19 +68,31 @@ impl Future for Server {
             match connections.entry(cid) {
                 Entry::Occupied(mut inner) => {
                     let &mut (addr, ref mut endpoint) = inner.get_mut();
-                    endpoint.handle_partial(partial)?;
+                    if let Err(e) = endpoint.handle_partial(partial) {
+                        error!("error from handle_partial: {:?}", e);
+                        continue;
+                    }
 
                     let mut sent = false;
-                    if let Some(buf) = endpoint.queued()? {
-                        try_ready!(self.socket.poll_send_to(&buf, &addr));
-                        sent = true;
+                    match endpoint.queued() {
+                        Ok(Some(buf)) => {
+                            debug!("send response to {:?} ({})", addr, buf.len());
+                            try_ready!(self.socket.poll_send_to(&buf, &addr));
+                            debug!("response to {:?} sent", addr);
+                            sent = true;
+                        }
+                        Err(e) => {
+                            error!("error from queued: {:?}", e);
+                            continue;
+                        }
+                        _ => {}
                     }
 
                     if sent {
                         endpoint.pop_queue();
                     }
                 }
-                Entry::Vacant(_) => panic!("connection ID {:?} unknown", dst_cid),
+                Entry::Vacant(_) => debug!("connection ID {:?} unknown", dst_cid),
             }
         }
     }

@@ -1,3 +1,4 @@
+extern crate env_logger;
 extern crate quinn;
 extern crate rustls;
 
@@ -24,6 +25,7 @@ fn main() {
     };
 
     let tls_config = quinn::tls::build_server_config(certs, key[0].clone());
+    env_logger::init();
     quinn::Server::new("0.0.0.0", 4433, tls_config)
         .unwrap()
         .run()

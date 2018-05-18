@@ -8,6 +8,7 @@ bytes = "0.4.7"
 failure = "0.1"
 failure_derive = "0.1"
 futures = "0.1"
+log = "0.4"
 tokio = "0.1"
 tokio-io = "0.1"
 rand = "0.4"
@@ -17,4 +18,5 @@ webpki = "0.18.0-alpha"
 webpki-roots = "0.14"
 
 [dev-dependencies]
+env_logger = "0.5"
 untrusted = "0.6"
