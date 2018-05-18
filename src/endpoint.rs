@@ -249,66 +249,15 @@ where
             }),
         ];
 
+        let mut received_tls = false;
         let mut wrote_handshake = false;
         for frame in &p.payload {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
-                    let (handshake, new_secret) =
-                        tls::process_handshake_messages(&mut self.tls, Some(&f.data))?;
-
-                    let mut stream = self.streams.received(f.id).ok_or_else(|| {
-                        QuicError::General(format!(
-                            "no incoming packets allowed on stream {}",
-                            f.id
-                        ))
-                    })?;
-                    let offset = stream.get_offset();
-                    stream.set_offset(offset + handshake.len() as u64);
-
-                    if !handshake.is_empty() {
-                        payload.push(Frame::Stream(StreamFrame {
-                            id: 0,
-                            fin: false,
-                            offset,
-                            len: Some(handshake.len() as u64),
-                            data: handshake,
-                        }));
+                    received_tls = true;
+                    if let Some(frame) = self.handle_tls(Some(f))? {
+                        payload.push(Frame::Stream(frame));
                         wrote_handshake = true;
-                    }
-
-                    if let Some(secret) = new_secret {
-                        self.set_secret(secret);
-                        self.state = State::Connected;
-
-                        let params = match self.tls.get_quic_transport_parameters() {
-                            None => {
-                                return Err(QuicError::General(
-                                    "no transport parameters received".into(),
-                                ));
-                            }
-                            Some(bytes) => {
-                                let mut read = Cursor::new(bytes);
-                                if self.side == Side::Client {
-                                    ServerTransportParameters::decode(&mut read).parameters
-                                } else {
-                                    ClientTransportParameters::decode(&mut read).parameters
-                                }
-                            }
-                        };
-
-                        mem::replace(&mut self.remote.params, params);
-
-                        let (num_send_bidi, num_send_uni) = (
-                            u64::from(self.remote.params.max_streams_bidi),
-                            u64::from(self.remote.params.max_stream_id_uni),
-                        );
-                        let (max_send_bidi, max_send_uni) = if self.side == Side::Server {
-                            (1 + 4 * num_send_bidi, 3 + 4 * num_send_uni)
-                        } else {
-                            (4 * num_send_bidi, 1 + 4 * num_send_uni)
-                        };
-                        self.streams.update_max_id(max_send_bidi);
-                        self.streams.update_max_id(max_send_uni);
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
@@ -333,6 +282,12 @@ where
             State::Start | State::InitialSent => {
                 self.state = State::Handshaking;
             }
+            State::Handshaking if !received_tls => {
+                if let Some(frame) = self.handle_tls(None)? {
+                    payload.push(Frame::Stream(frame));
+                    wrote_handshake = true;
+                }
+            }
             _ => {}
         }
 
@@ -340,6 +295,64 @@ where
             self.build_short_packet(payload)
         } else {
             self.build_handshake_packet(payload)
+        }
+    }
+
+    fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<Option<StreamFrame>> {
+        let (handshake, new_secret) =
+            tls::process_handshake_messages(&mut self.tls, frame.map(|f| f.data.as_ref()))?;
+
+        if let Some(secret) = new_secret {
+            self.set_secret(secret);
+            self.state = State::Connected;
+
+            let params = match self.tls.get_quic_transport_parameters() {
+                None => {
+                    return Err(QuicError::General(
+                        "no transport parameters received".into(),
+                    ));
+                }
+                Some(bytes) => {
+                    let mut read = Cursor::new(bytes);
+                    if self.side == Side::Client {
+                        ServerTransportParameters::decode(&mut read).parameters
+                    } else {
+                        ClientTransportParameters::decode(&mut read).parameters
+                    }
+                }
+            };
+
+            mem::replace(&mut self.remote.params, params);
+
+            let (num_send_bidi, num_send_uni) = (
+                u64::from(self.remote.params.max_streams_bidi),
+                u64::from(self.remote.params.max_stream_id_uni),
+            );
+            let (max_send_bidi, max_send_uni) = if self.side == Side::Server {
+                (1 + 4 * num_send_bidi, 3 + 4 * num_send_uni)
+            } else {
+                (4 * num_send_bidi, 1 + 4 * num_send_uni)
+            };
+            self.streams.update_max_id(max_send_bidi);
+            self.streams.update_max_id(max_send_uni);
+        }
+
+        let mut stream = self.streams
+            .received(0)
+            .ok_or_else(|| QuicError::General("no incoming packets allowed on stream 0".into()))?;
+        let offset = stream.get_offset();
+        stream.set_offset(offset + handshake.len() as u64);
+
+        if !handshake.is_empty() {
+            Ok(Some(StreamFrame {
+                id: 0,
+                fin: false,
+                offset,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }))
+        } else {
+            Ok(None)
         }
     }
 }
