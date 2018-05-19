@@ -379,6 +379,7 @@ impl Endpoint {
 
         {
             let config = config.clone();
+            let log = log.clone();
             tls.set_session_cache_mode(ssl::SslSessionCacheMode::CLIENT | ssl::SslSessionCacheMode::NO_INTERNAL_STORE);
             tls.set_new_session_callback(move |tls, session| {
                 match session.max_early_data() {
@@ -387,6 +388,8 @@ impl Endpoint {
                         // TODO: report illegal max early data
                     }
                 }
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
+                trace!(log, "{connection} got session ticket", connection=conn.id.clone());
                 if let Some(ref f) = config.session_cache {
                     let params = tls.ex_data(*TRANSPORT_PARAMS_INDEX).cloned().expect("missing transport params")
                         .unwrap();
@@ -397,7 +400,6 @@ impl Endpoint {
                     buf.extend_from_slice(&session);
                     params.write(&mut buf);
 
-                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
                     let name = tls.servername(ssl::NameType::HOST_NAME);
                     f(name, &conn.remote, &buf);
                 }
@@ -567,7 +569,7 @@ impl Endpoint {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
-        let conn = self.add_connection(remote_id.clone(), local_id, remote_id, remote, Side::Client);
+        let conn = self.add_connection(remote_id.clone(), local_id.clone(), remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls)?;
         if !config.accept_insecure_certs {
             tls.set_verify(ssl::SslVerifyMode::PEER);
@@ -580,7 +582,7 @@ impl Endpoint {
                 }
             }
         }
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: self.connections[conn.0].local_id.clone(), remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         if let Some(name) = config.server_name { tls.set_hostname(name)?; }
         let result = if let Some(session) = config.session_ticket {
             if session.len() < 2 { return Err(ConnectError::MalformedSession); }
@@ -595,6 +597,7 @@ impl Endpoint {
             let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
             tls.set_connect_state();
             if session.max_early_data() == TLS_MAX_EARLY_DATA {
+                trace!(self.log, "{connection} enabling 0rtt", connection=local_id.clone());
                 tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
                 self.connections[conn.0].zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
             }
@@ -1001,8 +1004,10 @@ impl Endpoint {
             if !tls.get_ref().read_blocked() {
                 let prev_offset = tls.get_ref().read_offset();
                 let status = tls.ssl_read(&mut [0; 1]);
+                let progress = tls.get_ref().read_offset() - prev_offset;
+                trace!(self.log, "stream 0 read {bytes} bytes", bytes=progress);
                 self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-                    .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
+                    .recv_mut().unwrap().max_data += progress;
                 self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
                 match status {
                     Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {}
@@ -1343,7 +1348,7 @@ impl Endpoint {
                     packet: handshake_close(&self.connections[conn.0].handshake_crypto,
                                             &self.connections[conn.0].remote_id,
                                             &self.connections[conn.0].local_id,
-                                            n as u32, state.reason.clone(), None),
+                                            n as u32, state.reason.clone(), state.alert.as_ref().map(|x| &x[..])),
                 });
                 self.reset_idle_timeout(now, conn);
             }
@@ -1758,6 +1763,13 @@ impl slog::Value for ConnectionId {
     fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{}", self))
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Crypto {
+    ZeroRtt,
+    Handshake,
+    OneRtt,
 }
 
 struct Connection {
@@ -2326,10 +2338,10 @@ impl Connection {
     }
 
     fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
-        let is_handshake = match *self.state.as_ref().unwrap() {
-            ref x if x.is_closed() => { return None; }
-            State::Handshake(_) => { true }
-            _ => self.awaiting_handshake
+        let established = match *self.state.as_ref().unwrap() {
+            State::Handshake(_) => false,
+            State::Established(_) => true,
+            ref e => { assert!(e.is_closed()); return None; }
         };
 
         let mut buf = Vec::new();
@@ -2339,12 +2351,12 @@ impl Connection {
         let ack_only;
         let is_initial;
         let header_len;
+        let crypto;
 
         {
             let pending;
-            if is_handshake {
-                // Special case: (re)transmit handshake data in long-header packets
-                if self.handshake_pending.is_empty() { return None; }
+            if (!established || self.awaiting_handshake) && !self.handshake_pending.is_empty() {
+                // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
@@ -2367,7 +2379,9 @@ impl Connection {
                     ty, number: number as u32, source_id: self.local_id.clone(), destination_id: self.remote_id.clone()
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
-            } else {
+                crypto = Crypto::Handshake;
+            } else if established || (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
+                // Send 0RTT or 1RTT data
                 is_initial = false;
                 if self.congestion_blocked() || self.pending.is_empty() && (!self.permit_ack_only || self.pending_acks.is_empty())
                 {
@@ -2377,12 +2391,23 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 trace!(log, "sending protected packet"; "pn" => number);
 
+                let id;
+                if !established {
+                    id = self.initial_id.clone();
+                    crypto = Crypto::ZeroRtt;
+                } else {
+                    id = self.remote_id.clone();
+                    crypto = Crypto::OneRtt;
+                }
+
                 Header::Short {
-                    id: self.remote_id.clone(),
+                    id,
                     number: PacketNumber::new(number, self.largest_acked_packet),
                     key_phase: self.key_phase
                 }.encode(&mut buf);
                 pending = &mut self.pending;
+            } else {
+                return None;
             }
             ack_only = pending.is_empty();
             header_len = buf.len() as u16;
@@ -2508,15 +2533,15 @@ impl Connection {
         if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
             buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
         }
-        if is_handshake {
+        if crypto == Crypto::Handshake {
             set_payload_length(&mut buf, header_len as usize);
         }
-        self.encrypt(is_handshake, number, &mut buf, header_len);
+        self.encrypt(crypto, number, &mut buf, header_len);
 
         self.on_packet_sent(config, now, number, SentPacket {
             acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
-            handshake: is_handshake,
+            handshake: crypto == Crypto::Handshake,
             retransmits: sent,
         });
 
@@ -2527,11 +2552,11 @@ impl Connection {
         Some(buf)
     }
 
-    fn encrypt(&self, handshake: bool, number: u64, buf: &mut Vec<u8>, header_len: u16) {
-        let payload = if handshake {
-            self.handshake_crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..])
-        } else {
-            self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..])
+    fn encrypt(&self, crypto: Crypto, number: u64, buf: &mut Vec<u8>, header_len: u16) {
+        let payload = match crypto {
+            Crypto::ZeroRtt => self.zero_rtt_crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
+            Crypto::Handshake => self.handshake_crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
+            Crypto::OneRtt => self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
         };
         debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
         buf.truncate(header_len as usize);
@@ -2549,7 +2574,7 @@ impl Connection {
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
-        self.encrypt(false, number, &mut buf, header_len);
+        self.encrypt(Crypto::OneRtt, number, &mut buf, header_len);
         self.on_packet_sent(config, now, number, SentPacket {
             time: now, bytes: buf.len() as u16, handshake: false, acks: RangeSet::new(), retransmits: Retransmits::default()
         });
@@ -2570,7 +2595,7 @@ impl Connection {
             state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
-        self.encrypt(false, number, &mut buf, header_len);
+        self.encrypt(Crypto::OneRtt, number, &mut buf, header_len);
         buf.into()
     }
 
