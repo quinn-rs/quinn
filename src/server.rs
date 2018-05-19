@@ -12,7 +12,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
-use tokio::net::UdpSocket;
+use tokio_udp::UdpSocket;
 
 pub struct Server {
     socket: UdpSocket,
