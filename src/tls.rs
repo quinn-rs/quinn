@@ -121,3 +121,39 @@ fn to_vec<T: Codec>(val: &T) -> Vec<u8> {
 }
 
 const ALPN_PROTOCOL: &str = "hq-11";
+
+#[cfg(test)]
+pub(crate) mod tests {
+    extern crate untrusted;
+    use self::untrusted::Input;
+    use rustls::internal::pemfile;
+    use std::{fs::File, io::{BufReader, Read}};
+    use webpki;
+
+    pub fn client_config() -> super::ClientConfig {
+        let mut f = File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes).expect("error while reading");
+
+        let anchor =
+            webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
+        let anchor_vec = vec![anchor];
+        super::build_client_config(Some(&webpki::TLSServerTrustAnchors(&anchor_vec)))
+    }
+
+    pub fn server_config() -> super::ServerConfig {
+        let certs = {
+            let f = File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
+            let mut reader = BufReader::new(f);
+            pemfile::certs(&mut reader).expect("cannot read certificates")
+        };
+
+        let keys = {
+            let f = File::open("certs/server.rsa").expect("cannot open 'certs/server.rsa'");
+            let mut reader = BufReader::new(f);
+            pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
+        };
+
+        super::build_server_config(certs, keys[0].clone())
+    }
+}

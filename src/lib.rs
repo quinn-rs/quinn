@@ -26,8 +26,6 @@ mod packet;
 mod parameters;
 mod server;
 mod streams;
-#[cfg(test)]
-mod tests;
 pub mod tls;
 mod types;
 

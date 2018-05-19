@@ -389,3 +389,74 @@ enum State {
     Handshaking,
     Connected,
 }
+
+#[cfg(test)]
+pub mod tests {
+    use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
+    use super::{tls, Endpoint, Packet, Secret};
+    use std::sync::Arc;
+
+    #[test]
+    fn test_encoded_handshake() {
+        let mut c = client_endpoint();
+        c.initial().unwrap();
+        let mut c_initial = c.queued().unwrap().unwrap().clone();
+        c.pop_queue();
+
+        let mut s = server_endpoint(Packet::start_decode(&mut c_initial).dst_cid());
+        s.handle(&mut c_initial).unwrap();
+
+        let mut s_sh = s.queued().unwrap().unwrap().clone();
+        s.pop_queue();
+        c.handle(&mut s_sh).unwrap();
+
+        let mut c_fin = c.queued().unwrap().unwrap().clone();
+        c.pop_queue();
+        s.handle(&mut c_fin).unwrap();
+
+        let mut s_short = s.queued().unwrap().unwrap().clone();
+        s.pop_queue();
+        let c_short = {
+            let partial = Packet::start_decode(&mut s_short);
+            let key = c.decode_key(&partial.header);
+            partial.finish(&key).unwrap()
+        };
+        assert_eq!(c_short.ptype(), None);
+    }
+
+    #[test]
+    fn test_handshake() {
+        let mut c = client_endpoint();
+        c.initial().unwrap();
+        let mut initial = c.queued().unwrap().unwrap().clone();
+        c.pop_queue();
+
+        let mut s = server_endpoint(Packet::start_decode(&mut initial).dst_cid());
+        s.handle(&mut initial).unwrap();
+        let mut server_hello = s.queued().unwrap().unwrap().clone();
+
+        c.handle(&mut server_hello).unwrap();
+        assert!(c.queued().unwrap().is_some());
+    }
+
+    pub fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {
+        Endpoint::new(
+            tls::server_session(
+                &Arc::new(tls::tests::server_config()),
+                &ServerTransportParameters::default(),
+            ),
+            Some(Secret::Handshake(hs_cid)),
+        )
+    }
+
+    pub fn client_endpoint() -> Endpoint<tls::ClientSession> {
+        Endpoint::new(
+            tls::client_session(
+                Some(tls::tests::client_config()),
+                "Localhost",
+                &ClientTransportParameters::default(),
+            ).unwrap(),
+            None,
+        )
+    }
+}
