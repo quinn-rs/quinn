@@ -1114,6 +1114,10 @@ impl Endpoint {
                     // Complete handshake (and ultimately send Finished)
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
+                            Frame::Ack(_) => {}
+                            _ => { self.connections[conn.0].permit_ack_only = true; }
+                        }
+                        match frame {
                             Frame::Padding => {}
                             Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
                                 state.tls.get_mut().insert(offset, &data);
@@ -2355,7 +2359,7 @@ impl Connection {
 
         {
             let pending;
-            if (!established || self.awaiting_handshake) && !self.handshake_pending.is_empty() {
+            if (!established || self.awaiting_handshake) && (!self.handshake_pending.is_empty() || (!self.pending_acks.is_empty() && self.permit_ack_only)) {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 number = self.get_tx_number();
@@ -2424,12 +2428,15 @@ impl Connection {
             // ACK
             // We will never ack protected packets in handshake packets because handshake_cleanup ensures we never send
             // handshake packets after receiving protected packets.
-            if !self.pending_acks.is_empty() {
+            // 0-RTT packets must never carry acks (which would have to be of handshake packets)
+            if !self.pending_acks.is_empty() && crypto != Crypto::ZeroRtt {
                 let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
                 frame::Ack::encode(delay, &self.pending_acks, &mut buf);
+                acks = self.pending_acks.clone();
+            } else {
+                acks = RangeSet::new();
             }
-            acks = self.pending_acks.clone();
 
             // PATH_RESPONSE
             if buf.len() + 9 < max_size {
@@ -2538,6 +2545,11 @@ impl Connection {
         }
         self.encrypt(crypto, number, &mut buf, header_len);
 
+        // If we sent any acks, don't immediately resend them.  Setting this even if ack_only is false needlessly
+        // prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to avoid
+        // double-transmitting acks all the time.
+        self.permit_ack_only &= acks.is_empty();
+
         self.on_packet_sent(config, now, number, SentPacket {
             acks,
             time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
@@ -2545,10 +2557,6 @@ impl Connection {
             retransmits: sent,
         });
 
-        // If we have any acks, we just sent them; don't immediately resend.  Setting this even if ack_only is false
-        // needlessly prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to
-        // avoid double-transmitting acks all the time.
-        self.permit_ack_only = false;
         Some(buf)
     }
 
