@@ -119,11 +119,11 @@ impl Future for ConnectFuture {
 #[cfg(test)]
 mod tests {
     extern crate tokio;
+    use self::tokio::executor::current_thread::CurrentThread;
     use endpoint::tests::client_endpoint;
     use futures::Future;
     use server::Server;
     use tls::tests::server_config;
-    use self::tokio::executor::current_thread::CurrentThread;
 
     #[test]
     fn test_client_connect_resolves() {
