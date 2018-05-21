@@ -415,28 +415,34 @@ pub mod tests {
     fn test_encoded_handshake() {
         let mut c = client_conn_state();
         c.initial().unwrap();
-        let mut c_initial = c.queued().unwrap().unwrap().clone();
+        let mut cp = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut c_initial).dst_cid());
-        s.handle(&mut c_initial).unwrap();
-
-        let mut s_sh = s.queued().unwrap().unwrap().clone();
+        let mut s = server_conn_state(Packet::start_decode(&mut cp).dst_cid());
+        s.handle(&mut cp).unwrap();
+        let mut sp = s.queued().unwrap().unwrap().clone();
         s.pop_queue();
-        c.handle(&mut s_sh).unwrap();
 
-        let mut c_fin = c.queued().unwrap().unwrap().clone();
-        c.pop_queue();
-        s.handle(&mut c_fin).unwrap();
+        let mut rt = 10;
+        loop {
+            c.handle(&mut sp).unwrap();
+            cp = c.queued().unwrap().unwrap().clone();
+            c.pop_queue();
 
-        let mut s_short = s.queued().unwrap().unwrap().clone();
-        s.pop_queue();
-        let c_short = {
-            let partial = Packet::start_decode(&mut s_short);
-            let key = c.decode_key(&partial.header);
-            partial.finish(&key).unwrap()
-        };
-        assert_eq!(c_short.header.ptype(), None);
+            s.handle(&mut cp).unwrap();
+            sp = s.queued().unwrap().unwrap().clone();
+            s.pop_queue();
+
+            let header = Packet::start_decode(&mut sp).header;
+            if header.ptype().is_none() {
+                break;
+            }
+
+            rt -= 1;
+            if rt < 1 {
+                panic!("short header not emitted within 10 round trips");
+            }
+        }
     }
 
     #[test]
