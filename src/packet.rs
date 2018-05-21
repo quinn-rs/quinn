@@ -15,10 +15,6 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn ptype(&self) -> Option<LongType> {
-        self.header.ptype()
-    }
-
     pub fn number(&self) -> u32 {
         self.header.number()
     }

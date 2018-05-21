@@ -421,7 +421,7 @@ pub mod tests {
             let key = c.decode_key(&partial.header);
             partial.finish(&key).unwrap()
         };
-        assert_eq!(c_short.ptype(), None);
+        assert_eq!(c_short.header.ptype(), None);
     }
 
     #[test]
