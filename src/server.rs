@@ -77,8 +77,8 @@ impl Future for Server {
                     match conn_state.queued() {
                         Ok(Some(buf)) => {
                             debug!("send response to {:?} ({})", addr, buf.len());
-                            try_ready!(self.socket.poll_send_to(&buf, &addr));
-                            debug!("response to {:?} sent", addr);
+                            let len = try_ready!(self.socket.poll_send_to(&buf, &addr));
+                            debug!("response to {:?} sent ({})", addr, len);
                             sent = true;
                         }
                         Err(e) => {
