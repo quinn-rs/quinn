@@ -11,7 +11,7 @@ any other feedback to the [issue tracker][issues] or [tweet me][twitter].
 
 # Features
 
-* Currently targets QUIC draft 10 and TLS 1.3 draft 23
+* Currently targets QUIC draft 11 and TLS 1.3 draft 28
 * Uses [rustls][rustls] for all TLS operations
 * Uses [*ring*][ring] for AEAD encryption/decryption
 
