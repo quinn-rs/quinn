@@ -1,5 +1,7 @@
 # Quinn
 
+[![Join the chat at https://gitter.im/djc/quinn](https://badges.gitter.im/djc/quinn.svg)](https://gitter.im/djc/quinn?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 Quinn is an implementation of the [QUIC][quic] protocol based on futures.
 It is currently in its very early stages: work is ongoing on implementing
 the protocol handshake for both client and server.
