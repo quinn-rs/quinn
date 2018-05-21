@@ -76,7 +76,7 @@ impl ConnectFuture {
 
         endpoint.initial()?;
         let socket = UdpSocket::bind(&local)?;
-        socket.connect(&remote);
+        socket.connect(&remote)?;
         Ok(ConnectFuture {
             client: Some(Client {
                 endpoint,
