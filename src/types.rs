@@ -3,22 +3,6 @@ use rand::{Rand, Rng};
 use std::fmt;
 use std::ops::Deref;
 
-use parameters::TransportParameters;
-
-pub struct PeerData {
-    pub cid: ConnectionId,
-    pub params: TransportParameters,
-}
-
-impl PeerData {
-    pub fn new(cid: ConnectionId) -> Self {
-        PeerData {
-            cid,
-            params: TransportParameters::default(),
-        }
-    }
-}
-
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub struct ConnectionId {
     pub len: u8,

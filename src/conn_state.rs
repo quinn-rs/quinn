@@ -9,10 +9,10 @@ use codec::{BufLen, Codec};
 use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
-use parameters::{ClientTransportParameters, ServerTransportParameters};
+use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
 use streams::{Dir, Streams};
 use tls;
-use types::{ConnectionId, PeerData, Side, GENERATED_CID_LENGTH};
+use types::{ConnectionId, Side, GENERATED_CID_LENGTH};
 
 pub struct ConnectionState<T> {
     side: Side,
@@ -379,6 +379,21 @@ impl ConnectionState<tls::ClientSession> {
                 data: handshake,
             }),
         ])
+    }
+}
+
+
+pub struct PeerData {
+    pub cid: ConnectionId,
+    pub params: TransportParameters,
+}
+
+impl PeerData {
+    pub fn new(cid: ConnectionId) -> Self {
+        PeerData {
+            cid,
+            params: TransportParameters::default(),
+        }
     }
 }
 
