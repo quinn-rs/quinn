@@ -1,0 +1,9 @@
+sudo: false
+language: rust
+rust:
+  - stable
+  - beta
+script:
+  - cargo test --all
+  - cargo fmt -- --write-mode=diff
+cache: cargo
