@@ -12,9 +12,13 @@ log = "0.4"
 tokio-udp = "0.1"
 rand = "0.4"
 ring = "0.13.0-alpha"
-rustls = { path = "../rustls", features = ["quic"] }
 webpki = "0.18.0-alpha"
 webpki-roots = "0.14"
+
+[dependencies.rustls]
+git = "https://github.com/ctz/rustls"
+branch = "jbp-tls13-draft-28"
+features = ["quic"]
 
 [dev-dependencies]
 env_logger = "0.5"
