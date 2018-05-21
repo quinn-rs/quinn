@@ -6,7 +6,7 @@ use parameters::ClientTransportParameters;
 use streams::Streams;
 use tls;
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use tokio_udp::UdpSocket;
 
@@ -64,20 +64,19 @@ impl ConnectFuture {
         server: &str,
         port: u16,
     ) -> QuicResult<ConnectFuture> {
-        endpoint.initial()?;
-
-        let mut addr = None;
-        for a in (server, port).to_socket_addrs()? {
-            if let SocketAddr::V4(_) = a {
-                addr = Some(a);
-                break;
+        let remote = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
+            QuicError::General(format!("no address found for '{}:{}'", server, port))
+        })?;
+        let local = match remote {
+            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            SocketAddr::V6(_) => {
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 0)
             }
-        }
+        };
 
-        let socket = UdpSocket::bind(&"0.0.0.0:0".parse()?)?;
-        socket.connect(&addr.ok_or_else(|| {
-            QuicError::General("no IPv4 address found for host".into())
-        })?)?;
+        endpoint.initial()?;
+        let socket = UdpSocket::bind(&local)?;
+        socket.connect(&remote);
         Ok(ConnectFuture {
             client: Some(Client {
                 endpoint,
@@ -128,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_client_connect_resolves() {
-        let server = Server::new("0.0.0.0", 4433, server_config()).unwrap();
+        let server = Server::new("::1", 4433, server_config()).unwrap();
         let connector = super::ConnectFuture::new(client_endpoint(), "localhost", 4433).unwrap();
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
