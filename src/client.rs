@@ -1,7 +1,7 @@
 use futures::{task, Async, Future, Poll};
 
 use super::{QuicError, QuicResult};
-use endpoint::Endpoint;
+use conn_state::ConnectionState;
 use parameters::ClientTransportParameters;
 use streams::Streams;
 use tls;
@@ -11,7 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use tokio_udp::UdpSocket;
 
 pub struct Client {
-    endpoint: Endpoint<tls::ClientSession>,
+    conn_state: ConnectionState<tls::ClientSession>,
     socket: UdpSocket,
     buf: Vec<u8>,
 }
@@ -19,8 +19,8 @@ pub struct Client {
 impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
-        let endpoint = Endpoint::new(tls, None);
-        ConnectFuture::new(endpoint, server, port)
+        let conn_state = ConnectionState::new(tls, None);
+        ConnectFuture::new(conn_state, server, port)
     }
 }
 
@@ -28,21 +28,21 @@ impl Future for Client {
     type Item = ();
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.endpoint.streams.set_task(task::current());
+        self.conn_state.streams.set_task(task::current());
         let mut waiting;
         loop {
             waiting = true;
-            if let Some(buf) = self.endpoint.queued()? {
+            if let Some(buf) = self.conn_state.queued()? {
                 let len = try_ready!(self.socket.poll_send(&buf));
                 debug_assert_eq!(len, buf.len());
                 waiting = false;
             }
             if !waiting {
-                self.endpoint.pop_queue();
+                self.conn_state.pop_queue();
             }
 
             let len = try_ready!(self.socket.poll_recv(&mut self.buf));
-            self.endpoint.handle(&mut self.buf[..len])?;
+            self.conn_state.handle(&mut self.buf[..len])?;
             waiting = false;
 
             if waiting {
@@ -60,7 +60,7 @@ pub struct ConnectFuture {
 
 impl ConnectFuture {
     pub(crate) fn new(
-        mut endpoint: Endpoint<tls::ClientSession>,
+        mut conn_state: ConnectionState<tls::ClientSession>,
         server: &str,
         port: u16,
     ) -> QuicResult<ConnectFuture> {
@@ -74,12 +74,12 @@ impl ConnectFuture {
             }
         };
 
-        endpoint.initial()?;
+        conn_state.initial()?;
         let socket = UdpSocket::bind(&local)?;
         socket.connect(&remote)?;
         Ok(ConnectFuture {
             client: Some(Client {
-                endpoint,
+                conn_state,
                 socket,
                 buf: vec![0u8; 65536],
             }),
@@ -96,7 +96,7 @@ impl Future for ConnectFuture {
                 Err(e) => {
                     return Err(e);
                 }
-                _ => !client.endpoint.is_handshaking(),
+                _ => !client.conn_state.is_handshaking(),
             }
         } else {
             panic!("invalid state for ConnectFuture");
@@ -105,7 +105,7 @@ impl Future for ConnectFuture {
         if done {
             match self.client.take() {
                 Some(client) => {
-                    let streams = client.endpoint.streams.clone();
+                    let streams = client.conn_state.streams.clone();
                     Ok(Async::Ready((client, streams)))
                 }
                 _ => panic!("invalid future state"),
@@ -120,7 +120,7 @@ impl Future for ConnectFuture {
 mod tests {
     extern crate tokio;
     use self::tokio::executor::current_thread::CurrentThread;
-    use endpoint::tests::client_endpoint;
+    use conn_state::tests::client_conn_state;
     use futures::Future;
     use server::Server;
     use tls::tests::server_config;
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_client_connect_resolves() {
         let server = Server::new("::1", 4433, server_config()).unwrap();
-        let connector = super::ConnectFuture::new(client_endpoint(), "localhost", 4433).unwrap();
+        let connector = super::ConnectFuture::new(client_conn_state(), "localhost", 4433).unwrap();
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();

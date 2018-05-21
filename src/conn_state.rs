@@ -14,7 +14,7 @@ use streams::{Dir, Streams};
 use tls;
 use types::{ConnectionId, PeerData, Side, GENERATED_CID_LENGTH};
 
-pub struct Endpoint<T> {
+pub struct ConnectionState<T> {
     side: Side,
     state: State,
     local: PeerData,
@@ -27,7 +27,7 @@ pub struct Endpoint<T> {
     tls: T,
 }
 
-impl<T> Endpoint<T>
+impl<T> ConnectionState<T>
 where
     T: tls::Session + tls::QuicSide,
 {
@@ -42,7 +42,7 @@ where
         } else if let Some(secret) = secret {
             secret
         } else {
-            panic!("need secret for client endpoint");
+            panic!("need secret for client conn_state");
         };
 
         let local = PeerData::new(rng.gen());
@@ -60,7 +60,7 @@ where
         streams.update_max_id(max_recv_bidi);
         streams.update_max_id(max_recv_uni);
 
-        Endpoint {
+        ConnectionState {
             tls,
             side,
             state: State::Start,
@@ -357,7 +357,7 @@ where
     }
 }
 
-impl Endpoint<tls::ClientSession> {
+impl ConnectionState<tls::ClientSession> {
     pub(crate) fn initial(&mut self) -> QuicResult<()> {
         let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, None)?;
         if let Some(secret) = new_secret {
@@ -393,17 +393,17 @@ enum State {
 #[cfg(test)]
 pub mod tests {
     use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
-    use super::{tls, Endpoint, Packet, Secret};
+    use super::{tls, ConnectionState, Packet, Secret};
     use std::sync::Arc;
 
     #[test]
     fn test_encoded_handshake() {
-        let mut c = client_endpoint();
+        let mut c = client_conn_state();
         c.initial().unwrap();
         let mut c_initial = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_endpoint(Packet::start_decode(&mut c_initial).dst_cid());
+        let mut s = server_conn_state(Packet::start_decode(&mut c_initial).dst_cid());
         s.handle(&mut c_initial).unwrap();
 
         let mut s_sh = s.queued().unwrap().unwrap().clone();
@@ -426,12 +426,12 @@ pub mod tests {
 
     #[test]
     fn test_handshake() {
-        let mut c = client_endpoint();
+        let mut c = client_conn_state();
         c.initial().unwrap();
         let mut initial = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_endpoint(Packet::start_decode(&mut initial).dst_cid());
+        let mut s = server_conn_state(Packet::start_decode(&mut initial).dst_cid());
         s.handle(&mut initial).unwrap();
         let mut server_hello = s.queued().unwrap().unwrap().clone();
 
@@ -439,8 +439,8 @@ pub mod tests {
         assert!(c.queued().unwrap().is_some());
     }
 
-    pub fn server_endpoint(hs_cid: ConnectionId) -> Endpoint<tls::ServerSession> {
-        Endpoint::new(
+    pub fn server_conn_state(hs_cid: ConnectionId) -> ConnectionState<tls::ServerSession> {
+        ConnectionState::new(
             tls::server_session(
                 &Arc::new(tls::tests::server_config()),
                 &ServerTransportParameters::default(),
@@ -449,8 +449,8 @@ pub mod tests {
         )
     }
 
-    pub fn client_endpoint() -> Endpoint<tls::ClientSession> {
-        Endpoint::new(
+    pub fn client_conn_state() -> ConnectionState<tls::ClientSession> {
+        ConnectionState::new(
             tls::client_session(
                 Some(tls::tests::client_config()),
                 "Localhost",

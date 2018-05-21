@@ -18,8 +18,8 @@ pub use server::Server;
 
 mod client;
 mod codec;
+mod conn_state;
 mod crypto;
-mod endpoint;
 mod frame;
 pub mod http;
 mod packet;

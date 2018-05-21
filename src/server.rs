@@ -1,8 +1,8 @@
 use futures::{Future, Poll};
 
 use super::{QuicError, QuicResult};
+use conn_state::ConnectionState;
 use crypto::Secret;
-use endpoint::Endpoint;
 use packet::{LongType, Packet};
 use parameters::ServerTransportParameters;
 use tls;
@@ -18,7 +18,7 @@ pub struct Server {
     socket: UdpSocket,
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
-    connections: HashMap<ConnectionId, (SocketAddr, Endpoint<tls::ServerSession>)>,
+    connections: HashMap<ConnectionId, (SocketAddr, ConnectionState<tls::ServerSession>)>,
 }
 
 impl Server {
@@ -53,13 +53,13 @@ impl Future for Server {
             let dst_cid = partial.dst_cid();
 
             let cid = if partial.header.ptype() == Some(LongType::Initial) {
-                let mut endpoint = Endpoint::new(
+                let mut conn_state = ConnectionState::new(
                     tls::server_session(&self.tls_config, &ServerTransportParameters::default()),
                     Some(Secret::Handshake(dst_cid)),
                 );
 
-                let cid = endpoint.pick_unused_cid(|cid| connections.contains_key(&cid));
-                connections.insert(cid, (addr, endpoint));
+                let cid = conn_state.pick_unused_cid(|cid| connections.contains_key(&cid));
+                connections.insert(cid, (addr, conn_state));
                 cid
             } else {
                 dst_cid
@@ -67,14 +67,14 @@ impl Future for Server {
 
             match connections.entry(cid) {
                 Entry::Occupied(mut inner) => {
-                    let &mut (addr, ref mut endpoint) = inner.get_mut();
-                    if let Err(e) = endpoint.handle_partial(partial) {
+                    let &mut (addr, ref mut conn_state) = inner.get_mut();
+                    if let Err(e) = conn_state.handle_partial(partial) {
                         error!("error from handle_partial: {:?}", e);
                         continue;
                     }
 
                     let mut sent = false;
-                    match endpoint.queued() {
+                    match conn_state.queued() {
                         Ok(Some(buf)) => {
                             debug!("send response to {:?} ({})", addr, buf.len());
                             try_ready!(self.socket.poll_send_to(&buf, &addr));
@@ -89,7 +89,7 @@ impl Future for Server {
                     }
 
                     if sent {
-                        endpoint.pop_queue();
+                        conn_state.pop_queue();
                     }
                 }
                 Entry::Vacant(_) => debug!("connection ID {:?} unknown", dst_cid),
