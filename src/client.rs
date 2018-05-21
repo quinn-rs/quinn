@@ -20,7 +20,10 @@ impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
         let conn_state = ConnectionState::new(tls, None);
-        ConnectFuture::new(conn_state, server, port)
+        let addr = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
+            QuicError::General(format!("no address found for '{}:{}'", server, port))
+        })?;
+        ConnectFuture::new(conn_state, addr)
     }
 }
 
@@ -59,14 +62,10 @@ pub struct ConnectFuture {
 }
 
 impl ConnectFuture {
-    pub(crate) fn new(
+    fn new(
         mut conn_state: ConnectionState<tls::ClientSession>,
-        server: &str,
-        port: u16,
+        remote: SocketAddr,
     ) -> QuicResult<ConnectFuture> {
-        let remote = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
-            QuicError::General(format!("no address found for '{}:{}'", server, port))
-        })?;
         let local = match remote {
             SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
             SocketAddr::V6(_) => {
@@ -124,11 +123,15 @@ mod tests {
     use futures::Future;
     use server::Server;
     use tls::tests::server_config;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn test_client_connect_resolves() {
-        let server = Server::new("::1", 4433, server_config()).unwrap();
-        let connector = super::ConnectFuture::new(client_conn_state(), "localhost", 4433).unwrap();
+        let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
+        let connector = super::ConnectFuture::new(
+            client_conn_state(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433)
+        ).unwrap();
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();
