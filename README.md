@@ -1,5 +1,8 @@
 # Quinn
 
+[![Build status](https://api.travis-ci.org/djc/quinn.svg?branch=master)](https://travis-ci.org/djc/quinn)
+[![Chat](https://badges.gitter.im/gitterHQ/gitter.png)](https://gitter.im/djc/quinn)
+
 Quinn is an implementation of the [QUIC][quic] protocol based on futures.
 It is currently in its very early stages: work is ongoing on implementing
 the protocol handshake for both client and server.
