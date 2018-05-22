@@ -116,11 +116,15 @@ impl Pair {
         let server_t = self.server.next_wakeup();
         if client_t == self.client.idle && server_t == self.server.idle { return false; }
         if client_t < server_t {
-            self.time = self.time.max(client_t);
-            trace!(self.log, "advancing to {time} for client", time=self.time);
+            if client_t != self.time {
+                self.time = self.time.max(client_t);
+                trace!(self.log, "advancing to {time} for client", time=self.time);
+            }
         } else {
-            self.time = self.time.max(server_t);
-            trace!(self.log, "advancing to {time} for server", time=self.time);
+            if server_t != self.time {
+                self.time = self.time.max(server_t);
+                trace!(self.log, "advancing to {time} for server", time=self.time);
+            }
         }
         true
     }
@@ -146,7 +150,10 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() }).unwrap();
+        let client_conn = self.client.connect(self.server.addr, ClientConfig {
+            accept_insecure_certs: true,
+            ..ClientConfig::default()
+        }).unwrap();
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
@@ -414,20 +421,32 @@ fn high_latency_handshake() {
 }
 
 #[test]
-fn resumption() {
+fn zero_rtt() {
     let cache = Arc::new(Mutex::new(None));
     let cache2 = cache.clone();
-    let mut pair = Pair::new(Config::default(), Config {
-        session_cache: Some(Box::new(move |_, _, ticket| { *cache2.lock().unwrap() = Some(ticket.to_owned()); })),
-        ..Config::default()
-    });
+    let mut pair = Pair::new(
+        Config { max_remote_uni_streams: 32, ..Config::default() },
+        Config {
+            session_cache: Some(Box::new(move |_, ticket| { *cache2.lock().unwrap() = Some(ticket.to_owned()); })),
+            ..Config::default()
+        });
     let (c, _) = pair.connect();
     let ticket = if let Some(x) = cache.lock().unwrap().clone() { x } else { panic!("no session ticket supplied"); };
-    info!(pair.log, "closing");
+    info!(pair.log, "closing"; "ticket size" => ticket.len());
     pair.client.close(pair.time, c, 42, (&[][..]).into());
     pair.drive();
     info!(pair.log, "resuming");
-    pair.client.connect(pair.server.addr, ClientConfig { session_ticket: Some(&ticket), ..ClientConfig::default() });
+    let cc = pair.client.connect(pair.server.addr,
+                                 ClientConfig {
+                                     accept_insecure_certs: true,
+                                     session_ticket: Some(&ticket),
+                                     ..ClientConfig::default()
+                                 }).unwrap();
+    let s = pair.client.open(cc, Directionality::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client.write(cc, s, MSG).unwrap();
     pair.drive();
-    // TODO: Check that resumption occurred
+    assert!(pair.client.get_session_resumed(c));
+    let sc = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
+    assert_matches!(pair.server.read_unordered(sc, s), Ok((ref data, 0)) if data == MSG);
 }

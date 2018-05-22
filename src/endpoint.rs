@@ -100,7 +100,7 @@ pub struct Config {
     pub keylog: Option<PathBuf>,
 
     /// Function to store session tickets transmitted by the server for fast resumption.
-    pub session_cache: Option<Box<Fn(Option<&str>, &SocketAddrV6, &[u8]) + Send + Sync + 'static>>,
+    pub session_cache: Option<Box<Fn(ConnectionHandle, &[u8]) + Send + Sync + 'static>>,
 
     /// Whether to force clients to prove they can receive responses before allocating resources for them.
     ///
@@ -380,8 +380,9 @@ impl Endpoint {
         {
             let config = config.clone();
             let log = log.clone();
-            tls.set_session_cache_mode(ssl::SslSessionCacheMode::CLIENT | ssl::SslSessionCacheMode::NO_INTERNAL_STORE);
+            tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
             tls.set_new_session_callback(move |tls, session| {
+                if tls.is_server() { return; }
                 match session.max_early_data() {
                     0 | TLS_MAX_EARLY_DATA => {}
                     _ => {
@@ -400,8 +401,7 @@ impl Endpoint {
                     buf.extend_from_slice(&session);
                     params.write(&mut buf);
 
-                    let name = tls.servername(ssl::NameType::HOST_NAME);
-                    f(name, &conn.remote, &buf);
+                    f(conn.handle.unwrap(), &buf);
                 }
             });
         }
@@ -582,7 +582,7 @@ impl Endpoint {
                 }
             }
         }
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { handle: Some(conn), id: local_id.clone(), remote });
         if let Some(name) = config.server_name { tls.set_hostname(name)?; }
         let result = if let Some(session) = config.session_ticket {
             if session.len() < 2 { return Err(ConnectError::MalformedSession); }
@@ -637,12 +637,23 @@ impl Endpoint {
             debug!(self.log, "failed to authenticate initial packet");
             return;
         };
+        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
+
+        if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
+            debug!(self.log, "rejecting connection due to full accept buffer");
+            let n = self.gen_initial_packet_num();
+            self.io.push_back(Io::Transmit {
+                destination: remote,
+                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY, None),
+            });
+            return;
+        }
+
         let mut stream = MemoryStream::new();
         if !parse_initial(&self.log, &mut stream, payload) { return; } // TODO: Send close?
         trace!(self.log, "got initial");
-        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { handle: None, id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
         tls.set_accept_state();
 
@@ -702,6 +713,7 @@ impl Endpoint {
                 }
                 Ok(None) => { zero_rtt_crypto = None; }
                 Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
+                    trace!(self.log, "{connection} enabled 0rtt", connection=local_id.clone());
                     zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
                 }
                 Err(e) => {
@@ -719,17 +731,7 @@ impl Endpoint {
         match tls.handshake() {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(mut tls)) => {
-                if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
-                    debug!(self.log, "rejecting connection due to full accept buffer");
-                    let n = self.gen_initial_packet_num();
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY, None),
-                    });
-                    return;
-                }
-
-                trace!(self.log, "performing handshake"; "connection" => %local_id);
+                trace!(self.log, "performing handshake"; "connection" => local_id.clone());
                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                     let params = params.expect("transport parameter errors should have aborted the handshake");
                     let conn = self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
@@ -777,7 +779,9 @@ impl Endpoint {
         }
     }
 
-    fn process_payload(&mut self, now: u64, conn: ConnectionHandle, number: u64, payload: Bytes, mut tls: Option<&mut SslStream<MemoryStream>>) -> Result<bool, state::CloseReason> {
+    fn process_payload(&mut self, now: u64, conn: ConnectionHandle, number: u64, payload: Bytes, tls: &mut MemoryStream)
+                       -> Result<bool, state::CloseReason>
+    {
         let cid = self.connections[conn.0].local_id.clone();
         for frame in frame::Iter::new(payload) {
             match frame {
@@ -832,18 +836,12 @@ impl Endpoint {
                             }
                             rs.recvd.insert(frame.offset..end);
                             if frame.id == StreamId(0) {
-                                if let Some(ref mut tls) = tls {
-                                    if frame.fin {
-                                        debug!(self.log, "got fin on stream 0"; "connection" => cid);
-                                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                                        return Err(TransportError::PROTOCOL_VIOLATION.into());
-                                    }
-                                    tls.get_mut().insert(frame.offset, &frame.data);
-                                } else {
-                                    debug!(self.log, "stream 0 frame in 0-RTT packet"; "connection" => cid);
+                                if frame.fin {
+                                    debug!(self.log, "got fin on stream 0"; "connection" => cid);
                                     self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
+                                tls.insert(frame.offset, &frame.data);
                             } else {
                                 rs.buffer(frame.data, frame.offset);
                             }
@@ -994,47 +992,41 @@ impl Endpoint {
                 }
             }
         }
-        if self.connections[conn.0].awaiting_handshake {
-            assert_eq!(self.connections[conn.0].side, Side::Client,
-                       "only the client confirms handshake completion based on a protected packet");
-            // Forget about unacknowledged handshake packets
-            self.connections[conn.0].handshake_cleanup(&self.config);
-        }
-        if let Some(ref mut tls) = tls {
-            if !tls.get_ref().read_blocked() {
-                let prev_offset = tls.get_ref().read_offset();
-                let status = tls.ssl_read(&mut [0; 1]);
-                let progress = tls.get_ref().read_offset() - prev_offset;
-                trace!(self.log, "stream 0 read {bytes} bytes", bytes=progress);
-                self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-                    .recv_mut().unwrap().max_data += progress;
-                self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
-                match status {
-                    Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {}
-                    Ok(_) => {
-                        debug!(self.log, "got TLS application data");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        return Err(TransportError::PROTOCOL_VIOLATION.into());
-                    }
-                    Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
-                        debug!(self.log, "TLS error"; "error" => %e);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() }));
-                        return Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into());
-                    }
-                    Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
-                        debug!(self.log, "TLS session terminated unexpectedly");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        return Err(TransportError::PROTOCOL_VIOLATION.into());
-                    }
-                    Err(e) => {
-                        error!(self.log, "unexpected TLS error"; "error" => %e);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
-                        return Err(TransportError::INTERNAL_ERROR.into());
-                    }
-                }
+        Ok(false)
+    }
+
+    fn drive_tls(&mut self, conn: ConnectionHandle, tls: &mut SslStream<MemoryStream>) -> Result<(), TransportError> {
+        if tls.get_ref().read_blocked() { return Ok(()); }
+        let prev_offset = tls.get_ref().read_offset();
+        let status = tls.ssl_read(&mut [0; 1]);
+        let progress = tls.get_ref().read_offset() - prev_offset;
+        trace!(self.log, "stream 0 read {bytes} bytes", bytes=progress);
+        self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
+            .recv_mut().unwrap().max_data += progress;
+        self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+        match status {
+            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
+            Ok(_) => {
+                debug!(self.log, "got TLS application data");
+                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                Err(TransportError::PROTOCOL_VIOLATION.into())
+            }
+            Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
+                debug!(self.log, "TLS error"; "error" => %e);
+                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() }));
+                Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
+            }
+            Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
+                debug!(self.log, "TLS session terminated unexpectedly");
+                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                Err(TransportError::PROTOCOL_VIOLATION.into())
+            }
+            Err(e) => {
+                error!(self.log, "unexpected TLS error"; "error" => %e);
+                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
+                Err(TransportError::INTERNAL_ERROR.into())
             }
         }
-        Ok(false)
     }
 
     fn handle_connected_inner(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet, state: State) -> State { match state {
@@ -1164,7 +1156,7 @@ impl Endpoint {
                                                                    Some(tls.get_mut().take_outgoing().to_owned().into()));
                                 }
                             }
-                            trace!(self.log, "established"; "connection" => %id, "session reused" => tls.ssl().session_reused());
+                            trace!(self.log, "{connection} established", connection=id.clone());
                             self.connections[conn.0].handshake_cleanup(&self.config);
                             if self.connections[conn.0].side == Side::Client {
                                 self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
@@ -1223,19 +1215,19 @@ impl Endpoint {
                     trace!(self.log, "dropping duplicate Initial");
                     State::Handshake(state)
                 }
-                Header::Long { ty: packet::ZERO_RTT, number, .. } if self.connections[conn.0].side == Side::Server => {
+                Header::Long { ty: packet::ZERO_RTT, number, destination_id: ref id, .. } if self.connections[conn.0].side == Side::Server => {
                     let payload = if let Some(ref crypto) = self.connections[conn.0].zero_rtt_crypto {
                         if let Some(x) = crypto.decrypt(number as u64, &packet.header_data, &packet.payload) { x }
                         else {
-                            debug!(self.log, "failed to authenticate 0-RTT packet");
+                            debug!(self.log, "{connection} failed to authenticate 0-RTT packet", connection=id.clone());
                             return State::Handshake(state);
                         }
                     } else {
-                        debug!(self.log, "ignoring unsupported 0-RTT packet");
+                        debug!(self.log, "{connection} ignoring unsupported 0-RTT packet", connection=id.clone());
                         return State::Handshake(state);
                     };
                     self.on_packet_authenticated(now, conn, number as u64);
-                    match self.process_payload(now, conn, number as u64, payload.into(), None) {
+                    match self.process_payload(now, conn, number as u64, payload.into(), state.tls.get_mut()) {
                         Err(e) => State::HandshakeFailed(state::HandshakeFailed { reason: e, app_closed: false, alert: None }),
                         Ok(true) => State::Draining(state.into()),
                         Ok(false) => State::Handshake(state),
@@ -1290,9 +1282,22 @@ impl Endpoint {
                 }
             };
             self.on_packet_authenticated(now, conn, number);
-            match self.process_payload(now, conn, number, payload.into(), Some(&mut state.tls)) {
+            if self.connections[conn.0].awaiting_handshake {
+                assert_eq!(self.connections[conn.0].side, Side::Client,
+                           "only the client confirms handshake completion based on a protected packet");
+                // Forget about unacknowledged handshake packets
+                self.connections[conn.0].handshake_cleanup(&self.config);
+            }
+            match self.process_payload(now, conn, number, payload.into(), state.tls.get_mut())
+                .and_then(|x| { self.drive_tls(conn, &mut state.tls)?; Ok(x) })
+            {
                 Err(e) => State::closed(e),
-                Ok(true) => State::Draining(state.into()),
+                Ok(true) => {
+                    // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable
+                    // session is not erased from the anti-replay cache as it otherwise might be.
+                    state.tls.shutdown().unwrap();
+                    State::Draining(state.into())
+                }
                 Ok(false) => State::Established(state),
             }
         }
@@ -1655,9 +1660,15 @@ impl Endpoint {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
     /// all important communications have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        if let &State::Drained = self.connections[conn.0].state.as_ref().unwrap() {
+        if let State::Drained = *self.connections[conn.0].state.as_ref().unwrap() {
             self.forget(conn);
             return;
+        }
+
+        if let State::Established(ref mut state) = *self.connections[conn.0].state.as_mut().unwrap() {
+            // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable session is
+            // not erased from the anti-replay cache as it otherwise might be.
+            state.tls.shutdown().unwrap();
         }
 
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
@@ -1718,6 +1729,13 @@ impl Endpoint {
             State::Established(ref state) => state.tls.ssl().servername(ssl::NameType::HOST_NAME),
             _ => None,
         }
+    }
+
+    /// Whether a previous session was successfully resumed by `conn`.
+    pub fn get_session_resumed(&self, conn: ConnectionHandle) -> bool {
+        if let State::Established(ref state) = self.connections[conn.0].state.as_ref().unwrap() {
+            state.tls.ssl().session_reused()
+        } else { false }
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> { self.incoming.pop_front() }
@@ -2202,7 +2220,9 @@ impl Connection {
         for (&packet, info) in self.sent_packets.range(0..largest_acked) {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
-            if time_since_sent > delay_until_lost || delta > self.reordering_threshold as u64 {
+            // Use of >= for time comparison here is critical so that we successfully detect lost packets in testing
+            // when rtt = 0
+            if time_since_sent >= delay_until_lost || delta > self.reordering_threshold as u64 {
                 lost_packets.push(packet);
             } else if self.loss_time == 0 && delay_until_lost != u64::max_value() {
                 self.loss_time = now + delay_until_lost - time_since_sent;
@@ -2395,20 +2415,21 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 trace!(log, "sending protected packet"; "pn" => number);
 
-                let id;
                 if !established {
-                    id = self.initial_id.clone();
                     crypto = Crypto::ZeroRtt;
+                    Header::Long {
+                        ty: packet::ZERO_RTT, number: number as u32,
+                        source_id: self.local_id.clone(), destination_id: self.initial_id.clone()
+                    }.encode(&mut buf);
                 } else {
-                    id = self.remote_id.clone();
                     crypto = Crypto::OneRtt;
+                    Header::Short {
+                        id: self.remote_id.clone(),
+                        number: PacketNumber::new(number, self.largest_acked_packet),
+                        key_phase: self.key_phase
+                    }.encode(&mut buf);
                 }
 
-                Header::Short {
-                    id,
-                    number: PacketNumber::new(number, self.largest_acked_packet),
-                    key_phase: self.key_phase
-                }.encode(&mut buf);
                 pending = &mut self.pending;
             } else {
                 return None;
@@ -2540,7 +2561,7 @@ impl Connection {
         if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
             buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
         }
-        if crypto == Crypto::Handshake {
+        if crypto != Crypto::OneRtt {
             set_payload_length(&mut buf, header_len as usize);
         }
         self.encrypt(crypto, number, &mut buf, header_len);
@@ -3236,6 +3257,7 @@ impl CookieFactory {
 }
 
 struct ConnectionInfo {
+    handle: Option<ConnectionHandle>,
     id: ConnectionId,
     remote: SocketAddrV6,
 }
