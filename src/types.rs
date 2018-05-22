@@ -1,4 +1,4 @@
-use rand::{Rand, Rng};
+use rand::{self, Rng};
 
 use std::fmt;
 use std::ops::Deref;
@@ -48,8 +48,8 @@ impl Deref for ConnectionId {
     }
 }
 
-impl Rand for ConnectionId {
-    fn rand<R: Rng>(rng: &mut R) -> Self {
+impl rand::distributions::Distribution<ConnectionId> for rand::distributions::Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ConnectionId {
         let mut res = ConnectionId {
             len: GENERATED_CID_LENGTH,
             bytes: [0; 18],
