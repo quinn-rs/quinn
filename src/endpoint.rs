@@ -1,7 +1,7 @@
 use std::collections::{hash_map, VecDeque, BTreeMap};
 use std::{io, cmp, fmt, mem, str};
 use std::net::SocketAddrV6;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 
 use bytes::{Buf, BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
@@ -99,9 +99,6 @@ pub struct Config {
     /// when using tools like Wireshark.
     pub keylog: Option<PathBuf>,
 
-    /// Function to store session tickets transmitted by the server for fast resumption.
-    pub session_cache: Option<Box<Fn(ConnectionHandle, &[u8]) + Send + Sync + 'static>>,
-
     /// Whether to force clients to prove they can receive responses before allocating resources for them.
     ///
     /// This adds a round trip to the handshake, increasing connection establishment latency, in exchange for improved
@@ -148,7 +145,6 @@ impl Default for Config {
             protocols: Vec::new(),
 
             keylog: None,
-            session_cache: None,
             use_stateless_retry: false,
         }
     }
@@ -202,6 +198,7 @@ pub struct Endpoint {
     readable_conns: FnvHashSet<ConnectionHandle>,
     incoming: VecDeque<ConnectionHandle>,
     incoming_handshakes: usize,
+    session_ticket_buffer: Arc<Mutex<Vec<Result<SslSession, ()>>>>,
 }
 
 const MIN_INITIAL_SIZE: usize = 1200;
@@ -368,7 +365,7 @@ impl Endpoint {
 
         if let Some(ref path) = config.keylog {
             let file = ::std::fs::File::create(path).map_err(EndpointError::Keylog)?;
-            let file = ::std::sync::Mutex::new(file);
+            let file = Mutex::new(file);
             tls.set_keylog_callback(move |_, line| {
                 use std::io::Write;
                 let mut file = file.lock().unwrap();
@@ -377,32 +374,20 @@ impl Endpoint {
             });
         }
 
+        let session_ticket_buffer = Arc::new(Mutex::new(Vec::new()));
         {
-            let config = config.clone();
-            let log = log.clone();
+            let session_ticket_buffer = session_ticket_buffer.clone();
             tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
             tls.set_new_session_callback(move |tls, session| {
                 if tls.is_server() { return; }
+                let mut buffer = session_ticket_buffer.lock().unwrap();
                 match session.max_early_data() {
                     0 | TLS_MAX_EARLY_DATA => {}
                     _ => {
-                        // TODO: report illegal max early data
+                        buffer.push(Err(()));
                     }
                 }
-                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).expect("connection info unset");
-                trace!(log, "{connection} got session ticket", connection=conn.id.clone());
-                if let Some(ref f) = config.session_cache {
-                    let params = tls.ex_data(*TRANSPORT_PARAMS_INDEX).cloned().expect("missing transport params")
-                        .unwrap();
-                    let session = session.to_der().expect("failed to serialize session ticket");
-
-                    let mut buf = Vec::new();
-                    buf.put_u16_be(session.len() as u16);
-                    buf.extend_from_slice(&session);
-                    params.write(&mut buf);
-
-                    f(conn.handle.unwrap(), &buf);
-                }
+                buffer.push(Ok(session));
             });
         }
 
@@ -421,6 +406,7 @@ impl Endpoint {
             readable_conns: FnvHashSet::default(),
             incoming: VecDeque::new(),
             incoming_handshakes: 0,
+            session_ticket_buffer,
         })
     }
 
@@ -582,7 +568,7 @@ impl Endpoint {
                 }
             }
         }
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { handle: Some(conn), id: local_id.clone(), remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         if let Some(name) = config.server_name { tls.set_hostname(name)?; }
         let result = if let Some(session) = config.session_ticket {
             if session.len() < 2 { return Err(ConnectError::MalformedSession); }
@@ -653,7 +639,7 @@ impl Endpoint {
         if !parse_initial(&self.log, &mut stream, payload) { return; } // TODO: Send close?
         trace!(self.log, "got initial");
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { handle: None, id: local_id.clone(), remote });
+        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         let mut tls = SslStreamBuilder::new(tls, stream);
         tls.set_accept_state();
 
@@ -1004,6 +990,32 @@ impl Endpoint {
         self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
             .recv_mut().unwrap().max_data += progress;
         self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+
+        // Process any new session tickets that might have been delivered
+        {
+            let mut buffer = self.session_ticket_buffer.lock().unwrap();
+            for session in buffer.drain(..) {
+                if let Ok(session) = session {
+                    trace!(self.log, "{connection} got session ticket", connection=self.connections[conn.0].local_id.clone());
+
+                    let params = &self.connections[conn.0].params;
+                    let session = session.to_der().expect("failed to serialize session ticket");
+
+                    let mut buf = Vec::new();
+                    buf.put_u16_be(session.len() as u16);
+                    buf.extend_from_slice(&session);
+                    params.write(&mut buf);
+
+                    self.events.push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
+                } else {
+                    debug!(self.log, "{connection} got malformed session ticket",
+                           connection=self.connections[conn.0].local_id.clone());
+                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                    return Err(TransportError::PROTOCOL_VIOLATION.into());
+                }
+            }
+        }
+
         match status {
             Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
             Ok(_) => {
@@ -3257,7 +3269,6 @@ impl CookieFactory {
 }
 
 struct ConnectionInfo {
-    handle: Option<ConnectionHandle>,
     id: ConnectionId,
     remote: SocketAddrV6,
 }
@@ -3299,6 +3310,9 @@ pub enum Event {
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {
         directionality: Directionality,
+    },
+    NewSessionTicket {
+        ticket: Box<[u8]>,
     },
 }
 

@@ -16,7 +16,6 @@ use std::net::SocketAddrV6;
 use std::{fmt, str};
 use std::io::{self, Write};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
@@ -275,6 +274,7 @@ fn version_negotiate() {
 fn lifecycle() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
@@ -297,6 +297,7 @@ fn stateless_retry() {
 fn stateless_reset() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
@@ -323,6 +324,7 @@ fn finish_stream() {
     pair.client.finish(client_conn, s);
     pair.drive();
 
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
     assert_matches!(pair.client.poll(), None);
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
@@ -335,6 +337,7 @@ fn finish_stream() {
 fn reset_stream() {
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
 
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
 
@@ -422,16 +425,12 @@ fn high_latency_handshake() {
 
 #[test]
 fn zero_rtt() {
-    let cache = Arc::new(Mutex::new(None));
-    let cache2 = cache.clone();
-    let mut pair = Pair::new(
-        Config { max_remote_uni_streams: 32, ..Config::default() },
-        Config {
-            session_cache: Some(Box::new(move |_, ticket| { *cache2.lock().unwrap() = Some(ticket.to_owned()); })),
-            ..Config::default()
-        });
+    let mut pair = Pair::default();
     let (c, _) = pair.connect();
-    let ticket = if let Some(x) = cache.lock().unwrap().clone() { x } else { panic!("no session ticket supplied"); };
+    let ticket = match pair.client.poll() {
+        Some((conn, Event::NewSessionTicket { ref ticket })) if conn == c => ticket.clone(),
+        e => panic!("unexpected poll result: {:?}", e),
+    };
     info!(pair.log, "closing"; "ticket size" => ticket.len());
     pair.client.close(pair.time, c, 42, (&[][..]).into());
     pair.drive();

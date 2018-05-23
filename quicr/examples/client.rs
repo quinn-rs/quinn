@@ -16,8 +16,9 @@ use std::time::{Instant, Duration};
 use std::path::PathBuf;
 use std::fs;
 
-use futures::Future;
+use futures::{Future, Stream};
 use tokio::runtime::current_thread::Runtime;
+use tokio::executor::current_thread;
 use url::Url;
 use structopt::StructOpt;
 
@@ -63,7 +64,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut config = quicr::Config {
+    let config = quicr::Config {
         protocols: vec![b"hq-11"[..].into()],
         keylog: options.keylog,
         ..quicr::Config::default()
@@ -76,11 +77,6 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => { return Err(e.into()); }
         };
-        let log = log.clone();
-        config.session_cache = Some(Box::new(move |_, _, data| {
-            fs::write(&path, data).unwrap();
-            info!(log, "wrote {bytes}B session", bytes=data.len());
-        }));
     } else {
         ticket = None;
     }
@@ -93,6 +89,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
+    let mut session_path = options.session_cache.take();
     runtime.block_on(
         endpoint.connect(&remote,
                          quicr::ClientConfig {
@@ -102,8 +99,19 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
                              ..quicr::ClientConfig::default()
                          })?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(move |(conn, _)| {
+            .and_then(move |conn| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));
+                if let Some(path) = session_path.take() {
+                    current_thread::spawn(conn.session_tickets.map_err(|_| ()).for_each(move |data| {
+                        if let Err(e) = fs::write(&path, &data) {
+                            error!(log, "failed to write session: {error}", error=e.to_string());
+                        } else {
+                            info!(log, "wrote {bytes}B session", bytes=data.len());
+                        }
+                        Ok(())
+                    }));
+                }
+                let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream.map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| {

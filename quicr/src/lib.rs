@@ -94,13 +94,13 @@ pub use quicr::{Config, ClientConfig, ConnectionError, ConnectionId, ListenKeys,
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
 pub enum Error {
-    /// An error arising during setup of the underlying UDP socket.
+    /// An error during setup of the underlying UDP socket.
     #[fail(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
-    /// An error arising from configuring TLS.
+    /// An error configuring TLS.
     #[fail(display = "failed to set up TLS: {}", _0)]
     Tls(ssl::Error),
-    /// An error arising from opening a file for logging TLS keys.
+    /// An error opening a file for logging TLS keys.
     #[fail(display = "failed open keylog file: {}", _0)]
     Keylog(io::Error),
     /// A supplied protocol identifier was too long
@@ -151,6 +151,8 @@ struct Pending {
     error: Option<ConnectionError>,
     draining: Option<oneshot::Sender<()>>,
     drained: bool,
+    incoming_session_tickets: VecDeque<Box<[u8]>>,
+    incoming_session_tickets_reader: Option<Task>,
 }
 
 impl Pending {
@@ -168,6 +170,8 @@ impl Pending {
         error: None,
         draining: None,
         drained: false,
+        incoming_session_tickets: VecDeque::new(),
+        incoming_session_tickets_reader: None,
     }}
 
     fn fail(&mut self, reason: ConnectionError) {
@@ -192,6 +196,9 @@ impl Pending {
         }
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(reason.clone()));
+        }
+        if let Some(x) = self.incoming_session_tickets_reader.take() {
+            x.notify();
         }
     }
 }
@@ -308,7 +315,7 @@ impl Endpoint {
 
     /// Connect to a remote endpoint.
     pub fn connect(&self, addr: &SocketAddr, config: ClientConfig)
-        -> Result<impl Future<Item=(Connection, IncomingStreams), Error=ConnectionError>, ConnectError>
+        -> Result<impl Future<Item=NewClientConnection, Error=ConnectionError>, ConnectError>
     {
         let (send, recv) = oneshot::channel();
         let conn = {
@@ -318,10 +325,9 @@ impl Endpoint {
             conn
         };
         let endpoint = Endpoint(self.0.clone());
-        let conn = Rc::new(ConnectionInner { endpoint: Endpoint(self.0.clone()), conn, side: Side::Client });
         Ok(recv.map_err(|_| unreachable!())
             .and_then(move |err| if let Some(err) = err { Err(err) } else {
-                Ok((Connection(conn.clone()), IncomingStreams { endpoint, conn }))
+                Ok(NewClientConnection::new(endpoint, conn))
             }))
     }
 }
@@ -343,7 +349,32 @@ impl NewConnection {
         });
         NewConnection {
             connection: Connection(conn.clone()),
-            incoming: IncomingStreams { endpoint, conn },
+            incoming: IncomingStreams(conn),
+        }
+    }
+}
+
+/// A connection initiated locally.
+pub struct NewClientConnection {
+    /// The connection itself.
+    pub connection: Connection,
+    /// The stream of QUIC streams initiated by the client.
+    pub incoming: IncomingStreams,
+    /// The stream of session tickets provided by the server.
+    pub session_tickets: IncomingSessionTickets,
+}
+
+impl NewClientConnection {
+    fn new(endpoint: Endpoint, handle: quicr::ConnectionHandle) -> Self {
+        let conn = Rc::new(ConnectionInner {
+            endpoint: Endpoint(endpoint.0.clone()),
+            conn: handle,
+            side: Side::Client,
+        });
+        Self {
+            connection: Connection(conn.clone()),
+            incoming: IncomingStreams(conn.clone()),
+            session_tickets: IncomingSessionTickets(conn),
         }
     }
 }
@@ -422,6 +453,17 @@ impl Future for Driver {
                         let _ = endpoint.pending.get_mut(&connection).unwrap()
                             .finishing.remove(&stream).unwrap().send(None);
                     }
+                    NewSessionTicket { ticket } => {
+                        let pending = endpoint.pending.get_mut(&connection).unwrap();
+                        const SESSION_TICKET_BUFFER_SIZE: usize = 16;
+                        if pending.incoming_session_tickets.len() >= SESSION_TICKET_BUFFER_SIZE {
+                            pending.incoming_session_tickets.pop_front();
+                        }
+                        pending.incoming_session_tickets.push_back(ticket);
+                        if let Some(x) = pending.incoming_session_tickets_reader.take() {
+                            x.notify();
+                        }
+                    }
                 }
             }
             let mut blocked = false;
@@ -491,7 +533,7 @@ impl Future for Driver {
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
                             use quicr::Timer::*;
                             match timer {
-                                LossDetection => { pending.cancel_loss_detect.take().map(|x| x.send(()).unwrap()); }
+                                LossDetection => { pending.cancel_loss_detect.take().map(|x| { let _ = x.send(()); }); }
                                 Idle => { pending.cancel_idle.take().map(|x| x.send(())); }
                                 Close => { unreachable!() }
                             }
@@ -622,6 +664,11 @@ impl Connection {
     /// The negotiated application protocol
     pub fn protocol(&self) -> Option<Box<[u8]>> {
         self.0.endpoint.0.borrow().inner.get_protocol(self.0.conn).map(|x| x.into())
+    }
+
+    /// Whether the cryptographic session was resumed
+    pub fn session_resumed(&self) -> bool {
+        self.0.endpoint.0.borrow().inner.get_session_resumed(self.0.conn)
     }
 }
 
@@ -952,10 +999,7 @@ impl Future for Timer {
 }
 
 /// A stream of QUIC streams initiated by a remote peer.
-pub struct IncomingStreams {
-    endpoint: Endpoint,
-    conn: Rc<ConnectionInner>,
-}
+pub struct IncomingStreams(Rc<ConnectionInner>);
 
 /// A stream initiated by a remote peer.
 pub enum NewStream {
@@ -969,11 +1013,10 @@ impl FuturesStream for IncomingStreams {
     type Item = NewStream;
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut endpoint = self.endpoint.0.borrow_mut();
-        let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
-        if let Some(ref x) = pending.error { return Err(x.clone()); }
+        let mut endpoint = self.0.endpoint.0.borrow_mut();
+        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
         if let Some(x) = pending.incoming_streams.pop_front() {
-            let stream = Stream::new(self.conn.clone(), x);
+            let stream = Stream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
             } else {
@@ -990,6 +1033,28 @@ impl FuturesStream for IncomingStreams {
     }
 }
 
+/// A stream of session tickets supplied by the server.
+pub struct IncomingSessionTickets(Rc<ConnectionInner>);
+
+impl FuturesStream for IncomingSessionTickets {
+    type Item = Box<[u8]>;
+    type Error = ConnectionError;
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let mut endpoint = self.0.endpoint.0.borrow_mut();
+        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+        if let Some(x) = pending.incoming_session_tickets.pop_front() {
+            return Ok(Async::Ready(Some(x)));
+        }
+        if let Some(ref x) = pending.error {
+            Err(x.clone())
+        } else if pending.drained {
+            return Ok(Async::Ready(None));
+        } else {
+            pending.incoming_session_tickets_reader = Some(task::current());
+            Ok(Async::NotReady)
+        }
+    }
+}
 
 /// Uses unordered reads to be more efficient than using `AsyncRead` would allow
 pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
