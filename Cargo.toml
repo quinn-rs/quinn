@@ -15,7 +15,7 @@ failure = "0.1"
 failure_derive = "0.1"
 futures = "0.1"
 log = "0.4"
-tokio-udp = "0.1"
+tokio = "0.1"
 rand = "0.5"
 ring = "0.13.0-alpha"
 webpki = "0.18.0-alpha"
@@ -28,5 +28,4 @@ features = ["quic"]
 
 [dev-dependencies]
 env_logger = "0.5"
-tokio = "0.1"
 untrusted = "0.6"

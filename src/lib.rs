@@ -9,7 +9,7 @@ extern crate log;
 extern crate rand;
 extern crate ring;
 extern crate rustls;
-extern crate tokio_udp;
+extern crate tokio;
 extern crate webpki;
 extern crate webpki_roots;
 
