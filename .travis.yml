@@ -1,9 +1,30 @@
-sudo: false
 language: rust
+sudo: required
+dist: trusty
+addons:
+    apt:
+        update: true
+        packages:
+            - libssl-dev
+cache: cargo
 rust:
   - stable
   - beta
   - nightly
+matrix:
+  allow_failures:
+    - rust: nightly
 script:
-  - cargo test
-cache: cargo
+- cargo clean
+- cargo build
+- cargo test
+
+after_success: |
+  if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
+    curl -L https://github.com/xd009642/tarpaulin/archive/develop.zip -o tarpaulin.zip
+    unzip tarpaulin.zip
+    pushd tarpaulin-develop && cargo install -f && popd
+    rm -rf tarpaulin-develop
+    cargo tarpaulin --out Xml
+    bash <(curl -s https://codecov.io/bash)
+  fi
