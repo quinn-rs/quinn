@@ -2,6 +2,12 @@
 name = "quinn"
 version = "0.1.0"
 authors = ["Dirkjan Ochtman <dirkjan@ochtman.nl>"]
+description = "Futures-based QUIC implementation"
+keywords = ["quic", "tokio"]
+categories = ["network-programming"]
+homepage = "https://github.com/djc/quinn"
+repository = "https://github.com/djc/quinn"
+license = "MIT/Apache-2.0"
 
 [dependencies]
 bytes = "0.4.7"
