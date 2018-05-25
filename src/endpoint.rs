@@ -187,6 +187,7 @@ pub struct Endpoint {
     rng: OsRng,
     initial_packet_number: distributions::Range<u64>,
     tls: SslContext,
+    connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
@@ -313,10 +314,14 @@ impl Endpoint {
                       ..TransportParameters::default()
                   };
                   let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
+                  let side;
                   if am_server {
                       params.stateless_reset_token = Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
+                      side = Side::Server;
+                  } else {
+                      side = Side::Client;
                   }
-                  params.write(&mut buf);
+                  params.write(side, &mut buf);
                   Ok(Some(buf))
               }
             },
@@ -397,6 +402,7 @@ impl Endpoint {
             log, rng, config, tls,
             listen_keys: listen,
             initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
+            connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
@@ -476,6 +482,10 @@ impl Endpoint {
 
         let dest_id = packet.header.destination_id().clone();
         if let Some(&conn) = self.connection_ids.get(&dest_id) {
+            self.handle_connected(now, conn, remote, packet);
+            return;
+        }
+        if let Some(&conn) = self.connection_ids_initial.get(&dest_id) {
             self.handle_connected(now, conn, remote, packet);
             return;
         }
@@ -721,7 +731,7 @@ impl Endpoint {
                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                     let params = params.expect("transport parameter errors should have aborted the handshake");
                     let conn = self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
-                    self.connection_ids.insert(dest_id, conn);
+                    self.connection_ids_initial.insert(dest_id, conn);
                     self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
                     self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
@@ -1004,7 +1014,7 @@ impl Endpoint {
                     let mut buf = Vec::new();
                     buf.put_u16_be(session.len() as u16);
                     buf.extend_from_slice(&session);
-                    params.write(&mut buf);
+                    params.write(Side::Server, &mut buf);
 
                     self.events.push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
                 } else {
@@ -1425,7 +1435,7 @@ impl Endpoint {
 
     fn forget(&mut self, conn: ConnectionHandle) {
         if self.connections[conn.0].side == Side::Server {
-            self.connection_ids.remove(&self.connections[conn.0].initial_id);
+            self.connection_ids_initial.remove(&self.connections[conn.0].initial_id);
         }
         self.connection_ids.remove(&self.connections[conn.0].local_id);
         self.connection_remotes.remove(&self.connections[conn.0].remote);

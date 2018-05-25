@@ -8,7 +8,6 @@ pub struct TransportParameters {
     pub initial_max_stream_data: u32,
     pub initial_max_data: u32,
     pub idle_timeout: u16,
-    /// Mandatory for servers
     pub stateless_reset_token: Option<[u8; 16]>,
     pub initial_max_streams_bidi: u16,
     pub initial_max_streams_uni: u16,
@@ -43,8 +42,8 @@ pub enum Error {
 }
 
 impl TransportParameters {
-    pub fn write<W: BufMut>(&self, w: &mut W) {
-        if self.stateless_reset_token.is_some() { // We're the server
+    pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
+        if side == Side::Server {
             w.write::<u32>(VERSION); // Negotiated version
             w.write::<u8>(8);                     // Bytes of supported versions
             w.write::<u32>(0x0a1a2a3a); // Reserved version
@@ -181,7 +180,7 @@ impl TransportParameters {
             }
         }
 
-        if initial_max_stream_data && initial_max_data && idle_timeout && (params.stateless_reset_token.is_none() || side == Side::Client) {
+        if initial_max_stream_data && initial_max_data && idle_timeout {
             Ok(params)
         } else {
             Err(Error::IllegalValue)
@@ -204,7 +203,7 @@ mod test {
             max_packet_size: Some(1200),
             ..TransportParameters::default()
         };
-        params.write(&mut buf);
+        params.write(Side::Client, &mut buf);
         assert_eq!(TransportParameters::read(Side::Server, &mut buf.into_buf()).unwrap(), params);
     }
 }
