@@ -492,12 +492,14 @@ impl Endpoint {
         if let Some(&conn) = self.connection_remotes.get(&remote) {
             if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
                 if packet.payload.len() >= 16 && &packet.payload[packet.payload.len() - 16..] == token {
-                    debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
-                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
-                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Close });
-                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
-                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::Reset }));
-                    self.connections[conn.0].state = Some(State::Drained);
+                    if !self.connections[conn.0].state.as_ref().unwrap().is_drained() {
+                        debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
+                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
+                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Close });
+                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
+                        self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::Reset }));
+                        self.connections[conn.0].state = Some(State::Drained);
+                    }
                     return;
                 }
             }
@@ -3181,6 +3183,10 @@ impl State {
             State::Draining(ref x) => x.app_closed,
             _ => false,
         }
+    }
+
+    fn is_drained(&self) -> bool {
+        if let State::Drained = *self { true } else { false }
     }
 }
 
