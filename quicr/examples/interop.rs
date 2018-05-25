@@ -83,14 +83,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream.map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |stream| {
-                        tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned()).map_err(|e| format_err!("failed to send request: {}", e))
-                    })
-                    .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
-                    .and_then(move |stream| {
-                        quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e))
-                    })
-                    .and_then(|(_, data)| {
+                    .and_then(move |stream| get(stream))
+                    .and_then(|data| {
                         println!("read {} bytes, closing", data.len());
                         stream_data = true;
                         conn.close(0, b"done").map_err(|_| unreachable!())
@@ -125,18 +119,25 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut resumption = false;
     if let Some(ticket) = ticket {
-        println!("attempting resumption");
-        let result = runtime.block_on(endpoint.connect(&remote,
-                                                       quicr::ClientConfig {
-                                                           server_name: Some(&options.host),
-                                                           accept_insecure_certs: true,
-                                                           session_ticket: Some(&ticket),
-                                                           ..quicr::ClientConfig::default()
-                                                       })?
-                                      .and_then(|conn| {
-                                          resumption = conn.connection.session_resumed();
-                                          conn.connection.close(0, b"done").map_err(|_| unreachable!())
-                                      }));
+        println!("attempting 0-RTT");
+        let (conn, established) = endpoint.connect_zero_rtt(
+            &remote,
+            quicr::ClientConfig {
+                server_name: Some(&options.host),
+                accept_insecure_certs: true,
+                session_ticket: Some(&ticket),
+                ..quicr::ClientConfig::default()
+            })?;
+        let conn = conn.connection;
+        let request = conn.open_bi()
+            .map_err(|e| format_err!("failed to open stream: {}", e))
+            .and_then(|stream| get(stream))
+            .and_then(|data| {
+                println!("read {} bytes, closing", data.len());
+                resumption = conn.session_resumed();
+                conn.close(0, b"done").map_err(|_| unreachable!())
+            });
+        let result = runtime.block_on(established.map_err(|e| format_err!("failed to connect: {}", e)).join(request));
         if let Err(e) = result {
             println!("failure: {}", e);
         }
@@ -161,4 +162,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     println!("");
 
     Ok(())
+}
+
+fn get(stream: quicr::Stream) -> impl Future<Item=Box<[u8]>, Error=Error> {
+    tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned()).map_err(|e| format_err!("failed to send request: {}", e))
+        .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+        .and_then(move |stream| {
+            quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e))
+        })
+        .map(|(_, data)| data)
 }

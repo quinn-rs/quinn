@@ -314,21 +314,56 @@ impl Endpoint {
     }}
 
     /// Connect to a remote endpoint.
+    ///
+    /// May fail immediately due to configuration errors, or in the future if the connection could not be established.
     pub fn connect(&self, addr: &SocketAddr, config: ClientConfig)
         -> Result<impl Future<Item=NewClientConnection, Error=ConnectionError>, ConnectError>
     {
+        let (fut, conn) = self.connect_inner(addr, config)?;
+        Ok(fut.map_err(|_| unreachable!())
+           .and_then(move |err| if let Some(err) = err { Err(err) } else {
+               Ok(NewClientConnection::new(Rc::new(conn)))
+           }))
+    }
+
+    /// Connect to a remote endpoint, with support for transmitting data before the connection is established
+    ///
+    /// Returns a connection that may be used for sending immediately, and a future that will complete when the
+    /// connection is established.
+    ///
+    /// Data transmitted this way may be replayed by an attacker until the session ticket expires. Never send non-idempotent
+    /// commands as 0-RTT data.
+    ///
+    /// Servers may reject 0-RTT data, in which case anything sent will be retransmitted after the connection is
+    /// established.
+    ///
+    /// # Panics
+    /// - If `config.session_ticket` is `None`. A session ticket is necessary for 0-RTT to be possible.
+    pub fn connect_zero_rtt(&self, addr: &SocketAddr, config: ClientConfig)
+        -> Result<(NewClientConnection, impl Future<Item=(), Error=ConnectionError>), ConnectError>
+    {
+        assert!(config.session_ticket.is_some(), "a session ticket must be supplied for zero-rtt transmits to be possible");
+        let (fut, conn) = self.connect_inner(addr, config)?;
+        let conn = NewClientConnection::new(Rc::new(conn));
+        Ok((conn, fut.map_err(|_| unreachable!()).and_then(move |err| err.map_or(Ok(()), Err) )))
+    }
+
+    fn connect_inner(&self, addr: &SocketAddr, config: ClientConfig)
+        -> Result<(impl Future<Item=Option<ConnectionError>, Error=futures::Canceled>, ConnectionInner), ConnectError>
+    {
         let (send, recv) = oneshot::channel();
-        let conn = {
+        let handle = {
             let mut endpoint = self.0.borrow_mut();
-            let conn = endpoint.inner.connect(normalize(*addr), config)?;
-            endpoint.pending.insert(conn, Pending::new(Some(send)));
-            conn
+            let handle = endpoint.inner.connect(normalize(*addr), config)?;
+            endpoint.pending.insert(handle, Pending::new(Some(send)));
+            handle
         };
-        let endpoint = Endpoint(self.0.clone());
-        Ok(recv.map_err(|_| unreachable!())
-            .and_then(move |err| if let Some(err) = err { Err(err) } else {
-                Ok(NewClientConnection::new(endpoint, conn))
-            }))
+        let conn = ConnectionInner {
+            endpoint: Endpoint(self.0.clone()),
+            conn: handle,
+            side: Side::Client,
+        };
+        Ok((recv, conn))
     }
 }
 
@@ -365,12 +400,7 @@ pub struct NewClientConnection {
 }
 
 impl NewClientConnection {
-    fn new(endpoint: Endpoint, handle: quicr::ConnectionHandle) -> Self {
-        let conn = Rc::new(ConnectionInner {
-            endpoint: Endpoint(endpoint.0.clone()),
-            conn: handle,
-            side: Side::Client,
-        });
+    fn new(conn: Rc<ConnectionInner>) -> Self {
         Self {
             connection: Connection(conn.clone()),
             incoming: IncomingStreams(conn.clone()),
