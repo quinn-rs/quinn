@@ -565,7 +565,7 @@ impl Future for Driver {
                             match timer {
                                 LossDetection => { pending.cancel_loss_detect.take().map(|x| { let _ = x.send(()); }); }
                                 Idle => { pending.cancel_idle.take().map(|x| x.send(())); }
-                                Close => { unreachable!() }
+                                Close => {} // Arises from stateless reset
                             }
                         }
                     }
