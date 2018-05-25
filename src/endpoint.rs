@@ -700,7 +700,8 @@ impl Endpoint {
             }
         } else {
             match tls.read_early_data(&mut [0; 1]) {
-                Ok(Some(_)) => {
+                Ok(0) => { zero_rtt_crypto = None; }
+                Ok(_) => {
                     debug!(self.log, "got TLS early data"; "connection" => local_id.clone());
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
@@ -709,7 +710,6 @@ impl Endpoint {
                     });
                     return;
                 }
-                Ok(None) => { zero_rtt_crypto = None; }
                 Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
                     trace!(self.log, "{connection} enabled 0rtt", connection=local_id.clone());
                     zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
