@@ -8,7 +8,8 @@ Quinn is an implementation of the [QUIC][quic] protocol based on futures.
 It is currently in its very early stages: work is ongoing on implementing
 the protocol handshake for both client and server.
 
-Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk].
+Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can also get
+the [slides][slides] (and the [animation][animation] about head-of-line blocking).
 
 All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the [issue tracker][issues] or [tweet me][twitter].
@@ -25,3 +26,5 @@ any other feedback to the [issue tracker][issues] or [tweet me][twitter].
 [rustls]: https://github.com/ctz/rustls
 [ring]: https://github.com/briansmith/ring
 [talk]: https://paris.rustfest.eu/sessions/a-quic-future-in-rust
+[slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
+[animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
