@@ -4,15 +4,16 @@
 
 use std::collections::VecDeque;
 
-pub struct HeaderField {
-    // TODO use Cow to avoid copy when possible
-    name: String,
-    value: String,
+use super::table::{HeaderField, HeaderTable};
+
+
+pub trait QpackMemSized {
+    fn mem_size(&self) -> usize;
 }
 
 
-impl HeaderField {
-    pub fn mem_size(&self) -> usize {
+impl QpackMemSized for HeaderField {
+    fn mem_size(&self) -> usize {
         self.name.len() + self.value.len()
     }
 }
@@ -57,9 +58,7 @@ impl DynamicTable {
      * Adding field into the table cannot fails, but it doesn't mean the header
      * field will be put inside the table.
      */
-    pub fn put_field(&mut self, name: &'static str, value: &'static str) {
-        let field = HeaderField { name: name.into(), value: value.into() };
-
+    pub fn put_field(&mut self, field: HeaderField) {
         if field.mem_size() <= self.mem_limit {
             let at_most = self.mem_limit - field.mem_size();
             self.shrink_to_fit(at_most);
@@ -70,10 +69,6 @@ impl DynamicTable {
             self.curr_mem_size += field.mem_size();
             self.fields.push_back(field);
         }
-    }
-
-    pub fn field_count(&self) -> usize {
-        self.fields.len()
     }
 
     pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), ErrorKind> {
@@ -107,8 +102,19 @@ impl DynamicTable {
 }
 
 
+impl HeaderTable for DynamicTable {
+    fn get(&self, index: usize) -> Option<&HeaderField> {
+        self.fields.get(index)
+    }
+    
+    fn count(&self) -> usize {
+        self.fields.len()
+    }
+}
+
+
 #[cfg(test)]
-mod table_tests {
+mod tests {
     use super::*;
 
     /**
@@ -126,7 +132,8 @@ mod table_tests {
         let table_size = 4 + 5 + 12 + 0 + ESTIMATED_OVERHEAD_BYTES;
 
         for pair in fields.iter() {
-            table.put_field(pair.0, pair.1);
+            let field = HeaderField::new(pair.0, pair.1);
+            table.put_field(field);
         }
 
         assert_eq!(table.mem_size(), table_size);
@@ -187,12 +194,12 @@ mod table_tests {
         let mut table = DynamicTable::new();
         assert_eq!(table.set_max_mem_size(200), Ok(()));
 
-        table.put_field("Name", "Value");
-        assert_eq!(table.field_count(), 1);
+        table.put_field(HeaderField::new("Name", "Value"));
+        assert_eq!(table.count(), 1);
 
         let size = table.mem_size();
         assert_eq!(table.set_max_mem_size(size), Ok(()));
-        assert_eq!(table.field_count(), 1);
+        assert_eq!(table.count(), 1);
     }
 
     /**
@@ -204,11 +211,11 @@ mod table_tests {
         let mut table = DynamicTable::new();
         assert_eq!(table.set_max_mem_size(200), Ok(()));
 
-        table.put_field("Name", "Value");
-        assert_eq!(table.field_count(), 1);
+        table.put_field(HeaderField::new("Name", "Value"));
+        assert_eq!(table.count(), 1);
 
         assert_eq!(table.set_max_mem_size(0), Ok(()));
-        assert_eq!(table.field_count(), 0);
+        assert_eq!(table.count(), 0);
     }
 
     /**
@@ -220,16 +227,37 @@ mod table_tests {
         let mut table = DynamicTable::new();
         assert_eq!(table.set_max_mem_size(200), Ok(()));
 
-        table.put_field("Name", "Value");
-        table.put_field("Name", "Value");
-        table.put_field("Name", "Value");
-        assert_eq!(table.field_count(), 3);
+        table.put_field(HeaderField::new("Name-1", "Value-1"));
+        table.put_field(HeaderField::new("Name-2", "Value-2"));
+        table.put_field(HeaderField::new("Name-3", "Value-3"));
+        assert_eq!(table.count(), 3);
 
-        let size_to_drop_one_field = table.mem_size() - 1;
-        assert_eq!(table.set_max_mem_size(size_to_drop_one_field), Ok(()));
-        assert_eq!(table.field_count(), 2);
+        let size_to_drop_first_field = table.mem_size() - 1;
+        assert_eq!(table.set_max_mem_size(size_to_drop_first_field), Ok(()));
+        assert_eq!(table.count(), 2);
     }
+    
+    /**
+     * https://tools.ietf.org/html/rfc7541#section-4.4
+     * 4.3.  Entry Eviction When Dynamic Table Size Changes
+     */
+    #[test]
+    fn test_drop_fields_are_in_fifo() {
+        let mut table = DynamicTable::new();
+        assert_eq!(table.set_max_mem_size(200), Ok(()));
 
+        let second_field = HeaderField::new("Name-2", "Value-2");
+
+        table.put_field(HeaderField::new("Name-1", "Value-1"));
+        table.put_field(second_field.clone());
+        table.put_field(HeaderField::new("Name-3", "Value-3"));
+        assert_eq!(table.count(), 3);
+
+        let size_to_drop_first_field = table.mem_size() - 1;
+        assert_eq!(table.set_max_mem_size(size_to_drop_first_field), Ok(()));
+        assert_eq!(table.get(0), Some(&second_field));
+    }
+    
     /**
      * https://tools.ietf.org/html/rfc7541#section-4.4
      * 4.4.  Entry Eviction When Adding New Entries
@@ -239,17 +267,17 @@ mod table_tests {
         let mut table = DynamicTable::new();
         assert_eq!(table.set_max_mem_size(200), Ok(()));
 
-        table.put_field("Name", "Value");
-        table.put_field("Name", "Value");
-        table.put_field("Name", "Value");
+        table.put_field(HeaderField::new("Name", "Value"));
+        table.put_field(HeaderField::new("Name", "Value"));
+        table.put_field(HeaderField::new("Name", "Value"));
 
         let size = table.mem_size();
         assert_eq!(table.set_max_mem_size(size), Ok(()));
-        assert_eq!(table.field_count(), 3);
+        assert_eq!(table.count(), 3);
 
         // header field that take two of the previous fields
-        table.put_field("NameName", "ValueValue");
-        assert_eq!(table.field_count(), 2);
+        table.put_field(HeaderField::new("NameName", "ValueValue"));
+        assert_eq!(table.count(), 2);
     }
 
     /**
@@ -261,13 +289,13 @@ mod table_tests {
         let mut table = DynamicTable::new();
         assert_eq!(table.set_max_mem_size(200), Ok(()));
 
-        table.put_field("Name", "Value");
+        table.put_field(HeaderField::new("Name", "Value"));
 
         let size = table.mem_size();
         assert_eq!(table.set_max_mem_size(size), Ok(()));
-        assert_eq!(table.field_count(), 1);
+        assert_eq!(table.count(), 1);
 
-        table.put_field("NameName", "ValueValue");
-        assert_eq!(table.field_count(), 0);
+        table.put_field(HeaderField::new("NameName", "ValueValue"));
+        assert_eq!(table.count(), 0);
     }
 }
