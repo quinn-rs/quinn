@@ -28,6 +28,7 @@ mod server;
 mod streams;
 pub mod tls;
 mod types;
+mod qpack;
 
 #[derive(Debug, Fail)]
 pub enum QuicError {
