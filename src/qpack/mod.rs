@@ -7,3 +7,6 @@ use self::table::{HeaderField, HeaderTable};
 
 pub mod dyn_table;
 use self::dyn_table::DynamicTable;
+
+pub mod static_table;
+use self::static_table::StaticTable;
