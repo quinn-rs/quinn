@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use super::table::{HeaderField, HeaderTable};
+use super::table::HeaderField;
 
 
 pub trait QpackMemSized {
@@ -99,10 +99,7 @@ impl DynamicTable {
     pub fn mem_size(&self) -> usize {
         self.curr_mem_size
     }
-}
 
-
-impl HeaderTable for DynamicTable {
     fn get(&self, index: usize) -> Option<&HeaderField> {
         self.fields.get(index)
     }
