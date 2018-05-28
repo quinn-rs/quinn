@@ -263,6 +263,7 @@ mod tests {
 
     #[test]
     fn test_ignores_unknown_transport_parameter_ids() {
+        #[cfg_attr(rustfmt, rustfmt_skip)]
         let bytes = [0u8, 130,
             0, 0, 0, 4, 0, 0, 64, 0,
             0, 1, 0, 4, 0, 0, 128, 0,
@@ -286,7 +287,8 @@ mod tests {
             255, 14, 0, 2, 255, 14,
             255, 15, 0, 2, 255, 15];
         let tp = TransportParameters::decode(&mut Cursor::new(bytes.as_ref()));
-        assert_eq!(tp,
+        assert_eq!(
+            tp,
             TransportParameters {
                 max_stream_data: 16384,
                 max_data: 32768,
