@@ -51,6 +51,8 @@ pub enum QuicError {
     Io(#[cause] std::io::Error),
     #[fail(display = "{}", _0)]
     Tls(#[cause] rustls::TLSError),
+    #[fail(display = "{}", _0)]
+    DecodeError(String),
 }
 
 impl From<std::io::Error> for QuicError {

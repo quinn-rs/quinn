@@ -54,17 +54,17 @@ impl Packet {
         Ok(header_len + out_len)
     }
 
-    pub fn start_decode(buf: &mut [u8]) -> PartialDecode {
+    pub fn start_decode(buf: &mut [u8]) -> QuicResult<PartialDecode> {
         let (header, header_len) = {
             let mut read = Cursor::new(&buf);
-            let header = Header::decode(&mut read);
+            let header = Header::decode(&mut read)?;
             (header, read.position() as usize)
         };
-        PartialDecode {
+        Ok(PartialDecode {
             header,
             header_len,
             buf,
-        }
+        })
     }
 }
 
@@ -91,7 +91,7 @@ impl<'a> PartialDecode<'a> {
 
         let mut payload = Vec::new();
         while read.has_remaining() {
-            let frame = Frame::decode(&mut read);
+            let frame = Frame::decode(&mut read)?;
             payload.push(frame);
         }
 
@@ -198,7 +198,7 @@ impl Codec for Header {
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let first = buf.get_u8();
         if first & 128 == 128 {
             let version = buf.get_u32_be();
@@ -220,14 +220,14 @@ impl Codec for Header {
             };
 
             buf.advance(used);
-            Header::Long {
+            Ok(Header::Long {
                 ptype: LongType::from_byte(first ^ 128),
                 version,
                 dst_cid,
                 src_cid,
-                len: VarLen::decode(buf).0,
+                len: VarLen::decode(buf)?.0,
                 number: buf.get_u32_be(),
-            }
+            })
         } else {
             let key_phase = first & 0x40 == 0x40;
             let dst_cid = {
@@ -243,12 +243,12 @@ impl Codec for Header {
                 ShortType::Four => buf.get_u32_be(),
             };
 
-            Header::Short {
+            Ok(Header::Short {
                 key_phase,
                 ptype,
                 dst_cid,
                 number,
-            }
+            })
         }
     }
 }

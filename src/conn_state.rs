@@ -175,7 +175,7 @@ where
     }
 
     pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
-        self.handle_partial(Packet::start_decode(buf))
+        self.handle_partial(Packet::start_decode(buf)?)
     }
 
     pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
@@ -286,9 +286,9 @@ where
                 Some(bytes) => {
                     let mut read = Cursor::new(bytes);
                     if self.side == Side::Client {
-                        ServerTransportParameters::decode(&mut read).parameters
+                        ServerTransportParameters::decode(&mut read)?.parameters
                     } else {
-                        ClientTransportParameters::decode(&mut read).parameters
+                        ClientTransportParameters::decode(&mut read)?.parameters
                     }
                 }
             };
@@ -391,7 +391,7 @@ pub mod tests {
         let mut cp = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut cp).dst_cid());
+        let mut s = server_conn_state(Packet::start_decode(&mut cp).unwrap().dst_cid());
         s.handle(&mut cp).unwrap();
         let mut sp = s.queued().unwrap().unwrap().clone();
         s.pop_queue();
@@ -406,7 +406,7 @@ pub mod tests {
             sp = s.queued().unwrap().unwrap().clone();
             s.pop_queue();
 
-            let header = Packet::start_decode(&mut sp).header;
+            let header = Packet::start_decode(&mut sp).unwrap().header;
             if header.ptype().is_none() {
                 break;
             }
@@ -425,7 +425,7 @@ pub mod tests {
         let mut initial = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut initial).dst_cid());
+        let mut s = server_conn_state(Packet::start_decode(&mut initial).unwrap().dst_cid());
         s.handle(&mut initial).unwrap();
         let mut server_hello = s.queued().unwrap().unwrap().clone();
 

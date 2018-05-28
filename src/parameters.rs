@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut};
 
-use super::QUIC_VERSION;
+use super::{QuicResult, QUIC_VERSION};
 use codec::Codec;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,11 +24,11 @@ impl Codec for ClientTransportParameters {
         self.parameters.encode(buf);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        ClientTransportParameters {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(ClientTransportParameters {
             initial_version: buf.get_u32_be(),
-            parameters: TransportParameters::decode(buf),
-        }
+            parameters: TransportParameters::decode(buf)?,
+        })
     }
 }
 
@@ -59,8 +59,8 @@ impl Codec for ServerTransportParameters {
         self.parameters.encode(buf);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        ServerTransportParameters {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(ServerTransportParameters {
             negotiated_version: buf.get_u32_be(),
             supported_versions: {
                 let mut supported_versions = vec![];
@@ -71,8 +71,8 @@ impl Codec for ServerTransportParameters {
                 }
                 supported_versions
             },
-            parameters: TransportParameters::decode(buf),
-        }
+            parameters: TransportParameters::decode(buf)?,
+        })
     }
 }
 
@@ -141,7 +141,7 @@ impl Codec for TransportParameters {
         buf.put_slice(&tmp);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let mut params = TransportParameters::default();
         let num = buf.get_u16_be();
         let mut sub = buf.take(num as usize);
@@ -188,7 +188,7 @@ impl Codec for TransportParameters {
                 }
             }
         }
-        params
+        Ok(params)
     }
 }
 
@@ -233,7 +233,7 @@ mod tests {
             ret
         };
         let mut read = Cursor::new(&buf);
-        assert_eq!(t, T::decode(&mut read));
+        assert_eq!(t, T::decode(&mut read).unwrap());
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
             255, 13, 0, 2, 255, 13,
             255, 14, 0, 2, 255, 14,
             255, 15, 0, 2, 255, 15];
-        let tp = TransportParameters::decode(&mut Cursor::new(bytes.as_ref()));
+        let tp = TransportParameters::decode(&mut Cursor::new(bytes.as_ref())).unwrap();
         assert_eq!(
             tp,
             TransportParameters {

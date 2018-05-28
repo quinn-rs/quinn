@@ -1,3 +1,4 @@
+use super::{QuicError, QuicResult};
 use bytes::{Buf, BufMut};
 
 pub struct VarLen(pub u64);
@@ -25,7 +26,7 @@ impl Codec for VarLen {
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let first = buf.get_u8();
         let be_val = first & 0x3f;
         let val = match first >> 6 {
@@ -40,9 +41,14 @@ impl Codec for VarLen {
                     | u64::from(buf.get_u16_be()) << 32
                     | u64::from(buf.get_u32_be())
             }
-            v => panic!("impossible variable length encoding: {}", v),
+            v => {
+                return Err(QuicError::DecodeError(format!(
+                    "impossible variable length encoding: {}",
+                    v
+                )))
+            }
         };
-        VarLen(val)
+        Ok(VarLen(val))
     }
 }
 
@@ -71,9 +77,10 @@ where
     }
 }
 
-pub trait Codec {
+pub trait Codec: Sized {
+    // TODO q on add sized
     fn encode<T: BufMut>(&self, buf: &mut T);
-    fn decode<T: Buf>(buf: &mut T) -> Self;
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self>;
 }
 
 #[cfg(test)]
@@ -90,7 +97,7 @@ mod tests {
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).0, num);
+        assert_eq!(VarLen::decode(&mut read).expect("Invalid VarLen").0, num);
     }
     #[test]
     fn test_var_len_encoding_4() {
@@ -102,7 +109,7 @@ mod tests {
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).0, num);
+        assert_eq!(VarLen::decode(&mut read).expect("Invalid VarLen").0, num);
     }
     #[test]
     fn test_var_len_encoding_2() {
@@ -114,7 +121,7 @@ mod tests {
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).0, num);
+        assert_eq!(VarLen::decode(&mut read).expect("Invalid VarLen").0, num);
     }
     #[test]
     fn test_var_len_encoding_1_short() {
@@ -126,6 +133,6 @@ mod tests {
         assert_eq!(bytes[..], *buf);
 
         let mut read = Cursor::new(bytes);
-        assert_eq!(VarLen::decode(&mut read).0, num);
+        assert_eq!(VarLen::decode(&mut read).expect("Invalid VarLen").0, num);
     }
 }

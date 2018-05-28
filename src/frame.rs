@@ -4,6 +4,8 @@ use codec::{BufLen, Codec, VarLen};
 
 use std::str;
 
+use super::{QuicError, QuicResult};
+
 #[derive(Debug, PartialEq)]
 pub enum Frame {
     Ack(AckFrame),
@@ -63,16 +65,16 @@ impl Codec for Frame {
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        match buf.bytes()[0] {
-            v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)),
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(match buf.bytes()[0] {
+            v if v >= 0x10 => Frame::Stream(StreamFrame::decode(buf)?),
             0x02 => Frame::ConnectionClose({
                 buf.get_u8();
-                CloseFrame::decode(buf)
+                CloseFrame::decode(buf)?
             }),
             0x03 => Frame::ApplicationClose({
                 buf.get_u8();
-                CloseFrame::decode(buf)
+                CloseFrame::decode(buf)?
             }),
             0x07 => {
                 buf.get_u8();
@@ -80,20 +82,25 @@ impl Codec for Frame {
             }
             0x0a => Frame::StreamIdBlocked({
                 buf.get_u8();
-                StreamIdBlockedFrame::decode(buf)
+                StreamIdBlockedFrame::decode(buf)?
             }),
-            0x0d => Frame::Ack(AckFrame::decode(buf)),
+            0x0d => Frame::Ack(AckFrame::decode(buf)?),
             0x0e => Frame::PathChallenge({
                 buf.get_u8();
-                PathFrame::decode(buf)
+                PathFrame::decode(buf)?
             }),
             0x0f => Frame::PathResponse({
                 buf.get_u8();
-                PathFrame::decode(buf)
+                PathFrame::decode(buf)?
             }),
-            0 => Frame::Padding(PaddingFrame::decode(buf)),
-            v => panic!("unimplemented decoding for frame type {}", v),
-        }
+            0 => Frame::Padding(PaddingFrame::decode(buf)?),
+            v => {
+                return Err(QuicError::DecodeError(format!(
+                    "unimplemented decoding for frame type {}",
+                    v
+                )))
+            }
+        })
     }
 }
 
@@ -132,30 +139,30 @@ impl Codec for StreamFrame {
         buf.put_slice(&self.data);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let first = buf.get_u8();
-        let id = VarLen::decode(buf).0;
+        let id = VarLen::decode(buf)?.0;
         let offset = if first & 0x04 > 0 {
-            VarLen::decode(buf).0
+            VarLen::decode(buf)?.0
         } else {
             0
         };
 
         let len = if first & 0x02 > 0 {
-            VarLen::decode(buf).0
+            VarLen::decode(buf)?.0
         } else {
             buf.remaining() as u64
         };
         let mut data = vec![0u8; len as usize];
         buf.copy_to_slice(&mut data);
 
-        StreamFrame {
+        Ok(StreamFrame {
             id,
             fin: first & 0x01 > 0,
             offset,
             len: if first & 0x02 > 0 { Some(len) } else { None },
             data,
-        }
+        })
     }
 }
 
@@ -188,27 +195,27 @@ impl Codec for AckFrame {
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let _ = buf.get_u8();
-        let largest = VarLen::decode(buf).0 as u32;
-        let ack_delay = VarLen::decode(buf).0;
-        let count = VarLen::decode(buf).0;
+        let largest = VarLen::decode(buf)?.0 as u32;
+        let ack_delay = VarLen::decode(buf)?.0;
+        let count = VarLen::decode(buf)?.0;
         debug_assert_eq!(count % 2, 0);
 
         let mut blocks = vec![];
         for i in 0..count + 1 {
             blocks.push(if i % 2 == 0 {
-                Ack::Ack(VarLen::decode(buf).0)
+                Ack::Ack(VarLen::decode(buf)?.0)
             } else {
-                Ack::Gap(VarLen::decode(buf).0)
+                Ack::Gap(VarLen::decode(buf)?.0)
             });
         }
 
-        AckFrame {
+        Ok(AckFrame {
             largest,
             ack_delay,
             blocks,
-        }
+        })
     }
 }
 
@@ -246,15 +253,15 @@ impl Codec for CloseFrame {
         buf.put_slice(self.reason.as_bytes());
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let code = buf.get_u16_be();
-        let len = VarLen::decode(buf).0 as usize;
+        let len = VarLen::decode(buf)?.0 as usize;
         let reason = {
             let bytes = buf.bytes();
             str::from_utf8(&bytes[..len]).unwrap()
         }.to_string();
         buf.advance(len);
-        CloseFrame { code, reason }
+        Ok(CloseFrame { code, reason })
     }
 }
 
@@ -272,10 +279,10 @@ impl Codec for PathFrame {
         buf.put_slice(&self.0);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let mut bytes = [0; 8];
         buf.copy_to_slice(&mut bytes);
-        PathFrame(bytes)
+        Ok(PathFrame(bytes))
     }
 }
 
@@ -293,8 +300,8 @@ impl Codec for StreamIdBlockedFrame {
         VarLen(self.0).encode(buf)
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        StreamIdBlockedFrame(VarLen::decode(buf).0)
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(StreamIdBlockedFrame(VarLen::decode(buf)?.0))
     }
 }
 
@@ -313,10 +320,10 @@ impl Codec for PaddingFrame {
         buf.put_slice(&padding);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let size = buf.bytes().iter().take_while(|b| **b == 0).count();
         buf.advance(size);
-        PaddingFrame(size)
+        Ok(PaddingFrame(size))
     }
 }
 
@@ -331,7 +338,7 @@ mod tests {
         let bytes = b"\x00\x00\x00\x00\x01";
         let frame = {
             let mut read = Cursor::new(&bytes);
-            let frame = super::Frame::decode(&mut read);
+            let frame = super::Frame::decode(&mut read).unwrap();
             assert_eq!(read.bytes(), b"\x01");
             frame
         };
@@ -357,7 +364,7 @@ mod tests {
         assert_eq!(&buf, bytes);
 
         let mut read = Cursor::new(bytes);
-        let decoded = super::Frame::decode(&mut read);
+        let decoded = super::Frame::decode(&mut read).unwrap();
         assert_eq!(decoded, obj);
     }
 }

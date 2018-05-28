@@ -59,7 +59,7 @@ impl Future for Server {
                     let connections = &mut self.connections;
 
                     let (dst_cid, ptype) = {
-                        let partial = Packet::start_decode(&mut self.in_buf[..len]);
+                        let partial = Packet::start_decode(&mut self.in_buf[..len])?;
                         debug!("incoming packet: {:?} {:?}", addr, partial.header);
                         (partial.dst_cid(), partial.header.ptype())
                     };

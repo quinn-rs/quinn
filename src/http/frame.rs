@@ -1,6 +1,7 @@
 use bytes::{Buf, BufMut};
 
 use codec::{BufLen, Codec, VarLen};
+use {QuicError, QuicResult};
 
 // On the wire:
 // len: VarLen
@@ -23,11 +24,16 @@ impl Codec for HttpFrame {
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        let len = VarLen::decode(buf).0 as usize;
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        let len = VarLen::decode(buf)?.0 as usize;
         match buf.get_u8() {
-            0x4 => HttpFrame::Settings(SettingsFrame::decode(&mut buf.take(1 + len))),
-            v => panic!("unsupported HTTP frame type {}", v),
+            0x4 => Ok(HttpFrame::Settings(SettingsFrame::decode(
+                &mut buf.take(1 + len),
+            )?)),
+            v => Err(QuicError::DecodeError(format!(
+                "unsupported HTTP frame type {}",
+                v
+            ))),
         }
     }
 }
@@ -53,21 +59,25 @@ impl Codec for SettingsFrame {
         encoded.encode(buf);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> SettingsFrame {
-        assert_eq!(buf.get_u8(), 0); // Flags
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<SettingsFrame> {
+        if buf.get_u8() != 0 {
+            return Err(QuicError::DecodeError(format!("Unsuported flags")));
+        }
         let mut settings = Settings::default();
         while buf.has_remaining() {
             let tag = buf.get_u16_be();
-            assert!(tag == 0x1 || tag == 0x6);
-            VarLen::decode(buf);
-            let val = VarLen::decode(buf);
+            if tag != 0x1 && tag != 0x6 {
+                return Err(QuicError::DecodeError(format!("Unsuported tag")));
+            }
+            VarLen::decode(buf)?;
+            let val = VarLen::decode(buf)?;
             if tag == 0x1 {
                 settings.header_table_size = val.0 as u32;
             } else if tag == 0x6 {
                 settings.max_header_list_size = val.0 as u32;
             }
         }
-        SettingsFrame(settings)
+        Ok(SettingsFrame(settings))
     }
 }
 
@@ -143,7 +153,7 @@ mod tests {
         );
 
         let mut read = Cursor::new(&buf);
-        let decoded = super::HttpFrame::decode(&mut read);
+        let decoded = super::HttpFrame::decode(&mut read).unwrap();
         assert_eq!(decoded, frame);
     }
 }
