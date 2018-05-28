@@ -5,20 +5,6 @@
 use bit_field::BitField;
 use bytes::{Bytes, Buf, IntoBuf};
 
-#[derive(Debug, PartialEq)]
-pub enum Bit {
-    Set,
-    Unset
-}
-
-
-impl From<bool> for Bit {
-    fn from(v: bool) -> Bit {
-        if v { Bit::Set }
-        else { Bit::Unset }
-    }
-}
-
 
 #[derive(Debug, PartialEq)]
 pub enum Value {
@@ -51,8 +37,8 @@ impl Parser {
     pub fn next(&mut self) -> Result<Value, Error> {
         let (msb, rest) = self.next_bit_byte()?;
         match msb.into() {
-            Bit::Set => self.read_index_header_field(rest),
-            Bit::Unset => unimplemented!()
+            true => self.read_index_header_field(rest),
+            false => unimplemented!()
         }
     }
 
