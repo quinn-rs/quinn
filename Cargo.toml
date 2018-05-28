@@ -1,2 +1,2 @@
 [workspace]
-members = ["quinn", "quinn-proto", "interop"]
+members = ["quinn", "quinn-proto", "quinn-h3", "interop"]
