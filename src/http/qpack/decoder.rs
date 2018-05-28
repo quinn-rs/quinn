@@ -19,7 +19,8 @@ pub enum Error {
     BadBufferLen,
     BadMaximumDynamicTableSize,
     BadNameIndexOnDynamicTable,
-    BadNameIndexOnStaticTable
+    BadNameIndexOnStaticTable,
+    BadDuplicateIndex
 }
 
 
@@ -119,10 +120,19 @@ impl Decoder {
             .map(|_| ())
     }
 
-    fn read_duplicate_entry<T: Buf>(&mut self, _byte: u8, _buf: &mut T)
+    fn read_duplicate_entry<T: Buf>(&mut self, byte: u8, buf: &mut T)
         -> Result<(), Error>
     {
-        unimplemented!();
+        let dup_index = Parser::new(buf).integer_from(5, byte)
+            .map_err(|_| Error::InvalidIntegerPrimitive)?;
+ 
+        let field = self.table.get(dup_index as usize)
+            .map(|x| x.clone())
+            .ok_or(Error::BadDuplicateIndex)?;
+
+        self.table.put_field(field);
+
+        Ok(())
     }
 }
 
@@ -292,6 +302,33 @@ mod tests {
 
         let field = decoder.get_rel_field(0);
         assert_eq!(field, Some(&expected_field));
+    }
+    
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
+     * 3.3.3.  Duplicate
+     */
+    #[test]
+    fn test_duplicate_field() {
+        let _index = 1;
+        
+        let bytes: [u8; 2] = [
+            // size
+            1,
+            // code, index
+            0 | 1,
+        ];
+
+        let mut decoder = Decoder::new();
+        decoder.table.put_field(HeaderField::new("", ""));
+        decoder.table.put_field(HeaderField::new("", ""));
+        assert_eq!(decoder.table.count(), 2);
+
+        let mut cursor = Cursor::new(&bytes);
+        let res = decoder.feed(&mut cursor);
+        assert_eq!(res, Ok(()));
+
+        assert_eq!(decoder.table.count(), 3);
     }
 
     /**
