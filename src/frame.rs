@@ -314,16 +314,7 @@ impl Codec for PaddingFrame {
     }
 
     fn decode<T: Buf>(buf: &mut T) -> Self {
-        let size = {
-            let mut size = 0;
-            for (i, b) in buf.bytes().iter().enumerate() {
-                if *b != 0 {
-                    size = i - 1;
-                    break;
-                }
-            }
-            size + 1
-        };
+        let size = buf.bytes().iter().take_while(|b| **b == 0).count();
         buf.advance(size);
         PaddingFrame(size)
     }
