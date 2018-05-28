@@ -74,16 +74,17 @@ impl Decoder {
         let value = parser.string(8)
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
-        let name = if is_static_table {
-            StaticTable::get(name_index)
-                .map(|x| x.name.clone())
-                .ok_or(Error::BadNameIndexOnStaticTable)?
-        } else {
-            // TODO get true field (now assuming relative = absolute index)
-            self.table.get(name_index)
-                .map(|x| x.name.clone())
-                .ok_or(Error::BadNameIndexOnDynamicTable)?
-        };
+        // TODO get true field (now assuming relative = absolute index)
+        let name = 
+            if is_static_table {
+                StaticTable::get(name_index)
+                    .map(|x| x.name.clone())
+                    .ok_or(Error::BadNameIndexOnStaticTable)?
+            } else {
+                self.table.get(name_index)
+                    .map(|x| x.name.clone())
+                    .ok_or(Error::BadNameIndexOnDynamicTable)?
+            };
 
         self.table.put_field(HeaderField {
             name: name.clone(),
@@ -146,32 +147,37 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
-        let mut decoder = Decoder::new();
-
-        let value = "some value";
-        assert!(value.len() < 127); // just to make sure size fit in prefix
-
         let name_index = 1u8;
-        assert!(name_index < 64); // just to make sure name index fit in prefix
+        let text = "serial value";
+        
+        let bytes: [u8; 15] = [
+            // size
+            14,
+            // code, from static, name index
+            128 | 64 | 1,
+            // not huffman, string size
+            0 | 12,
+            // bytes
+            's' as u8,
+            'e' as u8,
+            'r' as u8,
+            'i' as u8,
+            'a' as u8,
+            'l' as u8,
+            ' ' as u8,
+            'v' as u8,
+            'a' as u8,
+            'l' as u8,
+            'u' as u8,
+            'e' as u8
+        ];
 
-        let use_static = true;
+        let mut decoder = Decoder::new();
         let model_field = decoder.get_static_field(name_index as usize)
             .map(|x| x.clone());
         let expected_field = HeaderField::new(
-            model_field.expect("name index exists").name,
-            value);
-
-        let mut bytes: Vec<u8> = Vec::new();
-        // block length
-        bytes.push(2u8 + value.bytes().len() as u8);
-        // 0b1 message code, dynamic = 0 or static table = 1, name index
-        bytes.push(128u8
-                   | if use_static { 64u8 } else { 0u8 }
-                   | name_index);
-        // huffman = 1 or not = 0, value size
-        bytes.push(value.len() as u8);
-        // value
-        bytes.extend(value.bytes());
+            model_field.expect("field exists at name index").name,
+            text);
 
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed(&mut cursor);
@@ -179,6 +185,66 @@ mod tests {
 
         let field = decoder.get_rel_field(0);
         assert_eq!(field, Some(&expected_field));
+    }
+
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
+     * 3.3.1.  Insert With Name Reference
+     */
+    #[test]
+    fn test_insert_field_with_wrong_name_index_from_static_table() {
+        let mut decoder = Decoder::new();
+        
+        // NOTE this are the values encoded
+        let _name_index = 3000;
+        let _text = "";
+
+        let bytes: [u8; 5] = [
+            // size
+            4,
+            // code, from static, name index
+            128 | 64 | 63,
+            // name index (variable length encoding)
+            128 | 121,
+            // name index (variable length encoding, end)
+            22,
+            // not huffman, string size
+            0 | 0
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let res = decoder.feed(&mut cursor);
+        assert_eq!(res, Err(Error::BadNameIndexOnStaticTable));
+    }
+
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
+     * 3.3.1.  Insert With Name Reference
+     */
+    #[test]
+    fn test_insert_field_with_wrong_name_index_from_dynamic_table() {
+        let mut decoder = Decoder::new();
+        
+        // NOTE this are the values encoded
+        let _name_index = 3000;
+        let _text = "";
+
+        let bytes: [u8; 5] = [
+            // size
+            4,
+            // code, not from static, name index
+            128 | 0 | 63,
+            // name index (variable length encoding)
+            128 | 121,
+            // name index (variable length encoding, end)
+            22,
+            // not huffman, string size
+            0 | 0
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let res = decoder.feed(&mut cursor);
+        assert_eq!(res, Err(Error::BadNameIndexOnDynamicTable));
     }
 
     /**
