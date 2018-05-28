@@ -183,7 +183,9 @@ impl Codec for TransportParameters {
                     debug_assert_eq!(size, 2);
                     params.max_stream_id_uni = sub.get_u16_be();
                 }
-                t => panic!("invalid transport parameter tag {}", t),
+                _ => {
+                    sub.advance(usize::from(size));
+                }
             }
         }
         params
@@ -257,5 +259,44 @@ mod tests {
                 ..Default::default()
             },
         });
+    }
+
+    #[test]
+    fn test_ignores_unknown_transport_parameter_ids() {
+        let bytes = [0u8, 130,
+            0, 0, 0, 4, 0, 0, 64, 0,
+            0, 1, 0, 4, 0, 0, 128, 0,
+            0, 2, 0, 2, 0, 1,
+            0, 8, 0, 2, 0, 1,
+            0, 3, 0, 2, 0, 10,
+            255, 0, 0, 2, 255, 0,
+            255, 1, 0, 2, 255, 1,
+            255, 2, 0, 2, 255, 2,
+            255, 3, 0, 2, 255, 3,
+            255, 4, 0, 2, 255, 4,
+            255, 5, 0, 2, 255, 5,
+            255, 6, 0, 2, 255, 6,
+            255, 7, 0, 2, 255, 7,
+            255, 8, 0, 2, 255, 8,
+            255, 9, 0, 2, 255, 9,
+            255, 10, 0, 2, 255, 10,
+            255, 11, 0, 2, 255, 11,
+            255, 12, 0, 2, 255, 12,
+            255, 13, 0, 2, 255, 13,
+            255, 14, 0, 2, 255, 14,
+            255, 15, 0, 2, 255, 15];
+        let tp = TransportParameters::decode(&mut Cursor::new(bytes.as_ref()));
+        assert_eq!(tp,
+            TransportParameters {
+                max_stream_data: 16384,
+                max_data: 32768,
+                max_streams_bidi: 1,
+                idle_timeout: 10,
+                max_packet_size: 65527,
+                stateless_reset_token: None,
+                ack_delay_exponent: 3,
+                max_stream_id_uni: 1,
+            }
+        );
     }
 }
