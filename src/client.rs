@@ -122,15 +122,15 @@ mod tests {
     use conn_state::tests::client_conn_state;
     use futures::Future;
     use server::Server;
-    use tls::tests::server_config;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use tls::tests::server_config;
 
     #[test]
     fn test_client_connect_resolves() {
         let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
         let connector = super::ConnectFuture::new(
             client_conn_state(),
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433)
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433),
         ).unwrap();
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
