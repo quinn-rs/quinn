@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use super::table::{HeaderField, HeaderTable};
+use super::table::HeaderField;
 
 
 macro_rules! decl_fields {
@@ -86,12 +86,12 @@ const PREDEFINED_HEADERS: [HeaderField; 61] = decl_fields![
 pub struct StaticTable {}
 
 
-impl HeaderTable for StaticTable {
-    fn get(&self, index: usize) -> Option<&HeaderField> {
+impl StaticTable {
+    fn get(index: usize) -> Option<&'static HeaderField> {
         PREDEFINED_HEADERS.get(index)
     }
     
-    fn count(&self) -> usize {
+    fn count() -> usize {
         PREDEFINED_HEADERS.len()
     }
 }
@@ -103,8 +103,7 @@ mod tests {
 
     #[test]
     fn test_static_table_is_available() {
-        let table = StaticTable {};
         let field = HeaderField::new("www-authenticate", "");
-        assert_eq!(table.get(60), Some(&field));
+        assert_eq!(StaticTable::get(60), Some(&field));
     }
 }
