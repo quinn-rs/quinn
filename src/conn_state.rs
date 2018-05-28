@@ -88,7 +88,7 @@ where
         }
 
         if !frames.is_empty() {
-            self.build_short_packet(frames)?
+            self.build_packet(None, frames)?
         }
         Ok(self.queue.front())
     }
@@ -130,67 +130,38 @@ where
         self.prev_secret = Some(old);
     }
 
-    fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
+    fn build_packet(&mut self, ptype: Option<LongType>, mut payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
-        let mut payload_len = payload.buf_len() + self.secret.tag_len();
-        if payload_len < 1200 {
-            payload.push(Frame::Padding(PaddingFrame(1200 - payload_len)));
+        let mut payload_len = (payload.buf_len() + self.secret.tag_len()) as u64;
+        if ptype == Some(LongType::Initial) && payload_len < 1200 {
+            payload.push(Frame::Padding(PaddingFrame((1200 - payload_len) as usize)));
             payload_len = 1200;
+        } else if ptype == None {
+            debug_assert_eq!(self.state, State::Connected);
         }
 
         let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
         debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Long {
-                ptype: LongType::Initial,
+        let header = match ptype {
+            Some(ltype) => Header::Long {
+                ptype: ltype,
                 version: QUIC_VERSION,
                 dst_cid,
                 src_cid,
-                len: payload_len as u64,
+                len: payload_len,
                 number,
             },
-            payload,
-        })
-    }
-
-    fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
-        let number = self.src_pn;
-        self.src_pn += 1;
-
-        let len = (payload.buf_len() + self.secret.tag_len()) as u64;
-        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
-        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Long {
-                ptype: LongType::Handshake,
-                version: QUIC_VERSION,
-                dst_cid,
-                src_cid,
-                len,
-                number,
-            },
-            payload,
-        })
-    }
-
-    fn build_short_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
-        let number = self.src_pn;
-        self.src_pn += 1;
-
-        let dst_cid = self.remote.cid;
-        debug_assert_eq!(self.state, State::Connected);
-        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Short {
+            None => Header::Short {
                 key_phase: false,
                 ptype: ShortType::Four,
                 dst_cid,
                 number,
             },
-            payload,
-        })
+        };
+
+        self.queue_packet(Packet { header, payload })
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
@@ -292,9 +263,9 @@ where
         }
 
         if self.state == State::Connected && !wrote_handshake {
-            self.build_short_packet(payload)
+            self.build_packet(None, payload)
         } else {
-            self.build_handshake_packet(payload)
+            self.build_packet(Some(LongType::Handshake), payload)
         }
     }
 
@@ -370,18 +341,20 @@ impl ConnectionState<tls::ClientSession> {
         stream.set_offset(handshake.len() as u64);
 
         self.state = State::InitialSent;
-        self.build_initial_packet(vec![
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ])
+        self.build_packet(
+            Some(LongType::Initial),
+            vec![
+                Frame::Stream(StreamFrame {
+                    id: 0,
+                    fin: false,
+                    offset: 0,
+                    len: Some(handshake.len() as u64),
+                    data: handshake,
+                }),
+            ],
+        )
     }
 }
-
 
 pub struct PeerData {
     pub cid: ConnectionId,
