@@ -17,13 +17,39 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
+    pub(crate) fn new(server: &str, port: u16) -> QuicResult<Client> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
-        let conn_state = ConnectionState::new(tls, None);
+        Self::with_state(server, port, ConnectionState::new(tls, None))
+    }
+
+    pub fn with_state(
+        server: &str,
+        port: u16,
+        mut conn_state: ConnectionState<tls::ClientSession>,
+    ) -> QuicResult<Client> {
         let addr = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
             QuicError::General(format!("no address found for '{}:{}'", server, port))
         })?;
-        ConnectFuture::new(conn_state, addr)
+
+        let local = match addr {
+            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            SocketAddr::V6(_) => {
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 0)
+            }
+        };
+
+        conn_state.initial()?;
+        let socket = UdpSocket::bind(&local)?;
+        socket.connect(&addr)?;
+        Ok(Self {
+            conn_state,
+            socket,
+            buf: vec![0u8; 65536],
+        })
+    }
+
+    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
+        Ok(ConnectFuture::new(Self::new(server, port)?))
     }
 }
 
@@ -62,27 +88,10 @@ pub struct ConnectFuture {
 }
 
 impl ConnectFuture {
-    fn new(
-        mut conn_state: ConnectionState<tls::ClientSession>,
-        remote: SocketAddr,
-    ) -> QuicResult<ConnectFuture> {
-        let local = match remote {
-            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            SocketAddr::V6(_) => {
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 0)
-            }
-        };
-
-        conn_state.initial()?;
-        let socket = UdpSocket::bind(&local)?;
-        socket.connect(&remote)?;
-        Ok(ConnectFuture {
-            client: Some(Client {
-                conn_state,
-                socket,
-                buf: vec![0u8; 65536],
-            }),
-        })
+    fn new(client: Client) -> ConnectFuture {
+        ConnectFuture {
+            client: Some(client),
+        }
     }
 }
 
@@ -120,17 +129,14 @@ mod tests {
     use conn_state::tests::client_conn_state;
     use futures::Future;
     use server::Server;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use tls::tests::server_config;
     use tokio::executor::current_thread::CurrentThread;
 
     #[test]
     fn test_client_connect_resolves() {
         let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
-        let connector = super::ConnectFuture::new(
-            client_conn_state(),
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433),
-        ).unwrap();
+        let client = super::Client::with_state("127.0.0.1", 4433, client_conn_state()).unwrap();
+        let connector = super::ConnectFuture::new(client);
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();
