@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 
 pub mod table;
-use self::table::{HeaderField, HeaderTable};
+use self::table::HeaderField;
 
 pub mod dyn_table;
 use self::dyn_table::DynamicTable;

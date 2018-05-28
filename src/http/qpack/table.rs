@@ -29,10 +29,3 @@ impl HeaderField {
         }
     }
 }
-
-
-pub trait HeaderTable {
-    fn get(&self, index: usize) -> Option<&HeaderField>;
-
-    fn count(&self) -> usize;
-}
