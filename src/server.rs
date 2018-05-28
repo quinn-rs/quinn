@@ -58,36 +58,37 @@ impl Future for Server {
                     waiting = false;
                     let connections = &mut self.connections;
 
-                    let cid = {
+                    let (dst_cid, ptype) = {
                         let partial = Packet::start_decode(&mut self.in_buf[..len]);
                         debug!("incoming packet: {:?} {:?}", addr, partial.header);
-                        let dst_cid = partial.dst_cid();
-                        if partial.header.ptype() == Some(LongType::Initial) {
-                            let mut state = ConnectionState::new(
-                                tls::server_session(
-                                    &self.tls_config,
-                                    &ServerTransportParameters::default(),
-                                ),
-                                Some(Secret::Handshake(dst_cid)),
-                            );
+                        (partial.dst_cid(), partial.header.ptype())
+                    };
 
-                            let cid = state.pick_unused_cid(|cid| connections.contains_key(&cid));
-                            let (recv_tx, recv_rx) = mpsc::channel(5);
-                            tokio::executor::current_thread::spawn(
-                                Box::new(Connection::new(
-                                    addr,
-                                    state,
-                                    self.send_queue.0.clone(),
-                                    recv_rx,
-                                )).map_err(|e| {
-                                    error!("error spawning connection: {:?}", e);
-                                }),
-                            );
-                            connections.insert(cid, recv_tx);
-                            cid
-                        } else {
-                            dst_cid
-                        }
+                    let cid = if ptype == Some(LongType::Initial) {
+                        let mut state = ConnectionState::new(
+                            tls::server_session(
+                                &self.tls_config,
+                                &ServerTransportParameters::default(),
+                            ),
+                            Some(Secret::Handshake(dst_cid)),
+                        );
+
+                        let cid = state.pick_unused_cid(|cid| connections.contains_key(&cid));
+                        let (recv_tx, recv_rx) = mpsc::channel(5);
+                        tokio::executor::current_thread::spawn(
+                            Box::new(Connection::new(
+                                addr,
+                                state,
+                                self.send_queue.0.clone(),
+                                recv_rx,
+                            )).map_err(|e| {
+                                error!("error spawning connection: {:?}", e);
+                            }),
+                        );
+                        connections.insert(cid, recv_tx);
+                        cid
+                    } else {
+                        dst_cid
                     };
 
                     let msg = self.in_buf[..len].to_vec();
