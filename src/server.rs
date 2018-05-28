@@ -88,6 +88,17 @@ impl Server {
 
         Ok(())
     }
+
+    fn poll_next(&mut self) -> Option<(SocketAddr, Vec<u8>)> {
+        match self.send_queue.1.poll() {
+            Ok(Async::Ready(msg)) => msg,
+            Ok(Async::NotReady) => None,
+            Err(e) => {
+                error!("error polling send queue: {:?}", e);
+                None
+            }
+        }
+    }
 }
 
 impl Future for Server {
@@ -107,19 +118,12 @@ impl Future for Server {
                 Err(e) => error!("Server RECV ERROR: {:?}", e),
             }
 
-            match self.send_queue.1.poll() {
-                Ok(Async::Ready(Some((addr, msg)))) => {
-                    waiting = false;
-                    match self.socket.poll_send_to(&msg, &addr) {
-                        Ok(Async::Ready(_)) => {}
-                        Ok(Async::NotReady) => {}
-                        Err(e) => error!("Server poll_send_to ERROR {:?}", e),
-                    }
-                }
-                Ok(Async::Ready(None)) => {}
-                Ok(Async::NotReady) => {}
-                Err(e) => {
-                    error!("error polling send queue: {:?}", e);
+            if let Some((addr, msg)) = self.poll_next() {
+                waiting = false;
+                match self.socket.poll_send_to(&msg, &addr) {
+                    Ok(Async::Ready(_)) => {}
+                    Ok(Async::NotReady) => {}
+                    Err(e) => error!("Server poll_send_to ERROR {:?}", e),
                 }
             }
 
