@@ -68,16 +68,20 @@ impl<'a> Parser<'a> {
     }
     
     pub fn string_from(&mut self, _prefix: u8, byte: u8) -> Result<Vec<u8>, Error> {
+        // TODO actually use prefix
         let _huffman_encoded = byte & 128u8 == 128u8;
 
         let str_len = self.integer_from(7, byte)? as usize;
-        let str_bytes = self.buf.take(str_len);
-        if str_bytes.limit() != str_len {
-            Err(Error::MissingSomeBytesForString)
-        } else {
-            // TODO decode huffman code
-            Ok(Vec::from(str_bytes.bytes()))
+        if self.buf.remaining() < str_len {
+            return Err(Error::MissingSomeBytesForString);
         }
+
+        let mut str_bytes = Vec::new();
+        (0..str_len).for_each(|_| str_bytes.push(0u8));
+        self.buf.copy_to_slice(&mut str_bytes.as_mut_slice());
+
+        // TODO decode huffman code
+        Ok(str_bytes)
     }
 
 }
@@ -176,7 +180,7 @@ mod tests {
     #[test]
     fn test_read_ascii_string() {
         let text = "testing string is not fun";
-        assert!(text.len() < 127);
+        assert!(text.len() < 127); // just to make sure size fit in prefix
 
         let text_bytes = Vec::from(text);
         

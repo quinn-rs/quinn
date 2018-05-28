@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use super::table::HeaderField;
 
 
+#[allow(unused_macros)]
 macro_rules! decl_fields {
     [ $( ($key:expr, $value:expr) ),* ] => {
         [ $(
@@ -18,80 +19,79 @@ macro_rules! decl_fields {
     }
 }
 
-
 const PREDEFINED_HEADERS: [HeaderField; 61] = decl_fields![
-    (":authority", ""),
-    (":method", "GET"),
-    (":method", "POST"),
-    (":path", "/"),
-    (":path", "/index.html"),
-    (":scheme", "http"),
-    (":scheme", "https"),
-    (":status", "200"),
-    (":status", "204"),
-    (":status", "206"),
-    (":status", "304"),
-    (":status", "400"),
-    (":status", "404"),
-    (":status", "500"),
-    ("accept-charset", ""),
-    ("accept-encoding", "gzip, deflate"),
-    ("accept-language", ""),
-    ("accept-ranges", ""),
-    ("accept", ""),
-    ("access-control-allow-origin", ""),
-    ("age", ""),
-    ("allow", ""),
-    ("authorization", ""),
-    ("cache-control", ""),
-    ("content-disposition", ""),
-    ("content-encoding", ""),
-    ("content-language", ""),
-    ("content-length", ""),
-    ("content-location", ""),
-    ("content-range", ""),
-    ("content-type", ""),
-    ("cookie", ""),
-    ("date", ""),
-    ("etag", ""),
-    ("expect", ""),
-    ("expires", ""),
-    ("from", ""),
-    ("host", ""),
-    ("if-match", ""),
-    ("if-modified-since", ""),
-    ("if-none-match", ""),
-    ("if-range", ""),
-    ("if-unmodified-since", ""),
-    ("last-modified", ""),
-    ("link", ""),
-    ("location", ""),
-    ("max-forwards", ""),
-    ("proxy-authenticate", ""),
-    ("proxy-authorization", ""),
-    ("range", ""),
-    ("referer", ""),
-    ("refresh", ""),
-    ("retry-after", ""),
-    ("server", ""),
-    ("set-cookie", ""),
-    ("strict-transport-security", ""),
-    ("transfer-encoding", ""),
-    ("user-agent", ""),
-    ("vary", ""),
-    ("via", ""),
-    ("www-authenticate", "")
+    (b":authority", b""),
+    (b":method", b"GET"),
+    (b":method", b"POST"),
+    (b":path", b"/"),
+    (b":path", b"/index.html"),
+    (b":scheme", b"http"),
+    (b":scheme", b"https"),
+    (b":status", b"200"),
+    (b":status", b"204"),
+    (b":status", b"206"),
+    (b":status", b"304"),
+    (b":status", b"400"),
+    (b":status", b"404"),
+    (b":status", b"500"),
+    (b"accept-charset", b""),
+    (b"accept-encoding", b"gzip, deflate"),
+    (b"accept-language", b""),
+    (b"accept-ranges", b""),
+    (b"accept", b""),
+    (b"access-control-allow-origin", b""),
+    (b"age", b""),
+    (b"allow", b""),
+    (b"authorization", b""),
+    (b"cache-control", b""),
+    (b"content-disposition", b""),
+    (b"content-encoding", b""),
+    (b"content-language", b""),
+    (b"content-length", b""),
+    (b"content-location", b""),
+    (b"content-range", b""),
+    (b"content-type", b""),
+    (b"cookie", b""),
+    (b"date", b""),
+    (b"etag", b""),
+    (b"expect", b""),
+    (b"expires", b""),
+    (b"from", b""),
+    (b"host", b""),
+    (b"if-match", b""),
+    (b"if-modified-since", b""),
+    (b"if-none-match", b""),
+    (b"if-range", b""),
+    (b"if-unmodified-since", b""),
+    (b"last-modified", b""),
+    (b"link", b""),
+    (b"location", b""),
+    (b"max-forwards", b""),
+    (b"proxy-authenticate", b""),
+    (b"proxy-authorization", b""),
+    (b"range", b""),
+    (b"referer", b""),
+    (b"refresh", b""),
+    (b"retry-after", b""),
+    (b"server", b""),
+    (b"set-cookie", b""),
+    (b"strict-transport-security", b""),
+    (b"transfer-encoding", b""),
+    (b"user-agent", b""),
+    (b"vary", b""),
+    (b"via", b""),
+    (b"www-authenticate", b"")
 ];
 
 pub struct StaticTable {}
 
 
 impl StaticTable {
-    fn get(index: usize) -> Option<&'static HeaderField> {
+    pub fn get(index: usize) -> Option<&'static HeaderField> {
         PREDEFINED_HEADERS.get(index)
     }
     
-    fn count() -> usize {
+    pub fn count() -> usize {
         PREDEFINED_HEADERS.len()
     }
 }
