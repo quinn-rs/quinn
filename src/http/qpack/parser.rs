@@ -8,8 +8,11 @@ use bytes::Buf;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    MissingSomeBytesForInteger,
-    MissingSomeBytesForString
+    NoByteForIntegerLength,
+    TooShortBufferForInteger, // missing
+    NoByteForStringLength,
+    TooShortBufferForString(u32), // missing
+    InvalidStringPrefix
 }
 
 
@@ -31,18 +34,18 @@ impl<'a> Parser<'a> {
 
     pub fn integer(&mut self, prefix: u8) -> Result<u32, Error> {
         let byte = self.next_byte()
-            .ok_or(Error::MissingSomeBytesForInteger)?;
+            .ok_or(Error::NoByteForIntegerLength)?;
         self.integer_from(prefix, byte)
     }
-    
+
     pub fn integer_from(&mut self, prefix: u8, byte: u8) -> Result<u32, Error> {
         let byte = byte as u16;
         let prefix_byte = 2u16.pow(prefix as u32) - 1;
-        
-        if prefix_byte != byte { 
+
+        if prefix_byte & byte != prefix_byte {
             Ok((byte & prefix_byte) as u32)
-        } else { 
-            self.var_len_integer(prefix) 
+        } else {
+            self.var_len_integer(prefix)
         }
     }
 
@@ -52,7 +55,7 @@ impl<'a> Parser<'a> {
         let mut count = 0u32;
         loop {
             let byte = self.next_byte()
-                .ok_or(Error::MissingSomeBytesForInteger)?;
+                .ok_or(Error::TooShortBufferForInteger)?;
             value += (byte & 127u8) as u32 * 2u32.pow(count);
             count += 7;
             if byte & 128u8 != 128u8 { break; }
@@ -60,20 +63,24 @@ impl<'a> Parser<'a> {
 
         Ok(value)
     }
-    
+
     pub fn string(&mut self, prefix: u8) -> Result<Vec<u8>, Error> {
         let byte = self.next_byte()
-            .ok_or(Error::MissingSomeBytesForString)?;
+            .ok_or(Error::NoByteForStringLength)?;
         self.string_from(prefix, byte)
     }
-    
-    pub fn string_from(&mut self, _prefix: u8, byte: u8) -> Result<Vec<u8>, Error> {
-        // TODO actually use prefix
+
+    pub fn string_from(&mut self, prefix: u8, byte: u8) -> Result<Vec<u8>, Error> {
         let _huffman_encoded = byte & 128u8 == 128u8;
 
-        let str_len = self.integer_from(7, byte)? as usize;
+        if prefix <= 1 {
+            return Err(Error::InvalidStringPrefix);
+        }
+
+        let str_len = self.integer_from(prefix - 1, byte)? as usize;
         if self.buf.remaining() < str_len {
-            return Err(Error::MissingSomeBytesForString);
+            let delta = str_len - self.buf.remaining();
+            return Err(Error::TooShortBufferForString(delta as u32));
         }
 
         let mut str_bytes = Vec::new();
@@ -91,11 +98,11 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
 
-    
+
     /**
      * https://tools.ietf.org/html/rfc7541
      * 5.1.  Integer Representation
-     * 
+     *
      * https://tools.ietf.org/html/rfc7541
      * C.1.1.  Example 1: Encoding 10 Using a 5-Bit Prefix
      */
@@ -103,18 +110,18 @@ mod tests {
     fn test_read_integer_fit_in_prefix() {
         let bytes: [u8; 1] = [ 10u8 ];
         let value = 10;
-        
+
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer(7);
-        
+
         assert_eq!(res, Ok(value));
     }
 
     /**
      * https://tools.ietf.org/html/rfc7541
      * 5.1.  Integer Representation
-     * 
+     *
      * https://tools.ietf.org/html/rfc7541
      * C.1.2.  Example 2: Encoding 1337 Using a 5-Bit Prefix
      */
@@ -122,54 +129,54 @@ mod tests {
     fn test_read_integer_too_large_for_prefix() {
         let bytes: [u8; 3] = [ 31, 154, 10 ];
         let value = 1337;
-        
+
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer(5);
-        
+
         assert_eq!(res, Ok(value));
     }
 
     /**
      * https://tools.ietf.org/html/rfc7541
      * 5.1.  Integer Representation
-     * 
+     *
      * https://tools.ietf.org/html/rfc7541
      * C.1.2.  Example 2: Encoding 1337 Using a 5-Bit Prefix
      */
     #[test]
     fn test_read_invalid_var_len_integer() {
         let bytes: [u8; 2] = [ 3, 128 ];
-        
+
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer(2);
-        
-        assert_eq!(res, Err(Error::MissingSomeBytesForInteger));
+
+        assert_eq!(res, Err(Error::TooShortBufferForInteger));
     }
-    
+
     #[test]
     fn test_preprefix_content_is_ditched_when_integer_fit_in_prefix() {
         let bytes: [u8; 1] = [ 128 | 57 ];
         let value = 57;
-        
+
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer(7);
-        
+
         assert_eq!(res, Ok(value));
     }
-    
+
     #[test]
     fn test_read_integer_with_ahead_byte() {
         let bytes: [u8; 1] = [ 26 ];
         let first_byte = 31;
         let value = 57;
-        
+
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer_from(5, first_byte);
-        
+
         assert_eq!(res, Ok(value));
     }
 
@@ -179,22 +186,68 @@ mod tests {
      */
     #[test]
     fn test_read_ascii_string() {
-        let text = "testing string is not fun";
-        assert!(text.len() < 127); // just to make sure size fit in prefix
+        let text = "Testing ascii";
+        let bytes: [u8; 14] = [
+            // not huffman, size
+            13,
+            // bytes
+            'T' as u8,
+            'e' as u8,
+            's' as u8,
+            't' as u8,
+            'i' as u8,
+            'n' as u8,
+            'g' as u8,
+            ' ' as u8,
+            'a' as u8,
+            's' as u8,
+            'c' as u8,
+            'i' as u8,
+            'i' as u8
+        ];
 
-        let text_bytes = Vec::from(text);
-        
-        let mut bytes = Vec::new();
-        bytes.push(text.len() as u8);
-        bytes.extend(text_bytes.clone());
-        
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(0);
-        
-        let text_bytes = Vec::from(text);
-        assert_eq!(res, Ok(text_bytes));
+        let res = parser.string(8);
+
+        assert_eq!(res, Ok(Vec::from(text)));
     }
-    
+
+    /**
+     * https://tools.ietf.org/html/rfc7541
+     * 5.2.  String Literal Representation
+     */
+    #[test]
+    fn test_read_empty_string() {
+        let bytes: [u8; 1] = [
+            0 | 0 // not huffman, size
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.string(8);
+
+        assert_eq!(res, Ok(Vec::new()));
+    }
+
+    /**
+     * https://tools.ietf.org/html/rfc7541
+     * 5.2.  String Literal Representation
+     */
+    #[test]
+    fn test_read_invalid_string() {
+        let bytes: [u8; 2] = [
+            0 | 15, // not huffman, size
+            // bytes (not enough)
+            'a' as u8
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.string(8);
+
+        assert_eq!(res, Err(Error::TooShortBufferForString(14)));
+    }
+
 
 }
