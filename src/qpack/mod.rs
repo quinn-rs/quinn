@@ -10,3 +10,5 @@ use self::dyn_table::DynamicTable;
 
 pub mod static_table;
 use self::static_table::StaticTable;
+
+pub mod parser;
