@@ -8,7 +8,8 @@ use bytes::Buf;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    MissingSomeBytesForInteger
+    MissingSomeBytesForInteger,
+    MissingSomeBytesForString
 }
 
 
@@ -34,8 +35,7 @@ impl<'a> Parser<'a> {
         self.integer_from(prefix, byte)
     }
     
-    pub fn integer_from(&mut self, prefix: u8, byte: u8) 
-        -> Result<u32, Error> {
+    pub fn integer_from(&mut self, prefix: u8, byte: u8) -> Result<u32, Error> {
         let byte = byte as u16;
         let prefix_byte = 2u16.pow(prefix as u32) - 1;
         
@@ -59,6 +59,25 @@ impl<'a> Parser<'a> {
         }
 
         Ok(value)
+    }
+    
+    pub fn string(&mut self, prefix: u8) -> Result<Vec<u8>, Error> {
+        let byte = self.next_byte()
+            .ok_or(Error::MissingSomeBytesForString)?;
+        self.string_from(prefix, byte)
+    }
+    
+    pub fn string_from(&mut self, _prefix: u8, byte: u8) -> Result<Vec<u8>, Error> {
+        let _huffman_encoded = byte & 128u8 == 128u8;
+
+        let str_len = self.integer_from(7, byte)? as usize;
+        let str_bytes = self.buf.take(str_len);
+        if str_bytes.limit() != str_len {
+            Err(Error::MissingSomeBytesForString)
+        } else {
+            // TODO decode huffman code
+            Ok(Vec::from(str_bytes.bytes()))
+        }
     }
 
 }
@@ -150,5 +169,28 @@ mod tests {
         assert_eq!(res, Ok(value));
     }
 
+    /**
+     * https://tools.ietf.org/html/rfc7541
+     * 5.2.  String Literal Representation
+     */
+    #[test]
+    fn test_read_ascii_string() {
+        let text = "testing string is not fun";
+        assert!(text.len() < 127);
+
+        let text_bytes = Vec::from(text);
+        
+        let mut bytes = Vec::new();
+        bytes.push(text.len() as u8);
+        bytes.extend(text_bytes.clone());
+        
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.string(0);
+        
+        let text_bytes = Vec::from(text);
+        assert_eq!(res, Ok(text_bytes));
+    }
+    
 
 }
