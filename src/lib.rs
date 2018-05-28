@@ -12,6 +12,7 @@ extern crate rustls;
 extern crate tokio_udp;
 extern crate webpki;
 extern crate webpki_roots;
+extern crate bit_field;
 
 pub use client::Client;
 pub use server::Server;

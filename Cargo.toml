@@ -20,6 +20,7 @@ rand = "0.5"
 ring = "0.13.0-alpha"
 webpki = "0.18.0-alpha"
 webpki-roots = "0.14"
+bit_field = "0.9.0"
 
 [dependencies.rustls]
 git = "https://github.com/ctz/rustls"
