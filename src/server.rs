@@ -43,6 +43,51 @@ impl Server {
     pub fn run(&mut self) -> QuicResult<()> {
         self.wait()
     }
+
+    fn received(&mut self, addr: SocketAddr, len: usize) -> QuicResult<()> {
+        let connections = &mut self.connections;
+        let packet = &mut self.in_buf[..len];
+
+        let (dst_cid, ptype) = {
+            let partial = Packet::start_decode(packet)?;
+            debug!("incoming packet: {:?} {:?}", addr, partial.header);
+            (partial.dst_cid(), partial.header.ptype())
+        };
+
+        let cid = if ptype == Some(LongType::Initial) {
+            let mut state = ConnectionState::new(
+                tls::server_session(&self.tls_config, &ServerTransportParameters::default()),
+                Some(Secret::Handshake(dst_cid)),
+            );
+
+            let cid = state.pick_unused_cid(|cid| connections.contains_key(&cid));
+            let (recv_tx, recv_rx) = mpsc::channel(5);
+            tokio::executor::current_thread::spawn(
+                Box::new(Connection::new(
+                    addr,
+                    state,
+                    self.send_queue.0.clone(),
+                    recv_rx,
+                )).map_err(|e| {
+                    error!("error spawning connection: {:?}", e);
+                }),
+            );
+            connections.insert(cid, recv_tx);
+            cid
+        } else {
+            dst_cid
+        };
+
+        match connections.entry(cid) {
+            Entry::Occupied(mut inner) => {
+                let mut sink = inner.get_mut();
+                forward_packet(sink, packet.to_vec())?;
+            }
+            Entry::Vacant(_) => debug!("connection ID {:?} unknown", cid),
+        }
+
+        Ok(())
+    }
 }
 
 impl Future for Server {
@@ -56,49 +101,7 @@ impl Future for Server {
             match self.socket.poll_recv_from(&mut self.in_buf) {
                 Ok(Async::Ready((len, addr))) => {
                     waiting = false;
-                    let connections = &mut self.connections;
-
-                    let (dst_cid, ptype) = {
-                        let partial = Packet::start_decode(&mut self.in_buf[..len])?;
-                        debug!("incoming packet: {:?} {:?}", addr, partial.header);
-                        (partial.dst_cid(), partial.header.ptype())
-                    };
-
-                    let cid = if ptype == Some(LongType::Initial) {
-                        let mut state = ConnectionState::new(
-                            tls::server_session(
-                                &self.tls_config,
-                                &ServerTransportParameters::default(),
-                            ),
-                            Some(Secret::Handshake(dst_cid)),
-                        );
-
-                        let cid = state.pick_unused_cid(|cid| connections.contains_key(&cid));
-                        let (recv_tx, recv_rx) = mpsc::channel(5);
-                        tokio::executor::current_thread::spawn(
-                            Box::new(Connection::new(
-                                addr,
-                                state,
-                                self.send_queue.0.clone(),
-                                recv_rx,
-                            )).map_err(|e| {
-                                error!("error spawning connection: {:?}", e);
-                            }),
-                        );
-                        connections.insert(cid, recv_tx);
-                        cid
-                    } else {
-                        dst_cid
-                    };
-
-                    let msg = self.in_buf[..len].to_vec();
-                    match connections.entry(cid) {
-                        Entry::Occupied(mut inner) => {
-                            let mut sink = inner.get_mut();
-                            forward_packet(sink, msg)?;
-                        }
-                        Entry::Vacant(_) => debug!("connection ID {:?} unknown", cid),
-                    }
+                    self.received(addr, len)?;
                 }
                 Ok(Async::NotReady) => {}
                 Err(e) => error!("Server RECV ERROR: {:?}", e),
