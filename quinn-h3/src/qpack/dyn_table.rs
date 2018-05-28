@@ -100,11 +100,11 @@ impl DynamicTable {
         self.curr_mem_size
     }
 
-    fn get(&self, index: usize) -> Option<&HeaderField> {
+    pub fn get(&self, index: usize) -> Option<&HeaderField> {
         self.fields.get(index)
     }
     
-    fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.fields.len()
     }
 }
