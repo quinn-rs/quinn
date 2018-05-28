@@ -94,10 +94,18 @@ impl Decoder {
         Ok(())
     }
 
-    fn read_name_insert<T: Buf>(&mut self, _byte: u8, _buf: &mut T)
+    fn read_name_insert<T: Buf>(&mut self, byte: u8, buf: &mut T)
         -> Result<(), Error>
     {
-        unimplemented!("byte: {}", _byte);
+        let mut parser = Parser::new(buf);
+        let name = parser.string_from(7, byte)
+            .map_err(|_| Error::InvalidStringPrimitive)?;
+        let value = parser.string(8)
+            .map_err(|_| Error::InvalidStringPrimitive)?;
+
+        self.table.put_field(HeaderField::new(name, value));
+
+        Ok(())
     }
 
     fn read_table_size_update<T: Buf>(&mut self, byte: u8, buf: &mut T)
@@ -245,6 +253,45 @@ mod tests {
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed(&mut cursor);
         assert_eq!(res, Err(Error::BadNameIndexOnDynamicTable));
+    }
+    
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
+     * 3.3.2.  Insert Without Name Reference
+     */
+    #[test]
+    fn test_insert_field_without_name_ref() {
+        let key = "key";
+        let value = "value";
+        
+        let bytes: [u8; 11] = [
+            // size
+            10,
+            // code, not huffman, string size
+            64 | 0 | 3,
+            // bytes
+            'k' as u8,
+            'e' as u8,
+            'y' as u8,
+            // not huffman, string size
+            0 | 5,
+            // bytes
+            'v' as u8,
+            'a' as u8,
+            'l' as u8,
+            'u' as u8,
+            'e' as u8
+        ];
+
+        let mut decoder = Decoder::new();
+        let expected_field = HeaderField::new(key, value);
+
+        let mut cursor = Cursor::new(&bytes);
+        let res = decoder.feed(&mut cursor);
+        assert_eq!(res, Ok(()));
+
+        let field = decoder.get_rel_field(0);
+        assert_eq!(field, Some(&expected_field));
     }
 
     /**
