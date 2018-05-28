@@ -2,88 +2,60 @@
 // TODO remove allow dead code
 #![allow(dead_code)]
 
-use bit_field::BitField;
-use bytes::{Bytes, Buf, IntoBuf};
-
-
-#[derive(Debug, PartialEq)]
-pub enum Value {
-    IndexHeaderField(u32)
-}
+use std::io::Cursor;
+use bytes::Buf;
 
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    NoMoreInput,
-    InvalidIndexHeaderField
+    MissingSomeBytesForInteger
 }
 
 
-pub struct Parser {
-    buffer: Vec<u8>,
-    next_offset: usize
+pub struct Parser<'a> {
+    buf: &'a mut Buf
 }
 
 
-impl Parser {
+impl<'a> Parser<'a> {
 
-    pub fn new<'a>(bytes: &'a [u8]) -> Parser {
-        Parser {
-            buffer: Vec::from(bytes),
-            next_offset: 0
+    pub fn new<T: Buf>(buf: &'a mut T) -> Parser<'a> {
+        Parser { buf }
+    }
+
+    fn next_byte(&mut self) -> Option<u8> {
+        if self.buf.has_remaining() { Some(self.buf.get_u8()) }
+        else { None }
+    }
+
+    pub fn integer(&mut self, prefix: u8) -> Result<u32, Error> {
+        let byte = self.next_byte()
+            .ok_or(Error::MissingSomeBytesForInteger)?;
+        self.integer_from(prefix, byte)
+    }
+    
+    pub fn integer_from(&mut self, prefix: u8, byte: u8) 
+        -> Result<u32, Error> {
+        let byte = byte as u16;
+        let prefix_byte = 2u16.pow(prefix as u32) - 1;
+        
+        if prefix_byte != byte { 
+            Ok((byte & prefix_byte) as u32)
+        } else { 
+            self.var_len_integer(prefix) 
         }
     }
 
-    pub fn next(&mut self) -> Result<Value, Error> {
-        let (msb, rest) = self.next_bit_byte()?;
-        match msb.into() {
-            true => self.read_index_header_field(rest),
-            false => unimplemented!()
-        }
-    }
-
-    fn next_byte(&mut self) -> Result<u8, Error> {
-        if self.next_offset >= self.buffer.len() {
-            return Err(Error::NoMoreInput);
-        }
-
-        let byte = self.buffer[self.next_offset];
-        self.next_offset += 1;
-        Ok(byte)
-    }
-
-
-    fn next_bit_byte(&mut self) -> Result<(bool, u8), Error> {
-        let mut byte = self.next_byte()?;
-
-        let msb = byte.get_bit(7);
-        byte.set_bit(7, false);
-
-        Ok((msb, byte))
-    }
-
-    fn read_index_header_field(&mut self, byte: u8) -> Result<Value, Error> {
-        match byte {
-            0 => Err(Error::InvalidIndexHeaderField),
-            x => Ok(Value::IndexHeaderField(self.read_integer(7, x)?))
-        }
-    }
-
-    fn read_integer(&mut self, prefix: u32, byte: u8) -> Result<u32, Error> {
-        let prefix_byte = 2u8.pow(prefix) - 1;
-        if prefix_byte != byte { Ok(byte.into()) }
-        else { self.read_var_len_integer(prefix) }
-    }
-
-    fn read_var_len_integer(&mut self, prefix: u32) -> Result<u32, Error> {
-        let mut value = 2u32.pow(prefix) - 1;
+    fn var_len_integer(&mut self, prefix: u8) -> Result<u32, Error> {
+        let mut value = 2u32.pow(prefix as u32) - 1;
 
         let mut count = 0u32;
         loop {
-            let (msb, rest) = self.next_bit_byte()?;
-            value += rest as u32 * 2u32.pow(count);
+            let byte = self.next_byte()
+                .ok_or(Error::MissingSomeBytesForInteger)?;
+            value += (byte & 127u8) as u32 * 2u32.pow(count);
             count += 7;
-            if !msb { break; }
+            if byte & 128u8 != 128u8 { break; }
         }
 
         Ok(value)
@@ -97,64 +69,6 @@ mod tests {
     use super::*;
 
     
-    macro_rules! bit_to_byte {
-        ( $a:expr, $b:expr, $c:expr, $d:expr, 
-          $e:expr, $f:expr, $g:expr, $h:expr ) => { {
-            let mut v = 0u8;
-            v.set_bit(7, $a == 1)
-                .set_bit(6, $b == 1)
-                .set_bit(5, $c == 1)
-                .set_bit(4, $d == 1)
-                .set_bit(3, $e == 1)
-                .set_bit(2, $f == 1)
-                .set_bit(1, $g == 1)
-                .set_bit(0, $h == 1);
-                v
-        } }
-    }
-
-
-    #[test]
-    fn test_reader_has_no_more_data() {
-        let bytes: [u8; 0] = [];
-        let mut parser = Parser::new(&bytes);
-        let res = parser.next();
-        assert_eq!(res, Err(Error::NoMoreInput));
-    }
-
-    /**
-     * https://tools.ietf.org/html/rfc7541
-     * 6.1.  Indexed Header Field Representation
-     */
-    #[test]
-    fn test_read_indexed_header_field() {
-        let bytes: [u8; 1] = [
-            bit_to_byte!(1, 1, 0, 0, 0, 0, 1, 1)
-        ];
-        let index = 67;
-        
-        let mut parser = Parser::new(&bytes);
-        let res = parser.next();
-        
-        assert_eq!(res, Ok(Value::IndexHeaderField(index as u32)));
-    }
-
-    /**
-     * https://tools.ietf.org/html/rfc7541
-     * 6.1.  Indexed Header Field Representation
-     */
-    #[test]
-    fn test_read_indexed_header_field_invalid_value() {
-        let bytes: [u8; 1] = [
-            bit_to_byte!(1, 0, 0, 0, 0, 0, 0, 0)
-        ];
-        
-        let mut parser = Parser::new(&bytes);
-        let res = parser.next();
-        
-        assert_eq!(res, Err(Error::InvalidIndexHeaderField));
-    }
-    
     /**
      * https://tools.ietf.org/html/rfc7541
      * 5.1.  Integer Representation
@@ -164,15 +78,14 @@ mod tests {
      */
     #[test]
     fn test_read_integer_fit_in_prefix() {
-        let bytes: [u8; 1] = [
-            bit_to_byte!(1, 0, 0, 0, 1, 0, 1, 0)
-        ];
+        let bytes: [u8; 1] = [ 10u8 ];
         let value = 10;
         
-        let mut parser = Parser::new(&bytes);
-        let res = parser.next();
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.integer(7);
         
-        assert_eq!(res, Ok(Value::IndexHeaderField(value)));
+        assert_eq!(res, Ok(value));
     }
 
     /**
@@ -184,17 +97,57 @@ mod tests {
      */
     #[test]
     fn test_read_integer_too_large_for_prefix() {
-        let bytes: [u8; 3] = [
-            bit_to_byte!(1, 1, 1, 1, 1, 1, 1, 1),
-            bit_to_byte!(1, 0, 0, 1, 1, 0, 1, 0),
-            bit_to_byte!(0, 0, 0, 0, 1, 0, 1, 0)
-        ];
-        let value = 1337 + 96;
+        let bytes: [u8; 3] = [ 31, 154, 10 ];
+        let value = 1337;
         
-        let mut parser = Parser::new(&bytes);
-        let res = parser.next();
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.integer(5);
         
-        assert_eq!(res, Ok(Value::IndexHeaderField(value)));
+        assert_eq!(res, Ok(value));
+    }
+
+    /**
+     * https://tools.ietf.org/html/rfc7541
+     * 5.1.  Integer Representation
+     * 
+     * https://tools.ietf.org/html/rfc7541
+     * C.1.2.  Example 2: Encoding 1337 Using a 5-Bit Prefix
+     */
+    #[test]
+    fn test_read_invalid_var_len_integer() {
+        let bytes: [u8; 2] = [ 3, 128 ];
+        
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.integer(2);
+        
+        assert_eq!(res, Err(Error::MissingSomeBytesForInteger));
+    }
+    
+    #[test]
+    fn test_preprefix_content_is_ditched_when_integer_fit_in_prefix() {
+        let bytes: [u8; 1] = [ 128 | 57 ];
+        let value = 57;
+        
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.integer(7);
+        
+        assert_eq!(res, Ok(value));
+    }
+    
+    #[test]
+    fn test_read_integer_with_ahead_byte() {
+        let bytes: [u8; 1] = [ 26 ];
+        let first_byte = 31;
+        let value = 57;
+        
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.integer_from(5, first_byte);
+        
+        assert_eq!(res, Ok(value));
     }
 
 
