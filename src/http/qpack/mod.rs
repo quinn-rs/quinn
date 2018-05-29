@@ -23,6 +23,7 @@ pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 
 pub mod table;
 pub mod static_table;
+pub mod iocontext;
 pub mod parser;
 pub mod dump;
 pub mod vas;

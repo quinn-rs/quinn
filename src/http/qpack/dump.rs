@@ -4,6 +4,8 @@
 
 use std::io::{Write, Cursor, Result, Error, ErrorKind};
 
+use super::iocontext::StartingByte;
+
 
 
 pub struct Dump<'a> {
@@ -22,25 +24,22 @@ impl<'a> Dump<'a> {
         self.buf.write(&bytes).map(|_| ())
     }
 
-    pub fn integer(&mut self, prefix: usize, value: usize) -> Result<()> {
-        if prefix == 0 || prefix > 7 {
-            return Err(Error::new(ErrorKind::Other, "bad prefix"));
-        }
-
-        let prefix_mask = 2usize.pow(prefix as u32) - 1;
-
-        if value < prefix_mask {
+    pub fn integer(&mut self, value: usize, starter: StartingByte) 
+        -> Result<()> 
+    {
+        if value < starter.mask {
             self.put_byte(value as u8)
         } else {
-            self.var_len_integer(prefix_mask, value)
+            self.var_len_integer(value, starter)
         }
     }
 
-    fn var_len_integer(&mut self, prefix_mask: usize, value: usize) 
+    fn var_len_integer(&mut self, value: usize, starter: StartingByte) 
         -> Result<()> 
     {
-        let _ = self.put_byte(prefix_mask as u8)?;
-        let mut value = value - prefix_mask;
+        let first_byte = starter.byte.unwrap_or(0) | starter.mask;
+        let _ = self.put_byte(first_byte as u8)?;
+        let mut value = value - starter.mask;
 
         while value >= 128 {
             let rest = value % 128;
@@ -74,7 +73,11 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            assert!(dump.integer(prefix, value).is_ok());
+            assert!(dump.integer(
+                    value, 
+                    StartingByte::prefix(prefix)
+                    .expect("valid starting byte")
+                    ).is_ok());
         }
 
         assert_eq!(bytes.as_slice(), expected);
@@ -96,26 +99,14 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            assert!(dump.integer(prefix, value).is_ok());
+            assert!(dump.integer(
+                    value, 
+                    StartingByte::prefix(prefix)
+                    .expect("valid starting byte")
+                    ).is_ok());
         }
 
         assert_eq!(bytes.as_slice(), expected);
-    }
-    
-    fn test_integer_null_prefix() {
-        let any_value = 10000;
-        let mut bytes = Vec::new();
-        let mut cursor = Cursor::new(&mut bytes);
-        let mut dump = Dump::new(&mut cursor);
-        assert!(dump.integer(0, any_value).is_err());
-    }
-    
-    fn test_integer_bad_prefix() {
-        let any_value = 10000;
-        let mut bytes = Vec::new();
-        let mut cursor = Cursor::new(&mut bytes);
-        let mut dump = Dump::new(&mut cursor);
-        assert!(dump.integer(15, any_value).is_err());
     }
 
 }

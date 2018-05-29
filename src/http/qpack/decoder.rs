@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use bytes::Buf;
 
+use super::iocontext::StartingByte;
 use super::parser::Parser;
 use super::table::{HeaderField, DynamicTable};
 use super::static_table::StaticTable;
@@ -69,7 +70,8 @@ impl Decoder {
     }
 
     pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        let block_len = Parser::new(buf).integer(8)
+        let block_len = Parser::new(buf)
+            .integer(StartingByte::prefix(8).expect("valid starting byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         if block_len as usize != buf.remaining() {
@@ -77,11 +79,13 @@ impl Decoder {
         }
 
         while buf.has_remaining() {
-            match buf.get_u8() {
-                x if x & 128u8 == 128u8
+            match buf.get_u8() as usize {
+                x if x & 128usize == 128usize
                     => self.read_name_insert_by_ref(x, buf)?,
-                x if x & 64u8 == 64u8 => self.read_name_insert(x, buf)?,
-                x if x & 32u8 == 32u8 => self.read_table_size_update(x, buf)?,
+                x if x & 64usize == 64usize 
+                    => self.read_name_insert(x, buf)?,
+                x if x & 32usize == 32usize 
+                    => self.read_table_size_update(x, buf)?,
                 x => self.read_duplicate_entry(x, buf)?
             }
         }
@@ -89,15 +93,19 @@ impl Decoder {
         Ok(())
     }
 
-    fn read_name_insert_by_ref<T: Buf>(&mut self, byte: u8, buf: &mut T)
+    fn read_name_insert_by_ref<T: Buf>(&mut self, byte: usize, buf: &mut T)
         -> Result<(), Error>
     {
-        let is_static_table = byte & 64u8 == 64u8;
+        let is_static_table = byte & 64usize == 64usize;
 
         let mut parser = Parser::new(buf);
-        let name_index = parser.integer_from(6, byte)
+        let name_index = parser
+            .integer(StartingByte::valued(6, byte)
+                     .expect("valid starting byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)? as usize;
-        let value = parser.string(8)
+        let value = parser
+            .string(StartingByte::prefix(8)
+                    .expect("valid starting byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         let name =
@@ -119,13 +127,17 @@ impl Decoder {
         Ok(())
     }
 
-    fn read_name_insert<T: Buf>(&mut self, byte: u8, buf: &mut T)
+    fn read_name_insert<T: Buf>(&mut self, byte: usize, buf: &mut T)
         -> Result<(), Error>
     {
         let mut parser = Parser::new(buf);
-        let name = parser.string_from(7, byte)
+        let name = parser
+            .string(StartingByte::valued(7, byte)
+                    .expect("valid starting byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
-        let value = parser.string(8)
+        let value = parser
+            .string(StartingByte::prefix(8)
+                    .expect("valid starting byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         self.put_field(HeaderField::new(name, value));
@@ -133,19 +145,23 @@ impl Decoder {
         Ok(())
     }
 
-    fn read_table_size_update<T: Buf>(&mut self, byte: u8, buf: &mut T)
+    fn read_table_size_update<T: Buf>(&mut self, byte: usize, buf: &mut T)
         -> Result<(), Error>
     {
-        let size = Parser::new(buf).integer_from(5, byte)
+        let size = Parser::new(buf)
+            .integer(StartingByte::valued(5, byte)
+                     .expect("valid starting byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         self.resize_table(size as usize)
     }
 
-    fn read_duplicate_entry<T: Buf>(&mut self, byte: u8, buf: &mut T)
+    fn read_duplicate_entry<T: Buf>(&mut self, byte: usize, buf: &mut T)
         -> Result<(), Error>
     {
-        let dup_index = Parser::new(buf).integer_from(5, byte)
+        let dup_index = Parser::new(buf)
+            .integer(StartingByte::valued(5, byte)
+                     .expect("valid starting byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         let field = self.relative_field(dup_index as usize)

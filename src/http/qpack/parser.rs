@@ -5,6 +5,8 @@
 use std::io::Cursor;
 use bytes::Buf;
 
+use super::iocontext::StartingByte;
+
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -27,37 +29,35 @@ impl<'a> Parser<'a> {
         Parser { buf }
     }
 
-    fn next_byte(&mut self) -> Option<u8> {
-        if self.buf.has_remaining() { Some(self.buf.get_u8()) }
+    fn next_byte(&mut self) -> Option<usize> {
+        if self.buf.has_remaining() { Some(self.buf.get_u8() as usize) }
         else { None }
     }
 
-    pub fn integer(&mut self, prefix: usize) -> Result<usize, Error> {
-        let byte = self.next_byte()
+    pub fn integer(&mut self, starter: StartingByte) 
+        -> Result<usize, Error> 
+    {
+        let byte = 
+            starter.byte
+            .or_else(|| self.next_byte())
             .ok_or(Error::NoByteForIntegerLength)?;
-        self.integer_from(prefix, byte)
-    }
-
-    pub fn integer_from(&mut self, prefix: usize, byte: u8) 
-        -> Result<usize, Error> {
-        let byte = byte as usize;
-        let prefix_byte = 2usize.pow(prefix as u32) - 1;
-
-        if prefix_byte & byte != prefix_byte {
-            Ok(byte & prefix_byte)
+        
+        if starter.mask & byte != starter.mask {
+            Ok(byte & starter.mask)
         } else {
-            self.var_len_integer(prefix)
+            self.var_len_integer(starter)
         }
     }
 
-    fn var_len_integer(&mut self, prefix: usize) -> Result<usize, Error> {
-        let mut value = 2usize.pow(prefix as u32) - 1;
+    fn var_len_integer(&mut self, starter: StartingByte) 
+        -> Result<usize, Error> 
+    {
+        let mut value = starter.mask;
 
         let mut count = 0usize;
         loop {
             let byte = self.next_byte()
-                .ok_or(Error::TooShortBufferForInteger)?
-                as usize;
+                .ok_or(Error::TooShortBufferForInteger)?;
             value += (byte & 127) * 2usize.pow(count as u32);
             count += 7;
             if byte & 128 != 128{ break; }
@@ -66,22 +66,24 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    pub fn string(&mut self, prefix: usize) -> Result<Vec<u8>, Error> {
-        let byte = self.next_byte()
-            .ok_or(Error::NoByteForStringLength)?;
-        self.string_from(prefix, byte)
-    }
-
-    pub fn string_from(&mut self, prefix: usize, byte: u8) 
-        -> Result<Vec<u8>, Error> {
+    pub fn string(&mut self, starter: StartingByte) 
+        -> Result<Vec<u8>, Error> 
+    {
+        let byte = 
+            starter.byte
+            .or_else(|| self.next_byte())
+            .ok_or(Error::NoByteForIntegerLength)?;
+        
         // TODO huffman code
-        let _huffman_encoded = byte & 128u8 == 128u8;
+        let _huffman_encoded = byte & 128usize == 128usize;
 
-        if prefix <= 1 {
+        if starter.prefix <= 1 {
             return Err(Error::InvalidStringPrefix);
         }
 
-        let str_len = self.integer_from(prefix - 1, byte)? as usize;
+        let str_len = self.integer(
+            StartingByte::valued(starter.prefix - 1, byte)
+            .expect("valid starting byte"))? as usize;
         if self.buf.remaining() < str_len {
             let delta = str_len - self.buf.remaining();
             return Err(Error::TooShortBufferForString(delta as usize));
@@ -117,7 +119,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(7);
+        let res = parser.integer(StartingByte::prefix(7)
+                                 .expect("valid starting byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -136,7 +139,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(5);
+        let res = parser.integer(StartingByte::prefix(5)
+                                 .expect("valid starting byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -154,7 +158,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(2);
+        let res = parser.integer(StartingByte::prefix(2)
+                                 .expect("valid starting byte"));
 
         assert_eq!(res, Err(Error::TooShortBufferForInteger));
     }
@@ -166,7 +171,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(7);
+        let res = parser.integer(StartingByte::prefix(7)
+                                 .expect("valid starting byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -179,7 +185,9 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer_from(5, first_byte);
+        let res = parser.integer(
+            StartingByte::valued(5, first_byte)
+            .expect("valid starting byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -212,7 +220,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(8);
+        let res = parser.string(StartingByte::prefix(8)
+                                .expect("valid starting byte"));
 
         assert_eq!(res, Ok(Vec::from(text)));
     }
@@ -229,7 +238,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(8);
+        let res = parser.string(StartingByte::prefix(8)
+                                .expect("valid starting byte"));
 
         assert_eq!(res, Ok(Vec::new()));
     }
@@ -248,7 +258,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(8);
+        let res = parser.string(StartingByte::prefix(8)
+                                .expect("valid starting byte"));
 
         assert_eq!(res, Err(Error::TooShortBufferForString(14)));
     }
