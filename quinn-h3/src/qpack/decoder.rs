@@ -72,7 +72,7 @@ impl Decoder {
 
     pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
         let block_len = Parser::new(buf)
-            .integer(StarterByte::prefix(8).expect("valid starter byte"))
+            .integer(StarterByte::noprefix())
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         if block_len as usize != buf.remaining() {
@@ -105,8 +105,7 @@ impl Decoder {
                      .expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)? as usize;
         let value = parser
-            .string(StarterByte::prefix(8)
-                    .expect("valid starter byte"))
+            .string(StarterByte::noprefix())
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         let name =
@@ -137,8 +136,7 @@ impl Decoder {
                     .expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
         let value = parser
-            .string(StarterByte::prefix(8)
-                    .expect("valid starter byte"))
+            .string(StarterByte::noprefix())
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         self.put_field(HeaderField::new(name, value));

@@ -19,6 +19,10 @@ pub struct StarterByte {
 
 impl StarterByte {
 
+    pub fn noprefix() -> StarterByte {
+        StarterByte { prefix: 8, mask: 255, byte: None }
+    }
+
     pub fn prefix(prefix: usize) -> Result<StarterByte, Error> {
         Self::build(prefix, None)
     }

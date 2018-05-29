@@ -82,9 +82,7 @@ impl<'a> Dump<'a> {
             }
             
             let _ = self.put_byte(first_byte as u8)?;
-            let _ = self.integer(
-                input.len(),
-                StarterByte::prefix(8).expect("valid starter byte"))?;
+            let _ = self.integer(input.len(), StarterByte::noprefix())?;
         }
         
         self.buf.write(&input[..]).map(|_| ())
@@ -167,7 +165,7 @@ mod tests {
     #[test]
     fn test_write_ascii_string() {
         let text = b"Testing ascii";
-        let starter = StarterByte::prefix(8).expect("valid starter byte");
+        let starter = StarterByte::noprefix();
         let expected: [u8; 14] = [
             // not huffman, size
             0 | 13,
@@ -205,7 +203,7 @@ mod tests {
     #[test]
     fn test_write_empty_string() {
         let text = b"";
-        let starter = StarterByte::prefix(8).expect("valid starter byte");
+        let starter = StarterByte::noprefix();
         let expected: [u8; 1] = [
             0 | 0 // not huffman, size
         ];
