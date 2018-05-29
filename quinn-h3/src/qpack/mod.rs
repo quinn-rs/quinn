@@ -16,6 +16,11 @@
  *                        draft-ietf-quic-qpack-00
  */
 
+#[allow(dead_code)]
+pub const QPACK_VERSION: &'static str = "0.0.0~draft";
+#[allow(dead_code)]
+pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
+
 pub mod table;
 use self::table::HeaderField;
 
@@ -26,7 +31,5 @@ pub mod static_table;
 use self::static_table::StaticTable;
 
 pub mod parser;
-
-pub mod decoder;
-
 pub mod vas;
+pub mod decoder;
