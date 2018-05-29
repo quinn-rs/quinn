@@ -82,13 +82,14 @@ where
     }
 
     pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
-        let mut frames = vec![];
+        let mut payload = vec![];
         while let Some(frame) = self.streams.queued() {
-            frames.push(frame);
+            payload.push(frame);
         }
 
-        if !frames.is_empty() {
-            self.build_packet(frames)?
+        if !payload.is_empty() {
+            let header = self.build_header(&mut payload)?;
+            self.queue_packet(Packet { header, payload })?;
         }
         Ok(self.queue.front())
     }
@@ -130,7 +131,7 @@ where
         self.prev_secret = Some(old);
     }
 
-    fn build_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
+    fn build_header(&mut self, payload: &mut Vec<Frame>) -> QuicResult<Header> {
         let number = self.src_pn;
         self.src_pn += 1;
 
@@ -164,7 +165,7 @@ where
 
         let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
         debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        let header = match ptype {
+        Ok(match ptype {
             Some(ltype) => Header::Long {
                 ptype: ltype,
                 version: QUIC_VERSION,
@@ -179,9 +180,7 @@ where
                 dst_cid,
                 number,
             },
-        };
-
-        self.queue_packet(Packet { header, payload })
+        })
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
@@ -286,7 +285,8 @@ where
             _ => {}
         }
 
-        self.build_packet(payload)
+        let header = self.build_header(&mut payload)?;
+        self.queue_packet(Packet { header, payload })
     }
 
     fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<Option<StreamFrame>> {
@@ -363,7 +363,7 @@ impl ConnectionState<tls::ClientSession> {
         })?;
         stream.set_offset(handshake.len() as u64);
 
-        self.build_packet(vec![
+        let mut payload = vec![
             Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
@@ -371,7 +371,9 @@ impl ConnectionState<tls::ClientSession> {
                 len: Some(handshake.len() as u64),
                 data: handshake,
             }),
-        ])
+        ];
+        let header = self.build_header(&mut payload)?;
+        self.queue_packet(Packet { header, payload })
     }
 }
 
