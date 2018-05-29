@@ -12,6 +12,8 @@ extern crate rustls;
 extern crate tokio_udp;
 extern crate webpki;
 extern crate webpki_roots;
+#[cfg(test)] #[macro_use]
+extern crate proptest;
 
 pub use client::Client;
 pub use server::Server;
