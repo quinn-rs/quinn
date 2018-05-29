@@ -62,7 +62,7 @@ impl Decoder {
             .map_err(|_| Error::BadMaximumDynamicTableSize)
     }
 
-    pub fn feed<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
+    pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
         let block_len = Parser::new(buf).integer(8)
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
@@ -170,7 +170,7 @@ mod tests {
         ];
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
 
         assert_eq!(res, Err(Error::BadBufferLen));
     }
@@ -216,7 +216,7 @@ mod tests {
             text);
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
         let field = decoder.relative_field(0);
@@ -249,7 +249,7 @@ mod tests {
         ];
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Err(Error::BadNameIndexOnStaticTable));
     }
 
@@ -279,7 +279,7 @@ mod tests {
         ];
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Err(Error::BadNameIndexOnDynamicTable));
     }
 
@@ -317,7 +317,7 @@ mod tests {
         let expected_field = HeaderField::new(key, value);
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
         let field = decoder.relative_field(0);
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(decoder.table.count(), 2);
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
         assert_eq!(decoder.table.count(), 3);
@@ -367,7 +367,7 @@ mod tests {
         let expected_size = 25;
 
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed(&mut cursor);
+        let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
         let actual_max_size = decoder.table.max_mem_size();

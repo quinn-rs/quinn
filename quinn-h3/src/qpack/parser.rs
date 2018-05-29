@@ -9,9 +9,9 @@ use bytes::Buf;
 #[derive(Debug, PartialEq)]
 pub enum Error {
     NoByteForIntegerLength,
-    TooShortBufferForInteger, // missing
+    TooShortBufferForInteger,
     NoByteForStringLength,
-    TooShortBufferForString(u32), // missing
+    TooShortBufferForString(usize),
     InvalidStringPrefix
 }
 
@@ -32,33 +32,34 @@ impl<'a> Parser<'a> {
         else { None }
     }
 
-    pub fn integer(&mut self, prefix: u8) -> Result<u32, Error> {
+    pub fn integer(&mut self, prefix: u8) -> Result<usize, Error> {
         let byte = self.next_byte()
             .ok_or(Error::NoByteForIntegerLength)?;
         self.integer_from(prefix, byte)
     }
 
-    pub fn integer_from(&mut self, prefix: u8, byte: u8) -> Result<u32, Error> {
-        let byte = byte as u16;
-        let prefix_byte = 2u16.pow(prefix as u32) - 1;
+    pub fn integer_from(&mut self, prefix: u8, byte: u8) -> Result<usize, Error> {
+        let byte = byte as usize;
+        let prefix_byte = 2usize.pow(prefix as u32) - 1;
 
         if prefix_byte & byte != prefix_byte {
-            Ok((byte & prefix_byte) as u32)
+            Ok(byte & prefix_byte)
         } else {
             self.var_len_integer(prefix)
         }
     }
 
-    fn var_len_integer(&mut self, prefix: u8) -> Result<u32, Error> {
-        let mut value = 2u32.pow(prefix as u32) - 1;
+    fn var_len_integer(&mut self, prefix: u8) -> Result<usize, Error> {
+        let mut value = 2usize.pow(prefix as u32) - 1;
 
-        let mut count = 0u32;
+        let mut count = 0usize;
         loop {
             let byte = self.next_byte()
-                .ok_or(Error::TooShortBufferForInteger)?;
-            value += (byte & 127u8) as u32 * 2u32.pow(count);
+                .ok_or(Error::TooShortBufferForInteger)?
+                as usize;
+            value += (byte & 127) * 2usize.pow(count as u32);
             count += 7;
-            if byte & 128u8 != 128u8 { break; }
+            if byte & 128 != 128{ break; }
         }
 
         Ok(value)
@@ -80,7 +81,7 @@ impl<'a> Parser<'a> {
         let str_len = self.integer_from(prefix - 1, byte)? as usize;
         if self.buf.remaining() < str_len {
             let delta = str_len - self.buf.remaining();
-            return Err(Error::TooShortBufferForString(delta as u32));
+            return Err(Error::TooShortBufferForString(delta as usize));
         }
 
         let mut str_bytes = Vec::new();
