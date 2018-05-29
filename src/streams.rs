@@ -194,6 +194,14 @@ pub enum Dir {
 }
 
 impl Dir {
+    fn from_id(id: u64) -> Self {
+        if id & 2 == 2 {
+            Dir::Uni
+        } else {
+            Dir::Bidi
+        }
+    }
+
     fn to_bit(&self) -> u64 {
         match self {
             Dir::Bidi => 0,
