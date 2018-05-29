@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+xs 2460788859 706397335 1694821005 1406800176 # shrinks to ref count = 1
+xs 2025440535 3350353664 3939147093 133075357 # shrinks to ref count = 1
+xs 3430499501 2074173993 1680701940 3524423123 # shrinks to ref count = 2

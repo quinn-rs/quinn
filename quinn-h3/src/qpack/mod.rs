@@ -14,3 +14,5 @@ use self::static_table::StaticTable;
 pub mod parser;
 
 pub mod decoder;
+
+pub mod vas;
