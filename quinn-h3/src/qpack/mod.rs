@@ -31,5 +31,6 @@ pub mod static_table;
 use self::static_table::StaticTable;
 
 pub mod parser;
+pub mod dump;
 pub mod vas;
 pub mod decoder;
