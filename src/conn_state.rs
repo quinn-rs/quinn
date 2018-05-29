@@ -208,8 +208,8 @@ where
                 (dst_cid, number)
             } else {
                 return Err(QuicError::General(format!(
-                    "short header received in {:?} state",
-                    self.state
+                    "{:?} received short header in {:?} state",
+                    self.side, self.state
                 )));
             },
             Header::Negotiation { .. } => {
