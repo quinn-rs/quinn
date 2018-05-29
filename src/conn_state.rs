@@ -88,7 +88,7 @@ where
         }
 
         if !frames.is_empty() {
-            self.build_packet(None, frames)?
+            self.build_packet(frames)?
         }
         Ok(self.queue.front())
     }
@@ -130,17 +130,37 @@ where
         self.prev_secret = Some(old);
     }
 
-    fn build_packet(&mut self, ptype: Option<LongType>, mut payload: Vec<Frame>) -> QuicResult<()> {
+    fn build_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
         let number = self.src_pn;
         self.src_pn += 1;
 
         let mut payload_len = (payload.buf_len() + self.secret.tag_len()) as u64;
-        if ptype == Some(LongType::Initial) && payload_len < 1200 {
+        if self.state == State::Start && payload_len < 1200 {
             payload.push(Frame::Padding(PaddingFrame((1200 - payload_len) as usize)));
             payload_len = 1200;
-        } else if ptype == None {
-            debug_assert_eq!(self.state, State::Connected);
         }
+
+        let ptype = match self.state {
+            State::Connected => None,
+            State::Handshaking => Some(LongType::Handshake),
+            State::InitialSent => {
+                self.state = State::Handshaking;
+                Some(LongType::Handshake)
+            }
+            State::Start => {
+                if self.side == Side::Client {
+                    self.state = State::InitialSent;
+                    Some(LongType::Initial)
+                } else {
+                    self.state = State::Handshaking;
+                    Some(LongType::Handshake)
+                }
+            }
+            State::FinalHandshake => {
+                self.state = State::Connected;
+                Some(LongType::Handshake)
+            }
+        };
 
         let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
         debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
@@ -160,10 +180,6 @@ where
                 number,
             },
         };
-
-        if self.state == State::FinalHandshake {
-            self.state = State::Connected;
-        }
 
         self.queue_packet(Packet { header, payload })
     }
@@ -235,14 +251,12 @@ where
         ];
 
         let mut received_tls = false;
-        let mut wrote_handshake = false;
         for frame in &p.payload {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
                     received_tls = true;
                     if let Some(frame) = self.handle_tls(Some(f))? {
                         payload.push(Frame::Stream(frame));
-                        wrote_handshake = true;
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
@@ -264,23 +278,15 @@ where
         }
 
         match self.state {
-            State::Start | State::InitialSent => {
-                self.state = State::Handshaking;
-            }
             State::Handshaking if !received_tls => {
                 if let Some(frame) = self.handle_tls(None)? {
                     payload.push(Frame::Stream(frame));
-                    wrote_handshake = true;
                 }
             }
             _ => {}
         }
 
-        if self.state == State::Connected && !wrote_handshake {
-            self.build_packet(None, payload)
-        } else {
-            self.build_packet(Some(LongType::Handshake), payload)
-        }
+        self.build_packet(payload)
     }
 
     fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<Option<StreamFrame>> {
@@ -357,19 +363,15 @@ impl ConnectionState<tls::ClientSession> {
         })?;
         stream.set_offset(handshake.len() as u64);
 
-        self.state = State::InitialSent;
-        self.build_packet(
-            Some(LongType::Initial),
-            vec![
-                Frame::Stream(StreamFrame {
-                    id: 0,
-                    fin: false,
-                    offset: 0,
-                    len: Some(handshake.len() as u64),
-                    data: handshake,
-                }),
-            ],
-        )
+        self.build_packet(vec![
+            Frame::Stream(StreamFrame {
+                id: 0,
+                fin: false,
+                offset: 0,
+                len: Some(handshake.len() as u64),
+                data: handshake,
+            }),
+        ])
     }
 }
 
