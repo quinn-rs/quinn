@@ -57,39 +57,56 @@ impl DynamicTable {
     /**
      * Adding field into the table cannot fails, but it doesn't mean the header
      * field will be put inside the table.
+     * 
+     * @returns Flag to test if field is really in the table, \
+     * Number of fields removed to have enough space for the field
      */
-    pub fn put_field(&mut self, field: HeaderField) {
-        if field.mem_size() <= self.mem_limit {
-            let at_most = self.mem_limit - field.mem_size();
-            self.shrink_to_fit(at_most);
-        }
+    pub fn put_field(&mut self, field: HeaderField) -> (bool, usize) {
+        let dropped = 
+            if field.mem_size() <= self.mem_limit {
+                let at_most = self.mem_limit - field.mem_size();
+                self.shrink_to_fit(at_most)
+            } 
+            else { 0 };
 
         let available = self.mem_limit - self.curr_mem_size;
-        if field.mem_size() <= available {
+        let addable = field.mem_size() <= available;
+        if addable {
             self.curr_mem_size += field.mem_size();
             self.fields.push_back(field);
         }
+
+        (addable, dropped)
     }
 
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), ErrorKind> {
+    /**
+     * @returns Number of fields removed by resizing
+     */
+    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, ErrorKind> {
         if size > SETTINGS_HEADER_TABLE_SIZE {
             return Err(ErrorKind::MaximumTableSizeTooLarge);
         }
-        self.shrink_to_fit(size);
+        let dropped = self.shrink_to_fit(size);
         self.mem_limit = size;
-        Ok(())
+        Ok(dropped)
     }
 
     /**
      * https://tools.ietf.org/html/rfc7541
      * 4.4.  Entry Eviction When Adding New Entries
+     * 
+     * @returns Number of fields removed
      */
-    fn shrink_to_fit(&mut self, lower_bound: usize) {
+    fn shrink_to_fit(&mut self, lower_bound: usize) -> usize {
+        let initial = self.fields.len();
+        
         while !self.fields.is_empty() && self.curr_mem_size > lower_bound {
             let field = self.fields.pop_front()
                 .expect("there is at least one field");
             self.curr_mem_size -= field.mem_size();
         }
+        
+        initial - self.fields.len()
     }
 
     pub fn max_mem_size(&self) -> usize {
@@ -166,7 +183,7 @@ mod tests {
     fn test_maximum_table_size_can_be_lower_than_table_size() {
         let mut table = DynamicTable::new();
         let res_change = table.set_max_mem_size(0);
-        assert_eq!(res_change, Ok(()));
+        assert!(res_change.is_ok());
         assert_eq!(table.mem_size(), ESTIMATED_OVERHEAD_BYTES);
     }
 
@@ -179,7 +196,7 @@ mod tests {
         let mut table = DynamicTable::new();
         let valid_size = SETTINGS_HEADER_TABLE_SIZE / 2 + 1;
         let res_change = table.set_max_mem_size(valid_size);
-        assert_eq!(res_change, Ok(()));
+        assert!(res_change.is_ok());
     }
 
     /**
@@ -189,13 +206,13 @@ mod tests {
     #[test]
     fn test_fields_can_fit_up_to_the_last_byte() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         table.put_field(HeaderField::new("Name", "Value"));
         assert_eq!(table.count(), 1);
 
         let size = table.mem_size();
-        assert_eq!(table.set_max_mem_size(size), Ok(()));
+        assert!(table.set_max_mem_size(size).is_ok());
         assert_eq!(table.count(), 1);
     }
 
@@ -206,12 +223,12 @@ mod tests {
     #[test]
     fn test_null_maximum_table_size_purge_all_fields() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         table.put_field(HeaderField::new("Name", "Value"));
         assert_eq!(table.count(), 1);
 
-        assert_eq!(table.set_max_mem_size(0), Ok(()));
+        assert!(table.set_max_mem_size(0).is_ok());
         assert_eq!(table.count(), 0);
     }
 
@@ -222,7 +239,7 @@ mod tests {
     #[test]
     fn test_set_narrow_maximum_table_size_drop_fields_to_fit() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         table.put_field(HeaderField::new("Name-1", "Value-1"));
         table.put_field(HeaderField::new("Name-2", "Value-2"));
@@ -230,7 +247,7 @@ mod tests {
         assert_eq!(table.count(), 3);
 
         let size_to_drop_first_field = table.mem_size() - 1;
-        assert_eq!(table.set_max_mem_size(size_to_drop_first_field), Ok(()));
+        assert!(table.set_max_mem_size(size_to_drop_first_field).is_ok());
         assert_eq!(table.count(), 2);
     }
     
@@ -241,7 +258,7 @@ mod tests {
     #[test]
     fn test_drop_fields_are_in_fifo() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         let second_field = HeaderField::new("Name-2", "Value-2");
 
@@ -251,7 +268,7 @@ mod tests {
         assert_eq!(table.count(), 3);
 
         let size_to_drop_first_field = table.mem_size() - 1;
-        assert_eq!(table.set_max_mem_size(size_to_drop_first_field), Ok(()));
+        assert!(table.set_max_mem_size(size_to_drop_first_field).is_ok());
         assert_eq!(table.get(0), Some(&second_field));
     }
     
@@ -262,14 +279,14 @@ mod tests {
     #[test]
     fn test_put_field_drop_previous_fields_to_fit() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         table.put_field(HeaderField::new("Name", "Value"));
         table.put_field(HeaderField::new("Name", "Value"));
         table.put_field(HeaderField::new("Name", "Value"));
 
         let size = table.mem_size();
-        assert_eq!(table.set_max_mem_size(size), Ok(()));
+        assert!(table.set_max_mem_size(size).is_ok());
         assert_eq!(table.count(), 3);
 
         // header field that take two of the previous fields
@@ -284,12 +301,12 @@ mod tests {
     #[test]
     fn test_put_field_too_large_makes_it_evicted() {
         let mut table = DynamicTable::new();
-        assert_eq!(table.set_max_mem_size(200), Ok(()));
+        assert!(table.set_max_mem_size(200).is_ok());
 
         table.put_field(HeaderField::new("Name", "Value"));
 
         let size = table.mem_size();
-        assert_eq!(table.set_max_mem_size(size), Ok(()));
+        assert!(table.set_max_mem_size(size).is_ok());
         assert_eq!(table.count(), 1);
 
         table.put_field(HeaderField::new("NameName", "ValueValue"));

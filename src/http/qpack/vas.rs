@@ -72,16 +72,16 @@
  */
 
 
-pub type RelativeIndex = u32;
-pub type AbsoluteIndex = u32;
+pub type RelativeIndex = usize;
+pub type AbsoluteIndex = usize;
 
 
 #[derive(Debug)]
 pub struct VirtualAddressSpace {
-    inserted: u32,
-    dropped: u32,
-    delta: u32,
-    base: u32
+    inserted: usize,
+    dropped: usize,
+    delta: usize,
+    base: usize
 }
 
 
@@ -109,6 +109,12 @@ impl VirtualAddressSpace {
     pub fn drop(&mut self) {
         self.dropped += 1;
         self.delta -= 1;
+    }
+
+    pub fn drop_many<T>(&mut self, count: T) where T: Into<usize> {
+        let count = count.into();
+        self.dropped += count;
+        self.delta -= count;
     }
 
     pub fn relative(&self, index: RelativeIndex) -> Option<usize> {
@@ -157,7 +163,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_first_insertion_without_drop(
-            ref count in 1..2200u32
+            ref count in 1..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
             let abs_index = vas.add();
@@ -170,7 +176,7 @@ mod tests {
 
         #[test]
         fn test_first_insertion_with_drop(
-            ref count in 2..2200u32
+            ref count in 2..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
             let abs_index = vas.add();
@@ -184,7 +190,7 @@ mod tests {
         
         #[test]
         fn test_last_insertion_without_drop(
-            ref count in 1..2200u32
+            ref count in 1..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
             (1..*count).for_each(|_| { vas.add(); });
@@ -199,7 +205,7 @@ mod tests {
         
         #[test]
         fn test_last_insertion_with_drop(
-            ref count in 2..2200u32
+            ref count in 2..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
             (0..*count - 1).for_each(|_| { vas.add(); });
