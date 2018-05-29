@@ -55,6 +55,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_noprefix_consistency() {
+        assert_eq!(StarterByte::prefix(8), Ok(StarterByte::noprefix()));
+    }
+
+    #[test]
     fn test_prefix_transform_to_mask() {
         assert_eq!(StarterByte::prefix(6).unwrap().mask, 63);
     }
@@ -77,6 +82,13 @@ mod tests {
     #[test]
     fn test_bad_prefix() {
         assert_eq!(StarterByte::prefix(15), Err(Error::InvalidPrefix(15)));
+    }
+    
+    #[test]
+    fn test_clear_bytes_bit_after_prefix() {
+        let starter = StarterByte::valued(6, 255)
+            .expect("valid starter byte");
+        assert_eq!(starter.safe_start(), 255 & (128 | 64));
     }
 
 }
