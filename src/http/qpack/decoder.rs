@@ -7,8 +7,7 @@ use std::io::Cursor;
 use bytes::Buf;
 
 use super::parser::Parser;
-use super::table::HeaderField;
-use super::dyn_table::DynamicTable;
+use super::table::{HeaderField, DynamicTable};
 use super::static_table::StaticTable;
 use super::vas::VirtualAddressSpace;
 
