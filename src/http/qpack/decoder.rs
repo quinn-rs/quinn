@@ -63,6 +63,11 @@ impl Decoder {
             .map_err(|_| Error::BadMaximumDynamicTableSize)
     }
 
+    // TODO remove this when base index is modifiable via `feed_stream`
+    pub fn temp_set_base_index(&mut self, base: usize) {
+        self.vas.set_base_index(base);
+    }
+
     pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
         let block_len = Parser::new(buf).integer(8)
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
@@ -180,9 +185,7 @@ mod tests {
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
      * 3.3.1.  Insert With Name Reference
      */
-    // TODO this test cannot actually work because base index is not updated
-    // accordingly, so name index is currently invalid
-    // #[test]
+     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
         let name_index = 1u8;
         let text = "serial value";
@@ -220,6 +223,7 @@ mod tests {
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
+        decoder.temp_set_base_index(1);
         let field = decoder.relative_field(0);
         assert_eq!(field, Some(&expected_field));
     }
@@ -288,9 +292,7 @@ mod tests {
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
      * 3.3.2.  Insert Without Name Reference
      */
-    // TODO this test cannot actually work because base index is not updated
-    // accordingly, so later to test, relative index is not invalid
-    //#[test]
+    #[test]
     fn test_insert_field_without_name_ref() {
         let key = "key";
         let value = "value";
@@ -321,6 +323,7 @@ mod tests {
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
+        decoder.temp_set_base_index(1);
         let field = decoder.relative_field(0);
         assert_eq!(field, Some(&expected_field));
     }
@@ -329,9 +332,7 @@ mod tests {
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
      * 3.3.3.  Duplicate
      */
-    // TODO this test cannot actually work because base index is not updated
-    // accordingly, so duplicate index is currently invalid
-    // #[test]
+    #[test]
     fn test_duplicate_field() {
         let _index = 1;
 
@@ -345,6 +346,7 @@ mod tests {
         let mut decoder = Decoder::new();
         decoder.put_field(HeaderField::new("", ""));
         decoder.put_field(HeaderField::new("", ""));
+        decoder.temp_set_base_index(2);
         assert_eq!(decoder.table.count(), 2);
 
         let mut cursor = Cursor::new(&bytes);
