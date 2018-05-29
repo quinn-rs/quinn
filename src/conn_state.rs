@@ -161,6 +161,10 @@ where
             },
         };
 
+        if self.state == State::FinalHandshake {
+            self.state = State::Connected;
+        }
+
         self.queue_packet(Packet { header, payload })
     }
 
@@ -285,7 +289,10 @@ where
 
         if let Some(secret) = new_secret {
             self.set_secret(secret);
-            self.state = State::Connected;
+            self.state = match self.side {
+                Side::Client => State::FinalHandshake,
+                Side::Server => State::Connected,
+            };
 
             let params = match self.tls.get_quic_transport_parameters() {
                 None => {
@@ -385,6 +392,7 @@ enum State {
     Start,
     InitialSent,
     Handshaking,
+    FinalHandshake,
     Connected,
 }
 
