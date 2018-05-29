@@ -32,13 +32,14 @@ impl<'a> Parser<'a> {
         else { None }
     }
 
-    pub fn integer(&mut self, prefix: u8) -> Result<usize, Error> {
+    pub fn integer(&mut self, prefix: usize) -> Result<usize, Error> {
         let byte = self.next_byte()
             .ok_or(Error::NoByteForIntegerLength)?;
         self.integer_from(prefix, byte)
     }
 
-    pub fn integer_from(&mut self, prefix: u8, byte: u8) -> Result<usize, Error> {
+    pub fn integer_from(&mut self, prefix: usize, byte: u8) 
+        -> Result<usize, Error> {
         let byte = byte as usize;
         let prefix_byte = 2usize.pow(prefix as u32) - 1;
 
@@ -49,7 +50,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn var_len_integer(&mut self, prefix: u8) -> Result<usize, Error> {
+    fn var_len_integer(&mut self, prefix: usize) -> Result<usize, Error> {
         let mut value = 2usize.pow(prefix as u32) - 1;
 
         let mut count = 0usize;
@@ -65,13 +66,15 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    pub fn string(&mut self, prefix: u8) -> Result<Vec<u8>, Error> {
+    pub fn string(&mut self, prefix: usize) -> Result<Vec<u8>, Error> {
         let byte = self.next_byte()
             .ok_or(Error::NoByteForStringLength)?;
         self.string_from(prefix, byte)
     }
 
-    pub fn string_from(&mut self, prefix: u8, byte: u8) -> Result<Vec<u8>, Error> {
+    pub fn string_from(&mut self, prefix: usize, byte: u8) 
+        -> Result<Vec<u8>, Error> {
+        // TODO huffman code
         let _huffman_encoded = byte & 128u8 == 128u8;
 
         if prefix <= 1 {
