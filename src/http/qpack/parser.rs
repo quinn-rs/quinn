@@ -220,8 +220,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StarterByte::prefix(8)
-                                .expect("valid starter byte"));
+        let res = parser.string(StarterByte::noprefix());
 
         assert_eq!(res, Ok(Vec::from(text)));
     }
@@ -238,8 +237,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StarterByte::prefix(8)
-                                .expect("valid starter byte"));
+        let res = parser.string(StarterByte::noprefix());
 
         assert_eq!(res, Ok(Vec::new()));
     }
@@ -258,8 +256,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StarterByte::prefix(8)
-                                .expect("valid starter byte"));
+        let res = parser.string(StarterByte::noprefix());
 
         assert_eq!(res, Err(Error::TooShortBufferForString(14)));
     }
