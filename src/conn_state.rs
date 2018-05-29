@@ -175,7 +175,7 @@ where
             },
             None => Header::Short {
                 key_phase: false,
-                ptype: ShortType::Four,
+                ptype: ShortType::Two,
                 dst_cid,
                 number,
             },

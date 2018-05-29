@@ -199,14 +199,10 @@ impl Codec for Header {
                 number,
             } => {
                 let key_phase_bit = if key_phase { 0x40 } else { 0 };
-
                 buf.put_u8(key_phase_bit | 0x20 | 0x10 | ptype.to_byte());
                 buf.put_slice(&dst_cid);
-                match ptype {
-                    ShortType::One => buf.put_u8(number as u8),
-                    ShortType::Two => buf.put_u16_be(number as u16),
-                    ShortType::Four => buf.put_u32_be(number),
-                }
+                debug_assert_eq!(ptype, ShortType::Two);
+                buf.put_u16_be(number as u16);
             }
             Header::Negotiation {
                 dst_cid,
