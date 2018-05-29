@@ -6,7 +6,7 @@ use parameters::ClientTransportParameters;
 use streams::Streams;
 use tls;
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 
 use tokio::net::UdpSocket;
 
@@ -32,10 +32,8 @@ impl Client {
         })?;
 
         let local = match addr {
-            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            SocketAddr::V6(_) => {
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 0)
-            }
+            SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], 0)),
+            SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)),
         };
 
         conn_state.initial()?;
