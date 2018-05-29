@@ -22,7 +22,6 @@ travis-ci = { repository = "djc/quinn" }
 [dependencies]
 bytes = "0.4.7"
 bitlab = "0.8.1"
-bit_field = "0.9"
 lazy_static = "1"
 
 [dev-dependencies]
