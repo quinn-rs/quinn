@@ -5,7 +5,7 @@
 use std::io::Cursor;
 use bytes::Buf;
 
-use super::iocontext::StartingByte;
+use super::iocontext::StarterByte;
 
 
 #[derive(Debug, PartialEq)]
@@ -34,7 +34,7 @@ impl<'a> Parser<'a> {
         else { None }
     }
 
-    pub fn integer(&mut self, starter: StartingByte) 
+    pub fn integer(&mut self, starter: StarterByte) 
         -> Result<usize, Error> 
     {
         let byte = 
@@ -49,7 +49,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn var_len_integer(&mut self, starter: StartingByte) 
+    fn var_len_integer(&mut self, starter: StarterByte) 
         -> Result<usize, Error> 
     {
         let mut value = starter.mask;
@@ -66,7 +66,7 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    pub fn string(&mut self, starter: StartingByte) 
+    pub fn string(&mut self, starter: StarterByte) 
         -> Result<Vec<u8>, Error> 
     {
         let byte = 
@@ -82,8 +82,8 @@ impl<'a> Parser<'a> {
         }
 
         let str_len = self.integer(
-            StartingByte::valued(starter.prefix - 1, byte)
-            .expect("valid starting byte"))? as usize;
+            StarterByte::valued(starter.prefix - 1, byte)
+            .expect("valid starter byte"))? as usize;
         if self.buf.remaining() < str_len {
             let delta = str_len - self.buf.remaining();
             return Err(Error::TooShortBufferForString(delta as usize));
@@ -119,8 +119,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StartingByte::prefix(7)
-                                 .expect("valid starting byte"));
+        let res = parser.integer(StarterByte::prefix(7)
+                                 .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -139,8 +139,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StartingByte::prefix(5)
-                                 .expect("valid starting byte"));
+        let res = parser.integer(StarterByte::prefix(5)
+                                 .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -158,8 +158,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StartingByte::prefix(2)
-                                 .expect("valid starting byte"));
+        let res = parser.integer(StarterByte::prefix(2)
+                                 .expect("valid starter byte"));
 
         assert_eq!(res, Err(Error::TooShortBufferForInteger));
     }
@@ -171,8 +171,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StartingByte::prefix(7)
-                                 .expect("valid starting byte"));
+        let res = parser.integer(StarterByte::prefix(7)
+                                 .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -186,8 +186,8 @@ mod tests {
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
         let res = parser.integer(
-            StartingByte::valued(5, first_byte)
-            .expect("valid starting byte"));
+            StarterByte::valued(5, first_byte)
+            .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
     }
@@ -220,8 +220,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StartingByte::prefix(8)
-                                .expect("valid starting byte"));
+        let res = parser.string(StarterByte::prefix(8)
+                                .expect("valid starter byte"));
 
         assert_eq!(res, Ok(Vec::from(text)));
     }
@@ -238,8 +238,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StartingByte::prefix(8)
-                                .expect("valid starting byte"));
+        let res = parser.string(StarterByte::prefix(8)
+                                .expect("valid starter byte"));
 
         assert_eq!(res, Ok(Vec::new()));
     }
@@ -258,8 +258,8 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.string(StartingByte::prefix(8)
-                                .expect("valid starting byte"));
+        let res = parser.string(StarterByte::prefix(8)
+                                .expect("valid starter byte"));
 
         assert_eq!(res, Err(Error::TooShortBufferForString(14)));
     }

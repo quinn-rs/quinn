@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use bytes::Buf;
 
-use super::iocontext::StartingByte;
+use super::iocontext::StarterByte;
 use super::parser::Parser;
 use super::table::HeaderField;
 use super::dyn_table::DynamicTable;
@@ -72,7 +72,7 @@ impl Decoder {
 
     pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
         let block_len = Parser::new(buf)
-            .integer(StartingByte::prefix(8).expect("valid starting byte"))
+            .integer(StarterByte::prefix(8).expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         if block_len as usize != buf.remaining() {
@@ -101,12 +101,12 @@ impl Decoder {
 
         let mut parser = Parser::new(buf);
         let name_index = parser
-            .integer(StartingByte::valued(6, byte)
-                     .expect("valid starting byte"))
+            .integer(StarterByte::valued(6, byte)
+                     .expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)? as usize;
         let value = parser
-            .string(StartingByte::prefix(8)
-                    .expect("valid starting byte"))
+            .string(StarterByte::prefix(8)
+                    .expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         let name =
@@ -133,12 +133,12 @@ impl Decoder {
     {
         let mut parser = Parser::new(buf);
         let name = parser
-            .string(StartingByte::valued(7, byte)
-                    .expect("valid starting byte"))
+            .string(StarterByte::valued(7, byte)
+                    .expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
         let value = parser
-            .string(StartingByte::prefix(8)
-                    .expect("valid starting byte"))
+            .string(StarterByte::prefix(8)
+                    .expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
         self.put_field(HeaderField::new(name, value));
@@ -150,8 +150,8 @@ impl Decoder {
         -> Result<(), Error>
     {
         let size = Parser::new(buf)
-            .integer(StartingByte::valued(5, byte)
-                     .expect("valid starting byte"))
+            .integer(StarterByte::valued(5, byte)
+                     .expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         self.resize_table(size as usize)
@@ -161,8 +161,8 @@ impl Decoder {
         -> Result<(), Error>
     {
         let dup_index = Parser::new(buf)
-            .integer(StartingByte::valued(5, byte)
-                     .expect("valid starting byte"))
+            .integer(StarterByte::valued(5, byte)
+                     .expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         let field = self.relative_field(dup_index as usize)
