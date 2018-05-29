@@ -18,7 +18,9 @@ pub enum Error {
     InvalidIntegerPrimitive,
     InvalidStringPrimitive,
     BadBufferLen,
+    // Same as HTTP_QPACK_DECOMPRESSION_FAILED
     BadMaximumDynamicTableSize,
+    // Same as HTTP_QPACK_DECOMPRESSION_FAILED
     BadNameIndexOnDynamicTable,
     BadNameIndexOnStaticTable,
     BadDuplicateIndex
