@@ -13,8 +13,7 @@ pub enum Error {
     NoByteForIntegerLength,
     TooShortBufferForInteger,
     NoByteForStringLength,
-    TooShortBufferForString(usize),
-    InvalidStringPrefix
+    TooShortBufferForString(usize)
 }
 
 
@@ -74,16 +73,26 @@ impl<'a> Parser<'a> {
             .or_else(|| self.next_byte())
             .ok_or(Error::NoByteForIntegerLength)?;
         
-        // TODO huffman code
-        let _huffman_encoded = byte & 128usize == 128usize;
 
-        if starter.prefix <= 1 {
-            return Err(Error::InvalidStringPrefix);
-        }
+        let (_huffman_encoded, str_len) = 
+            if starter.prefix > 1 {
+                let bit = 2usize.pow(starter.prefix as u32 - 1) as usize;
+                let huffman = byte & bit == bit;
 
-        let str_len = self.integer(
-            StarterByte::valued(starter.prefix - 1, byte)
-            .expect("valid starter byte"))? as usize;
+                let len = self.integer(
+                    StarterByte::valued(starter.prefix - 1, byte)
+                    .expect("valid starter byte"))?;
+
+                (huffman, len)
+            }
+            // Corner case where ]x x x x x x x H]  where x: taken
+            // huffman flag is the last bit, so size must be read afterwards
+            else {
+                let huffman = byte & 1 == 1;
+                let len = self.integer(StarterByte::noprefix())?;
+                (huffman, len)
+            };
+
         if self.buf.remaining() < str_len {
             let delta = str_len - self.buf.remaining();
             return Err(Error::TooShortBufferForString(delta as usize));
@@ -232,7 +241,8 @@ mod tests {
     #[test]
     fn test_read_empty_string() {
         let bytes: [u8; 1] = [
-            0 | 0 // not huffman, size
+            // not huffman, size
+            0 | 0
         ];
 
         let mut cursor = Cursor::new(&bytes);
@@ -242,13 +252,32 @@ mod tests {
         assert_eq!(res, Ok(Vec::new()));
     }
 
-    /**
-     * https://tools.ietf.org/html/rfc7541
-     * 5.2.  String Literal Representation
-     */
+    #[test]
+    fn test_read_string_with_huffman_flag_and_size_on_different_byte() {
+        let text = "Aaa";
+        let starter = StarterByte::prefix(1).expect("valid starter byte");
+        let bytes: [u8; 5] = [
+            // not huffman
+            0,
+            // size
+            3,
+            // bytes
+            'A' as u8,
+            'a' as u8,
+            'a' as u8
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.string(starter);
+
+        assert_eq!(res, Ok(Vec::from(text)));
+    }
+
     #[test]
     fn test_read_invalid_string() {
         let bytes: [u8; 2] = [
+            // not huffman, size
             0 | 15, // not huffman, size
             // bytes (not enough)
             'a' as u8
