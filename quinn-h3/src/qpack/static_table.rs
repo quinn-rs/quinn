@@ -104,6 +104,7 @@ mod tests {
     #[test]
     fn test_static_table_is_available() {
         let field = HeaderField::new("www-authenticate", "");
+        assert_eq!(StaticTable::count(), 61);
         assert_eq!(StaticTable::get(60), Some(&field));
     }
 }
