@@ -208,6 +208,11 @@ where
                     self.state
                 )));
             },
+            Header::Negotiation { .. } => {
+                return Err(QuicError::General(format!(
+                    "negotiation packet not handled by connections"
+                )));
+            }
         };
 
         if self.state != State::Start && dst_cid != self.local.cid {

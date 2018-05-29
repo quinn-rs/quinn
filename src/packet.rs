@@ -6,6 +6,8 @@ use crypto::PacketKey;
 use frame::Frame;
 use types::{ConnectionId, GENERATED_CID_LENGTH};
 
+use rand::{thread_rng, Rng};
+
 use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
@@ -44,6 +46,7 @@ impl Packet {
                 let mut in_out = &mut payload[..msg_len - header_len + tag_len];
                 key.encrypt(number, &header_buf, in_out, tag_len)?
             }
+            Header::Negotiation { .. } => header_len,
         };
 
         if let Header::Long { len, .. } = self.header {
@@ -97,6 +100,7 @@ impl<'a> PartialDecode<'a> {
                 }
                 payload
             }
+            Header::Negotiation { .. } => vec![],
         };
 
         Ok(Packet { header, payload })
@@ -125,6 +129,11 @@ pub enum Header {
         dst_cid: ConnectionId,
         number: u32,
     },
+    Negotiation {
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        supported_versions: Vec<u32>,
+    },
 }
 
 impl Header {
@@ -132,6 +141,7 @@ impl Header {
         match *self {
             Header::Long { ptype, .. } => Some(ptype),
             Header::Short { .. } => None,
+            Header::Negotiation { .. } => None,
         }
     }
 
@@ -139,20 +149,26 @@ impl Header {
         match *self {
             Header::Long { dst_cid, .. } => dst_cid,
             Header::Short { dst_cid, .. } => dst_cid,
+            Header::Negotiation { dst_cid, .. } => dst_cid,
         }
     }
 }
 
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
-        match *self {
+        match self {
             Header::Long {
                 dst_cid,
                 src_cid,
                 len,
                 ..
-            } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len(),
+            } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(*len).buf_len(),
             Header::Short { ptype, dst_cid, .. } => 1 + (dst_cid.len as usize) + ptype.buf_len(),
+            Header::Negotiation {
+                dst_cid,
+                src_cid,
+                supported_versions,
+            } => 6 + (dst_cid.len as usize + src_cid.len as usize) + 4 * supported_versions.len(),
         }
     }
 }
@@ -192,6 +208,20 @@ impl Codec for Header {
                     ShortType::Four => buf.put_u32_be(number),
                 }
             }
+            Header::Negotiation {
+                dst_cid,
+                src_cid,
+                ref supported_versions,
+            } => {
+                buf.put_u8(thread_rng().gen::<u8>() | 128);
+                buf.put_u32_be(0);
+                buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
+                buf.put_slice(&dst_cid);
+                buf.put_slice(&src_cid);
+                for v in supported_versions {
+                    buf.put_u32_be(*v);
+                }
+            }
         }
     }
 
@@ -217,14 +247,26 @@ impl Codec for Header {
             };
 
             buf.advance(used);
-            Ok(Header::Long {
-                ptype: LongType::from_byte(first ^ 128),
-                version,
-                dst_cid,
-                src_cid,
-                len: VarLen::decode(buf)?.0,
-                number: buf.get_u32_be(),
-            })
+            if version == 0 {
+                let mut supported_versions = vec![];
+                while buf.has_remaining() {
+                    supported_versions.push(buf.get_u32_be());
+                }
+                Ok(Header::Negotiation {
+                    dst_cid,
+                    src_cid,
+                    supported_versions,
+                })
+            } else {
+                Ok(Header::Long {
+                    ptype: LongType::from_byte(first ^ 128),
+                    version,
+                    dst_cid,
+                    src_cid,
+                    len: VarLen::decode(buf)?.0,
+                    number: buf.get_u32_be(),
+                })
+            }
         } else {
             let key_phase = first & 0x40 == 0x40;
             let dst_cid = {
