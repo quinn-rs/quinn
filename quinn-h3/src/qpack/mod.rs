@@ -30,6 +30,7 @@ use self::dyn_table::DynamicTable;
 pub mod static_table;
 use self::static_table::StaticTable;
 
+pub mod iocontext;
 pub mod parser;
 pub mod dump;
 pub mod vas;
