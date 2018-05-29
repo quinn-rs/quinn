@@ -116,7 +116,7 @@ where
         self.secret.build_key(self.side)
     }
 
-    pub(crate) fn decode_key(&self, h: &Header) -> PacketKey {
+    fn decode_key(&self, h: &Header) -> PacketKey {
         if let Some(LongType::Handshake) = h.ptype() {
             if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
                 return secret.build_key(self.side.other());
