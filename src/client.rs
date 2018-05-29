@@ -25,7 +25,7 @@ impl Client {
     pub fn with_state(
         server: &str,
         port: u16,
-        mut conn_state: ConnectionState<tls::ClientSession>,
+        conn_state: ConnectionState<tls::ClientSession>,
     ) -> QuicResult<Client> {
         let addr = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
             QuicError::General(format!("no address found for '{}:{}'", server, port))
@@ -36,7 +36,6 @@ impl Client {
             SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)),
         };
 
-        conn_state.initial()?;
         let socket = UdpSocket::bind(&local)?;
         socket.connect(&addr)?;
         Ok(Self {
@@ -47,7 +46,7 @@ impl Client {
     }
 
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
-        Ok(ConnectFuture::new(Self::new(server, port)?))
+        ConnectFuture::new(Self::new(server, port)?)
     }
 
     fn poll_send(&mut self) -> Poll<(), QuicError> {
@@ -82,10 +81,11 @@ pub struct ConnectFuture {
 }
 
 impl ConnectFuture {
-    fn new(client: Client) -> ConnectFuture {
-        ConnectFuture {
+    fn new(mut client: Client) -> QuicResult<ConnectFuture> {
+        client.conn_state.initial()?;
+        Ok(ConnectFuture {
             client: Some(client),
-        }
+        })
     }
 }
 
@@ -130,7 +130,7 @@ mod tests {
     fn test_client_connect_resolves() {
         let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
         let client = super::Client::with_state("127.0.0.1", 4433, client_conn_state()).unwrap();
-        let connector = super::ConnectFuture::new(client);
+        let connector = super::ConnectFuture::new(client).unwrap();
         let mut exec = CurrentThread::new();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();
