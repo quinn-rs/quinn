@@ -15,10 +15,6 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn number(&self) -> u32 {
-        self.header.number()
-    }
-
     pub fn encode(&self, key: &PacketKey, buf: &mut [u8]) -> QuicResult<usize> {
         let tag_len = key.algorithm().tag_len();
         let len = self.buf_len() + tag_len;
@@ -42,10 +38,12 @@ impl Packet {
             (header_len, msg_len, write.into_inner())
         };
 
-        let out_len = {
-            let (header_buf, mut payload) = buf.split_at_mut(header_len);
-            let mut in_out = &mut payload[..msg_len - header_len + tag_len];
-            key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
+        let out_len = match self.header {
+            Header::Long { number, .. } | Header::Short { number, .. } => {
+                let (header_buf, mut payload) = buf.split_at_mut(header_len);
+                let mut in_out = &mut payload[..msg_len - header_len + tag_len];
+                key.encrypt(number, &header_buf, in_out, tag_len)?
+            }
         };
 
         if let Header::Long { len, .. } = self.header {
@@ -85,15 +83,21 @@ impl<'a> PartialDecode<'a> {
             header_len,
             buf,
         } = self;
-        let (header_buf, payload_buf) = buf.split_at_mut(header_len);
-        let decrypted = key.decrypt(header.number(), &header_buf, payload_buf)?;
-        let mut read = Cursor::new(decrypted);
 
-        let mut payload = Vec::new();
-        while read.has_remaining() {
-            let frame = Frame::decode(&mut read)?;
-            payload.push(frame);
-        }
+        let payload = match header {
+            Header::Long { number, .. } | Header::Short { number, .. } => {
+                let (header_buf, payload_buf) = buf.split_at_mut(header_len);
+                let decrypted = key.decrypt(number, &header_buf, payload_buf)?;
+                let mut read = Cursor::new(decrypted);
+
+                let mut payload = Vec::new();
+                while read.has_remaining() {
+                    let frame = Frame::decode(&mut read)?;
+                    payload.push(frame);
+                }
+                payload
+            }
+        };
 
         Ok(Packet { header, payload })
     }
@@ -135,13 +139,6 @@ impl Header {
         match *self {
             Header::Long { dst_cid, .. } => dst_cid,
             Header::Short { dst_cid, .. } => dst_cid,
-        }
-    }
-
-    fn number(&self) -> u32 {
-        match *self {
-            Header::Long { number, .. } => number,
-            Header::Short { number, .. } => number,
         }
     }
 }

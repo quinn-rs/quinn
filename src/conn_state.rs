@@ -185,18 +185,23 @@ where
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
     fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
-        let dst_cid = match p.header {
+        let (dst_cid, number) = match p.header {
             Header::Long {
-                dst_cid, src_cid, ..
+                dst_cid,
+                src_cid,
+                number,
+                ..
             } => match self.state {
                 State::Start | State::InitialSent => {
                     self.remote.cid = src_cid;
-                    dst_cid
+                    (dst_cid, number)
                 }
-                _ => dst_cid,
+                _ => (dst_cid, number),
             },
-            Header::Short { dst_cid, .. } => if let State::Connected = self.state {
-                dst_cid
+            Header::Short {
+                dst_cid, number, ..
+            } => if let State::Connected = self.state {
+                (dst_cid, number)
             } else {
                 return Err(QuicError::General(format!(
                     "short header received in {:?} state",
@@ -214,7 +219,7 @@ where
 
         let mut payload = vec![
             Frame::Ack(AckFrame {
-                largest: p.number(),
+                largest: number,
                 ack_delay: 0,
                 blocks: vec![Ack::Ack(0)],
             }),
