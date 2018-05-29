@@ -10,7 +10,7 @@ use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
-use streams::{Dir, Streams};
+use streams::{Streams};
 use tls;
 use types::{ConnectionId, Side, GENERATED_CID_LENGTH};
 
@@ -353,24 +353,10 @@ where
 
 impl ConnectionState<tls::ClientSession> {
     pub(crate) fn initial(&mut self) -> QuicResult<()> {
-        let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, None)?;
-        if let Some(secret) = new_secret {
-            self.set_secret(secret);
-        }
-
-        let mut stream = self.streams.init_send(Dir::Bidi).ok_or_else(|| {
-            QuicError::General("no bidirectional stream available for initial packet".into())
-        })?;
-        stream.set_offset(handshake.len() as u64);
-
         let mut payload = vec![
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
+            Frame::Stream(self.handle_tls(None)?.ok_or_else(|| {
+                QuicError::General("must have TLS messages in Initial message".into())
+            })?)
         ];
         let header = self.build_header(&mut payload)?;
         self.queue_packet(Packet { header, payload })
