@@ -10,32 +10,37 @@ pub enum Error {
 
 
 #[derive(Debug, PartialEq)]
-pub struct StartingByte {
+pub struct StarterByte {
     pub prefix: usize,
     pub mask: usize,
     pub byte: Option<usize>
 }
 
 
-impl StartingByte {
+impl StarterByte {
 
-    pub fn prefix(prefix: usize) -> Result<StartingByte, Error> {
+    pub fn prefix(prefix: usize) -> Result<StarterByte, Error> {
         Self::build(prefix, None)
     }
 
-    pub fn valued(prefix: usize, byte: usize) -> Result<StartingByte, Error> {
+    pub fn valued(prefix: usize, byte: usize) -> Result<StarterByte, Error> {
         Self::build(prefix, Some(byte))
     }
     
     fn build(prefix: usize, byte: Option<usize>) 
-        -> Result<StartingByte, Error> 
+        -> Result<StarterByte, Error> 
     {
         if prefix == 0 || prefix > 8 {
             Err(Error::InvalidPrefix(prefix))
         } else {
             let mask = 2usize.pow(prefix as u32) - 1;
-            Ok(StartingByte { prefix, mask, byte })
+            Ok(StarterByte { prefix, mask, byte })
         }
+    }
+
+    pub fn safe_start(&self) -> usize { 
+        let rev = 255usize - self.mask;
+        self.byte.map(|x| x & rev).unwrap_or(0)
     }
 
 }
@@ -47,27 +52,27 @@ mod tests {
 
     #[test]
     fn test_prefix_transform_to_mask() {
-        assert_eq!(StartingByte::prefix(6).unwrap().mask, 63);
+        assert_eq!(StarterByte::prefix(6).unwrap().mask, 63);
     }
 
     #[test]
     fn test_prefix_with_ahead_byte() {
-        assert_eq!(StartingByte::valued(3, 5).unwrap().byte, Some(5));
+        assert_eq!(StarterByte::valued(3, 5).unwrap().byte, Some(5));
     }
 
     #[test]
     fn test_ahead_byte_not_given() {
-        assert_eq!(StartingByte::prefix(3).unwrap().byte, None);
+        assert_eq!(StarterByte::prefix(3).unwrap().byte, None);
     }
 
     #[test]
     fn test_null_prefix() {
-        assert_eq!(StartingByte::prefix(0), Err(Error::InvalidPrefix(0)));
+        assert_eq!(StarterByte::prefix(0), Err(Error::InvalidPrefix(0)));
     }
     
     #[test]
     fn test_bad_prefix() {
-        assert_eq!(StartingByte::prefix(15), Err(Error::InvalidPrefix(15)));
+        assert_eq!(StarterByte::prefix(15), Err(Error::InvalidPrefix(15)));
     }
 
 }
