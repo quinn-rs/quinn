@@ -49,6 +49,15 @@ impl Client {
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
         Ok(ConnectFuture::new(Self::new(server, port)?))
     }
+
+    fn poll_send(&mut self) -> Poll<(), QuicError> {
+        if let Some(buf) = self.conn_state.queued()? {
+            let len = try_ready!(self.socket.poll_send(&buf));
+            debug_assert_eq!(len, buf.len());
+        }
+        self.conn_state.pop_queue();
+        Ok(Async::Ready(()))
+    }
 }
 
 impl Future for Client {
@@ -56,27 +65,14 @@ impl Future for Client {
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.conn_state.streams.set_task(task::current());
-        let mut waiting;
         loop {
-            waiting = true;
-            if let Some(buf) = self.conn_state.queued()? {
-                let len = try_ready!(self.socket.poll_send(&buf));
-                debug_assert_eq!(len, buf.len());
-                waiting = false;
+            match self.poll_send() {
+                Ok(Async::Ready(())) | Ok(Async::NotReady) => {}
+                e @ Err(_) => try_ready!(e),
             }
-            if !waiting {
-                self.conn_state.pop_queue();
-            }
-
             let len = try_ready!(self.socket.poll_recv(&mut self.buf));
             self.conn_state.handle(&mut self.buf[..len])?;
-            waiting = false;
-
-            if waiting {
-                break;
-            }
         }
-        Ok(Async::NotReady)
     }
 }
 
