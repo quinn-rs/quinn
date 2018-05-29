@@ -114,7 +114,7 @@ impl VirtualAddressSpace {
     pub fn relative(&self, index: RelativeIndex) -> Option<usize> {
         if self.delta == 0 
             || index > self.base
-            || self.base - index < self.dropped { None }
+            || self.base - index <= self.dropped { None }
         else { Some((self.base - index - 1) as usize) }
     }
     
@@ -126,7 +126,7 @@ impl VirtualAddressSpace {
 
     pub fn absolute(&self, index: AbsoluteIndex) -> Option<usize> {
         if index == 0
-            || index < self.dropped
+            || index <= self.dropped
             || index > self.inserted { None }
         else { Some((index - self.dropped - 1) as usize) }
     }
@@ -164,8 +164,8 @@ mod tests {
             (1..*count).for_each(|_| { vas.add(); });
             
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), Some(0));
-            assert_eq!(vas.absolute(abs_index), Some(0));
+            assert_eq!(vas.relative(count - 1), Some(0), "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Some(0), "{:?}", vas);
         }
 
         #[test]
@@ -178,8 +178,8 @@ mod tests {
             (0..*count - 1).for_each(|_| vas.drop());
             
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), None);
-            assert_eq!(vas.absolute(abs_index), None);
+            assert_eq!(vas.relative(count - 1), None, "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), None, "{:?}", vas);
         }
         
         #[test]
@@ -191,8 +191,10 @@ mod tests {
             let abs_index = vas.add();
             
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Some((count - 1) as usize));
-            assert_eq!(vas.absolute(abs_index), Some((count - 1) as usize));
+            assert_eq!(vas.relative(0), Some((count - 1) as usize), 
+                       "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Some((count - 1) as usize), 
+                       "{:?}", vas);
         }
         
         #[test]
@@ -205,8 +207,9 @@ mod tests {
             (0..*count - 1).for_each(|_| { vas.drop(); });
             
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Some((count - 1) as usize));
-            assert_eq!(vas.absolute(abs_index), Some(0));
+            assert_eq!(vas.relative(0), Some((count - 1) as usize), 
+                       "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Some(0), "{:?}", vas);
         }
     }
     
