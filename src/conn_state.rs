@@ -10,7 +10,7 @@ use crypto::{PacketKey, Secret};
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
-use streams::{Streams};
+use streams::Streams;
 use tls;
 use types::{ConnectionId, Side, GENERATED_CID_LENGTH};
 
@@ -356,7 +356,7 @@ impl ConnectionState<tls::ClientSession> {
         let mut payload = vec![
             Frame::Stream(self.handle_tls(None)?.ok_or_else(|| {
                 QuicError::General("must have TLS messages in Initial message".into())
-            })?)
+            })?),
         ];
         let header = self.build_header(&mut payload)?;
         self.queue_packet(Packet { header, payload })
