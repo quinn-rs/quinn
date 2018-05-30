@@ -62,13 +62,8 @@ impl Server {
 
             let cid = state.pick_unused_cid(|cid| connections.contains_key(&cid));
             let (recv_tx, recv_rx) = mpsc::channel(5);
-            tokio::executor::current_thread::spawn(
-                Box::new(Connection::new(
-                    addr,
-                    state,
-                    self.send_queue.0.clone(),
-                    recv_rx,
-                )).map_err(|e| {
+            tokio::spawn(
+                Connection::new(addr, state, self.send_queue.0.clone(), recv_rx).map_err(|e| {
                     error!("error spawning connection: {:?}", e);
                 }),
             );

@@ -124,14 +124,14 @@ mod tests {
     use futures::Future;
     use server::Server;
     use tls::tests::server_config;
-    use tokio::executor::current_thread::CurrentThread;
+    use tokio::runtime::current_thread::Runtime;
 
     #[test]
     fn test_client_connect_resolves() {
         let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
         let client = super::Client::with_state("127.0.0.1", 4433, client_conn_state()).unwrap();
         let connector = super::ConnectFuture::new(client).unwrap();
-        let mut exec = CurrentThread::new();
+        let mut exec = Runtime::new().unwrap();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();
     }
