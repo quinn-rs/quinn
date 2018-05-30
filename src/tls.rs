@@ -46,12 +46,15 @@ pub fn server_session(
     ServerSession::new_quic(config, to_vec(params))
 }
 
-pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
+pub fn build_server_config(
+    cert_chain: Vec<Certificate>,
+    key: PrivateKey,
+) -> QuicResult<ServerConfig> {
     let mut config = ServerConfig::new(NoClientAuth::new());
     config.set_protocols(&[ALPN_PROTOCOL.into()]);
-    config.set_single_cert(cert_chain, key);
+    config.set_single_cert(cert_chain, key)?;
     config.key_log = Arc::new(KeyLogFile::new());
-    config
+    Ok(config)
 }
 
 pub fn process_handshake_messages<T>(session: &mut T, msgs: Option<&[u8]>) -> QuicResult<TlsResult>
@@ -154,6 +157,6 @@ pub(crate) mod tests {
             pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
         };
 
-        super::build_server_config(certs, keys[0].clone())
+        super::build_server_config(certs, keys[0].clone()).unwrap()
     }
 }

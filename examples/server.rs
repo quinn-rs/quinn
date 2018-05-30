@@ -25,7 +25,7 @@ fn main() {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let tls_config = quinn::tls::build_server_config(certs, key[0].clone());
+    let tls_config = quinn::tls::build_server_config(certs, key[0].clone()).unwrap();
     env_logger::init();
     tokio::run(quinn::Server::new("0.0.0.0", 4433, tls_config).unwrap());
 }
