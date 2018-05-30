@@ -40,10 +40,6 @@ impl Server {
         })
     }
 
-    pub fn run(&mut self) -> QuicResult<()> {
-        self.wait()
-    }
-
     fn received(&mut self, addr: SocketAddr, len: usize) -> QuicResult<()> {
         let connections = &mut self.connections;
         let packet = &mut self.in_buf[..len];
@@ -98,16 +94,18 @@ impl Server {
 
 impl Future for Server {
     type Item = ();
-    type Error = QuicError;
+    type Error = ();
 
-    fn poll(&mut self) -> Poll<(), QuicError> {
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut waiting;
         loop {
             waiting = true;
             match self.socket.poll_recv_from(&mut self.in_buf) {
                 Ok(Async::Ready((len, addr))) => {
                     waiting = false;
-                    self.received(addr, len)?;
+                    if let Err(e) = self.received(addr, len) {
+                        error!("error while handling received packet: {:?}", e);
+                    }
                 }
                 Ok(Async::NotReady) => {}
                 Err(e) => error!("Server RECV ERROR: {:?}", e),
