@@ -32,8 +32,8 @@ impl Client {
         })?;
 
         let local = match addr {
-            SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], 0)),
-            SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 0)),
+            SocketAddr::V4(_) => SocketAddr::from(([0, 0, 0, 0], 0)),
+            SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
         };
 
         let socket = UdpSocket::bind(&local)?;
