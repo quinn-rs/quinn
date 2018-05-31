@@ -2,7 +2,6 @@ use bytes::{Buf, BufMut};
 
 use super::QuicResult;
 use codec::{BufLen, Codec, VarLen};
-use crypto::PacketKey;
 use frame::Frame;
 use types::{ConnectionId, GENERATED_CID_LENGTH};
 
@@ -32,40 +31,14 @@ impl Packet {
 }
 
 pub struct PartialDecode<'a> {
-    pub(crate) header: Header,
-    header_len: usize,
-    buf: &'a mut [u8],
+    pub header: Header,
+    pub header_len: usize,
+    pub buf: &'a mut [u8],
 }
 
 impl<'a> PartialDecode<'a> {
     pub fn dst_cid(&self) -> ConnectionId {
         self.header.dst_cid()
-    }
-
-    pub fn finish(self, key: &PacketKey) -> QuicResult<Packet> {
-        let PartialDecode {
-            header,
-            header_len,
-            buf,
-        } = self;
-
-        let payload = match header {
-            Header::Long { number, .. } | Header::Short { number, .. } => {
-                let (header_buf, payload_buf) = buf.split_at_mut(header_len);
-                let decrypted = key.decrypt(number, &header_buf, payload_buf)?;
-                let mut read = Cursor::new(decrypted);
-
-                let mut payload = Vec::new();
-                while read.has_remaining() {
-                    let frame = Frame::decode(&mut read)?;
-                    payload.push(frame);
-                }
-                payload
-            }
-            Header::Negotiation { .. } => vec![],
-        };
-
-        Ok(Packet { header, payload })
     }
 }
 

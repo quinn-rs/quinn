@@ -1,3 +1,5 @@
+use bytes::Buf;
+
 use rand::{thread_rng, Rng};
 
 use std::collections::VecDeque;
@@ -6,7 +8,7 @@ use std::mem;
 
 use super::{QuicError, QuicResult, QUIC_VERSION};
 use codec::{BufLen, Codec};
-use crypto::{PacketKey, Secret};
+use crypto::Secret;
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
 use packet::{Header, LongType, Packet, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
@@ -112,15 +114,6 @@ where
         self.local.cid
     }
 
-    fn decode_key(&self, h: &Header) -> PacketKey {
-        if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
-                return secret.build_key(self.side.other());
-            }
-        }
-        self.secret.build_key(self.side.other())
-    }
-
     pub(crate) fn set_secret(&mut self, secret: Secret) {
         let old = mem::replace(&mut self.secret, secret);
         self.prev_secret = Some(old);
@@ -223,13 +216,47 @@ where
     }
 
     pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
-        let key = self.decode_key(&partial.header);
-        self.handle_packet(partial.finish(&key)?)
+        let PartialDecode {
+            header,
+            header_len,
+            buf,
+        } = partial;
+
+        let key = {
+            let secret = if let Some(LongType::Handshake) = header.ptype() {
+                if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
+                    secret
+                } else {
+                    &self.secret
+                }
+            } else {
+                &self.secret
+            };
+            secret.build_key(self.side.other())
+        };
+
+        let payload = match header {
+            Header::Long { number, .. } | Header::Short { number, .. } => {
+                let (header_buf, payload_buf) = buf.split_at_mut(header_len);
+                let decrypted = key.decrypt(number, &header_buf, payload_buf)?;
+                let mut read = Cursor::new(decrypted);
+
+                let mut payload = Vec::new();
+                while read.has_remaining() {
+                    let frame = Frame::decode(&mut read)?;
+                    payload.push(frame);
+                }
+                payload
+            }
+            Header::Negotiation { .. } => vec![],
+        };
+
+        self.handle_packet(header, payload)
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
-        let (dst_cid, number) = match p.header {
+    fn handle_packet(&mut self, header: Header, payload: Vec<Frame>) -> QuicResult<()> {
+        let (dst_cid, number) = match header {
             Header::Long {
                 dst_cid,
                 src_cid,
@@ -273,7 +300,7 @@ where
         }));
 
         let mut received_tls = false;
-        for frame in &p.payload {
+        for frame in &payload {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
                     received_tls = true;
