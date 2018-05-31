@@ -31,6 +31,7 @@ pub mod static_table;
 use self::static_table::StaticTable;
 
 pub mod iocontext;
+pub mod string;
 pub mod parser;
 pub mod dump;
 pub mod vas;
