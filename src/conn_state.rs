@@ -24,6 +24,7 @@ pub struct ConnectionState<T> {
     prev_secret: Option<Secret>,
     pub streams: Streams,
     queue: VecDeque<Vec<u8>>,
+    control: VecDeque<Frame>,
     tls: T,
 }
 
@@ -71,6 +72,7 @@ where
             prev_secret: None,
             streams,
             queue: VecDeque::new(),
+            control: VecDeque::new(),
         }
     }
 
@@ -83,6 +85,9 @@ where
 
     pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
         let mut payload = vec![];
+        while let Some(frame) = self.control.pop_front() {
+            payload.push(frame);
+        }
         while let Some(frame) = self.streams.queued() {
             payload.push(frame);
         }
@@ -241,25 +246,21 @@ where
             )));
         }
 
-        let mut payload = vec![
-            Frame::Ack(AckFrame {
-                largest: number,
-                ack_delay: 0,
-                blocks: vec![Ack::Ack(0)],
-            }),
-        ];
+        self.control.push_back(Frame::Ack(AckFrame {
+            largest: number,
+            ack_delay: 0,
+            blocks: vec![Ack::Ack(0)],
+        }));
 
         let mut received_tls = false;
         for frame in &p.payload {
             match frame {
                 Frame::Stream(f) if f.id == 0 => {
                     received_tls = true;
-                    if let Some(frame) = self.handle_tls(Some(f))? {
-                        payload.push(Frame::Stream(frame));
-                    }
+                    self.handle_tls(Some(f))?;
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
-                    payload.push(Frame::PathResponse(PathFrame(*token)));
+                    self.control.push_back(Frame::PathResponse(PathFrame(*token)));
                 }
                 Frame::ApplicationClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ApplicationClose(*code, reason.clone()));
@@ -276,20 +277,13 @@ where
             }
         }
 
-        match self.state {
-            State::Handshaking if !received_tls => {
-                if let Some(frame) = self.handle_tls(None)? {
-                    payload.push(Frame::Stream(frame));
-                }
-            }
-            _ => {}
+        if let (State::Handshaking, false) = (&self.state, received_tls) {
+            self.handle_tls(None)?;
         }
-
-        let header = self.build_header(&mut payload)?;
-        self.queue_packet(Packet { header, payload })
+        Ok(())
     }
 
-    fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<Option<StreamFrame>> {
+    fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<()> {
         let (handshake, new_secret) =
             tls::process_handshake_messages(&mut self.tls, frame.map(|f| f.data.as_ref()))?;
 
@@ -338,28 +332,21 @@ where
         stream.set_offset(offset + handshake.len() as u64);
 
         if !handshake.is_empty() {
-            Ok(Some(StreamFrame {
+            self.control.push_back(Frame::Stream(StreamFrame {
                 id: 0,
                 fin: false,
                 offset,
                 len: Some(handshake.len() as u64),
                 data: handshake,
-            }))
-        } else {
-            Ok(None)
+            }));
         }
+        Ok(())
     }
 }
 
 impl ConnectionState<tls::ClientSession> {
     pub(crate) fn initial(&mut self) -> QuicResult<()> {
-        let mut payload = vec![
-            Frame::Stream(self.handle_tls(None)?.ok_or_else(|| {
-                QuicError::General("must have TLS messages in Initial message".into())
-            })?),
-        ];
-        let header = self.build_header(&mut payload)?;
-        self.queue_packet(Packet { header, payload })
+        self.handle_tls(None)
     }
 }
 
