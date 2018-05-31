@@ -3,7 +3,7 @@ use futures::{Async, AsyncSink, Future, Poll, Sink, Stream, sync::mpsc::{self, R
 use super::{QuicError, QuicResult};
 use conn_state::ConnectionState;
 use crypto::Secret;
-use packet::{LongType, Packet};
+use packet::{LongType, PartialDecode};
 use parameters::ServerTransportParameters;
 use tls;
 use types::ConnectionId;
@@ -45,7 +45,7 @@ impl Server {
         let packet = &mut self.in_buf[..len];
 
         let (dst_cid, ptype) = {
-            let partial = Packet::start_decode(packet)?;
+            let partial = PartialDecode::new(packet)?;
             debug!("incoming packet: {:?} {:?}", addr, partial.header);
             (partial.dst_cid(), partial.header.ptype())
         };

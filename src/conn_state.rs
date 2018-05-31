@@ -10,7 +10,7 @@ use super::{QuicError, QuicResult, QUIC_VERSION};
 use codec::{BufLen, Codec};
 use crypto::Secret;
 use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
-use packet::{Header, LongType, Packet, PartialDecode, ShortType};
+use packet::{Header, LongType, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
 use streams::Streams;
 use tls;
@@ -212,7 +212,7 @@ where
     }
 
     pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
-        self.handle_partial(Packet::start_decode(buf)?)
+        self.handle_partial(PartialDecode::new(buf)?)
     }
 
     pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
@@ -423,7 +423,7 @@ enum State {
 #[cfg(test)]
 pub mod tests {
     use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
-    use super::{tls, ConnectionState, Packet, Secret};
+    use super::{tls, ConnectionState, PartialDecode, Secret};
     use std::sync::Arc;
 
     #[test]
@@ -433,7 +433,7 @@ pub mod tests {
         let mut cp = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut cp).unwrap().dst_cid());
+        let mut s = server_conn_state(PartialDecode::new(&mut cp).unwrap().dst_cid());
         s.handle(&mut cp).unwrap();
         let mut sp = s.queued().unwrap().unwrap().clone();
         s.pop_queue();
@@ -448,7 +448,7 @@ pub mod tests {
             sp = s.queued().unwrap().unwrap().clone();
             s.pop_queue();
 
-            let header = Packet::start_decode(&mut sp).unwrap().header;
+            let header = PartialDecode::new(&mut sp).unwrap().header;
             if header.ptype().is_none() {
                 break;
             }
@@ -467,7 +467,7 @@ pub mod tests {
         let mut initial = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut initial).unwrap().dst_cid());
+        let mut s = server_conn_state(PartialDecode::new(&mut initial).unwrap().dst_cid());
         s.handle(&mut initial).unwrap();
         let mut server_hello = s.queued().unwrap().unwrap().clone();
 

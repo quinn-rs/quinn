@@ -2,33 +2,11 @@ use bytes::{Buf, BufMut};
 
 use super::QuicResult;
 use codec::{BufLen, Codec, VarLen};
-use frame::Frame;
 use types::{ConnectionId, GENERATED_CID_LENGTH};
 
 use rand::{thread_rng, Rng};
 
 use std::io::Cursor;
-
-#[derive(Debug, PartialEq)]
-pub struct Packet {
-    pub header: Header,
-    pub payload: Vec<Frame>,
-}
-
-impl Packet {
-    pub fn start_decode(buf: &mut [u8]) -> QuicResult<PartialDecode> {
-        let (header, header_len) = {
-            let mut read = Cursor::new(&buf);
-            let header = Header::decode(&mut read)?;
-            (header, read.position() as usize)
-        };
-        Ok(PartialDecode {
-            header,
-            header_len,
-            buf,
-        })
-    }
-}
 
 pub struct PartialDecode<'a> {
     pub header: Header,
@@ -37,6 +15,19 @@ pub struct PartialDecode<'a> {
 }
 
 impl<'a> PartialDecode<'a> {
+    pub fn new(buf: &'a mut [u8]) -> QuicResult<Self> {
+        let (header, header_len) = {
+            let mut read = Cursor::new(&buf);
+            let header = Header::decode(&mut read)?;
+            (header, read.position() as usize)
+        };
+        Ok(Self {
+            header,
+            header_len,
+            buf,
+        })
+    }
+
     pub fn dst_cid(&self) -> ConnectionId {
         self.header.dst_cid()
     }
