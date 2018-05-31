@@ -1,3 +1,4 @@
+extern crate bitlab;
 extern crate bytes;
 extern crate failure;
 #[macro_use]

@@ -10,6 +10,7 @@ repository = "https://github.com/djc/quinn"
 license = "MIT/Apache-2.0"
 
 [dependencies]
+bitlab = "0.8.1"
 bytes = "0.4.7"
 failure = "0.1"
 failure_derive = "0.1"
