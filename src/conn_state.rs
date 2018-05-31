@@ -157,7 +157,9 @@ where
 
         let mut encrypted_payload_len = (payload.buf_len() + tag_len) as u64;
         if ptype == Some(LongType::Initial) && encrypted_payload_len < 1200 {
-            payload.push(Frame::Padding(PaddingFrame((1200 - encrypted_payload_len) as usize)));
+            payload.push(Frame::Padding(PaddingFrame(
+                (1200 - encrypted_payload_len) as usize,
+            )));
             encrypted_payload_len = 1200;
         }
 
@@ -307,7 +309,8 @@ where
                     self.handle_tls(Some(f))?;
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
-                    self.control.push_back(Frame::PathResponse(PathFrame(*token)));
+                    self.control
+                        .push_back(Frame::PathResponse(PathFrame(*token)));
                 }
                 Frame::ApplicationClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ApplicationClose(*code, reason.clone()));
