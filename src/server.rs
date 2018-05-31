@@ -19,10 +19,7 @@ pub struct Server {
     tls_config: Arc<tls::ServerConfig>,
     in_buf: Vec<u8>,
     connections: HashMap<ConnectionId, Sender<Vec<u8>>>,
-    send_queue: (
-        Sender<(SocketAddr, Vec<u8>)>,
-        Receiver<(SocketAddr, Vec<u8>)>,
-    ),
+    send_queue: PacketChannel,
 }
 
 impl Server {
@@ -193,7 +190,7 @@ impl Future for Connection {
 
             let mut sent = false;
             match self.state.queued() {
-                Ok(Some(msg)) => match self.send.start_send((self.addr.clone(), msg.clone())) {
+                Ok(Some(msg)) => match self.send.start_send((self.addr, msg.clone())) {
                     Ok(AsyncSink::Ready) => {
                         sent = true;
                     }
@@ -223,3 +220,8 @@ impl Future for Connection {
         Ok(Async::NotReady)
     }
 }
+
+type PacketChannel = (
+    Sender<(SocketAddr, Vec<u8>)>,
+    Receiver<(SocketAddr, Vec<u8>)>,
+);

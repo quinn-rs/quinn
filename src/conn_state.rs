@@ -282,9 +282,9 @@ where
                 )));
             },
             Header::Negotiation { .. } => {
-                return Err(QuicError::General(format!(
-                    "negotiation packet not handled by connections"
-                )));
+                return Err(QuicError::General(
+                    "negotiation packet not handled by connections".into(),
+                ));
             }
         };
 

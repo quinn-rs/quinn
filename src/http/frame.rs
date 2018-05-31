@@ -45,14 +45,14 @@ impl Codec for SettingsFrame {
     fn encode<T: BufMut>(&self, buf: &mut T) {
         buf.put_u8(0);
         buf.put_u16_be(0x1);
-        let encoded = VarLen(self.0.header_table_size as u64);
+        let encoded = VarLen(u64::from(self.0.header_table_size));
         let encoded_len = encoded.buf_len();
         debug_assert!(encoded_len < 64);
         VarLen(encoded_len as u64).encode(buf);
         encoded.encode(buf);
 
         buf.put_u16_be(0x6);
-        let encoded = VarLen(self.0.max_header_list_size as u64);
+        let encoded = VarLen(u64::from(self.0.max_header_list_size));
         let encoded_len = encoded.buf_len();
         debug_assert!(encoded_len < 64);
         VarLen(encoded_len as u64).encode(buf);
@@ -61,13 +61,13 @@ impl Codec for SettingsFrame {
 
     fn decode<T: Buf>(buf: &mut T) -> QuicResult<SettingsFrame> {
         if buf.get_u8() != 0 {
-            return Err(QuicError::DecodeError(format!("Unsuported flags")));
+            return Err(QuicError::DecodeError("unsupported flags".into()));
         }
         let mut settings = Settings::default();
         while buf.has_remaining() {
             let tag = buf.get_u16_be();
             if tag != 0x1 && tag != 0x6 {
-                return Err(QuicError::DecodeError(format!("Unsuported tag")));
+                return Err(QuicError::DecodeError("unsupported tag".into()));
             }
             VarLen::decode(buf)?;
             let val = VarLen::decode(buf)?;
@@ -84,8 +84,8 @@ impl Codec for SettingsFrame {
 impl FrameHeader for SettingsFrame {
     fn len(&self) -> VarLen {
         VarLen(
-            (6 + VarLen(self.0.header_table_size as u64).buf_len()
-                + VarLen(self.0.max_header_list_size as u64).buf_len()) as u64,
+            (6 + VarLen(u64::from(self.0.header_table_size)).buf_len()
+                + VarLen(u64::from(self.0.max_header_list_size)).buf_len()) as u64,
         )
     }
     fn flags(&self) -> u8 {
