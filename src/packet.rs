@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut};
 
-use super::{QuicError, QuicResult};
+use super::QuicResult;
 use codec::{BufLen, Codec, VarLen};
 use crypto::PacketKey;
 use frame::Frame;
@@ -17,44 +17,6 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn encode(&self, key: &PacketKey, buf: &mut [u8]) -> QuicResult<usize> {
-        let tag_len = key.algorithm().tag_len();
-        let len = self.buf_len() + tag_len;
-        if len > buf.len() {
-            return Err(QuicError::AllocationError(len, buf.len()));
-        }
-
-        let (header_len, msg_len, buf) = {
-            let mut write = Cursor::new(buf);
-            self.header.encode(&mut write);
-            let header_len = write.position() as usize;
-            debug_assert_eq!(header_len, self.header.buf_len());
-
-            let mut expected = header_len;
-            for frame in &self.payload {
-                frame.encode(&mut write);
-                expected += frame.buf_len();
-            }
-            debug_assert_eq!(expected, write.position() as usize);
-            let msg_len = write.position() as usize;
-            (header_len, msg_len, write.into_inner())
-        };
-
-        let out_len = match self.header {
-            Header::Long { number, .. } | Header::Short { number, .. } => {
-                let (header_buf, mut payload) = buf.split_at_mut(header_len);
-                let mut in_out = &mut payload[..msg_len - header_len + tag_len];
-                key.encrypt(number, &header_buf, in_out, tag_len)?
-            }
-            Header::Negotiation { .. } => header_len,
-        };
-
-        if let Header::Long { len, .. } = self.header {
-            debug_assert_eq!(len, out_len as u64);
-        }
-        Ok(header_len + out_len)
-    }
-
     pub fn start_decode(buf: &mut [u8]) -> QuicResult<PartialDecode> {
         let (header, header_len) = {
             let mut read = Cursor::new(&buf);
@@ -104,12 +66,6 @@ impl<'a> PartialDecode<'a> {
         };
 
         Ok(Packet { header, payload })
-    }
-}
-
-impl BufLen for Packet {
-    fn buf_len(&self) -> usize {
-        self.header.buf_len() + self.payload.buf_len()
     }
 }
 

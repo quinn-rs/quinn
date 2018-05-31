@@ -93,8 +93,7 @@ where
         }
 
         if !payload.is_empty() {
-            let header = self.build_header(&mut payload)?;
-            self.queue_packet(Packet { header, payload })?;
+            self.queue_packet(payload)?;
         }
         Ok(self.queue.front())
     }
@@ -113,15 +112,6 @@ where
         self.local.cid
     }
 
-    fn encode_key(&self, h: &Header) -> PacketKey {
-        if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
-                return secret.build_key(self.side);
-            }
-        }
-        self.secret.build_key(self.side)
-    }
-
     fn decode_key(&self, h: &Header) -> PacketKey {
         if let Some(LongType::Handshake) = h.ptype() {
             if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
@@ -136,16 +126,8 @@ where
         self.prev_secret = Some(old);
     }
 
-    fn build_header(&mut self, payload: &mut Vec<Frame>) -> QuicResult<Header> {
-        let number = self.src_pn;
-        self.src_pn += 1;
-
-        let mut payload_len = (payload.buf_len() + self.secret.tag_len()) as u64;
-        if self.state == State::Start && payload_len < 1200 {
-            payload.push(Frame::Padding(PaddingFrame((1200 - payload_len) as usize)));
-            payload_len = 1200;
-        }
-
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+    pub fn queue_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
         let ptype = match self.state {
             State::Connected => None,
             State::Handshaking => Some(LongType::Handshake),
@@ -168,15 +150,35 @@ where
             }
         };
 
+        let secret = if let Some(LongType::Handshake) = ptype {
+            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
+                secret
+            } else {
+                &self.secret
+            }
+        } else {
+            &self.secret
+        };
+        let key = secret.build_key(self.side);
+        let tag_len = key.algorithm().tag_len();
+
+        let mut encrypted_payload_len = (payload.buf_len() + tag_len) as u64;
+        if ptype == Some(LongType::Initial) && encrypted_payload_len < 1200 {
+            payload.push(Frame::Padding(PaddingFrame((1200 - encrypted_payload_len) as usize)));
+            encrypted_payload_len = 1200;
+        }
+
+        let number = self.src_pn;
+        self.src_pn += 1;
         let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
         debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        Ok(match ptype {
+        let header = match ptype {
             Some(ltype) => Header::Long {
                 ptype: ltype,
                 version: QUIC_VERSION,
                 dst_cid,
                 src_cid,
-                len: payload_len,
+                len: encrypted_payload_len,
                 number,
             },
             None => Header::Short {
@@ -185,15 +187,33 @@ where
                 dst_cid,
                 number,
             },
-        })
-    }
+        };
 
-    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    pub fn queue_packet(&mut self, packet: Packet) -> QuicResult<()> {
-        let key = self.encode_key(&packet.header);
-        let len = packet.buf_len() + key.algorithm().tag_len();
-        let mut buf = vec![0u8; len];
-        packet.encode(&key, &mut buf)?;
+        debug_assert_eq!(tag_len, self.secret.tag_len());
+        let buf = vec![0u8; header.buf_len() + (encrypted_payload_len as usize)];
+        let (header_len, msg_len, mut buf) = {
+            let mut write = Cursor::new(buf);
+            header.encode(&mut write);
+            let header_len = write.position() as usize;
+            debug_assert_eq!(header_len, header.buf_len());
+
+            for frame in &payload {
+                let before = write.position();
+                frame.encode(&mut write);
+                let after = write.position();
+                debug_assert_eq!((after - before) as usize, frame.buf_len());
+            }
+            let msg_len = write.position() as usize;
+            (header_len, msg_len, write.into_inner())
+        };
+
+        let out_len = {
+            let (header_buf, mut payload) = buf.split_at_mut(header_len);
+            let mut in_out = &mut payload[..msg_len - header_len + tag_len];
+            key.encrypt(number, &header_buf, in_out, tag_len)?
+        };
+
+        debug_assert_eq!(encrypted_payload_len, out_len as u64);
         self.queue.push_back(buf);
         Ok(())
     }
