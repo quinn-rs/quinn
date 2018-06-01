@@ -155,6 +155,7 @@ struct Inner {
     open: [OpenStreams; 4],
 }
 
+#[derive(Default)]
 struct Stream {
     offset: u64,
     queued: VecDeque<Vec<u8>>,
@@ -164,9 +165,7 @@ struct Stream {
 impl Stream {
     fn new() -> Self {
         Self {
-            offset: 0,
-            queued: VecDeque::new(),
-            received: VecDeque::new(),
+            ..Default::default()
         }
     }
 }
