@@ -5,7 +5,7 @@ use futures::task;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use super::QuicError;
+use super::{QuicError, QuicResult};
 use frame::{Frame, StreamIdBlockedFrame};
 use types::Side;
 
@@ -45,7 +45,7 @@ impl Streams {
         me.queue.pop_front()
     }
 
-    pub fn init_send(&mut self, dir: Dir) -> Option<StreamRef> {
+    pub fn init_send(&mut self, dir: Dir) -> QuicResult<StreamRef> {
         let mut me = self.inner.lock().unwrap();
         let stype = (me.side.to_bit() + dir.to_bit()) as usize;
         let next = me.open[stype].next;
@@ -64,6 +64,11 @@ impl Streams {
                 inner: self.inner.clone(),
                 id,
             }
+        }).ok_or_else(|| {
+            QuicError::General(format!(
+                "{:?} not allowed to send on stream {:?} [init send]",
+                me.side, next
+            ))
         })
     }
 
