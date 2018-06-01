@@ -22,9 +22,7 @@ impl Streams {
             OpenStreams::new(),
             OpenStreams::new(),
         ];
-        if let Side::Client = side {
-            open[0].next = Some(0);
-        }
+        open[0].next = Some(0);
 
         Self {
             inner: Arc::new(Mutex::new(Inner {
