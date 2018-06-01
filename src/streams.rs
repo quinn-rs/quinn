@@ -171,6 +171,7 @@ impl Stream {
     }
 }
 
+#[derive(Debug)]
 struct OpenStreams {
     next: Option<u64>,
     max: u64,
