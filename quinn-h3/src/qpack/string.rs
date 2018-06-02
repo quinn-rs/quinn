@@ -64,7 +64,6 @@ impl HuffmanDecoder {
         range: &mut BitRange,
         input: &Vec<u8>
     ) -> Result<Option<u32>, Error> {
-        // println!("Check EOF {:?} {:?}", input, range);
         if (range.byte + 1) as usize > input.len() {
             return Ok(None);
         }
@@ -76,15 +75,12 @@ impl HuffmanDecoder {
             let rest = match input.get_u8(side.byte, side.bit, side.count) {
                 Ok(x) => x,
                 Err(_) => {
-                    // eprintln!("Fail to read bits up to bound {:?}", side);
                     return Err(Error::MissingBits(side.clone()));
                 }
             };
             
             let eof_filler = ((2u16 << (side.count - 1)) - 1) as u8;
-            // eprintln!("Compare with eof {} <?> {}", rest, eof_filler);
             if rest & eof_filler == eof_filler {
-                // eprintln!("Hit eof");
                 return Ok(None);
             }
         }
@@ -97,7 +93,6 @@ impl HuffmanDecoder {
         range: &mut BitRange,
         input: &Vec<u8>
     ) -> Result<Option<u32>, Error> {
-        // eprintln!("Try read {:?} {:?}", input, range);
         let value = match input.get_u32(
             range.byte, range.bit, range.count) {
             Ok(x) => x,
@@ -126,7 +121,7 @@ impl HuffmanDecoder {
         };
 
         match at_value {
-            &DecodeValue::Sym(x) => { println!("Got {}", x); Ok(Some(x)) },
+            &DecodeValue::Sym(x) => Ok(Some(x)),
             &DecodeValue::Partial(d) => d.decode_next(range, input),
         }
     }

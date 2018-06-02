@@ -6,6 +6,7 @@ use std::io::Cursor;
 use bytes::Buf;
 
 use super::iocontext::StarterByte;
+use super::string::{HpackStringDecode, Error as HuffmanEncodingError};
 
 
 #[derive(Debug, PartialEq)]
@@ -13,7 +14,8 @@ pub enum Error {
     NoByteForIntegerLength,
     TooShortBufferForInteger,
     NoByteForStringLength,
-    TooShortBufferForString(usize)
+    TooShortBufferForString(usize),
+    InvalidHuffmanStringEncoding(HuffmanEncodingError)
 }
 
 
@@ -33,14 +35,14 @@ impl<'a> Parser<'a> {
         else { None }
     }
 
-    pub fn integer(&mut self, starter: StarterByte) 
-        -> Result<usize, Error> 
+    pub fn integer(&mut self, starter: StarterByte)
+        -> Result<usize, Error>
     {
-        let byte = 
+        let byte =
             starter.byte
             .or_else(|| self.next_byte())
             .ok_or(Error::NoByteForIntegerLength)?;
-        
+
         if starter.mask & byte != starter.mask {
             Ok(byte & starter.mask)
         } else {
@@ -48,8 +50,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn var_len_integer(&mut self, starter: StarterByte) 
-        -> Result<usize, Error> 
+    fn var_len_integer(&mut self, starter: StarterByte)
+        -> Result<usize, Error>
     {
         let mut value = starter.mask;
 
@@ -65,18 +67,18 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    pub fn string(&mut self, starter: StarterByte) 
-        -> Result<Vec<u8>, Error> 
+    pub fn string(&mut self, starter: StarterByte)
+        -> Result<Vec<u8>, Error>
     {
-        let byte = 
+        let byte =
             starter.byte
             .or_else(|| self.next_byte())
             .ok_or(Error::NoByteForIntegerLength)?;
-        
 
-        let (_huffman_encoded, str_len) = 
+
+        let (huffman_encoded, str_len) =
             if starter.prefix > 1 {
-                let bit = 2usize.pow(starter.prefix as u32 - 1) as usize;
+                let bit = 2usize << (starter.prefix - 1);
                 let huffman = byte & bit == bit;
 
                 let len = self.integer(
@@ -102,7 +104,13 @@ impl<'a> Parser<'a> {
         (0..str_len).for_each(|_| str_bytes.push(0u8));
         self.buf.copy_to_slice(&mut str_bytes.as_mut_slice());
 
-        // TODO decode huffman code
+        if huffman_encoded {
+            let decoded: Result<Vec<_>, HuffmanEncodingError> = 
+                str_bytes.hpack_decode().collect();
+            str_bytes = decoded.map_err(
+                |x| Error::InvalidHuffmanStringEncoding(x))?;
+        }
+
         Ok(str_bytes)
     }
 
