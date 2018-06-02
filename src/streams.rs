@@ -28,9 +28,9 @@ impl Streams {
             inner: Arc::new(Mutex::new(Inner {
                 side,
                 task: None,
-                queue: VecDeque::new(),
                 streams: HashMap::new(),
                 open,
+                control: VecDeque::new(),
             })),
         }
     }
@@ -42,7 +42,7 @@ impl Streams {
 
     pub fn queued(&mut self) -> Option<Frame> {
         let mut me = self.inner.lock().unwrap();
-        me.queue.pop_front()
+        me.control.pop_front()
     }
 
     pub fn init_send(&mut self, dir: Dir) -> QuicResult<StreamRef> {
@@ -113,7 +113,7 @@ impl Streams {
                 }
             };
             if consumer.is_some() {
-                me.queue
+                me.control
                     .push_back(Frame::StreamIdBlocked(StreamIdBlockedFrame(id)));
                 if let Some(ref mut task) = me.task {
                     task.notify();
@@ -153,9 +153,9 @@ impl StreamRef {
 struct Inner {
     side: Side,
     task: Option<task::Task>,
-    queue: VecDeque<Frame>,
     streams: HashMap<u64, Stream>,
     open: [OpenStreams; 4],
+    control: VecDeque<Frame>,
 }
 
 #[derive(Default)]
