@@ -78,11 +78,8 @@ impl BufLen for Header {
     fn buf_len(&self) -> usize {
         match self {
             Header::Long {
-                dst_cid,
-                src_cid,
-                len,
-                ..
-            } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(*len).buf_len(),
+                dst_cid, src_cid, ..
+            } => 12 + (dst_cid.len as usize + src_cid.len as usize),
             Header::Short { ptype, dst_cid, .. } => 1 + (dst_cid.len as usize) + ptype.buf_len(),
             Header::Negotiation {
                 dst_cid,
@@ -109,7 +106,8 @@ impl Codec for Header {
                 buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
                 buf.put_slice(&dst_cid);
                 buf.put_slice(&src_cid);
-                VarLen(len).encode(buf);
+                debug_assert!(len < 16383);
+                buf.put_u16_be((len | 16384) as u16);
                 buf.put_u32_be(number);
             }
             Header::Short {
