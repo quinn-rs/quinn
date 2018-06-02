@@ -295,20 +295,19 @@ where
             )));
         }
 
-        self.control.push_back(Frame::Ack(AckFrame {
-            largest: number,
-            ack_delay: 0,
-            blocks: vec![Ack::Ack(0)],
-        }));
-
+        let mut send_ack = false;
         let mut received_tls = false;
         for frame in &payload {
             match frame {
-                Frame::Stream(f) if f.id == 0 => {
-                    received_tls = true;
-                    self.handle_tls(Some(f))?;
+                Frame::Stream(f) => {
+                    send_ack = true;
+                    if f.id == 0 {
+                        received_tls = true;
+                        self.handle_tls(Some(f))?;
+                    }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
+                    send_ack = true;
                     self.control
                         .push_back(Frame::PathResponse(PathFrame(*token)));
                 }
@@ -318,13 +317,19 @@ where
                 Frame::ConnectionClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ConnectionClose(*code, reason.clone()));
                 }
-                Frame::Ack(_)
-                | Frame::Padding(_)
-                | Frame::PathResponse(_)
-                | Frame::Stream(_)
-                | Frame::Ping
-                | Frame::StreamIdBlocked(_) => {}
+                Frame::PathResponse(_) | Frame::Ping | Frame::StreamIdBlocked(_) => {
+                    send_ack = true;
+                }
+                Frame::Ack(_) | Frame::Padding(_) => {}
             }
+        }
+
+        if send_ack {
+            self.control.push_back(Frame::Ack(AckFrame {
+                largest: number,
+                ack_delay: 0,
+                blocks: vec![Ack::Ack(0)],
+            }));
         }
 
         if let (State::Handshaking, false) = (&self.state, received_tls) {
