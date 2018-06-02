@@ -77,7 +77,12 @@ where
     };
 
     let mut messages = Vec::new();
-    session.write_tls(&mut messages)?;
+    loop {
+        let size = session.write_tls(&mut messages)?;
+        if size == 0 {
+            break;
+        }
+    }
 
     let secret = if let Some(suite) = key_ready {
         let mut client_secret = vec![0u8; suite.enc_key_len];

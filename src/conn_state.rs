@@ -7,12 +7,12 @@ use std::io::Cursor;
 use std::mem;
 
 use super::{QuicError, QuicResult, QUIC_VERSION};
-use codec::{BufLen, Codec};
+use codec::Codec;
 use crypto::Secret;
-use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
+use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame};
 use packet::{Header, LongType, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
-use streams::Streams;
+use streams::{Dir, Streams};
 use tls;
 use types::{ConnectionId, Side, GENERATED_CID_LENGTH};
 
@@ -28,6 +28,7 @@ pub struct ConnectionState<T> {
     queue: VecDeque<Vec<u8>>,
     control: VecDeque<Frame>,
     tls: T,
+    pmtu: usize,
 }
 
 impl<T> ConnectionState<T>
@@ -75,6 +76,7 @@ where
             streams,
             queue: VecDeque::new(),
             control: VecDeque::new(),
+            pmtu: IPV6_MIN_MTU,
         }
     }
 
@@ -86,17 +88,7 @@ where
     }
 
     pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
-        let mut payload = vec![];
-        while let Some(frame) = self.control.pop_front() {
-            payload.push(frame);
-        }
-        while let Some(frame) = self.streams.queued() {
-            payload.push(frame);
-        }
-
-        if !payload.is_empty() {
-            self.queue_packet(payload)?;
-        }
+        self.queue_packet()?;
         Ok(self.queue.front())
     }
 
@@ -120,7 +112,12 @@ where
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    pub fn queue_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
+    pub fn queue_packet(&mut self) -> QuicResult<()> {
+        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
+        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
+        let number = self.src_pn;
+        self.src_pn += 1;
+
         let ptype = match self.state {
             State::Connected => None,
             State::Handshaking => Some(LongType::Handshake),
@@ -143,6 +140,11 @@ where
             }
         };
 
+        let header_len = match ptype {
+            Some(_) => (12 + (dst_cid.len + src_cid.len) as usize),
+            None => (3 + dst_cid.len as usize),
+        };
+
         let secret = if let Some(LongType::Handshake) = ptype {
             if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
                 secret
@@ -155,25 +157,34 @@ where
         let key = secret.build_key(self.side);
         let tag_len = key.algorithm().tag_len();
 
-        let mut encrypted_payload_len = (payload.buf_len() + tag_len) as u64;
-        if ptype == Some(LongType::Initial) && encrypted_payload_len < 1200 {
-            payload.push(Frame::Padding(PaddingFrame(
-                (1200 - encrypted_payload_len) as usize,
-            )));
-            encrypted_payload_len = 1200;
+        let mut buf = vec![0u8; self.pmtu];
+        let payload_len = {
+            let mut write = Cursor::new(&mut buf[header_len..self.pmtu - tag_len]);
+            while let Some(frame) = self.control.pop_front() {
+                frame.encode(&mut write);
+            }
+            self.streams.poll_send(&mut write);
+
+            let mut payload_len = write.position() as usize;
+            let initial_min_size = 1200 - header_len - tag_len;
+            if ptype == Some(LongType::Initial) && payload_len < initial_min_size {
+                Frame::Padding(PaddingFrame(initial_min_size - payload_len)).encode(&mut write);
+                payload_len = initial_min_size;
+            }
+            payload_len
+        };
+
+        if payload_len == 0 {
+            return Ok(());
         }
 
-        let number = self.src_pn;
-        self.src_pn += 1;
-        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
-        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
         let header = match ptype {
             Some(ltype) => Header::Long {
                 ptype: ltype,
                 version: QUIC_VERSION,
                 dst_cid,
                 src_cid,
-                len: encrypted_payload_len,
+                len: (payload_len + tag_len) as u64,
                 number,
             },
             None => Header::Short {
@@ -183,32 +194,18 @@ where
                 number,
             },
         };
-
-        debug_assert_eq!(tag_len, self.secret.tag_len());
-        let buf = vec![0u8; header.buf_len() + (encrypted_payload_len as usize)];
-        let (header_len, msg_len, mut buf) = {
-            let mut write = Cursor::new(buf);
+        {
+            let mut write = Cursor::new(&mut buf[..header_len]);
             header.encode(&mut write);
-            let header_len = write.position() as usize;
-            debug_assert_eq!(header_len, header.buf_len());
-
-            for frame in &payload {
-                let before = write.position();
-                frame.encode(&mut write);
-                let after = write.position();
-                debug_assert_eq!((after - before) as usize, frame.buf_len());
-            }
-            let msg_len = write.position() as usize;
-            (header_len, msg_len, write.into_inner())
-        };
+        }
 
         let out_len = {
             let (header_buf, mut payload) = buf.split_at_mut(header_len);
-            let mut in_out = &mut payload[..msg_len - header_len + tag_len];
+            let mut in_out = &mut payload[..payload_len + tag_len];
             key.encrypt(number, &header_buf, in_out, tag_len)?
         };
 
-        debug_assert_eq!(encrypted_payload_len, out_len as u64);
+        buf.truncate(header_len + out_len);
         self.queue.push_back(buf);
         Ok(())
     }
@@ -296,14 +293,13 @@ where
         }
 
         let mut send_ack = false;
-        let mut received_tls = false;
         for frame in &payload {
             match frame {
                 Frame::Stream(f) => {
                     send_ack = true;
+                    self.streams.received(f)?;
                     if f.id == 0 {
-                        received_tls = true;
-                        self.handle_tls(Some(f))?;
+                        self.handle_tls()?;
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
@@ -332,15 +328,21 @@ where
             }));
         }
 
-        if let (State::Handshaking, false) = (&self.state, received_tls) {
-            self.handle_tls(None)?;
-        }
         Ok(())
     }
 
-    fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<()> {
-        let (handshake, new_secret) =
-            tls::process_handshake_messages(&mut self.tls, frame.map(|f| f.data.as_ref()))?;
+    fn handle_tls(&mut self) -> QuicResult<()> {
+        let mut stream = match self.streams.get_stream(0) {
+            Some(s) => s,
+            None => {
+                let stream = self.streams.init_send(Dir::Bidi)?;
+                debug_assert_eq!(stream.id, 0);
+                stream
+            }
+        };
+
+        let data = stream.received()?;
+        let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, Some(&data))?;
 
         if let Some(secret) = new_secret {
             self.set_secret(secret);
@@ -380,28 +382,13 @@ where
             self.streams.update_max_id(max_send_uni);
         }
 
-        let mut stream = self.streams
-            .received(0)
-            .ok_or_else(|| QuicError::General("no incoming packets allowed on stream 0".into()))?;
-        let offset = stream.get_offset();
-        stream.set_offset(offset + handshake.len() as u64);
-
-        if !handshake.is_empty() {
-            self.control.push_back(Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }));
-        }
-        Ok(())
+        stream.send(&handshake)
     }
 }
 
 impl ConnectionState<tls::ClientSession> {
     pub(crate) fn initial(&mut self) -> QuicResult<()> {
-        self.handle_tls(None)
+        self.handle_tls()
     }
 }
 
@@ -428,6 +415,8 @@ enum State {
     Connected,
 }
 
+const IPV6_MIN_MTU: usize = 1232;
+
 #[cfg(test)]
 pub mod tests {
     use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
@@ -443,20 +432,26 @@ pub mod tests {
 
         let mut s = server_conn_state(PartialDecode::new(&mut cp).unwrap().dst_cid());
         s.handle(&mut cp).unwrap();
-        let mut sp = s.queued().unwrap().unwrap().clone();
-        s.pop_queue();
+        let mut messages = Vec::new();
+        gather(&mut s, &mut messages);
 
         let mut rt = 10;
         loop {
-            c.handle(&mut sp).unwrap();
-            cp = c.queued().unwrap().unwrap().clone();
-            c.pop_queue();
+            for mut sp in messages.drain(..) {
+                c.handle(&mut sp).unwrap();
+            }
 
-            s.handle(&mut cp).unwrap();
-            sp = s.queued().unwrap().unwrap().clone();
-            s.pop_queue();
+            gather(&mut c, &mut messages);
 
-            let header = PartialDecode::new(&mut sp).unwrap().header;
+            for mut cp in messages.drain(..) {
+                s.handle(&mut cp).unwrap();
+            }
+
+            gather(&mut s, &mut messages);
+
+            let header = PartialDecode::new(messages.last_mut().unwrap())
+                .unwrap()
+                .header;
             if header.ptype().is_none() {
                 break;
             }
@@ -464,6 +459,24 @@ pub mod tests {
             rt -= 1;
             if rt < 1 {
                 panic!("short header not emitted within 10 round trips");
+            }
+        }
+    }
+
+    fn gather<T>(cs: &mut ConnectionState<T>, buf: &mut Vec<Vec<u8>>)
+    where
+        T: tls::Session + tls::QuicSide,
+    {
+        loop {
+            let mut found = false;
+            if let Some(packet) = cs.queued().unwrap() {
+                buf.push(packet.clone());
+                found = true;
+            }
+            if found {
+                cs.pop_queue();
+            } else {
+                break;
             }
         }
     }
