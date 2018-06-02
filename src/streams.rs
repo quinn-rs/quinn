@@ -134,7 +134,7 @@ impl Streams {
 
 pub struct StreamRef {
     inner: Arc<Mutex<Inner>>,
-    id: u64,
+    pub id: u64,
 }
 
 impl StreamRef {
