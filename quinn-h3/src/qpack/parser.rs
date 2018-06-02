@@ -75,24 +75,19 @@ impl<'a> Parser<'a> {
             .or_else(|| self.next_byte())
             .ok_or(Error::NoByteForIntegerLength)?;
 
+        let huffman_bit = 1usize << (starter.prefix - 1);
+        let huffman_encoded = byte & huffman_bit == huffman_bit;
 
-        let (huffman_encoded, str_len) =
+        let str_len = 
             if starter.prefix > 1 {
-                let bit = 2usize << (starter.prefix - 1);
-                let huffman = byte & bit == bit;
-
-                let len = self.integer(
+                self.integer(
                     StarterByte::valued(starter.prefix - 1, byte)
-                    .expect("valid starter byte"))?;
-
-                (huffman, len)
-            }
-            // Corner case where ]x x x x x x x H]  where x: taken
-            // huffman flag is the last bit, so size must be read afterwards
-            else {
-                let huffman = byte & 1 == 1;
-                let len = self.integer(StarterByte::noprefix())?;
-                (huffman, len)
+                    .expect("valid starter byte"))?
+            } 
+            else { 
+                // Corner case where ]x x x x x x x H]  where x: taken
+                // huffman flag is the last bit, so size must be read afterwards
+                self.integer(StarterByte::noprefix())? 
             };
 
         if self.buf.remaining() < str_len {
@@ -233,6 +228,29 @@ mod tests {
             'c' as u8,
             'i' as u8,
             'i' as u8
+        ];
+
+        let mut cursor = Cursor::new(&bytes);
+        let mut parser = Parser::new(&mut cursor);
+        let res = parser.string(StarterByte::noprefix());
+
+        assert_eq!(res, Ok(Vec::from(text)));
+    }
+
+    /**
+     * https://tools.ietf.org/html/rfc7541
+     * 5.2.  String Literal Representation
+     */
+    #[test]
+    fn test_read_ascii_string_huffman_encoded() {
+        let text = "abc";
+        let bytes: [u8; 4] = [
+            // huffman, size
+            0b1000_0000 | 3,
+            // bytes
+            (0b00011 << 3) | 0b100,
+            (0b011 << 5) | 0b00100,
+            255
         ];
 
         let mut cursor = Cursor::new(&bytes);
