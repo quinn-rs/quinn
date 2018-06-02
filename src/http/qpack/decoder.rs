@@ -131,7 +131,7 @@ impl Decoder {
     {
         let mut parser = Parser::new(buf);
         let name = parser
-            .string(StarterByte::valued(7, byte)
+            .string(StarterByte::valued(6, byte)
                     .expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
         let value = parser
