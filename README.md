@@ -10,6 +10,7 @@ the protocol handshake for both client and server.
 
 Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can also get
 the [slides][slides] (and the [animation][animation] about head-of-line blocking).
+Video of the talk is available [on YouTube][youtube].
 
 All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the [issue tracker][issues] or [tweet me][twitter].
@@ -28,3 +29,4 @@ any other feedback to the [issue tracker][issues] or [tweet me][twitter].
 [talk]: https://paris.rustfest.eu/sessions/a-quic-future-in-rust
 [slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
+[youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
