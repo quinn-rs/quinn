@@ -118,26 +118,16 @@ where
         let number = self.src_pn;
         self.src_pn += 1;
 
-        let ptype = match self.state {
-            State::Connected => None,
-            State::Handshaking => Some(LongType::Handshake),
-            State::InitialSent => {
-                self.state = State::Handshaking;
-                Some(LongType::Handshake)
+        let (ptype, new_state) = match self.state {
+            State::Connected => (None, self.state),
+            State::Handshaking => (Some(LongType::Handshake), self.state),
+            State::InitialSent => (Some(LongType::Handshake), State::Handshaking),
+            State::Start => if self.side == Side::Client {
+                (Some(LongType::Initial), State::InitialSent)
+            } else {
+                (Some(LongType::Handshake), State::Handshaking)
             }
-            State::Start => {
-                if self.side == Side::Client {
-                    self.state = State::InitialSent;
-                    Some(LongType::Initial)
-                } else {
-                    self.state = State::Handshaking;
-                    Some(LongType::Handshake)
-                }
-            }
-            State::FinalHandshake => {
-                self.state = State::Connected;
-                Some(LongType::Handshake)
-            }
+            State::FinalHandshake => (Some(LongType::Handshake), State::Connected),
         };
 
         let header_len = match ptype {
@@ -207,6 +197,7 @@ where
 
         buf.truncate(header_len + out_len);
         self.queue.push_back(buf);
+        self.state = new_state;
         Ok(())
     }
 
