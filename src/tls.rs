@@ -1,5 +1,5 @@
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
-use rustls::{ClientConfig, KeyLogFile, NoClientAuth, ProtocolVersion, TLSError};
+use rustls::{KeyLogFile, NoClientAuth, ProtocolVersion, TLSError};
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -13,7 +13,8 @@ use types::Side;
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::{Certificate, ClientSession, PrivateKey, ServerConfig, ServerSession, Session};
+pub use rustls::{Certificate, PrivateKey};
+pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
 
 pub fn client_session(
     config: Option<ClientConfig>,

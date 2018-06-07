@@ -17,12 +17,29 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
+        ConnectFuture::new(Self::new(server, port)?)
+    }
+
+    pub fn connect_with_tls_config(
+        server: &str,
+        port: u16,
+        config: tls::ClientConfig,
+    ) -> QuicResult<ConnectFuture> {
+        let tls = tls::client_session(Some(config), server, &ClientTransportParameters::default())?;
+        ConnectFuture::new(Self::with_state(
+            server,
+            port,
+            ConnectionState::new(tls, None),
+        )?)
+    }
+
     pub(crate) fn new(server: &str, port: u16) -> QuicResult<Client> {
         let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
         Self::with_state(server, port, ConnectionState::new(tls, None))
     }
 
-    pub fn with_state(
+    pub(crate) fn with_state(
         server: &str,
         port: u16,
         conn_state: ConnectionState<tls::ClientSession>,
@@ -43,10 +60,6 @@ impl Client {
             socket,
             buf: vec![0u8; 65536],
         })
-    }
-
-    pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
-        ConnectFuture::new(Self::new(server, port)?)
     }
 
     fn poll_send(&mut self) -> Poll<(), QuicError> {
