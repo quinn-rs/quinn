@@ -278,8 +278,8 @@ where
 
         if self.state != State::Start && dst_cid != self.local.cid {
             return Err(QuicError::General(format!(
-                "invalid destination CID {:?} received (expected {:?})",
-                dst_cid, self.local.cid
+                "invalid destination CID {:?} received (expected {:?} in state {:?})",
+                dst_cid, self.local.cid, self.state
             )));
         }
 
