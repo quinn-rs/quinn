@@ -136,7 +136,8 @@ pub(crate) mod tests {
     extern crate untrusted;
     use self::untrusted::Input;
     use rustls::internal::pemfile;
-    use std::{fs::File, io::{BufReader, Read}};
+    use std::fs::File;
+    use std::io::{BufReader, Read};
     use webpki;
 
     pub fn client_config() -> super::ClientConfig {

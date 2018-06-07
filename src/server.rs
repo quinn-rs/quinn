@@ -1,4 +1,5 @@
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream, sync::mpsc::{self, Receiver, Sender}};
+use futures::sync::mpsc::{self, Receiver, Sender};
+use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 
 use super::{QuicError, QuicResult};
 use conn_state::ConnectionState;
@@ -8,7 +9,7 @@ use parameters::ServerTransportParameters;
 use tls;
 use types::ConnectionId;
 
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{hash_map::Entry, HashMap};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 

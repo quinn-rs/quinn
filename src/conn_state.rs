@@ -419,8 +419,8 @@ const IPV6_MIN_MTU: usize = 1232;
 
 #[cfg(test)]
 pub mod tests {
-    use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
     use super::{tls, ConnectionState, PartialDecode, Secret};
+    use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
     use std::sync::Arc;
 
     #[test]
