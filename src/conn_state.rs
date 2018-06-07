@@ -406,7 +406,7 @@ impl PeerData {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Start,
     InitialSent,
