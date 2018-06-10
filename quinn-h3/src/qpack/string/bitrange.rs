@@ -15,10 +15,14 @@ impl BitRange {
     pub fn forwards(&mut self, step: u32) {
         self.bit += self.count;
         
-        self.byte += self.bit / 8;;
+        self.byte += self.bit / 8;
         self.bit %= 8;
         
         self.count = step;
+    }
+
+    pub fn join(&mut self) {
+        self.forwards(0);
     }
 
     pub fn byte_boundary(&self) -> BitRange {

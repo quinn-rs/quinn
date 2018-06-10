@@ -6,4 +6,9 @@ pub mod bitrange;
 pub use self::bitrange::BitRange;
 
 pub mod decode;
-pub use self::decode::{DecodeIter, HpackStringDecode, Error};
+pub use self::decode::{DecodeIter, HpackStringDecode, 
+    Error as HuffmanDecodingError};
+
+pub mod encode;
+pub use self::encode::{HpackStringEncode,
+    Error as HuffmanEncodingError};

@@ -3,9 +3,23 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
-use std::io::{Write, Cursor, Result, Error, ErrorKind};
+use std::io::{Write, Cursor, Error as IoError, ErrorKind};
 
 use super::iocontext::StarterByte;
+use super::string::{HpackStringEncode, HuffmanEncodingError};
+
+
+#[derive(Debug)]
+pub enum Error {
+    IoError(IoError),
+    InvalidHuffmanStringEncoding(HuffmanEncodingError)
+}
+
+
+pub enum StringEncoding {
+    NoEncoding,
+    HuffmanEncoding
+}
 
 
 
@@ -20,13 +34,15 @@ impl<'a> Dump<'a> {
         Dump { buf }
     }
 
-    fn put_byte<T>(&mut self, byte: T) -> Result<()> where T: Into<u8> {
+    fn put_byte<T>(&mut self, byte: T) 
+        -> Result<(), Error> where T: Into<u8> {
         let bytes: [u8; 1] = [ byte.into() ];
         self.buf.write(&bytes).map(|_| ())
+            .map_err(|x| Error::IoError(x))
     }
 
     pub fn integer(&mut self, value: usize, starter: StarterByte) 
-        -> Result<()> 
+        -> Result<(), Error> 
     {
         if value < starter.mask {
             let first_byte = starter.safe_start();
@@ -37,7 +53,7 @@ impl<'a> Dump<'a> {
     }
 
     fn var_len_integer(&mut self, value: usize, starter: StarterByte) 
-        -> Result<()> 
+        -> Result<(), Error> 
     {
         let first_byte = starter.safe_start() | starter.mask;
         let _ = self.put_byte(first_byte as u8)?;
@@ -53,17 +69,25 @@ impl<'a> Dump<'a> {
     }
 
     pub fn string<T>(&mut self, value: T, starter: StarterByte) 
-        -> Result<()> 
+        -> Result<(), Error> 
+        where T: Into<Cow<'a, [u8]>>,
+    {
+        self.string_with_encoding(value, StringEncoding::NoEncoding, starter)
+    }
+    
+    pub fn string_with_encoding<T>(
+        &mut self, 
+        value: T, 
+        encoding: StringEncoding,
+        starter: StarterByte
+        ) -> Result<(), Error> 
         where T: Into<Cow<'a, [u8]>>,
     {
         let input = value.into();
 
-        // TODO huffman encoding
-        let _huffman = false;
-        
         if starter.prefix > 1 {
             let mut first_byte = starter.safe_start();
-            if _huffman {
+            if let StringEncoding::HuffmanEncoding = encoding {
                 let bit = 2usize.pow(starter.prefix as u32 - 1) as usize;
                 first_byte |= bit;
             }
@@ -77,15 +101,40 @@ impl<'a> Dump<'a> {
         // huffman flag is the last bit, so size must be written afterwards
         else {
             let mut first_byte = starter.safe_start();
-            if _huffman {
+            if let StringEncoding::HuffmanEncoding = encoding {
                 first_byte |= 1;
             }
             
             let _ = self.put_byte(first_byte as u8)?;
             let _ = self.integer(input.len(), StarterByte::noprefix())?;
         }
+
+        match encoding {
+            StringEncoding::NoEncoding =>
+                self.buf.write(&input[..])
+                .map_err(|x| Error::IoError(x))
+                .map(|_| ()),
+            StringEncoding::HuffmanEncoding => {
+                let encoded = match input {
+                    // NOTE: At the moment, input must be a Vec so copy is made
+                    // if necessary.
+                    // It uses underling 'bitlab' crate to manipulate 
+                    // individual bits, but it only works on Vec and not 
+                    // on slice or array. 
+                    Cow::Borrowed(borrowed) =>
+                        borrowed.to_owned().hpack_encode()
+                        .map_err(|x| Error::InvalidHuffmanStringEncoding(x))?,
+                    Cow::Owned(owned) =>
+                        owned.hpack_encode()
+                        .map_err(|x| Error::InvalidHuffmanStringEncoding(x))?
+                };
+                
+                self.buf.write(&encoded[..])
+                    .map_err(|x| Error::IoError(x))
+                    .map(|_| ())
+            }
+        }
         
-        self.buf.write(&input[..]).map(|_| ())
     }
 
 }
@@ -250,21 +299,22 @@ mod tests {
         let starter = StarterByte::prefix(1)
             .expect("valid starter byte");
         let expected: [u8; 5] = [
-            // not huffman
-            0,
+            // huffman
+            1,
             // size
             3,
             // bytes
-            'A' as u8,
-            'a' as u8,
-            'a' as u8
+            (0b100001 << 2) | 0b00,
+            (0b011 << 5) | 0b00011,
+            255
         ];
 
         let mut bytes = Vec::new();
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            let res = dump.string(&text[..], starter);
+            let res = dump.string_with_encoding(
+                &text[..], StringEncoding::HuffmanEncoding, starter);
             assert!(res.is_ok());
         }
 
