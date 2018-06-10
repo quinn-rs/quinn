@@ -6,7 +6,7 @@ use std::io::Cursor;
 use bytes::Buf;
 
 use super::iocontext::StarterByte;
-use super::string::{HpackStringDecode, Error as HuffmanEncodingError};
+use super::string::{HpackStringDecode, HuffmanDecodingError};
 
 
 #[derive(Debug, PartialEq)]
@@ -15,7 +15,7 @@ pub enum Error {
     TooShortBufferForInteger,
     NoByteForStringLength,
     TooShortBufferForString(usize),
-    InvalidHuffmanStringEncoding(HuffmanEncodingError)
+    InvalidHuffmanStringDecoding(HuffmanDecodingError)
 }
 
 
@@ -100,10 +100,10 @@ impl<'a> Parser<'a> {
         self.buf.copy_to_slice(&mut str_bytes.as_mut_slice());
 
         if huffman_encoded {
-            let decoded: Result<Vec<_>, HuffmanEncodingError> = 
+            let decoded: Result<Vec<_>, HuffmanDecodingError> = 
                 str_bytes.hpack_decode().collect();
             str_bytes = decoded.map_err(
-                |x| Error::InvalidHuffmanStringEncoding(x))?;
+                |x| Error::InvalidHuffmanStringDecoding(x))?;
         }
 
         Ok(str_bytes)
