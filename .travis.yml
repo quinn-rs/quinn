@@ -21,10 +21,7 @@ script:
 
 after_success: |
   if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
-    curl -L https://github.com/xd009642/tarpaulin/archive/develop.zip -o tarpaulin.zip
-    unzip tarpaulin.zip
-    pushd tarpaulin-develop && cargo install -f && popd
-    rm -rf tarpaulin-develop
+    bash <(curl https://raw.githubusercontent.com/xd009642/tarpaulin/master/travis-install.sh)
     cargo tarpaulin --out Xml
     bash <(curl -s https://codecov.io/bash)
   fi
