@@ -2,7 +2,7 @@
 
 quicr is an implementation of the [QUIC](https://en.wikipedia.org/wiki/QUIC) network protocol [undergoing
 standardization by the IETF](https://quicwg.github.io/). It is currently suitable for experimental use. The
-implementation is split up into the state macine crate `quicr-core` which performs no IO internally and can be tested
+implementation is split up into the state machine crate `quicr-core` which performs no IO internally and can be tested
 deterministically, and a high-level tokio-compatible API in `quicr`. See `quicr/examples/` for usage.
 
 [![Crates.io](https://img.shields.io/crates/v/quicr.svg)](https://crates.io/crates/quicr)
