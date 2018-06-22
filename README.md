@@ -15,6 +15,10 @@ Video of the talk is available [on YouTube][youtube].
 All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the [issue tracker][issues] or [tweet me][twitter].
 
+Quinn was created by Dirkjan Ochtman. If you are in a position to support further
+development or want to use it in your project, please consider supporting my open
+source work on [Patreon][patreon].
+
 # Features
 
 * Currently targets QUIC draft 11 and TLS 1.3 draft 28
@@ -30,3 +34,4 @@ any other feedback to the [issue tracker][issues] or [tweet me][twitter].
 [slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
+[patreon]: https://www.patreon.com/dochtman
