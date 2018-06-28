@@ -12,7 +12,7 @@ use openssl::{self, ex_data};
 use openssl::ssl::{self, SslContext, SslMethod, SslOptions, SslVersion, SslMode, Ssl, SslStream, HandshakeError, MidHandshakeSslStream,
                    SslStreamBuilder, SslAlert, SslRef, SslSession};
 use openssl::pkey::{PKeyRef, Private};
-use openssl::x509::X509Ref;
+use openssl::x509::{X509Ref, X509StoreContextRef};
 use openssl::x509::verify::X509CheckFlags;
 use openssl::hash::MessageDigest;
 use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
@@ -106,6 +106,20 @@ pub struct Config {
     ///
     /// Only meaningful for endpoints that accept incoming connections.
     pub use_stateless_retry: bool,
+
+    /// Whether incoming connections are required to provide certificates.
+    ///
+    /// If this is not set but a `client_cert_verifier` is supplied, a certificate will still be requested, but the
+    /// handshake will proceed even if one is not supplied.
+    pub require_client_certs: bool,
+
+    /// Function to preform application-level verification of client certificates from incoming connections.
+    ///
+    /// Called with a boolean indicating whether the certificate chain is valid at the TLS level, and a
+    /// `X509StoreContextRef` containing said chain. Returns whether the certificate should be considered valid.
+    ///
+    /// If `None`, all valid certificates will be accepted.
+    pub client_cert_verifier: Option<Box<Fn(bool, &mut X509StoreContextRef) -> bool + Send + Sync + 'static>>,
 }
 
 pub struct CertConfig<'a> {
@@ -146,6 +160,9 @@ impl Default for Config {
 
             keylog: None,
             use_stateless_retry: false,
+
+            require_client_certs: false,
+            client_cert_verifier: None,
         }
     }
 }
@@ -396,6 +413,14 @@ impl Endpoint {
             });
         }
 
+        let verify_flag = if config.require_client_certs { ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT } else { ssl::SslVerifyMode::empty() };
+        if config.client_cert_verifier.is_some() {
+            let config = config.clone();
+            tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| (config.client_cert_verifier.as_ref().unwrap())(x, y));
+        } else {
+            tls.set_verify(verify_flag);
+        }
+
         let tls = tls.build();
 
         Ok(Self {
@@ -570,7 +595,7 @@ impl Endpoint {
         let conn = self.add_connection(remote_id.clone(), local_id.clone(), remote_id, remote, Side::Client);
         let mut tls = Ssl::new(&self.tls)?;
         if !config.accept_insecure_certs {
-            tls.set_verify(ssl::SslVerifyMode::PEER);
+            tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
             let param = tls.param_mut();
             if let Some(name) = config.server_name {
                 param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
@@ -579,6 +604,8 @@ impl Endpoint {
                     Err(_) => { param.set_host(name).expect("failed to inform TLS of remote hostname"); }
                 }
             }
+        } else {
+            tls.set_verify(ssl::SslVerifyMode::NONE);
         }
         tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
         if let Some(name) = config.server_name { tls.set_hostname(name)?; }
