@@ -17,32 +17,35 @@ pub struct Client {
 }
 
 impl Client {
+    /// Connect a client with a default TLS configuration.
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
-        ConnectFuture::new(Self::new(server, port)?)
+        ConnectFuture::new(Self::new(server, port, None)?)
     }
 
+    /// Connect a client with a custom TLS `ClientConfig`.
     pub fn connect_with_tls_config(
         server: &str,
         port: u16,
         config: tls::ClientConfig,
     ) -> QuicResult<ConnectFuture> {
+        ConnectFuture::new(Self::new(server, port, Some(config))?)
+    }
+
+    // Optionally takes a tls::ClientConfig.
+    pub(crate) fn new(
+        server: &str,
+        port: u16,
+        config: Option<tls::ClientConfig>,
+    ) -> QuicResult<Client> {
         let tls = tls::client_session(
-            Some(config),
+            config,
             server,
             &ClientTransportParameters::new(QUIC_VERSION),
         )?;
-        ConnectFuture::new(Self::with_state(
-            server,
-            port,
-            ConnectionState::new(tls, None),
-        )?)
-    }
-
-    pub(crate) fn new(server: &str, port: u16) -> QuicResult<Client> {
-        let tls = tls::client_session(None, server, &ClientTransportParameters::new(QUIC_VERSION))?;
         Self::with_state(server, port, ConnectionState::new(tls, None))
     }
 
+    // Takes a ConnectionState.
     pub(crate) fn with_state(
         server: &str,
         port: u16,
