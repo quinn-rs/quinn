@@ -413,6 +413,7 @@ pub mod tests {
     use super::{tls, ConnectionState, PartialDecode, Secret};
     use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
     use std::sync::Arc;
+    use QUIC_VERSION;
 
     #[test]
     fn test_encoded_handshake() {
@@ -491,7 +492,7 @@ pub mod tests {
         ConnectionState::new(
             tls::server_session(
                 &Arc::new(tls::tests::server_config()),
-                &ServerTransportParameters::new(),
+                &ServerTransportParameters::new(QUIC_VERSION),
             ),
             Some(Secret::Handshake(hs_cid)),
         )
@@ -502,7 +503,7 @@ pub mod tests {
             tls::client_session(
                 Some(tls::tests::client_config()),
                 "Localhost",
-                &ClientTransportParameters::new(),
+                &ClientTransportParameters::new(QUIC_VERSION),
             ).unwrap(),
             None,
         )

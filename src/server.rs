@@ -1,7 +1,7 @@
 use futures::sync::mpsc::{self, Receiver, Sender};
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 
-use super::{QuicError, QuicResult};
+use super::{QuicError, QuicResult, QUIC_VERSION};
 use conn_state::ConnectionState;
 use crypto::Secret;
 use packet::{LongType, PartialDecode};
@@ -50,7 +50,10 @@ impl Server {
 
         let cid = if ptype == Some(LongType::Initial) {
             let mut state = ConnectionState::new(
-                tls::server_session(&self.tls_config, &ServerTransportParameters::new()),
+                tls::server_session(
+                    &self.tls_config,
+                    &ServerTransportParameters::new(QUIC_VERSION),
+                ),
                 Some(Secret::Handshake(dst_cid)),
             );
 

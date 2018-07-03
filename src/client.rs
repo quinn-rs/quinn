@@ -1,6 +1,6 @@
 use futures::{task, Async, Future, Poll};
 
-use super::{QuicError, QuicResult};
+use super::{QuicError, QuicResult, QUIC_VERSION};
 use conn_state::ConnectionState;
 use parameters::ClientTransportParameters;
 use streams::Streams;
@@ -26,7 +26,11 @@ impl Client {
         port: u16,
         config: tls::ClientConfig,
     ) -> QuicResult<ConnectFuture> {
-        let tls = tls::client_session(Some(config), server, &ClientTransportParameters::new())?;
+        let tls = tls::client_session(
+            Some(config),
+            server,
+            &ClientTransportParameters::new(QUIC_VERSION),
+        )?;
         ConnectFuture::new(Self::with_state(
             server,
             port,
@@ -35,7 +39,7 @@ impl Client {
     }
 
     pub(crate) fn new(server: &str, port: u16) -> QuicResult<Client> {
-        let tls = tls::client_session(None, server, &ClientTransportParameters::new())?;
+        let tls = tls::client_session(None, server, &ClientTransportParameters::new(QUIC_VERSION))?;
         Self::with_state(server, port, ConnectionState::new(tls, None))
     }
 
