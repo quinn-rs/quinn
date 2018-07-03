@@ -33,11 +33,13 @@ impl Codec for VarLen {
             0 => u64::from(be_val),
             1 => u64::from(be_val) << 8 | u64::from(buf.get_u8()),
             2 => {
-                u64::from(be_val) << 24 | u64::from(buf.get_u8()) << 16
+                u64::from(be_val) << 24
+                    | u64::from(buf.get_u8()) << 16
                     | u64::from(buf.get_u16_be())
             }
             3 => {
-                u64::from(be_val) << 56 | u64::from(buf.get_u8()) << 48
+                u64::from(be_val) << 56
+                    | u64::from(buf.get_u8()) << 48
                     | u64::from(buf.get_u16_be()) << 32
                     | u64::from(buf.get_u32_be())
             }

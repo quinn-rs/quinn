@@ -175,7 +175,9 @@ pub struct AckFrame {
 
 impl BufLen for AckFrame {
     fn buf_len(&self) -> usize {
-        1 + VarLen(u64::from(self.largest)).buf_len() + VarLen(self.ack_delay).buf_len()
+        1
+            + VarLen(u64::from(self.largest)).buf_len()
+            + VarLen(self.ack_delay).buf_len()
             + VarLen((self.blocks.len() - 1) as u64).buf_len()
             + self.blocks
                 .iter()

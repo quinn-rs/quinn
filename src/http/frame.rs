@@ -84,7 +84,8 @@ impl Codec for SettingsFrame {
 impl FrameHeader for SettingsFrame {
     fn len(&self) -> VarLen {
         VarLen(
-            (6 + VarLen(u64::from(self.0.header_table_size)).buf_len()
+            (6
+                + VarLen(u64::from(self.0.header_table_size)).buf_len()
                 + VarLen(u64::from(self.0.max_header_list_size)).buf_len()) as u64,
         )
     }

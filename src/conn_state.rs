@@ -126,7 +126,7 @@ where
                 (Some(LongType::Initial), State::InitialSent)
             } else {
                 (Some(LongType::Handshake), State::Handshaking)
-            }
+            },
             State::FinalHandshake => (Some(LongType::Handshake), State::Connected),
         };
 
