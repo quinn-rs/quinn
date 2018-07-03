@@ -29,6 +29,7 @@ pub struct ConnectionState<T> {
     control: VecDeque<Frame>,
     tls: T,
     pmtu: usize,
+    version: u32,
 }
 
 impl<T> ConnectionState<T>
@@ -77,6 +78,7 @@ where
             queue: VecDeque::new(),
             control: VecDeque::new(),
             pmtu: IPV6_MIN_MTU,
+            version: QUIC_VERSION,
         }
     }
 
@@ -171,7 +173,7 @@ where
         let header = match ptype {
             Some(ltype) => Header::Long {
                 ptype: ltype,
-                version: QUIC_VERSION,
+                version: self.version,
                 dst_cid,
                 src_cid,
                 len: (payload_len + tag_len) as u64,
