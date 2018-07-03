@@ -26,7 +26,7 @@ impl Client {
         port: u16,
         config: tls::ClientConfig,
     ) -> QuicResult<ConnectFuture> {
-        let tls = tls::client_session(Some(config), server, &ClientTransportParameters::default())?;
+        let tls = tls::client_session(Some(config), server, &ClientTransportParameters::new())?;
         ConnectFuture::new(Self::with_state(
             server,
             port,
@@ -35,7 +35,7 @@ impl Client {
     }
 
     pub(crate) fn new(server: &str, port: u16) -> QuicResult<Client> {
-        let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
+        let tls = tls::client_session(None, server, &ClientTransportParameters::new())?;
         Self::with_state(server, port, ConnectionState::new(tls, None))
     }
 

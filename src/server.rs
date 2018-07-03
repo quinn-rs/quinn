@@ -50,7 +50,7 @@ impl Server {
 
         let cid = if ptype == Some(LongType::Initial) {
             let mut state = ConnectionState::new(
-                tls::server_session(&self.tls_config, &ServerTransportParameters::default()),
+                tls::server_session(&self.tls_config, &ServerTransportParameters::new()),
                 Some(Secret::Handshake(dst_cid)),
             );
 

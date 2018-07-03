@@ -491,7 +491,7 @@ pub mod tests {
         ConnectionState::new(
             tls::server_session(
                 &Arc::new(tls::tests::server_config()),
-                &ServerTransportParameters::default(),
+                &ServerTransportParameters::new(),
             ),
             Some(Secret::Handshake(hs_cid)),
         )
@@ -502,7 +502,7 @@ pub mod tests {
             tls::client_session(
                 Some(tls::tests::client_config()),
                 "Localhost",
-                &ClientTransportParameters::default(),
+                &ClientTransportParameters::new(),
             ).unwrap(),
             None,
         )

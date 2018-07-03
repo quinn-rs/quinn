@@ -9,8 +9,8 @@ pub struct ClientTransportParameters {
     pub parameters: TransportParameters,
 }
 
-impl Default for ClientTransportParameters {
-    fn default() -> Self {
+impl ClientTransportParameters {
+    pub fn new() -> Self {
         Self {
             initial_version: QUIC_VERSION,
             parameters: TransportParameters::default(),
@@ -39,8 +39,8 @@ pub struct ServerTransportParameters {
     pub parameters: TransportParameters,
 }
 
-impl Default for ServerTransportParameters {
-    fn default() -> Self {
+impl ServerTransportParameters {
+    pub fn new() -> Self {
         Self {
             negotiated_version: QUIC_VERSION,
             supported_versions: vec![QUIC_VERSION],
