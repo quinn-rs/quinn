@@ -17,8 +17,8 @@ futures = "0.1"
 log = "0.4"
 tokio = "0.1"
 rand = "0.5"
-ring = "0.13.0-alpha"
-webpki = "0.18.0-alpha"
+ring = "0.13"
+webpki = "0.18"
 webpki-roots = "0.14"
 
 [dependencies.rustls]
