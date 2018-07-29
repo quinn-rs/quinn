@@ -23,7 +23,6 @@ webpki-roots = "0.15"
 
 [dependencies.rustls]
 git = "https://github.com/ctz/rustls"
-branch = "jbp-tls13-draft-28"
 features = ["quic"]
 
 [dev-dependencies]
