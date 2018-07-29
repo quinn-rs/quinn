@@ -29,5 +29,4 @@ deterministically, and a high-level tokio-compatible API in `quicr`. See `quicr/
 
 ## Building
 
-Because TLS1.3 is a new standard, OpenSSL 1.1.1-pre6 (or later) is required for quicr to build. For compatibility with
-most other QUIC implementations as of this writing, it should be patched with `openssl-tls-28.patch` in this repository.
+Because TLS1.3 is a new standard, OpenSSL 1.1.1-pre8 (or later) is required for quicr to build.

@@ -284,6 +284,7 @@ fn lifecycle() {
                     Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
                         reason: ApplicationClose { error_code: 42, ref reason }
                     }})) if reason == REASON);
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionDrained)) if conn == client_conn);
 }
 
@@ -309,6 +310,7 @@ fn stateless_reset() {
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_conn);
 }
 
@@ -324,6 +326,7 @@ fn finish_stream() {
     pair.client.finish(client_conn, s);
     pair.drive();
 
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
     assert_matches!(pair.client.poll(), None);
@@ -354,6 +357,7 @@ fn reset_stream() {
     assert_matches!(pair.server.poll(), None);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: ERROR }));
+    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), None);
 }
 

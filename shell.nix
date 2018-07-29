@@ -2,14 +2,13 @@ with import <nixpkgs> { };
 let
 openssl-pre = openssl_1_1_0.overrideAttrs (old: rec {
   name = "openssl-${version}";
-  version = "1.1.1-pre6";
+  version = "1.1.1-pre8";
   src = fetchFromGitHub {
     owner = "openssl";
     repo = "openssl";
-    rev = "OpenSSL_1_1_1-pre6";
-    sha256 = "09pnc0bibclgwi66cc0r4nq1cvgpp1vh7sdmgnlf2xa44ixzfddq";
+    rev = "OpenSSL_1_1_1-pre8";
+    sha256 = "14s431kal2xwx4wqy0xz2wp6a7rbn9yw3bn0g1c0197qiacv7z1g";
   };
-  patches = [ ./openssl-tls-28.patch ];
   # dontStrip = true;
   # separateDebugInfo = false;
   # configureFlags = old.configureFlags ++ ["--debug"];
