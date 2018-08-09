@@ -10,7 +10,7 @@ extern crate log;
 extern crate rand;
 extern crate ring;
 extern crate rustls;
-extern crate tokio_udp;
+extern crate tokio;
 extern crate webpki;
 extern crate webpki_roots;
 #[cfg(test)] #[macro_use]
@@ -54,6 +54,8 @@ pub enum QuicError {
     Io(#[cause] std::io::Error),
     #[fail(display = "{}", _0)]
     Tls(#[cause] rustls::TLSError),
+    #[fail(display = "{}", _0)]
+    DecodeError(String),
 }
 
 impl From<std::io::Error> for QuicError {

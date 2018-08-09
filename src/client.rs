@@ -1,14 +1,14 @@
 use futures::{task, Async, Future, Poll};
 
-use super::{QuicError, QuicResult};
+use super::{QuicError, QuicResult, QUIC_VERSION};
 use conn_state::ConnectionState;
 use parameters::ClientTransportParameters;
 use streams::Streams;
 use tls;
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 
-use tokio_udp::UdpSocket;
+use tokio::net::UdpSocket;
 
 pub struct Client {
     conn_state: ConnectionState<tls::ClientSession>,
@@ -17,13 +17,65 @@ pub struct Client {
 }
 
 impl Client {
+    /// Connect a client with a default TLS configuration.
     pub fn connect(server: &str, port: u16) -> QuicResult<ConnectFuture> {
-        let tls = tls::client_session(None, server, &ClientTransportParameters::default())?;
-        let conn_state = ConnectionState::new(tls, None);
+        ConnectFuture::new(Self::new(server, port, None)?)
+    }
+
+    /// Connect a client with a custom TLS `ClientConfig`.
+    pub fn connect_with_tls_config(
+        server: &str,
+        port: u16,
+        config: tls::ClientConfig,
+    ) -> QuicResult<ConnectFuture> {
+        ConnectFuture::new(Self::new(server, port, Some(config))?)
+    }
+
+    // Optionally takes a tls::ClientConfig.
+    pub(crate) fn new(
+        server: &str,
+        port: u16,
+        config: Option<tls::ClientConfig>,
+    ) -> QuicResult<Client> {
+        let tls = tls::client_session(
+            config,
+            server,
+            &ClientTransportParameters::new(QUIC_VERSION),
+        )?;
+        Self::with_state(server, port, ConnectionState::new(tls, None))
+    }
+
+    // Takes a ConnectionState.
+    pub(crate) fn with_state(
+        server: &str,
+        port: u16,
+        conn_state: ConnectionState<tls::ClientSession>,
+    ) -> QuicResult<Client> {
         let addr = (server, port).to_socket_addrs()?.next().ok_or_else(|| {
             QuicError::General(format!("no address found for '{}:{}'", server, port))
         })?;
-        ConnectFuture::new(conn_state, addr)
+
+        let local = match addr {
+            SocketAddr::V4(_) => SocketAddr::from(([0, 0, 0, 0], 0)),
+            SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
+        };
+
+        let socket = UdpSocket::bind(&local)?;
+        socket.connect(&addr)?;
+        Ok(Self {
+            conn_state,
+            socket,
+            buf: vec![0u8; 65536],
+        })
+    }
+
+    fn poll_send(&mut self) -> Poll<(), QuicError> {
+        if let Some(buf) = self.conn_state.queued()? {
+            let len = try_ready!(self.socket.poll_send(&buf));
+            debug_assert_eq!(len, buf.len());
+        }
+        self.conn_state.pop_queue();
+        Ok(Async::Ready(()))
     }
 }
 
@@ -32,27 +84,14 @@ impl Future for Client {
     type Error = QuicError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.conn_state.streams.set_task(task::current());
-        let mut waiting;
         loop {
-            waiting = true;
-            if let Some(buf) = self.conn_state.queued()? {
-                let len = try_ready!(self.socket.poll_send(&buf));
-                debug_assert_eq!(len, buf.len());
-                waiting = false;
+            match self.poll_send() {
+                Ok(Async::Ready(())) | Ok(Async::NotReady) => {}
+                e @ Err(_) => try_ready!(e),
             }
-            if !waiting {
-                self.conn_state.pop_queue();
-            }
-
             let len = try_ready!(self.socket.poll_recv(&mut self.buf));
             self.conn_state.handle(&mut self.buf[..len])?;
-            waiting = false;
-
-            if waiting {
-                break;
-            }
         }
-        Ok(Async::NotReady)
     }
 }
 
@@ -62,26 +101,10 @@ pub struct ConnectFuture {
 }
 
 impl ConnectFuture {
-    fn new(
-        mut conn_state: ConnectionState<tls::ClientSession>,
-        remote: SocketAddr,
-    ) -> QuicResult<ConnectFuture> {
-        let local = match remote {
-            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-            SocketAddr::V6(_) => {
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 0)
-            }
-        };
-
-        conn_state.initial()?;
-        let socket = UdpSocket::bind(&local)?;
-        socket.connect(&remote)?;
+    fn new(mut client: Client) -> QuicResult<ConnectFuture> {
+        client.conn_state.initial()?;
         Ok(ConnectFuture {
-            client: Some(Client {
-                conn_state,
-                socket,
-                buf: vec![0u8; 65536],
-            }),
+            client: Some(client),
         })
     }
 }
@@ -117,22 +140,18 @@ impl Future for ConnectFuture {
 
 #[cfg(test)]
 mod tests {
-    extern crate tokio;
-    use self::tokio::executor::current_thread::CurrentThread;
     use conn_state::tests::client_conn_state;
     use futures::Future;
     use server::Server;
     use tls::tests::server_config;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use tokio::runtime::current_thread::Runtime;
 
     #[test]
     fn test_client_connect_resolves() {
         let server = Server::new("127.0.0.1", 4433, server_config()).unwrap();
-        let connector = super::ConnectFuture::new(
-            client_conn_state(),
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433)
-        ).unwrap();
-        let mut exec = CurrentThread::new();
+        let client = super::Client::with_state("127.0.0.1", 4433, client_conn_state()).unwrap();
+        let connector = super::ConnectFuture::new(client).unwrap();
+        let mut exec = Runtime::new().unwrap();
         exec.spawn(server.map_err(|_| ()));
         exec.block_on(connector).unwrap();
     }

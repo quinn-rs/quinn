@@ -1,5 +1,5 @@
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
-use rustls::{ClientConfig, KeyLogFile, NoClientAuth, ProtocolVersion, TLSError};
+use rustls::{KeyLogFile, NoClientAuth, ProtocolVersion, TLSError};
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -13,7 +13,8 @@ use types::Side;
 use webpki::{DNSNameRef, TLSServerTrustAnchors};
 use webpki_roots;
 
-pub use rustls::{Certificate, ClientSession, PrivateKey, ServerConfig, ServerSession, Session};
+pub use rustls::{Certificate, PrivateKey};
+pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
 
 pub fn client_session(
     config: Option<ClientConfig>,
@@ -46,12 +47,15 @@ pub fn server_session(
     ServerSession::new_quic(config, to_vec(params))
 }
 
-pub fn build_server_config(cert_chain: Vec<Certificate>, key: PrivateKey) -> ServerConfig {
+pub fn build_server_config(
+    cert_chain: Vec<Certificate>,
+    key: PrivateKey,
+) -> QuicResult<ServerConfig> {
     let mut config = ServerConfig::new(NoClientAuth::new());
     config.set_protocols(&[ALPN_PROTOCOL.into()]);
-    config.set_single_cert(cert_chain, key);
+    config.set_single_cert(cert_chain, key)?;
     config.key_log = Arc::new(KeyLogFile::new());
-    config
+    Ok(config)
 }
 
 pub fn process_handshake_messages<T>(session: &mut T, msgs: Option<&[u8]>) -> QuicResult<TlsResult>
@@ -74,7 +78,12 @@ where
     };
 
     let mut messages = Vec::new();
-    session.write_tls(&mut messages)?;
+    loop {
+        let size = session.write_tls(&mut messages)?;
+        if size == 0 {
+            break;
+        }
+    }
 
     let secret = if let Some(suite) = key_ready {
         let mut client_secret = vec![0u8; suite.enc_key_len];
@@ -127,7 +136,8 @@ pub(crate) mod tests {
     extern crate untrusted;
     use self::untrusted::Input;
     use rustls::internal::pemfile;
-    use std::{fs::File, io::{BufReader, Read}};
+    use std::fs::File;
+    use std::io::{BufReader, Read};
     use webpki;
 
     pub fn client_config() -> super::ClientConfig {
@@ -154,6 +164,6 @@ pub(crate) mod tests {
             pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
         };
 
-        super::build_server_config(certs, keys[0].clone())
+        super::build_server_config(certs, keys[0].clone()).unwrap()
     }
 }

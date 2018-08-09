@@ -1,6 +1,7 @@
 extern crate env_logger;
 extern crate quinn;
 extern crate rustls;
+extern crate tokio;
 
 use rustls::internal::pemfile;
 use std::{fs::File, io::BufReader};
@@ -24,10 +25,7 @@ fn main() {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let tls_config = quinn::tls::build_server_config(certs, key[0].clone());
+    let tls_config = quinn::tls::build_server_config(certs, key[0].clone()).unwrap();
     env_logger::init();
-    quinn::Server::new("0.0.0.0", 4433, tls_config)
-        .unwrap()
-        .run()
-        .unwrap();
+    tokio::run(quinn::Server::new("0.0.0.0", 4433, tls_config).unwrap());
 }

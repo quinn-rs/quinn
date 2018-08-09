@@ -1,107 +1,35 @@
 use bytes::{Buf, BufMut};
 
-use super::{QuicError, QuicResult};
+use super::QuicResult;
 use codec::{BufLen, Codec, VarLen};
-use crypto::PacketKey;
-use frame::Frame;
 use types::{ConnectionId, GENERATED_CID_LENGTH};
+
+use rand::{thread_rng, Rng};
 
 use std::io::Cursor;
 
-#[derive(Debug, PartialEq)]
-pub struct Packet {
-    pub header: Header,
-    pub payload: Vec<Frame>,
-}
-
-impl Packet {
-    pub fn number(&self) -> u32 {
-        self.header.number()
-    }
-
-    pub fn encode(&self, key: &PacketKey, buf: &mut [u8]) -> QuicResult<usize> {
-        let tag_len = key.algorithm().tag_len();
-        let len = self.buf_len() + tag_len;
-        if len > buf.len() {
-            return Err(QuicError::AllocationError(len, buf.len()));
-        }
-
-        let (header_len, msg_len, buf) = {
-            let mut write = Cursor::new(buf);
-            self.header.encode(&mut write);
-            let header_len = write.position() as usize;
-            debug_assert_eq!(header_len, self.header.buf_len());
-
-            let mut expected = header_len;
-            for frame in &self.payload {
-                frame.encode(&mut write);
-                expected += frame.buf_len();
-            }
-            debug_assert_eq!(expected, write.position() as usize);
-            let msg_len = write.position() as usize;
-            (header_len, msg_len, write.into_inner())
-        };
-
-        let out_len = {
-            let (header_buf, mut payload) = buf.split_at_mut(header_len);
-            let mut in_out = &mut payload[..msg_len - header_len + tag_len];
-            key.encrypt(self.header.number(), &header_buf, in_out, tag_len)?
-        };
-
-        if let Header::Long { len, .. } = self.header {
-            debug_assert_eq!(len, out_len as u64);
-        }
-        Ok(header_len + out_len)
-    }
-
-    pub fn start_decode(buf: &mut [u8]) -> PartialDecode {
-        let (header, header_len) = {
-            let mut read = Cursor::new(&buf);
-            let header = Header::decode(&mut read);
-            (header, read.position() as usize)
-        };
-        PartialDecode {
-            header,
-            header_len,
-            buf,
-        }
-    }
-}
-
 pub struct PartialDecode<'a> {
-    pub(crate) header: Header,
-    header_len: usize,
-    buf: &'a mut [u8],
+    pub header: Header,
+    pub header_len: usize,
+    pub buf: &'a mut [u8],
 }
 
 impl<'a> PartialDecode<'a> {
-    pub fn dst_cid(&self) -> ConnectionId {
-        self.header.dst_cid()
-    }
-
-    pub fn finish(self, key: &PacketKey) -> QuicResult<Packet> {
-        let PartialDecode {
+    pub fn new(buf: &'a mut [u8]) -> QuicResult<Self> {
+        let (header, header_len) = {
+            let mut read = Cursor::new(&buf);
+            let header = Header::decode(&mut read)?;
+            (header, read.position() as usize)
+        };
+        Ok(Self {
             header,
             header_len,
             buf,
-        } = self;
-        let (header_buf, payload_buf) = buf.split_at_mut(header_len);
-        let decrypted = key.decrypt(header.number(), &header_buf, payload_buf)?;
-        let mut read = Cursor::new(decrypted);
-
-        let mut payload = Vec::new();
-        while read.has_remaining() {
-            let frame = Frame::decode(&mut read);
-            payload.push(frame);
-        }
-
-        Ok(Packet { header, payload })
+        })
     }
-}
 
-impl BufLen for Packet {
-    fn buf_len(&self) -> usize {
-        self.header.buf_len() + self.payload.buf_len()
+    pub fn dst_cid(&self) -> ConnectionId {
+        self.header.dst_cid()
     }
 }
 
@@ -121,6 +49,11 @@ pub enum Header {
         dst_cid: ConnectionId,
         number: u32,
     },
+    Negotiation {
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        supported_versions: Vec<u32>,
+    },
 }
 
 impl Header {
@@ -128,6 +61,7 @@ impl Header {
         match *self {
             Header::Long { ptype, .. } => Some(ptype),
             Header::Short { .. } => None,
+            Header::Negotiation { .. } => None,
         }
     }
 
@@ -135,27 +69,23 @@ impl Header {
         match *self {
             Header::Long { dst_cid, .. } => dst_cid,
             Header::Short { dst_cid, .. } => dst_cid,
-        }
-    }
-
-    fn number(&self) -> u32 {
-        match *self {
-            Header::Long { number, .. } => number,
-            Header::Short { number, .. } => number,
+            Header::Negotiation { dst_cid, .. } => dst_cid,
         }
     }
 }
 
 impl BufLen for Header {
     fn buf_len(&self) -> usize {
-        match *self {
+        match self {
             Header::Long {
+                dst_cid, src_cid, ..
+            } => 12 + (dst_cid.len as usize + src_cid.len as usize),
+            Header::Short { ptype, dst_cid, .. } => 1 + (dst_cid.len as usize) + ptype.buf_len(),
+            Header::Negotiation {
                 dst_cid,
                 src_cid,
-                len,
-                ..
-            } => 10 + (dst_cid.len as usize + src_cid.len as usize) + VarLen(len).buf_len(),
-            Header::Short { ptype, dst_cid, .. } => 1 + (dst_cid.len as usize) + ptype.buf_len(),
+                supported_versions,
+            } => 6 + (dst_cid.len as usize + src_cid.len as usize) + 4 * supported_versions.len(),
         }
     }
 }
@@ -176,7 +106,8 @@ impl Codec for Header {
                 buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
                 buf.put_slice(&dst_cid);
                 buf.put_slice(&src_cid);
-                VarLen(len).encode(buf);
+                debug_assert!(len < 16383);
+                buf.put_u16_be((len | 16384) as u16);
                 buf.put_u32_be(number);
             }
             Header::Short {
@@ -186,19 +117,29 @@ impl Codec for Header {
                 number,
             } => {
                 let key_phase_bit = if key_phase { 0x40 } else { 0 };
-
                 buf.put_u8(key_phase_bit | 0x20 | 0x10 | ptype.to_byte());
                 buf.put_slice(&dst_cid);
-                match ptype {
-                    ShortType::One => buf.put_u8(number as u8),
-                    ShortType::Two => buf.put_u16_be(number as u16),
-                    ShortType::Four => buf.put_u32_be(number),
+                debug_assert_eq!(ptype, ShortType::Two);
+                buf.put_u16_be(number as u16);
+            }
+            Header::Negotiation {
+                dst_cid,
+                src_cid,
+                ref supported_versions,
+            } => {
+                buf.put_u8(thread_rng().gen::<u8>() | 128);
+                buf.put_u32_be(0);
+                buf.put_u8((dst_cid.cil() << 4) | src_cid.cil());
+                buf.put_slice(&dst_cid);
+                buf.put_slice(&src_cid);
+                for v in supported_versions {
+                    buf.put_u32_be(*v);
                 }
             }
         }
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let first = buf.get_u8();
         if first & 128 == 128 {
             let version = buf.get_u32_be();
@@ -220,13 +161,25 @@ impl Codec for Header {
             };
 
             buf.advance(used);
-            Header::Long {
-                ptype: LongType::from_byte(first ^ 128),
-                version,
-                dst_cid,
-                src_cid,
-                len: VarLen::decode(buf).0,
-                number: buf.get_u32_be(),
+            if version == 0 {
+                let mut supported_versions = vec![];
+                while buf.has_remaining() {
+                    supported_versions.push(buf.get_u32_be());
+                }
+                Ok(Header::Negotiation {
+                    dst_cid,
+                    src_cid,
+                    supported_versions,
+                })
+            } else {
+                Ok(Header::Long {
+                    ptype: LongType::from_byte(first ^ 128),
+                    version,
+                    dst_cid,
+                    src_cid,
+                    len: VarLen::decode(buf)?.0,
+                    number: buf.get_u32_be(),
+                })
             }
         } else {
             let key_phase = first & 0x40 == 0x40;
@@ -243,12 +196,12 @@ impl Codec for Header {
                 ShortType::Four => buf.get_u32_be(),
             };
 
-            Header::Short {
+            Ok(Header::Short {
                 key_phase,
                 ptype,
                 dst_cid,
                 number,
-            }
+            })
         }
     }
 }

@@ -1,3 +1,5 @@
+use bytes::Buf;
+
 use rand::{thread_rng, Rng};
 
 use std::collections::VecDeque;
@@ -5,10 +7,10 @@ use std::io::Cursor;
 use std::mem;
 
 use super::{QuicError, QuicResult, QUIC_VERSION};
-use codec::{BufLen, Codec};
-use crypto::{PacketKey, Secret};
-use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame, StreamFrame};
-use packet::{Header, LongType, Packet, PartialDecode, ShortType};
+use codec::Codec;
+use crypto::Secret;
+use frame::{Ack, AckFrame, CloseFrame, Frame, PaddingFrame, PathFrame};
+use packet::{Header, LongType, PartialDecode, ShortType};
 use parameters::{ClientTransportParameters, ServerTransportParameters, TransportParameters};
 use streams::{Dir, Streams};
 use tls;
@@ -24,7 +26,10 @@ pub struct ConnectionState<T> {
     prev_secret: Option<Secret>,
     pub streams: Streams,
     queue: VecDeque<Vec<u8>>,
+    control: VecDeque<Frame>,
     tls: T,
+    pmtu: usize,
+    version: u32,
 }
 
 impl<T> ConnectionState<T>
@@ -71,6 +76,9 @@ where
             prev_secret: None,
             streams,
             queue: VecDeque::new(),
+            control: VecDeque::new(),
+            pmtu: IPV6_MIN_MTU,
+            version: QUIC_VERSION,
         }
     }
 
@@ -82,14 +90,7 @@ where
     }
 
     pub fn queued(&mut self) -> QuicResult<Option<&Vec<u8>>> {
-        let mut frames = vec![];
-        while let Some(frame) = self.streams.queued() {
-            frames.push(frame);
-        }
-
-        if !frames.is_empty() {
-            self.build_short_packet(frames)?
-        }
+        self.queue_packet()?;
         Ok(self.queue.front())
     }
 
@@ -107,161 +108,197 @@ where
         self.local.cid
     }
 
-    fn encode_key(&self, h: &Header) -> PacketKey {
-        if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
-                return secret.build_key(self.side);
-            }
-        }
-        self.secret.build_key(self.side)
-    }
-
-    pub(crate) fn decode_key(&self, h: &Header) -> PacketKey {
-        if let Some(LongType::Handshake) = h.ptype() {
-            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
-                return secret.build_key(self.side.other());
-            }
-        }
-        self.secret.build_key(self.side.other())
-    }
-
     pub(crate) fn set_secret(&mut self, secret: Secret) {
         let old = mem::replace(&mut self.secret, secret);
         self.prev_secret = Some(old);
     }
 
-    fn build_initial_packet(&mut self, mut payload: Vec<Frame>) -> QuicResult<()> {
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+    pub fn queue_packet(&mut self) -> QuicResult<()> {
+        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
+        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
         let number = self.src_pn;
         self.src_pn += 1;
 
-        let mut payload_len = payload.buf_len() + self.secret.tag_len();
-        if payload_len < 1200 {
-            payload.push(Frame::Padding(PaddingFrame(1200 - payload_len)));
-            payload_len = 1200;
+        let (ptype, new_state) = match self.state {
+            State::Connected => (None, self.state),
+            State::Handshaking => (Some(LongType::Handshake), self.state),
+            State::InitialSent => (Some(LongType::Handshake), State::Handshaking),
+            State::Start => if self.side == Side::Client {
+                (Some(LongType::Initial), State::InitialSent)
+            } else {
+                (Some(LongType::Handshake), State::Handshaking)
+            },
+            State::FinalHandshake => (Some(LongType::Handshake), State::Connected),
+        };
+
+        let header_len = match ptype {
+            Some(_) => (12 + (dst_cid.len + src_cid.len) as usize),
+            None => (3 + dst_cid.len as usize),
+        };
+
+        let secret = if let Some(LongType::Handshake) = ptype {
+            if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
+                secret
+            } else {
+                &self.secret
+            }
+        } else {
+            &self.secret
+        };
+        let key = secret.build_key(self.side);
+        let tag_len = key.algorithm().tag_len();
+
+        let mut buf = vec![0u8; self.pmtu];
+        let payload_len = {
+            let mut write = Cursor::new(&mut buf[header_len..self.pmtu - tag_len]);
+            while let Some(frame) = self.control.pop_front() {
+                frame.encode(&mut write);
+            }
+            self.streams.poll_send(&mut write);
+
+            let mut payload_len = write.position() as usize;
+            let initial_min_size = 1200 - header_len - tag_len;
+            if ptype == Some(LongType::Initial) && payload_len < initial_min_size {
+                Frame::Padding(PaddingFrame(initial_min_size - payload_len)).encode(&mut write);
+                payload_len = initial_min_size;
+            }
+            payload_len
+        };
+
+        if payload_len == 0 {
+            return Ok(());
         }
 
-        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
-        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Long {
-                ptype: LongType::Initial,
-                version: QUIC_VERSION,
+        let header = match ptype {
+            Some(ltype) => Header::Long {
+                ptype: ltype,
+                version: self.version,
                 dst_cid,
                 src_cid,
-                len: payload_len as u64,
+                len: (payload_len + tag_len) as u64,
                 number,
             },
-            payload,
-        })
-    }
-
-    fn build_handshake_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
-        let number = self.src_pn;
-        self.src_pn += 1;
-
-        let len = (payload.buf_len() + self.secret.tag_len()) as u64;
-        let (dst_cid, src_cid) = (self.remote.cid, self.local.cid);
-        debug_assert_eq!(src_cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Long {
-                ptype: LongType::Handshake,
-                version: QUIC_VERSION,
-                dst_cid,
-                src_cid,
-                len,
-                number,
-            },
-            payload,
-        })
-    }
-
-    fn build_short_packet(&mut self, payload: Vec<Frame>) -> QuicResult<()> {
-        let number = self.src_pn;
-        self.src_pn += 1;
-
-        let dst_cid = self.remote.cid;
-        debug_assert_eq!(self.state, State::Connected);
-        debug_assert_eq!(self.local.cid.len, GENERATED_CID_LENGTH);
-        self.queue_packet(Packet {
-            header: Header::Short {
+            None => Header::Short {
                 key_phase: false,
-                ptype: ShortType::Four,
+                ptype: ShortType::Two,
                 dst_cid,
                 number,
             },
-            payload,
-        })
-    }
+        };
+        {
+            let mut write = Cursor::new(&mut buf[..header_len]);
+            header.encode(&mut write);
+        }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    pub fn queue_packet(&mut self, packet: Packet) -> QuicResult<()> {
-        let key = self.encode_key(&packet.header);
-        let len = packet.buf_len() + key.algorithm().tag_len();
-        let mut buf = vec![0u8; len];
-        packet.encode(&key, &mut buf)?;
+        let out_len = {
+            let (header_buf, mut payload) = buf.split_at_mut(header_len);
+            let mut in_out = &mut payload[..payload_len + tag_len];
+            key.encrypt(number, &header_buf, in_out, tag_len)?
+        };
+
+        buf.truncate(header_len + out_len);
         self.queue.push_back(buf);
+        self.state = new_state;
         Ok(())
     }
 
     pub(crate) fn handle(&mut self, buf: &mut [u8]) -> QuicResult<()> {
-        self.handle_partial(Packet::start_decode(buf))
+        self.handle_partial(PartialDecode::new(buf)?)
     }
 
     pub(crate) fn handle_partial(&mut self, partial: PartialDecode) -> QuicResult<()> {
-        let key = self.decode_key(&partial.header);
-        self.handle_packet(partial.finish(&key)?)
+        let PartialDecode {
+            header,
+            header_len,
+            buf,
+        } = partial;
+
+        let key = {
+            let secret = if let Some(LongType::Handshake) = header.ptype() {
+                if let Some(ref secret @ Secret::Handshake(_)) = self.prev_secret {
+                    secret
+                } else {
+                    &self.secret
+                }
+            } else {
+                &self.secret
+            };
+            secret.build_key(self.side.other())
+        };
+
+        let payload = match header {
+            Header::Long { number, .. } | Header::Short { number, .. } => {
+                let (header_buf, payload_buf) = buf.split_at_mut(header_len);
+                let decrypted = key.decrypt(number, &header_buf, payload_buf)?;
+                let mut read = Cursor::new(decrypted);
+
+                let mut payload = Vec::new();
+                while read.has_remaining() {
+                    let frame = Frame::decode(&mut read)?;
+                    payload.push(frame);
+                }
+                payload
+            }
+            Header::Negotiation { .. } => vec![],
+        };
+
+        self.handle_packet(header, payload)
     }
 
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    fn handle_packet(&mut self, p: Packet) -> QuicResult<()> {
-        let dst_cid = match p.header {
+    fn handle_packet(&mut self, header: Header, payload: Vec<Frame>) -> QuicResult<()> {
+        let (dst_cid, number) = match header {
             Header::Long {
-                dst_cid, src_cid, ..
+                dst_cid,
+                src_cid,
+                number,
+                ..
             } => match self.state {
                 State::Start | State::InitialSent => {
                     self.remote.cid = src_cid;
-                    dst_cid
+                    (dst_cid, number)
                 }
-                _ => dst_cid,
+                _ => (dst_cid, number),
             },
-            Header::Short { dst_cid, .. } => if let State::Connected = self.state {
-                dst_cid
+            Header::Short {
+                dst_cid, number, ..
+            } => if let State::Connected = self.state {
+                (dst_cid, number)
             } else {
                 return Err(QuicError::General(format!(
-                    "short header received in {:?} state",
-                    self.state
+                    "{:?} received short header in {:?} state",
+                    self.side, self.state
                 )));
             },
+            Header::Negotiation { .. } => {
+                return Err(QuicError::General(
+                    "negotiation packet not handled by connections".into(),
+                ));
+            }
         };
 
         if self.state != State::Start && dst_cid != self.local.cid {
             return Err(QuicError::General(format!(
-                "invalid destination CID {:?} received (expected {:?})",
-                dst_cid, self.local.cid
+                "invalid destination CID {:?} received (expected {:?} in state {:?})",
+                dst_cid, self.local.cid, self.state
             )));
         }
 
-        let mut payload = vec![
-            Frame::Ack(AckFrame {
-                largest: p.number(),
-                ack_delay: 0,
-                blocks: vec![Ack::Ack(0)],
-            }),
-        ];
-
-        let mut received_tls = false;
-        let mut wrote_handshake = false;
-        for frame in &p.payload {
+        let mut send_ack = false;
+        for frame in &payload {
             match frame {
-                Frame::Stream(f) if f.id == 0 => {
-                    received_tls = true;
-                    if let Some(frame) = self.handle_tls(Some(f))? {
-                        payload.push(Frame::Stream(frame));
-                        wrote_handshake = true;
+                Frame::Stream(f) => {
+                    send_ack = true;
+                    self.streams.received(f)?;
+                    if f.id == 0 {
+                        self.handle_tls()?;
                     }
                 }
                 Frame::PathChallenge(PathFrame(token)) => {
-                    payload.push(Frame::PathResponse(PathFrame(*token)));
+                    send_ack = true;
+                    self.control
+                        .push_back(Frame::PathResponse(PathFrame(*token)));
                 }
                 Frame::ApplicationClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ApplicationClose(*code, reason.clone()));
@@ -269,42 +306,43 @@ where
                 Frame::ConnectionClose(CloseFrame { code, reason }) => {
                     return Err(QuicError::ConnectionClose(*code, reason.clone()));
                 }
-                Frame::Ack(_)
-                | Frame::Padding(_)
-                | Frame::PathResponse(_)
-                | Frame::Stream(_)
-                | Frame::Ping
-                | Frame::StreamIdBlocked(_) => {}
-            }
-        }
-
-        match self.state {
-            State::Start | State::InitialSent => {
-                self.state = State::Handshaking;
-            }
-            State::Handshaking if !received_tls => {
-                if let Some(frame) = self.handle_tls(None)? {
-                    payload.push(Frame::Stream(frame));
-                    wrote_handshake = true;
+                Frame::PathResponse(_) | Frame::Ping | Frame::StreamIdBlocked(_) => {
+                    send_ack = true;
                 }
+                Frame::Ack(_) | Frame::Padding(_) => {}
             }
-            _ => {}
         }
 
-        if self.state == State::Connected && !wrote_handshake {
-            self.build_short_packet(payload)
-        } else {
-            self.build_handshake_packet(payload)
+        if send_ack {
+            self.control.push_back(Frame::Ack(AckFrame {
+                largest: number,
+                ack_delay: 0,
+                blocks: vec![Ack::Ack(0)],
+            }));
         }
+
+        Ok(())
     }
 
-    fn handle_tls(&mut self, frame: Option<&StreamFrame>) -> QuicResult<Option<StreamFrame>> {
-        let (handshake, new_secret) =
-            tls::process_handshake_messages(&mut self.tls, frame.map(|f| f.data.as_ref()))?;
+    fn handle_tls(&mut self) -> QuicResult<()> {
+        let mut stream = match self.streams.get_stream(0) {
+            Some(s) => s,
+            None => {
+                let stream = self.streams.init_send(Dir::Bidi)?;
+                debug_assert_eq!(stream.id, 0);
+                stream
+            }
+        };
+
+        let data = stream.received()?;
+        let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, Some(&data))?;
 
         if let Some(secret) = new_secret {
             self.set_secret(secret);
-            self.state = State::Connected;
+            self.state = match self.side {
+                Side::Client => State::FinalHandshake,
+                Side::Server => State::Connected,
+            };
 
             let params = match self.tls.get_quic_transport_parameters() {
                 None => {
@@ -315,9 +353,9 @@ where
                 Some(bytes) => {
                     let mut read = Cursor::new(bytes);
                     if self.side == Side::Client {
-                        ServerTransportParameters::decode(&mut read).parameters
+                        ServerTransportParameters::decode(&mut read)?.parameters
                     } else {
-                        ClientTransportParameters::decode(&mut read).parameters
+                        ClientTransportParameters::decode(&mut read)?.parameters
                     }
                 }
             };
@@ -337,51 +375,15 @@ where
             self.streams.update_max_id(max_send_uni);
         }
 
-        let mut stream = self.streams
-            .received(0)
-            .ok_or_else(|| QuicError::General("no incoming packets allowed on stream 0".into()))?;
-        let offset = stream.get_offset();
-        stream.set_offset(offset + handshake.len() as u64);
-
-        if !handshake.is_empty() {
-            Ok(Some(StreamFrame {
-                id: 0,
-                fin: false,
-                offset,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }))
-        } else {
-            Ok(None)
-        }
+        stream.send(&handshake)
     }
 }
 
 impl ConnectionState<tls::ClientSession> {
     pub(crate) fn initial(&mut self) -> QuicResult<()> {
-        let (handshake, new_secret) = tls::process_handshake_messages(&mut self.tls, None)?;
-        if let Some(secret) = new_secret {
-            self.set_secret(secret);
-        }
-
-        let mut stream = self.streams.init_send(Dir::Bidi).ok_or_else(|| {
-            QuicError::General("no bidirectional stream available for initial packet".into())
-        })?;
-        stream.set_offset(handshake.len() as u64);
-
-        self.state = State::InitialSent;
-        self.build_initial_packet(vec![
-            Frame::Stream(StreamFrame {
-                id: 0,
-                fin: false,
-                offset: 0,
-                len: Some(handshake.len() as u64),
-                data: handshake,
-            }),
-        ])
+        self.handle_tls()
     }
 }
-
 
 pub struct PeerData {
     pub cid: ConnectionId,
@@ -397,19 +399,23 @@ impl PeerData {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Start,
     InitialSent,
     Handshaking,
+    FinalHandshake,
     Connected,
 }
 
+const IPV6_MIN_MTU: usize = 1232;
+
 #[cfg(test)]
 pub mod tests {
+    use super::{tls, ConnectionState, PartialDecode, Secret};
     use super::{ClientTransportParameters, ConnectionId, ServerTransportParameters};
-    use super::{tls, ConnectionState, Packet, Secret};
     use std::sync::Arc;
+    use QUIC_VERSION;
 
     #[test]
     fn test_encoded_handshake() {
@@ -418,22 +424,28 @@ pub mod tests {
         let mut cp = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut cp).dst_cid());
+        let mut s = server_conn_state(PartialDecode::new(&mut cp).unwrap().dst_cid());
         s.handle(&mut cp).unwrap();
-        let mut sp = s.queued().unwrap().unwrap().clone();
-        s.pop_queue();
+        let mut messages = Vec::new();
+        gather(&mut s, &mut messages);
 
         let mut rt = 10;
         loop {
-            c.handle(&mut sp).unwrap();
-            cp = c.queued().unwrap().unwrap().clone();
-            c.pop_queue();
+            for mut sp in messages.drain(..) {
+                c.handle(&mut sp).unwrap();
+            }
 
-            s.handle(&mut cp).unwrap();
-            sp = s.queued().unwrap().unwrap().clone();
-            s.pop_queue();
+            gather(&mut c, &mut messages);
 
-            let header = Packet::start_decode(&mut sp).header;
+            for mut cp in messages.drain(..) {
+                s.handle(&mut cp).unwrap();
+            }
+
+            gather(&mut s, &mut messages);
+
+            let header = PartialDecode::new(messages.last_mut().unwrap())
+                .unwrap()
+                .header;
             if header.ptype().is_none() {
                 break;
             }
@@ -445,6 +457,24 @@ pub mod tests {
         }
     }
 
+    fn gather<T>(cs: &mut ConnectionState<T>, buf: &mut Vec<Vec<u8>>)
+    where
+        T: tls::Session + tls::QuicSide,
+    {
+        loop {
+            let mut found = false;
+            if let Some(packet) = cs.queued().unwrap() {
+                buf.push(packet.clone());
+                found = true;
+            }
+            if found {
+                cs.pop_queue();
+            } else {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn test_handshake() {
         let mut c = client_conn_state();
@@ -452,7 +482,7 @@ pub mod tests {
         let mut initial = c.queued().unwrap().unwrap().clone();
         c.pop_queue();
 
-        let mut s = server_conn_state(Packet::start_decode(&mut initial).dst_cid());
+        let mut s = server_conn_state(PartialDecode::new(&mut initial).unwrap().dst_cid());
         s.handle(&mut initial).unwrap();
         let mut server_hello = s.queued().unwrap().unwrap().clone();
 
@@ -464,7 +494,7 @@ pub mod tests {
         ConnectionState::new(
             tls::server_session(
                 &Arc::new(tls::tests::server_config()),
-                &ServerTransportParameters::default(),
+                &ServerTransportParameters::new(QUIC_VERSION),
             ),
             Some(Secret::Handshake(hs_cid)),
         )
@@ -475,7 +505,7 @@ pub mod tests {
             tls::client_session(
                 Some(tls::tests::client_config()),
                 "Localhost",
-                &ClientTransportParameters::default(),
+                &ClientTransportParameters::new(QUIC_VERSION),
             ).unwrap(),
             None,
         )

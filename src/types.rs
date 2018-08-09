@@ -73,6 +73,14 @@ impl Side {
         }
     }
 
+    pub fn from_id(id: u64) -> Self {
+        if id & 1 == 1 {
+            Side::Server
+        } else {
+            Side::Client
+        }
+    }
+
     pub fn to_bit(&self) -> u64 {
         match self {
             Side::Client => 0,

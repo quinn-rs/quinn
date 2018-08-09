@@ -3,7 +3,8 @@ use bytes::{Buf, BufMut};
 use std::fmt;
 use std::io::Cursor;
 
-use ring::{digest, hkdf, aead::{self, OpeningKey, SealingKey}};
+use ring::aead::{self, OpeningKey, SealingKey};
+use ring::{digest, hkdf};
 
 pub use ring::aead::AES_128_GCM;
 pub use ring::digest::SHA256;
@@ -175,7 +176,7 @@ mod tests {
         let hs_cid = ConnectionId {
             len: 8,
             bytes: [
-                0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ],
         };
         let client_handshake_secret = super::expanded_handshake_secret(hs_cid, b"client hs");

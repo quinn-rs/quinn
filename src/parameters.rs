@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut};
 
-use super::QUIC_VERSION;
+use super::{QuicResult, QUIC_VERSION};
 use codec::Codec;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -9,10 +9,10 @@ pub struct ClientTransportParameters {
     pub parameters: TransportParameters,
 }
 
-impl Default for ClientTransportParameters {
-    fn default() -> Self {
+impl ClientTransportParameters {
+    pub fn new(initial_version: u32) -> Self {
         Self {
-            initial_version: QUIC_VERSION,
+            initial_version,
             parameters: TransportParameters::default(),
         }
     }
@@ -24,11 +24,11 @@ impl Codec for ClientTransportParameters {
         self.parameters.encode(buf);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        ClientTransportParameters {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(ClientTransportParameters {
             initial_version: buf.get_u32_be(),
-            parameters: TransportParameters::decode(buf),
-        }
+            parameters: TransportParameters::decode(buf)?,
+        })
     }
 }
 
@@ -39,10 +39,10 @@ pub struct ServerTransportParameters {
     pub parameters: TransportParameters,
 }
 
-impl Default for ServerTransportParameters {
-    fn default() -> Self {
+impl ServerTransportParameters {
+    pub fn new(negotiated_version: u32) -> Self {
         Self {
-            negotiated_version: QUIC_VERSION,
+            negotiated_version,
             supported_versions: vec![QUIC_VERSION],
             parameters: TransportParameters::default(),
         }
@@ -59,8 +59,8 @@ impl Codec for ServerTransportParameters {
         self.parameters.encode(buf);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
-        ServerTransportParameters {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
+        Ok(ServerTransportParameters {
             negotiated_version: buf.get_u32_be(),
             supported_versions: {
                 let mut supported_versions = vec![];
@@ -71,8 +71,8 @@ impl Codec for ServerTransportParameters {
                 }
                 supported_versions
             },
-            parameters: TransportParameters::decode(buf),
-        }
+            parameters: TransportParameters::decode(buf)?,
+        })
     }
 }
 
@@ -141,7 +141,7 @@ impl Codec for TransportParameters {
         buf.put_slice(&tmp);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Self {
+    fn decode<T: Buf>(buf: &mut T) -> QuicResult<Self> {
         let mut params = TransportParameters::default();
         let num = buf.get_u16_be();
         let mut sub = buf.take(num as usize);
@@ -183,10 +183,12 @@ impl Codec for TransportParameters {
                     debug_assert_eq!(size, 2);
                     params.max_stream_id_uni = sub.get_u16_be();
                 }
-                t => panic!("invalid transport parameter tag {}", t),
+                _ => {
+                    sub.advance(usize::from(size));
+                }
             }
         }
-        params
+        Ok(params)
     }
 }
 
@@ -231,7 +233,7 @@ mod tests {
             ret
         };
         let mut read = Cursor::new(&buf);
-        assert_eq!(t, T::decode(&mut read));
+        assert_eq!(t, T::decode(&mut read).unwrap());
     }
 
     #[test]
@@ -257,5 +259,46 @@ mod tests {
                 ..Default::default()
             },
         });
+    }
+
+    #[test]
+    fn test_ignores_unknown_transport_parameter_ids() {
+        #[cfg_attr(rustfmt, rustfmt_skip)]
+        let bytes = [0u8, 130,
+            0, 0, 0, 4, 0, 0, 64, 0,
+            0, 1, 0, 4, 0, 0, 128, 0,
+            0, 2, 0, 2, 0, 1,
+            0, 8, 0, 2, 0, 1,
+            0, 3, 0, 2, 0, 10,
+            255, 0, 0, 2, 255, 0,
+            255, 1, 0, 2, 255, 1,
+            255, 2, 0, 2, 255, 2,
+            255, 3, 0, 2, 255, 3,
+            255, 4, 0, 2, 255, 4,
+            255, 5, 0, 2, 255, 5,
+            255, 6, 0, 2, 255, 6,
+            255, 7, 0, 2, 255, 7,
+            255, 8, 0, 2, 255, 8,
+            255, 9, 0, 2, 255, 9,
+            255, 10, 0, 2, 255, 10,
+            255, 11, 0, 2, 255, 11,
+            255, 12, 0, 2, 255, 12,
+            255, 13, 0, 2, 255, 13,
+            255, 14, 0, 2, 255, 14,
+            255, 15, 0, 2, 255, 15];
+        let tp = TransportParameters::decode(&mut Cursor::new(bytes.as_ref())).unwrap();
+        assert_eq!(
+            tp,
+            TransportParameters {
+                max_stream_data: 16384,
+                max_data: 32768,
+                max_streams_bidi: 1,
+                idle_timeout: 10,
+                max_packet_size: 65527,
+                stateless_reset_token: None,
+                ack_delay_exponent: 3,
+                max_stream_id_uni: 1,
+            }
+        );
     }
 }
