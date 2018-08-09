@@ -6,11 +6,8 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use bytes::Buf;
 
-use super::iocontext::StarterByte;
-use super::parser::Parser;
-use super::table::HeaderField;
-use super::dyn_table::DynamicTable;
-use super::static_table::StaticTable;
+use super::primitive::{StarterByte, Parser};
+use super::table::{HeaderField, DynamicTable, StaticTable};
 use super::vas::VirtualAddressSpace;
 
 
@@ -52,7 +49,7 @@ impl Decoder {
 
     pub fn put_field(&mut self, field: HeaderField) {
         let (is_added, dropped) = self.table.put_field(field);
-        
+
         if is_added {
             self.vas.add();
         }
@@ -83,9 +80,9 @@ impl Decoder {
             match buf.get_u8() as usize {
                 x if x & 128usize == 128usize
                     => self.read_name_insert_by_ref(x, buf)?,
-                x if x & 64usize == 64usize 
+                x if x & 64usize == 64usize
                     => self.read_name_insert(x, buf)?,
-                x if x & 32usize == 32usize 
+                x if x & 32usize == 32usize
                     => self.read_table_size_update(x, buf)?,
                 x => self.read_duplicate_entry(x, buf)?
             }

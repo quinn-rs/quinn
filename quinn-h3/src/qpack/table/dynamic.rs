@@ -4,19 +4,7 @@
 
 use std::collections::VecDeque;
 
-use super::table::HeaderField;
-
-
-pub trait QpackMemSized {
-    fn mem_size(&self) -> usize;
-}
-
-
-impl QpackMemSized for HeaderField {
-    fn mem_size(&self) -> usize {
-        self.name.len() + self.value.len()
-    }
-}
+use super::field::HeaderField;
 
 
 /**

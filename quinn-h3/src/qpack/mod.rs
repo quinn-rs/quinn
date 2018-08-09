@@ -22,17 +22,8 @@ pub const QPACK_VERSION: &'static str = "0.0.0~draft";
 pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 
 pub mod table;
-use self::table::HeaderField;
-
-pub mod dyn_table;
-use self::dyn_table::DynamicTable;
-
-pub mod static_table;
-use self::static_table::StaticTable;
-
-pub mod iocontext;
 pub mod string;
-pub mod parser;
-pub mod dump;
+pub mod primitive;
+
 pub mod vas;
 pub mod decoder;

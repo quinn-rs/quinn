@@ -6,7 +6,7 @@ use std::io::Cursor;
 use bytes::Buf;
 
 use super::iocontext::StarterByte;
-use super::string::{HpackStringDecode, HuffmanDecodingError};
+use super::super::string::{HpackStringDecode, HuffmanDecodingError};
 
 
 #[derive(Debug, PartialEq)]
