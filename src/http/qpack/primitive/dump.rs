@@ -41,7 +41,7 @@ impl<'a> Dump<'a> {
             .map_err(|x| Error::IoError(x))
     }
 
-    pub fn integer(&mut self, value: usize, starter: StarterByte) 
+    pub fn put_integer(&mut self, value: usize, starter: StarterByte) 
         -> Result<(), Error> 
     {
         if value < starter.mask {
@@ -68,14 +68,14 @@ impl<'a> Dump<'a> {
         self.put_byte(value as u8)
     }
 
-    pub fn string<T>(&mut self, value: T, starter: StarterByte) 
+    pub fn put_string<T>(&mut self, value: T, starter: StarterByte) 
         -> Result<(), Error> 
         where T: Into<Cow<'a, [u8]>>,
     {
-        self.string_with_encoding(value, StringEncoding::NoEncoding, starter)
+        self.put_encode_string(value, StringEncoding::NoEncoding, starter)
     }
     
-    pub fn string_with_encoding<T>(
+    pub fn put_encode_string<T>(
         &mut self, 
         value: T, 
         encoding: StringEncoding,
@@ -92,12 +92,12 @@ impl<'a> Dump<'a> {
                 first_byte |= bit;
             }
             
-            let _ = self.integer(
+            let _ = self.put_integer(
                 input.len(),
                 StarterByte::valued(starter.prefix - 1, first_byte)
                 .expect("valid starter byte"))?;
         }
-        // Corner case where ]x x x x x x x H]  where x: taken
+        // Corner case where ]x x x x x x x H]  where x are taken
         // huffman flag is the last bit, so size must be written afterwards
         else {
             let mut first_byte = starter.safe_start();
@@ -106,7 +106,7 @@ impl<'a> Dump<'a> {
             }
             
             let _ = self.put_byte(first_byte as u8)?;
-            let _ = self.integer(input.len(), StarterByte::noprefix())?;
+            let _ = self.put_integer(input.len(), StarterByte::noprefix())?;
         }
 
         match encoding {
@@ -161,7 +161,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            assert!(dump.integer(value, starter).is_ok());
+            assert!(dump.put_integer(value, starter).is_ok());
         }
 
         assert_eq!(bytes.as_slice(), expected);
@@ -184,7 +184,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            assert!(dump.integer(value, starter).is_ok());
+            assert!(dump.put_integer(value, starter).is_ok());
         }
 
         assert_eq!(bytes.as_slice(), expected);
@@ -201,7 +201,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            assert!(dump.integer(value, starter).is_ok());
+            assert!(dump.put_integer(value, starter).is_ok());
         }
 
         assert_eq!(bytes.as_slice(), expected);
@@ -238,7 +238,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            let res = dump.string(&text[..], starter);
+            let res = dump.put_string(&text[..], starter);
             assert!(res.is_ok());
         }
 
@@ -261,7 +261,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            let res = dump.string(&text[..], starter);
+            let res = dump.put_string(&text[..], starter);
             assert!(res.is_ok());
         }
 
@@ -286,7 +286,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            let res = dump.string(&text[..], starter);
+            let res = dump.put_string(&text[..], starter);
             assert!(res.is_ok());
         }
 
@@ -313,7 +313,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut bytes);
             let mut dump = Dump::new(&mut cursor);
-            let res = dump.string_with_encoding(
+            let res = dump.put_encode_string(
                 &text[..], StringEncoding::HuffmanEncoding, starter);
             assert!(res.is_ok());
         }
