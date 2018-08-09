@@ -23,7 +23,7 @@ impl StarterByte {
         StarterByte { prefix: 8, mask: 255, byte: None }
     }
 
-    pub fn prefix(prefix: usize) -> Result<StarterByte, Error> {
+    pub fn prefixed(prefix: usize) -> Result<StarterByte, Error> {
         Self::build(prefix, None)
     }
 
@@ -34,11 +34,18 @@ impl StarterByte {
     fn build(prefix: usize, byte: Option<usize>) 
         -> Result<StarterByte, Error> 
     {
-        if prefix == 0 || prefix > 8 {
-            Err(Error::InvalidPrefix(prefix))
-        } else {
-            let mask = 2usize.pow(prefix as u32) - 1;
-            Ok(StarterByte { prefix, mask, byte })
+        // NOTE this implementation should be faster than using `pow` function
+        // to compute bitmask
+        match prefix {
+            1 => Ok(StarterByte { prefix, mask: 1, byte }),
+            2 => Ok(StarterByte { prefix, mask: 3, byte }),
+            3 => Ok(StarterByte { prefix, mask: 7, byte }),
+            4 => Ok(StarterByte { prefix, mask: 15, byte }),
+            5 => Ok(StarterByte { prefix, mask: 31, byte }),
+            6 => Ok(StarterByte { prefix, mask: 63, byte }),
+            7 => Ok(StarterByte { prefix, mask: 127, byte }),
+            8 => Ok(StarterByte { prefix, mask: 255, byte }),
+            _ => Err(Error::InvalidPrefix(prefix))
         }
     }
 
@@ -56,12 +63,12 @@ mod tests {
 
     #[test]
     fn test_noprefix_consistency() {
-        assert_eq!(StarterByte::prefix(8), Ok(StarterByte::noprefix()));
+        assert_eq!(StarterByte::prefixed(8), Ok(StarterByte::noprefix()));
     }
 
     #[test]
     fn test_prefix_transform_to_mask() {
-        assert_eq!(StarterByte::prefix(6).unwrap().mask, 63);
+        assert_eq!(StarterByte::prefixed(6).unwrap().mask, 63);
     }
 
     #[test]
@@ -71,17 +78,17 @@ mod tests {
 
     #[test]
     fn test_ahead_byte_not_given() {
-        assert_eq!(StarterByte::prefix(3).unwrap().byte, None);
+        assert_eq!(StarterByte::prefixed(3).unwrap().byte, None);
     }
 
     #[test]
     fn test_null_prefix() {
-        assert_eq!(StarterByte::prefix(0), Err(Error::InvalidPrefix(0)));
+        assert_eq!(StarterByte::prefixed(0), Err(Error::InvalidPrefix(0)));
     }
     
     #[test]
     fn test_bad_prefix() {
-        assert_eq!(StarterByte::prefix(15), Err(Error::InvalidPrefix(15)));
+        assert_eq!(StarterByte::prefixed(15), Err(Error::InvalidPrefix(15)));
     }
     
     #[test]
