@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn test_write_integer_fit_in_prefix() {
         let value = 10;
-        let starter = StarterByte::prefix(5)
+        let starter = StarterByte::prefixed(5)
             .expect("valid starter byte");
         let expected: [u8; 1] = [ 10 ];
 
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_write_var_len_integer() {
         let value = 1337;
-        let starter = StarterByte::prefix(5)
+        let starter = StarterByte::prefixed(5)
             .expect("valid starter byte");
         let expected: [u8; 3] = [ 31, 154, 10 ];
 
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_write_string_with_huffman_flag_and_size_on_different_byte() {
         let text = b"Aaa";
-        let starter = StarterByte::prefix(1)
+        let starter = StarterByte::prefixed(1)
             .expect("valid starter byte");
         let expected: [u8; 5] = [
             // huffman
