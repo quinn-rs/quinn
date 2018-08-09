@@ -3,8 +3,8 @@
 #![allow(dead_code)]
 
 /**
- * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
- * 3.2.  Indexing
+ * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2.1
+ * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2.2
  */
 
 /*
