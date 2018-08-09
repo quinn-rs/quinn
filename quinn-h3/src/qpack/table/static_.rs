@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use super::table::HeaderField;
+use super::field::HeaderField;
 
 
 #[allow(unused_macros)]

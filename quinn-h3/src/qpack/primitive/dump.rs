@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::io::{Write, Cursor, Error as IoError, ErrorKind};
 
 use super::iocontext::StarterByte;
-use super::string::{HpackStringEncode, HuffmanEncodingError};
+use super::super::string::{HpackStringEncode, HuffmanEncodingError};
 
 
 #[derive(Debug)]

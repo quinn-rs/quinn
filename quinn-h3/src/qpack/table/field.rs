@@ -3,7 +3,6 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
-use std::collections::VecDeque;
 
 
 #[derive(Debug, PartialEq, Clone)]
@@ -21,5 +20,9 @@ impl HeaderField {
             name: Cow::Owned(name.into()),
             value: Cow::Owned(value.into())
         }
+    }
+    
+    pub fn mem_size(&self) -> usize {
+        self.name.len() + self.value.len()
     }
 }
