@@ -83,6 +83,7 @@ const PREDEFINED_HEADERS: [HeaderField; 61] = decl_fields![
     (b"www-authenticate", b"")
 ];
 
+
 pub struct StaticTable {}
 
 
@@ -102,13 +103,6 @@ impl StaticTable {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_static_table_is_available() {
-        let field = HeaderField::new("www-authenticate", "");
-        assert_eq!(StaticTable::count(), 61);
-        assert_eq!(StaticTable::get(61), Some(&field));
-    }
-
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
      * 2.1. Static Table
@@ -118,5 +112,16 @@ mod tests {
     #[test]
     fn test_static_table_index_is_1_based() {
         assert_eq!(StaticTable::get(0), None);
+    }
+
+    #[test]
+    fn test_static_table_is_full() {
+        assert_eq!(StaticTable::count(), 61);
+    }
+
+    #[test]
+    fn test_static_table_can_get_field() {
+        let field = HeaderField::new("www-authenticate", "");
+        assert_eq!(StaticTable::get(61), Some(&field));
     }
 }

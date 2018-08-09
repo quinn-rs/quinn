@@ -8,16 +8,16 @@ use super::field::HeaderField;
 
 
 /**
- * https://tools.ietf.org/html/rfc7541
- * 4.1.  Calculating Table Size
+ * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
+ * 4. Configuration
  */
-pub const ESTIMATED_OVERHEAD_BYTES: usize = 32;
+pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
 
 /**
- * https://www.rfc-editor.org/rfc/rfc7540.txt
- * 6.5.2.  Defined SETTINGS Parameters
+ * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
+ * 4. Configuration
  */
-pub const SETTINGS_HEADER_TABLE_SIZE: usize = 4096;
+pub const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 
 
 #[derive(Debug, PartialEq)]
@@ -37,46 +37,42 @@ impl DynamicTable {
     pub fn new() -> DynamicTable {
         DynamicTable {
             fields: VecDeque::new(),
-            curr_mem_size: ESTIMATED_OVERHEAD_BYTES,
-            mem_limit: SETTINGS_HEADER_TABLE_SIZE,
+            curr_mem_size: 0,
+            mem_limit: SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
         }
     }
 
     /**
-     * Adding field into the table cannot fails, but it doesn't mean the header
-     * field will be put inside the table.
-     * 
      * @returns Flag to test if field is really in the table, \
      * Number of fields removed to have enough space for the field
      */
     pub fn put_field(&mut self, field: HeaderField) -> (bool, usize) {
-        let dropped = 
-            if field.mem_size() <= self.mem_limit {
-                let at_most = self.mem_limit - field.mem_size();
-                self.shrink_to_fit(at_most)
-            } 
-            else { 0 };
+        let at_most = 
+            if field.mem_size() <= self.mem_limit { 
+                self.mem_limit - field.mem_size() 
+            } else { 0 };
+        let dropped = self.shrink_to(at_most);
 
         let available = self.mem_limit - self.curr_mem_size;
-        let addable = field.mem_size() <= available;
-        if addable {
+        let can_add = field.mem_size() <= available;
+        if can_add {
             self.curr_mem_size += field.mem_size();
             self.fields.push_back(field);
         }
 
-        (addable, dropped)
+        (can_add, dropped)
     }
 
     /**
      * @returns Number of fields removed by resizing
      */
     pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, ErrorKind> {
-        if size > SETTINGS_HEADER_TABLE_SIZE {
+        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
             return Err(ErrorKind::MaximumTableSizeTooLarge);
         }
-        let dropped = self.shrink_to_fit(size);
+        
         self.mem_limit = size;
-        Ok(dropped)
+        Ok(self.shrink_to(size))
     }
 
     /**
@@ -85,7 +81,7 @@ impl DynamicTable {
      * 
      * @returns Number of fields removed
      */
-    fn shrink_to_fit(&mut self, lower_bound: usize) -> usize {
+    fn shrink_to(&mut self, lower_bound: usize) -> usize {
         let initial = self.fields.len();
         
         while !self.fields.is_empty() && self.curr_mem_size > lower_bound {
@@ -119,19 +115,22 @@ impl DynamicTable {
 mod tests {
     use super::*;
 
+    // Test on table size
+
+
     /**
-     * https://tools.ietf.org/html/rfc7541
-     * 4.1.  Calculating Table Size
+     * https://tools.ietf.org/html/rfc7541#section-4.1
+     * "The size of the dynamic table is the sum of the size of its entries."
      */
     #[test]
-    fn test_dynamic_table_size() {
+    fn test_table_size_is_sum_of_its_entries() {
         let mut table = DynamicTable::new();
 
         let fields: [(&'static str, &'static str); 2] = [
             ("Name", "Value"),
             ("Another-Name", ""), // no value
         ];
-        let table_size = 4 + 5 + 12 + 0 + ESTIMATED_OVERHEAD_BYTES;
+        let table_size = 4 + 5 + 12 + 0 + /* ESTIMATED_OVERHEAD_BYTES */ 32 * 2;
 
         for pair in fields.iter() {
             let field = HeaderField::new(pair.0, pair.1);
@@ -141,163 +140,204 @@ mod tests {
         assert_eq!(table.mem_size(), table_size);
     }
 
+
+    // Test on maximum table size
+
+    
     /**
-     * https://tools.ietf.org/html/rfc7541
-     * 4.1.  Calculating Table Size
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "The decoder determines the maximum size that the encoder is permitted
+     *  to use for the dynamic table.  In HTTP/QUIC, this value is determined
+     *  by the SETTINGS_HEADER_TABLE_SIZE setting (see Section 4.2.5.2 of
+     *  [QUIC-HTTP])."
+     *  
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-4
+     * "SETTINGS_HEADER_TABLE_SIZE (0x1):  An integer with a maximum value of
+     *   2^30 - 1.  The default value is 4,096 bytes.  See (todo: reference
+     *   PR#1357) for usage."
      */
     #[test]
-    fn test_minimum_table_size_is_not_null() {
+    fn test_maximum_table_size_is_not_null_nor_max_by_default() {
         let table = DynamicTable::new();
-        assert_eq!(table.mem_size(), ESTIMATED_OVERHEAD_BYTES);
+        assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_DEFAULT);
     }
 
+    
     /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.2.  Maximum Table Size
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "The decoder determines the maximum size that the encoder is permitted
+     *  to use for the dynamic table.  In HTTP/QUIC, this value is determined
+     *  by the SETTINGS_HEADER_TABLE_SIZE setting (see Section 4.2.5.2 of
+     *  [QUIC-HTTP])."
      */
     #[test]
-    fn test_set_too_large_maximum_table_size() {
+    fn test_try_set_too_large_maximum_table_size() {
         let mut table = DynamicTable::new();
-        let invalid_size = SETTINGS_HEADER_TABLE_SIZE + 10;
+        let invalid_size = SETTINGS_HEADER_TABLE_SIZE_MAX + 10;
         let res_change = table.set_max_mem_size(invalid_size);
         assert_eq!(res_change, Err(ErrorKind::MaximumTableSizeTooLarge));
     }
 
+    
     /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.2.  Maximum Table Size
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "This mechanism can be used to completely clear entries from the
+     *  dynamic table by setting a maximum size of 0, which can subsequently
+     *  be restored."
      */
     #[test]
-    fn test_maximum_table_size_can_be_lower_than_table_size() {
+    fn test_maximum_table_size_can_reach_zero() {
         let mut table = DynamicTable::new();
         let res_change = table.set_max_mem_size(0);
         assert!(res_change.is_ok());
-        assert_eq!(table.mem_size(), ESTIMATED_OVERHEAD_BYTES);
+        assert_eq!(table.max_mem_size(), 0);
     }
 
+    
     /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.2.  Maximum Table Size
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "The decoder determines the maximum size that the encoder is permitted
+     *  to use for the dynamic table.  In HTTP/QUIC, this value is determined
+     *  by the SETTINGS_HEADER_TABLE_SIZE setting (see Section 4.2.5.2 of
+     *  [QUIC-HTTP])."
      */
     #[test]
-    fn test_set_maximum_table_size() {
+    fn test_maximum_table_size_can_reach_maximum() {
         let mut table = DynamicTable::new();
-        let valid_size = SETTINGS_HEADER_TABLE_SIZE / 2 + 1;
-        let res_change = table.set_max_mem_size(valid_size);
+        let res_change = table.set_max_mem_size(SETTINGS_HEADER_TABLE_SIZE_MAX);
         assert!(res_change.is_ok());
+        assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_MAX);
     }
 
-    /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.2.  Maximum Table Size
-     */
-    #[test]
-    fn test_fields_can_fit_up_to_the_last_byte() {
-        let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
 
-        table.put_field(HeaderField::new("Name", "Value"));
-        assert_eq!(table.count(), 1);
+    // Test duplicated fields
 
-        let size = table.mem_size();
-        assert!(table.set_max_mem_size(size).is_ok());
-        assert_eq!(table.count(), 1);
-    }
-
-    /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.2.  Maximum Table Size
-     */
-    #[test]
-    fn test_null_maximum_table_size_purge_all_fields() {
-        let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
-
-        table.put_field(HeaderField::new("Name", "Value"));
-        assert_eq!(table.count(), 1);
-
-        assert!(table.set_max_mem_size(0).is_ok());
-        assert_eq!(table.count(), 0);
-    }
-
-    /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.3.  Entry Eviction When Dynamic Table Size Changes
-     */
-    #[test]
-    fn test_set_narrow_maximum_table_size_drop_fields_to_fit() {
-        let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
-
-        table.put_field(HeaderField::new("Name-1", "Value-1"));
-        table.put_field(HeaderField::new("Name-2", "Value-2"));
-        table.put_field(HeaderField::new("Name-3", "Value-3"));
-        assert_eq!(table.count(), 3);
-
-        let size_to_drop_first_field = table.mem_size() - 1;
-        assert!(table.set_max_mem_size(size_to_drop_first_field).is_ok());
-        assert_eq!(table.count(), 2);
-    }
     
     /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.3.  Entry Eviction When Dynamic Table Size Changes
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "The dynamic table can contain duplicate entries (i.e., entries with
+     *  the same name and same value).  Therefore, duplicate entries MUST NOT
+     *  be treated as an error by a decoder."
      */
     #[test]
-    fn test_drop_fields_are_in_fifo() {
+    fn test_table_supports_duplicated_entries() {
         let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
-
-        let second_field = HeaderField::new("Name-2", "Value-2");
-
-        table.put_field(HeaderField::new("Name-1", "Value-1"));
-        table.put_field(second_field.clone());
-        table.put_field(HeaderField::new("Name-3", "Value-3"));
-        assert_eq!(table.count(), 3);
-
-        let size_to_drop_first_field = table.mem_size() - 1;
-        assert!(table.set_max_mem_size(size_to_drop_first_field).is_ok());
-        assert_eq!(table.get(0), Some(&second_field));
-    }
-    
-    /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.4.  Entry Eviction When Adding New Entries
-     */
-    #[test]
-    fn test_put_field_drop_previous_fields_to_fit() {
-        let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
-
         table.put_field(HeaderField::new("Name", "Value"));
         table.put_field(HeaderField::new("Name", "Value"));
-        table.put_field(HeaderField::new("Name", "Value"));
-
-        let size = table.mem_size();
-        assert!(table.set_max_mem_size(size).is_ok());
-        assert_eq!(table.count(), 3);
-
-        // header field that take two of the previous fields
-        table.put_field(HeaderField::new("NameName", "ValueValue"));
         assert_eq!(table.count(), 2);
     }
 
+
+    // Test adding fields
+
+    
+    /** functional test */
+    #[test]
+    fn test_add_field_fitting_free_space() {
+        let mut table = DynamicTable::new();
+
+        let (added, _) = table.put_field(HeaderField::new("Name", "Value"));
+        assert_eq!(added, true);
+        assert_eq!(table.count(), 1);
+    }
+
+    
+    /** functional test */
+    #[test]
+    fn test_add_field_reduce_free_space() {
+        let mut table = DynamicTable::new();
+
+        let field = HeaderField::new("Name", "Value");
+        table.put_field(field.clone());
+        assert_eq!(table.mem_size(), field.mem_size());
+    }
+
+    
     /**
-     * https://tools.ietf.org/html/rfc7541#section-4.4
-     * 4.4.  Entry Eviction When Adding New Entries
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "Before a new entry is added to the dynamic table, entries are evicted
+     *  from the end of the dynamic table until the size of the dynamic table
+     *  is less than or equal to (maximum size - new entry size) or until the
+     *  table is empty."
      */
     #[test]
-    fn test_put_field_too_large_makes_it_evicted() {
+    fn test_add_field_drop_older_fields_to_have_enough_space() {
         let mut table = DynamicTable::new();
-        assert!(table.set_max_mem_size(200).is_ok());
 
-        table.put_field(HeaderField::new("Name", "Value"));
-
-        let size = table.mem_size();
-        assert!(table.set_max_mem_size(size).is_ok());
+        table.put_field(HeaderField::new("Name-A", "Value-A"));
+        table.put_field(HeaderField::new("Name-B", "Value-B"));
+        let perfect_size = table.mem_size();
+        assert!(table.set_max_mem_size(perfect_size).is_ok());
+        
+        let field = HeaderField::new("Name-Large", "Value-Large");
+        let (added, dropped) = table.put_field(field);
+        
+        assert_eq!(added, true);
+        assert_eq!(dropped, 2);
         assert_eq!(table.count(), 1);
+    }
 
-        table.put_field(HeaderField::new("NameName", "ValueValue"));
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "If the size of the new entry is less than or equal to the maximum
+     *  size, that entry is added to the table.  It is an error to attempt to
+     *  add an entry that is larger than the maximum size;"
+     */
+    #[test]
+    fn test_try_add_field_larger_than_maximum_size() {
+        let mut table = DynamicTable::new();
+
+        table.put_field(HeaderField::new("Name-A", "Value-A"));
+        let perfect_size = table.mem_size();
+        assert!(table.set_max_mem_size(perfect_size).is_ok());
+        
+        let field = HeaderField::new("Name-Large", "Value-Large");
+        let (added, dropped) = table.put_field(field);
+        
+        assert_eq!(added, false);
+        assert_eq!(dropped, 1);
         assert_eq!(table.count(), 0);
     }
+
+
+    // Test on entry eviction
+
+    
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
+     * "This mechanism can be used to completely clear entries from the
+     *  dynamic table by setting a maximum size of 0, which can subsequently
+     *  be restored."
+     */
+    #[test]
+    fn test_set_maximum_table_size_to_zero_clear_entries() {
+        let mut table = DynamicTable::new();
+
+        table.put_field(HeaderField::new("Name", "Value"));
+        table.put_field(HeaderField::new("Name", "Value"));
+        assert_eq!(table.count(), 2);
+
+        let were_dropped = table.set_max_mem_size(0);
+        assert_eq!(were_dropped, Ok(2));
+        assert_eq!(table.count(), 0);
+    }
+
+    
+    /** functional test */
+    #[test]
+    fn test_eviction_is_fifo() {
+        let mut table = DynamicTable::new();
+
+        table.put_field(HeaderField::new("Name-A", "Value-A"));
+        table.put_field(HeaderField::new("Name-B", "Value-B"));
+        let perfect_size = table.mem_size();
+        assert!(table.set_max_mem_size(perfect_size).is_ok());
+
+        table.put_field(HeaderField::new("Name-C", "Value-C"));
+
+        assert_eq!(table.get(0), Some(&HeaderField::new("Name-B", "Value-B")));
+        assert_eq!(table.get(1), Some(&HeaderField::new("Name-C", "Value-C")));
+        assert_eq!(table.get(2), None);
+    }
+    
 }
