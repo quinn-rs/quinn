@@ -2,8 +2,8 @@
 // TODO remove allow dead code
 #![allow(unused_imports)]
 
-pub mod bitrange;
-pub use self::bitrange::BitRange;
+pub mod bitwin;
+pub use self::bitwin::BitWindow;
 
 pub mod decode;
 pub use self::decode::{DecodeIter, HpackStringDecode, 

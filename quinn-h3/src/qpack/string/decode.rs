@@ -2,13 +2,13 @@ extern crate bitlab;
 
 use bitlab::*;
 
-use super::BitRange;
+use super::BitWindow;
 
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    MissingBits(BitRange),
-    Unhandled(BitRange, usize)
+    MissingBits(BitWindow),
+    Unhandled(BitWindow, usize)
 }
 
 
@@ -29,16 +29,23 @@ struct HuffmanDecoder {
 impl HuffmanDecoder {
 
     fn check_eof(&self,
-                 range: &mut BitRange,
+                 bit_pos: &mut BitWindow,
                  input: &Vec<u8>
-                ) -> Result<Option<u32>, Error> {
-        if (range.byte + 1) as usize > input.len() {
+                ) -> Result<Option<u32>, Error> 
+    {
+        // Position is out-of-range
+        if (bit_pos.byte + 1) as usize > input.len() {
             return Ok(None);
         }
-        else if (range.byte + 1) as usize == input.len() {
-            let side = range.byte_boundary();
+        // Position is on the last byte
+        else if (bit_pos.byte + 1) as usize == input.len() {
+            let side = bit_pos.opposite_bit_window();
 
-            let rest = match input.get_u8(side.byte, side.bit, side.count) {
+            let rest = match input.get_u8(
+                side.byte, 
+                side.bit, 
+                side.count) 
+            {
                 Ok(x) => x,
                 Err(_) => {
                     return Err(Error::MissingBits(side.clone()));
@@ -51,44 +58,47 @@ impl HuffmanDecoder {
             }
         }
 
-        Err(Error::MissingBits(range.clone()))
+        Err(Error::MissingBits(bit_pos.clone()))
     }
 
-    fn value(
+    fn fetch_value( 
         &self,
-        range: &mut BitRange,
+        bit_pos: &mut BitWindow,
         input: &Vec<u8>
-        ) -> Result<Option<u32>, Error> {
-        let value = match input.get_u32(
-            range.byte, range.bit, range.count) {
-            Ok(x) => x,
-            Err(_) => return self.check_eof(range, &input)
-        };
-
-        Ok(Some(value))
+        ) -> Result<Option<u32>, Error> 
+    {
+        match input.get_u32(
+            bit_pos.byte, 
+            bit_pos.bit, 
+            bit_pos.count) 
+        {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => self.check_eof(bit_pos, &input)
+        }
     }
 
     fn decode_next(
         &self,
-        range: &mut BitRange,
+        bit_pos: &mut BitWindow,
         input: &Vec<u8>
-        ) -> Result<Option<u8>, Error> {
-        range.forwards(self.lookup);
+        ) -> Result<Option<u8>, Error> 
+    {
+        bit_pos.forwards(self.lookup);
 
-        let value = match self.value(range, input) {
-            Ok(Some(x)) => x as usize,
+        let value = match self.fetch_value(bit_pos, input) {
+            Ok(Some(value)) => value as usize,
             Ok(None) => return Ok(None),
             Err(err) => return Err(err)
         };
 
         let at_value = match (&self.table[..]).get(value) {
             Some(x) => x,
-            None => return Err(Error::Unhandled(range.clone(), value))
+            None => return Err(Error::Unhandled(bit_pos.clone(), value))
         };
 
         match at_value {
             &DecodeValue::Sym(x) => Ok(Some(x)),
-            &DecodeValue::Partial(d) => d.decode_next(range, input),
+            &DecodeValue::Partial(d) => d.decode_next(bit_pos, input),
         }
     }
 
@@ -180,119 +190,119 @@ bits_decode![
         => END0_11010, => END0_11011, => END0_11100, => END0_11101,
         => END0_11110, => END0_11111,
         ]),
-        END0_01010 => ( 32, '%'),
-        END0_01011 => ('-', '.'),
-        END0_01100 => ('/', '3'),
-        END0_01101 => ('4', '5'),
-        END0_01110 => ('6', '7'),
-        END0_01111 => ('8', '9'),
-        END0_10000 => ('=', 'A'),
-        END0_10001 => ('_', 'b'),
-        END0_10010 => ('d', 'f'),
-        END0_10011 => ('g', 'h'),
-        END0_10100 => ('l', 'm'),
-        END0_10101 => ('n', 'p'),
-        END0_10110 => ('r', 'u'),
-        END0_10111 => (':', 'B', 'C', 'D'),
-        END0_11000 => ('E', 'F', 'G', 'H'),
-        END0_11001 => ('I', 'J', 'K', 'L'),
-        END0_11010 => ('M', 'N', 'O', 'P'),
-        END0_11011 => ('Q', 'R', 'S', 'T'),
-        END0_11100 => ('U', 'V', 'W', 'Y'),
-        END0_11101 => ('j', 'k', 'q', 'v'),
-        END0_11110 => ('w', 'x', 'y', 'z'),
-        END0_11111 => (=> END5_00, => END5_01, => END5_10, => END5_11),
-        END5_00 => ('&', '*'),
-        END5_01 => (',', 59),
-        END5_10 => ('X', 'Z'),
-        END5_11 => (=> END7_0, => END7_1),
-        END7_0 => ('!', '"', '(', ')'),
-        END7_1 => (=> END8_0, => END8_1),
-        END8_0 => ('?', => END9A_1), 
-        END9A_1 => ('\'', '+'),
-        END8_1 => (lookup: 2, ['|', => END9B_01, => END9B_10, => END9B_11,]), 
-        END9B_01 => ('#', '>'),
-        END9B_10 => (0, '$', '@', '['),
-        END9B_11 => (lookup: 2, [']', '~', => END13_10, => END13_11,]),
-        END13_10 => ('^', '}'),
-        END13_11 => (=> END14_0, => END14_1),
-        END14_0 => ('<', '`'),
-        END14_1 => ('{', => END15_1),
-        END15_1 => 
-        (lookup: 4, [ '\\', 195, 208, => END19_0011,
-         => END19_0100, => END19_0101, => END19_0110, => END19_0111,
-         => END19_1000, => END19_1001, => END19_1010, => END19_1011,
-         => END19_1100, => END19_1101, => END19_1110, => END19_1111,
-        ]),
-        END19_0011 => (128, 130),
-        END19_0100 => (131, 162),
-        END19_0101 => (184, 194),
-        END19_0110 => (224, 226),
-        END19_0111 => (153, 161, 167, 172),
-        END19_1000 => (176, 177, 179, 209),
-        END19_1001 => (216, 217, 227, 229),
-        END19_1010 => (lookup: 2, [230, => END19_1010_01, => END19_1010_10, 
-                       => END19_1010_11,]),
-        END19_1010_01 => (129, 132),
-        END19_1010_10 => (133, 134),
-        END19_1010_11 => (136, 146),
-        END19_1011 => (lookup: 3, [154, 156, 160, 163, 164, 169, 170, 173,]),
-        END19_1100 => (lookup: 3, [178, 181, 185, 186, 187, 189, 190, 196,]),
-        END19_1101 => (lookup: 3, [198, 228, 232, 233,
-                       => END23A_100, => END23A_101,
-                       => END23A_110, => END23A_111,]),
-        END23A_100 => (  1, 135),
-        END23A_101 => (137, 138),
-        END23A_110 => (139, 140),
-        END23A_111 => (141, 143),
-        END19_1110 => (lookup: 4, [147, 149, 150, 151, 152, 155, 157, 158, 
-                       165, 166, 168, 174, 175, 180, 182, 183,]),
-        END19_1111 => (lookup: 4, [188, 191, 197, 231, 239,
-                       => END23B_0101, => END23B_0110, => END23B_0111,
-                       => END23B_1000, => END23B_1001, => END23B_1010,
-                       => END23B_1011, => END23B_1100, => END23B_1101,
-                       => END23B_1110, => END23B_1111,]),
-        END23B_0101 => (  9, 142),
-        END23B_0110 => (144, 145),
-        END23B_0111 => (148, 159),
-        END23B_1000 => (171, 206),
-        END23B_1001 => (215, 225),
-        END23B_1010 => (236, 237),
-        END23B_1011 => (199, 207, 234, 235),
-        END23B_1100 => (lookup: 3, [192, 193, 200, 201, 202, 205, 210, 213,]),
-        END23B_1101 => (lookup: 3, [218, 219, 238, 240, 242, 243, 255, 
-                        => END27A_111,]),
-        END27A_111 => (203, 204),
-        END23B_1110 => (lookup: 4, [211, 212, 214, 221, 222, 223, 241, 244, 
-                        245, 246, 247, 248, 250, 251, 252, 253,]),
-        END23B_1111 => (lookup: 4, [ 254, => END27B_0001, => END27B_0010,
-                        => END27B_0011, => END27B_0100, => END27B_0101,
-                        => END27B_0110, => END27B_0111, => END27B_1000,
-                        => END27B_1001, => END27B_1010, => END27B_1011,
-                        => END27B_1100, => END27B_1101, => END27B_1110,
-                        => END27B_1111,]),
-        END27B_0001 => (2, 3),
-        END27B_0010 => (4, 5),
-        END27B_0011 => (6, 7),
-        END27B_0100 => (8, 11),
-        END27B_0101 => (12, 14),
-        END27B_0110 => (15, 16),
-        END27B_0111 => (17, 18),
-        END27B_1000 => (19, 20),
-        END27B_1001 => (21, 23),
-        END27B_1010 => (24, 25),
-        END27B_1011 => (26, 27),
-        END27B_1100 => (28, 29),
-        END27B_1101 => (30, 31),
-        END27B_1110 => (127, 220),
-        END27B_1111 => (lookup: 1, [249, => END31_1,]),
-        END31_1 => (lookup: 2, [10, 13, 22, => EOF,]),
-        EOF => (lookup: 8, []),
-        ];
+    END0_01010 => ( 32, '%'),
+    END0_01011 => ('-', '.'),
+    END0_01100 => ('/', '3'),
+    END0_01101 => ('4', '5'),
+    END0_01110 => ('6', '7'),
+    END0_01111 => ('8', '9'),
+    END0_10000 => ('=', 'A'),
+    END0_10001 => ('_', 'b'),
+    END0_10010 => ('d', 'f'),
+    END0_10011 => ('g', 'h'),
+    END0_10100 => ('l', 'm'),
+    END0_10101 => ('n', 'p'),
+    END0_10110 => ('r', 'u'),
+    END0_10111 => (':', 'B', 'C', 'D'),
+    END0_11000 => ('E', 'F', 'G', 'H'),
+    END0_11001 => ('I', 'J', 'K', 'L'),
+    END0_11010 => ('M', 'N', 'O', 'P'),
+    END0_11011 => ('Q', 'R', 'S', 'T'),
+    END0_11100 => ('U', 'V', 'W', 'Y'),
+    END0_11101 => ('j', 'k', 'q', 'v'),
+    END0_11110 => ('w', 'x', 'y', 'z'),
+    END0_11111 => (=> END5_00, => END5_01, => END5_10, => END5_11),
+    END5_00 => ('&', '*'),
+    END5_01 => (',', 59),
+    END5_10 => ('X', 'Z'),
+    END5_11 => (=> END7_0, => END7_1),
+    END7_0 => ('!', '"', '(', ')'),
+    END7_1 => (=> END8_0, => END8_1),
+    END8_0 => ('?', => END9A_1), 
+    END9A_1 => ('\'', '+'),
+    END8_1 => (lookup: 2, ['|', => END9B_01, => END9B_10, => END9B_11,]), 
+    END9B_01 => ('#', '>'),
+    END9B_10 => (0, '$', '@', '['),
+    END9B_11 => (lookup: 2, [']', '~', => END13_10, => END13_11,]),
+    END13_10 => ('^', '}'),
+    END13_11 => (=> END14_0, => END14_1),
+    END14_0 => ('<', '`'),
+    END14_1 => ('{', => END15_1),
+    END15_1 => 
+    (lookup: 4, [ '\\', 195, 208, => END19_0011,
+     => END19_0100, => END19_0101, => END19_0110, => END19_0111,
+     => END19_1000, => END19_1001, => END19_1010, => END19_1011,
+     => END19_1100, => END19_1101, => END19_1110, => END19_1111,
+    ]),
+    END19_0011 => (128, 130),
+    END19_0100 => (131, 162),
+    END19_0101 => (184, 194),
+    END19_0110 => (224, 226),
+    END19_0111 => (153, 161, 167, 172),
+    END19_1000 => (176, 177, 179, 209),
+    END19_1001 => (216, 217, 227, 229),
+    END19_1010 => (lookup: 2, [230, => END19_1010_01, => END19_1010_10, 
+                   => END19_1010_11,]),
+    END19_1010_01 => (129, 132),
+    END19_1010_10 => (133, 134),
+    END19_1010_11 => (136, 146),
+    END19_1011 => (lookup: 3, [154, 156, 160, 163, 164, 169, 170, 173,]),
+    END19_1100 => (lookup: 3, [178, 181, 185, 186, 187, 189, 190, 196,]),
+    END19_1101 => (lookup: 3, [198, 228, 232, 233,
+                   => END23A_100, => END23A_101,
+                   => END23A_110, => END23A_111,]),
+    END23A_100 => (  1, 135),
+    END23A_101 => (137, 138),
+    END23A_110 => (139, 140),
+    END23A_111 => (141, 143),
+    END19_1110 => (lookup: 4, [147, 149, 150, 151, 152, 155, 157, 158, 
+                   165, 166, 168, 174, 175, 180, 182, 183,]),
+    END19_1111 => (lookup: 4, [188, 191, 197, 231, 239,
+                   => END23B_0101, => END23B_0110, => END23B_0111,
+                   => END23B_1000, => END23B_1001, => END23B_1010,
+                   => END23B_1011, => END23B_1100, => END23B_1101,
+                   => END23B_1110, => END23B_1111,]),
+    END23B_0101 => (  9, 142),
+    END23B_0110 => (144, 145),
+    END23B_0111 => (148, 159),
+    END23B_1000 => (171, 206),
+    END23B_1001 => (215, 225),
+    END23B_1010 => (236, 237),
+    END23B_1011 => (199, 207, 234, 235),
+    END23B_1100 => (lookup: 3, [192, 193, 200, 201, 202, 205, 210, 213,]),
+    END23B_1101 => (lookup: 3, [218, 219, 238, 240, 242, 243, 255, 
+                    => END27A_111,]),
+    END27A_111 => (203, 204),
+    END23B_1110 => (lookup: 4, [211, 212, 214, 221, 222, 223, 241, 244, 
+                    245, 246, 247, 248, 250, 251, 252, 253,]),
+    END23B_1111 => (lookup: 4, [ 254, => END27B_0001, => END27B_0010,
+                    => END27B_0011, => END27B_0100, => END27B_0101,
+                    => END27B_0110, => END27B_0111, => END27B_1000,
+                    => END27B_1001, => END27B_1010, => END27B_1011,
+                    => END27B_1100, => END27B_1101, => END27B_1110,
+                    => END27B_1111,]),
+    END27B_0001 => (2, 3),
+    END27B_0010 => (4, 5),
+    END27B_0011 => (6, 7),
+    END27B_0100 => (8, 11),
+    END27B_0101 => (12, 14),
+    END27B_0110 => (15, 16),
+    END27B_0111 => (17, 18),
+    END27B_1000 => (19, 20),
+    END27B_1001 => (21, 23),
+    END27B_1010 => (24, 25),
+    END27B_1011 => (26, 27),
+    END27B_1100 => (28, 29),
+    END27B_1101 => (30, 31),
+    END27B_1110 => (127, 220),
+    END27B_1111 => (lookup: 1, [249, => END31_1,]),
+    END31_1 => (lookup: 2, [10, 13, 22, => EOF,]),
+    EOF => (lookup: 8, []),
+    ];
 
 
 pub struct DecodeIter<'a> {
-    range: BitRange,
+    bit_pos: BitWindow,
     content: &'a Vec<u8>
 }
 
@@ -302,7 +312,7 @@ impl<'a> Iterator for DecodeIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match HPACK_STRING
-            .decode_next(&mut self.range, self.content) {
+            .decode_next(&mut self.bit_pos, self.content) {
                 Ok(Some(x)) => Some(Ok(x)),
                 Err(err) => Some(Err(err)),
                 Ok(None) => None
@@ -319,7 +329,7 @@ pub trait HpackStringDecode {
 impl HpackStringDecode for Vec<u8> {
     fn hpack_decode<'a>(&'a self) -> DecodeIter<'a> {
         DecodeIter {
-            range: BitRange::new(),
+            bit_pos: BitWindow::new(),
             content: self
         }
     }
