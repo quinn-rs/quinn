@@ -2,12 +2,12 @@ extern crate bitlab;
 
 use bitlab::*;
 
-use super::BitRange;
+use super::BitWindow;
 
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
-    range: BitRange,
+    buffer_pos: BitWindow,
     len: usize,
     capacity: usize,
     text: String
@@ -23,7 +23,7 @@ struct EncodeValue {
 
 #[derive(Clone, Debug)]
 struct HuffmanEncoder {
-    range: BitRange,
+    buffer_pos: BitWindow,
     buffer: Vec<u8>
 }
 
@@ -32,15 +32,15 @@ impl HuffmanEncoder {
 
     fn new() -> HuffmanEncoder {
         HuffmanEncoder {
-            range: BitRange::new(),
+            buffer_pos: BitWindow::new(),
             buffer: Vec::new()
         }
     }
 
 
-    fn error(&self, text: String) -> Error {
+    fn create_error(&self, text: String) -> Error {
         Error {
-            range: self.range.clone(),
+            buffer_pos: self.buffer_pos.clone(),
             len: self.buffer.len(),
             capacity: self.buffer.capacity(),
             text
@@ -48,20 +48,24 @@ impl HuffmanEncoder {
     }
     
     
-    fn ensure(&mut self, bit_count: u32) {
-        let mut end_range = self.range.clone();
+    fn ensure_free_space(&mut self, bit_count: u32) {
+        let mut end_range = self.buffer_pos.clone();
         end_range.forwards(bit_count);
-        end_range.join();
+        end_range.forwards(0);
         
+        // buffer still has enough space to work on
         if self.buffer.len() > end_range.byte as usize {
             return;
         }
 
+        // optimisation to grow capacity before pushing data
         if self.buffer.capacity() <= end_range.byte as usize {
             self.buffer.reserve(((7 * end_range.byte) / 4) as usize);
         }
         
         while self.buffer.len() <= end_range.byte as usize {
+            // push filler value that will ends huffman decoding if not
+            // modified
             self.buffer.push(255);
         }
     }
@@ -70,21 +74,21 @@ impl HuffmanEncoder {
     fn put(&mut self, code: &u8) -> Result<(), Error> {
         let encode_value = &HPACK_STRING[*code as usize];
 
-        self.ensure(encode_value.bit_count);
+        self.ensure_free_space(encode_value.bit_count);
 
         let mut rest = encode_value.bit_count;
         for i in 0..encode_value.buffer.len() {
-            let value = encode_value.buffer[i];
+            let part = encode_value.buffer[i];
 
-            self.range.forwards(if rest < 8 { rest } else { 8 });
-            rest -= self.range.count;
+            self.buffer_pos.forwards(if rest < 8 { rest } else { 8 });
+            rest -= self.buffer_pos.count;
         
             self.buffer.set(
-                self.range.byte,
-                self.range.bit,
-                self.range.count,
-                value)
-                .map_err(|x| self.error(x))?;
+                self.buffer_pos.byte,
+                self.buffer_pos.bit,
+                self.buffer_pos.count,
+                part)
+                .map_err(|x| self.create_error(x))?;
         }
 
         Ok(())
