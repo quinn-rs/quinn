@@ -131,7 +131,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StarterByte::prefix(7)
+        let res = parser.integer(StarterByte::prefixed(7)
                                  .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
@@ -151,7 +151,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StarterByte::prefix(5)
+        let res = parser.integer(StarterByte::prefixed(5)
                                  .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
@@ -170,7 +170,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StarterByte::prefix(2)
+        let res = parser.integer(StarterByte::prefixed(2)
                                  .expect("valid starter byte"));
 
         assert_eq!(res, Err(Error::TooShortBufferForInteger));
@@ -183,7 +183,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let mut parser = Parser::new(&mut cursor);
-        let res = parser.integer(StarterByte::prefix(7)
+        let res = parser.integer(StarterByte::prefixed(7)
                                  .expect("valid starter byte"));
 
         assert_eq!(res, Ok(value));
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_read_string_with_huffman_flag_and_size_on_different_byte() {
         let text = "Aaa";
-        let starter = StarterByte::prefix(1).expect("valid starter byte");
+        let starter = StarterByte::prefixed(1).expect("valid starter byte");
         let bytes: [u8; 5] = [
             // not huffman
             0,
