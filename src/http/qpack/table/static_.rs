@@ -88,7 +88,8 @@ pub struct StaticTable {}
 
 impl StaticTable {
     pub fn get(index: usize) -> Option<&'static HeaderField> {
-        PREDEFINED_HEADERS.get(index)
+        if index == 0 { None }
+        else { PREDEFINED_HEADERS.get(index - 1) }
     }
     
     pub fn count() -> usize {
@@ -105,6 +106,17 @@ mod tests {
     fn test_static_table_is_available() {
         let field = HeaderField::new("www-authenticate", "");
         assert_eq!(StaticTable::count(), 61);
-        assert_eq!(StaticTable::get(60), Some(&field));
+        assert_eq!(StaticTable::get(61), Some(&field));
+    }
+
+    /**
+     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
+     * 2.1. Static Table
+     *    [...] Note that because HPACK did not use zero-based references, 
+     *    there is no value at index zero of the static table.
+     */
+    #[test]
+    fn test_static_table_index_is_1_based() {
+        assert_eq!(StaticTable::get(0), None);
     }
 }
