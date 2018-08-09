@@ -6,10 +6,8 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use bytes::Buf;
 
-use super::iocontext::StarterByte;
-use super::parser::Parser;
-use super::table::{HeaderField, DynamicTable};
-use super::static_table::StaticTable;
+use super::primitive::{StarterByte, Parser};
+use super::table::{HeaderField, DynamicTable, StaticTable};
 use super::vas::VirtualAddressSpace;
 
 
