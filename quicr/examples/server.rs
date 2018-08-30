@@ -1,30 +1,30 @@
-extern crate tokio;
 extern crate quicr;
+extern crate tokio;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate slog_term;
 extern crate futures;
+extern crate slog_term;
 #[macro_use]
 extern crate structopt;
 
-use std::fs;
-use std::fmt;
-use std::path::{self, Path, PathBuf};
-use std::str;
-use std::rc::Rc;
 use std::ascii;
+use std::fmt;
+use std::fs;
 use std::net::SocketAddr;
+use std::path::{self, Path, PathBuf};
+use std::rc::Rc;
+use std::str;
 
+use failure::{Fail, ResultExt};
 use futures::{Future, Stream};
+use structopt::StructOpt;
 use tokio::executor::current_thread;
 use tokio::runtime::current_thread::Runtime;
-use failure::{ResultExt, Fail};
-use structopt::StructOpt;
 
-use slog::{Logger, Drain};
 use failure::Error;
+use slog::{Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -47,7 +47,9 @@ pub trait ErrorExt {
 }
 
 impl ErrorExt for Error {
-    fn pretty(&self) -> PrettyErr { PrettyErr(self.cause()) }
+    fn pretty(&self) -> PrettyErr {
+        PrettyErr(self.cause())
+    }
 }
 
 #[derive(StructOpt, Debug)]
@@ -77,23 +79,31 @@ fn main() {
     let opt = Opt::from_args();
     let code = {
         let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-        let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
+        let drain = slog_term::FullFormat::new(decorator)
+            .use_original_order()
+            .build()
+            .fuse();
         if let Err(e) = run(Logger::root(drain, o!()), opt) {
             eprintln!("ERROR: {}", e.pretty());
             1
-        } else { 0 }
+        } else {
+            0
+        }
     };
     ::std::process::exit(code);
 }
 
 fn run(log: Logger, options: Opt) -> Result<()> {
     let root = Rc::new(options.root);
-    if !root.exists() { bail!("root path does not exist"); }
+    if !root.exists() {
+        bail!("root path does not exist");
+    }
 
     let mut runtime = Runtime::new()?;
 
     let mut builder = quicr::Endpoint::new();
-    builder.logger(log.clone())
+    builder
+        .logger(log.clone())
         .config(quicr::Config {
             protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
@@ -104,26 +114,38 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .listen();
 
     if let Some(key_path) = options.key {
-        let key = fs::read(&key_path).context("failed to read private key")?;;
-        builder.private_key_pem(&key).context("failed to load private key")?;
+        let key = fs::read(&key_path).context("failed to read private key")?;
+        builder
+            .private_key_pem(&key)
+            .context("failed to load private key")?;
 
         let cert_path = options.cert.unwrap(); // Ensured present by option parsing
         let cert = fs::read(&cert_path).context("failed to read certificate")?;
-        builder.certificate_pem(&cert).context("failed to load certificate")?;
+        builder
+            .certificate_pem(&cert)
+            .context("failed to load certificate")?;
     } else {
-        builder.generate_insecure_certificate().context("failed to generate certificate")?;
+        builder
+            .generate_insecure_certificate()
+            .context("failed to generate certificate")?;
     }
 
     let (_, driver, incoming) = builder.bind(options.listen)?;
 
-    runtime.spawn(incoming.for_each(move |conn| { handle_connection(&root, &log, conn); Ok(()) }));
+    runtime.spawn(incoming.for_each(move |conn| {
+        handle_connection(&root, &log, conn);
+        Ok(())
+    }));
     runtime.block_on(driver)?;
 
     Ok(())
 }
 
 fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
-    let quicr::NewConnection { incoming, connection } = conn;
+    let quicr::NewConnection {
+        incoming,
+        connection,
+    } = conn;
     let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
     info!(log, "got connection";
           "remote_id" => %connection.remote_id(),
@@ -136,7 +158,10 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
     current_thread::spawn(
         incoming
             .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
-            .for_each(move |stream| { handle_request(&root, &log, stream); Ok(()) })
+            .for_each(move |stream| {
+                handle_request(&root, &log, stream);
+                Ok(())
+            }),
     );
 }
 
@@ -171,25 +196,35 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
             // Gracefully terminate the stream
             .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
             .map(move |_| info!(log3, "request complete"))
-            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty()))
+            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty())),
     )
 }
 
 fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
-    if x.len() < 4 || &x[0..4] != b"GET " { bail!("missing GET"); }
-    if x[4..].len() < 2 || &x[x.len()-2..] != b"\r\n" { bail!("missing \\r\\n"); }
-    let path = str::from_utf8(&x[4..x.len()-2]).context("path is malformed UTF-8")?;
+    if x.len() < 4 || &x[0..4] != b"GET " {
+        bail!("missing GET");
+    }
+    if x[4..].len() < 2 || &x[x.len() - 2..] != b"\r\n" {
+        bail!("missing \\r\\n");
+    }
+    let path = str::from_utf8(&x[4..x.len() - 2]).context("path is malformed UTF-8")?;
     let path = Path::new(&path);
     let mut real_path = PathBuf::from(root);
     let mut components = path.components();
     match components.next() {
         Some(path::Component::RootDir) => {}
-        _ => { bail!("path must be absolute"); }
+        _ => {
+            bail!("path must be absolute");
+        }
     }
     for c in components {
         match c {
-            path::Component::Normal(x) => { real_path.push(x); }
-            x => { bail!("illegal component in path: {:?}", x); }
+            path::Component::Normal(x) => {
+                real_path.push(x);
+            }
+            x => {
+                bail!("illegal component in path: {:?}", x);
+            }
         }
     }
     let data = fs::read(&real_path).context("failed reading file")?;

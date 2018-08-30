@@ -1,6 +1,6 @@
 use openssl::hash::MessageDigest;
-use openssl::sign::Signer;
 use openssl::pkey::PKey;
+use openssl::sign::Signer;
 
 use bytes::BufMut;
 
@@ -17,7 +17,9 @@ fn expand(algo: MessageDigest, prk: &[u8], info: &[u8], length: usize) -> Box<[u
     let mut t = Vec::new();
     let mut okm = Vec::new();
     okm.reserve_exact(length);
-    if length > 255 * size { panic!("length too large"); }
+    if length > 255 * size {
+        panic!("length too large");
+    }
     for i in 1.. {
         let mut signer = Signer::new(algo, &prk).unwrap();
         signer.update(&t).unwrap();
@@ -60,7 +62,10 @@ mod test {
         const INFO: [u8; 10] = hex!("f0f1f2f3f4f5f6f7f8f9");
         const L: usize = 42;
         let prk = extract(algo, &SALT, &IKM);
-        assert_eq!(&prk[..], &hex!("077709362c2e32df0ddc3f0dc47bba63 90b6c73bb50f9c3122ec844ad7c2b3e5")[..]);
+        assert_eq!(
+            &prk[..],
+            &hex!("077709362c2e32df0ddc3f0dc47bba63 90b6c73bb50f9c3122ec844ad7c2b3e5")[..]
+        );
         let okm = expand(algo, &prk, &INFO, L);
         assert_eq!(okm.len(), L);
         assert_eq!(&okm[..], &hex!("3cb25f25faacd57a90434f64d0362f2a 2d2d0a90cf1a5a4c5db02d56ecc4c5bf 34007208d5b887185865")[..]);

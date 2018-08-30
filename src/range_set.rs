@@ -1,15 +1,17 @@
-use std::collections::BTreeMap;
-use std::collections::Bound::{Included, Excluded};
-use std::collections::btree_map;
-use std::ops::Range;
 use std::cmp;
+use std::collections::btree_map;
+use std::collections::BTreeMap;
+use std::collections::Bound::{Excluded, Included};
+use std::ops::Range;
 
 /// A set of u64 values optimized for long runs and random insert/delete/contains
 #[derive(Debug, Clone)]
 pub struct RangeSet(BTreeMap<u64, u64>);
 
 impl RangeSet {
-    pub fn new() -> Self { RangeSet(BTreeMap::new()) }
+    pub fn new() -> Self {
+        RangeSet(BTreeMap::new())
+    }
 
     pub fn contains(&self, x: u64) -> bool {
         self.pred(x).map_or(false, |(_, end)| end > x)
@@ -23,7 +25,7 @@ impl RangeSet {
             } else if end == x {
                 // Extend existing
                 self.0.remove(&start);
-                let mut new_end = x+1;
+                let mut new_end = x + 1;
                 if let Some((next_start, next_end)) = self.succ(x) {
                     if next_start == new_end {
                         self.0.remove(&next_start);
@@ -34,7 +36,7 @@ impl RangeSet {
                 return true;
             }
         }
-        let mut new_end = x+1;
+        let mut new_end = x + 1;
         if let Some((next_start, next_end)) = self.succ(x) {
             if next_start == new_end {
                 self.0.remove(&next_start);
@@ -54,7 +56,9 @@ impl RangeSet {
                 // Overlaps with pred
                 self.0.remove(&start);
                 while let Some((next_start, next_end)) = self.succ(x.start) {
-                    if next_start > x.end { break; }
+                    if next_start > x.end {
+                        break;
+                    }
                     // ..and succ
                     self.0.remove(&next_start);
                     x.end = cmp::max(next_end, x.end);
@@ -64,7 +68,9 @@ impl RangeSet {
             }
         }
         while let Some((next_start, next_end)) = self.succ(x.start) {
-            if next_start > x.end { break; }
+            if next_start > x.end {
+                break;
+            }
             // Overlaps with succ
             self.0.remove(&next_start);
             x.end = cmp::max(next_end, x.end);
@@ -74,11 +80,18 @@ impl RangeSet {
     }
 
     fn pred(&self, x: u64) -> Option<(u64, u64)> {
-        self.0.range((Included(0), Included(x))).rev().next().map(|(&x, &y)| (x, y))
+        self.0
+            .range((Included(0), Included(x)))
+            .rev()
+            .next()
+            .map(|(&x, &y)| (x, y))
     }
 
     fn succ(&self, x: u64) -> Option<(u64, u64)> {
-        self.0.range((Excluded(x), Included(u64::max_value()))).next().map(|(&x, &y)| (x, y))
+        self.0
+            .range((Excluded(x), Included(u64::max_value())))
+            .next()
+            .map(|(&x, &y)| (x, y))
     }
 
     pub fn remove(&mut self, x: Range<u64>) -> bool {
@@ -92,20 +105,28 @@ impl RangeSet {
                     self.0.insert(x.end, end);
                 }
                 // Short-circuit if we cannot possibly overlap with another range
-                if end >= x.end { return true; }
+                if end >= x.end {
+                    return true;
+                }
                 true
-            } else { false }
-        } else { false };
-        let mut after = false;;
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let mut after = false;
         while let Some((start, end)) = self.succ(x.start) {
-            if start >= x.end { break; }
+            if start >= x.end {
+                break;
+            }
             after = true;
             self.0.remove(&start);
             if end > x.end {
                 self.0.insert(x.end, end);
                 break;
             }
-        };
+        }
         before || after
     }
 
@@ -121,14 +142,30 @@ impl RangeSet {
         }
     }
 
-    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 
-    pub fn min(&self) -> Option<u64> { self.iter().next().map(|x| x.start) }
-    pub fn max(&self) -> Option<u64> { self.iter().rev().next().map(|x| x.end-1) }
+    pub fn min(&self) -> Option<u64> {
+        self.iter().next().map(|x| x.start)
+    }
+    pub fn max(&self) -> Option<u64> {
+        self.iter().rev().next().map(|x| x.end - 1)
+    }
 
-    pub fn len(&self) -> usize { self.0.len() }
-    pub fn iter(&self) -> Iter { Iter(self.0.iter()) }
-    pub fn elts(&self) -> EltIter { EltIter { inner: self.0.iter(), next: 0, end: 0 } }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn iter(&self) -> Iter {
+        Iter(self.0.iter())
+    }
+    pub fn elts(&self) -> EltIter {
+        EltIter {
+            inner: self.0.iter(),
+            next: 0,
+            end: 0,
+        }
+    }
 
     pub fn pop_min(&mut self) -> Option<Range<u64>> {
         let (&start, &end) = self.0.iter().next()?;
@@ -157,7 +194,9 @@ impl<'a> DoubleEndedIterator for Iter<'a> {
 impl<'a> IntoIterator for &'a RangeSet {
     type Item = Range<u64>;
     type IntoIter = Iter<'a>;
-    fn into_iter(self) -> Iter<'a> { self.iter() }
+    fn into_iter(self) -> Iter<'a> {
+        self.iter()
+    }
 }
 
 pub struct EltIter<'a> {

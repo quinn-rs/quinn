@@ -1,39 +1,48 @@
-use std::collections::{hash_map, VecDeque, BTreeMap};
-use std::{io, cmp, fmt, mem, str};
+use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::{cmp, fmt, io, mem, str};
 
-use bytes::{Buf, BufMut, Bytes, ByteOrder, BigEndian, IntoBuf};
-use rand::{distributions, OsRng, Rng};
-use rand::distributions::Sample;
-use slab::Slab;
-use openssl::{self, ex_data};
-use openssl::ssl::{self, SslContext, SslMethod, SslOptions, SslVersion, SslMode, Ssl, SslStream, HandshakeError, MidHandshakeSslStream,
-                   SslStreamBuilder, SslAlert, SslRef, SslSession};
-use openssl::pkey::{PKeyRef, Private};
-use openssl::x509::{X509Ref, X509StoreContextRef};
-use openssl::x509::verify::X509CheckFlags;
-use openssl::hash::MessageDigest;
-use openssl::symm::{Cipher, encrypt_aead, decrypt_aead};
-use blake2::Blake2b;
-use digest::{Input, VariableOutput};
-use constant_time_eq::constant_time_eq;
-use slog::{self, Logger};
 use arrayvec::ArrayVec;
+use blake2::Blake2b;
+use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, IntoBuf};
+use constant_time_eq::constant_time_eq;
+use digest::{Input, VariableOutput};
 use fnv::{FnvHashMap, FnvHashSet};
+use openssl::hash::MessageDigest;
+use openssl::pkey::{PKeyRef, Private};
+use openssl::ssl::{
+    self, HandshakeError, MidHandshakeSslStream, Ssl, SslAlert, SslContext, SslMethod, SslMode,
+    SslOptions, SslRef, SslSession, SslStream, SslStreamBuilder, SslVersion,
+};
+use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
+use openssl::x509::verify::X509CheckFlags;
+use openssl::x509::{X509Ref, X509StoreContextRef};
+use openssl::{self, ex_data};
+use rand::distributions::Sample;
+use rand::{distributions, OsRng, Rng};
+use slab::Slab;
+use slog::{self, Logger};
 
-use memory_stream::MemoryStream;
-use transport_parameters::TransportParameters;
 use coding::{self, BufExt, BufMutExt};
-use {hkdf, frame, Frame, TransportError, StreamId, Side, Directionality, VERSION, MAX_CID_SIZE, RESET_TOKEN_SIZE};
+use memory_stream::MemoryStream;
 use range_set::RangeSet;
 use stream::{self, Stream};
+use transport_parameters::TransportParameters;
+use {
+    frame, hkdf, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE,
+    RESET_TOKEN_SIZE, VERSION,
+};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(usize);
 
-impl From<ConnectionHandle> for usize { fn from(x: ConnectionHandle) -> usize { x.0 } }
+impl From<ConnectionHandle> for usize {
+    fn from(x: ConnectionHandle) -> usize {
+        x.0
+    }
+}
 
 /// Parameters governing the core QUIC state machine.
 pub struct Config {
@@ -119,7 +128,8 @@ pub struct Config {
     /// `X509StoreContextRef` containing said chain. Returns whether the certificate should be considered valid.
     ///
     /// If `None`, all valid certificates will be accepted.
-    pub client_cert_verifier: Option<Box<Fn(bool, &mut X509StoreContextRef) -> bool + Send + Sync + 'static>>,
+    pub client_cert_verifier:
+        Option<Box<Fn(bool, &mut X509StoreContextRef) -> bool + Send + Sync + 'static>>,
 }
 
 pub struct CertConfig<'a> {
@@ -131,9 +141,9 @@ pub struct CertConfig<'a> {
 
 impl Default for Config {
     fn default() -> Self {
-        const EXPECTED_RTT: u32 = 100;                  // ms
+        const EXPECTED_RTT: u32 = 100; // ms
         const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
-        // Window size needed to avoid pipeline stalls
+                                                        // Window size needed to avoid pipeline stalls
         const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
         Self {
             max_remote_bi_streams: 0,
@@ -188,11 +198,13 @@ pub struct ClientConfig<'a> {
 }
 
 impl<'a> Default for ClientConfig<'a> {
-    fn default() -> Self { Self {
-        server_name: None,
-        session_ticket: None,
-        accept_insecure_certs: false,
-    }}
+    fn default() -> Self {
+        Self {
+            server_name: None,
+            session_ticket: None,
+            accept_insecure_certs: false,
+        }
+    }
 }
 
 /// The main entry point to the library
@@ -278,11 +290,24 @@ pub enum EndpointError {
     ProtocolTooLong(Box<[u8]>),
 }
 
-impl From<ssl::Error> for EndpointError { fn from(x: ssl::Error) -> Self { EndpointError::Tls(x) } }
-impl From<openssl::error::ErrorStack> for EndpointError { fn from(x: openssl::error::ErrorStack) -> Self { EndpointError::Tls(x.into()) } }
+impl From<ssl::Error> for EndpointError {
+    fn from(x: ssl::Error) -> Self {
+        EndpointError::Tls(x)
+    }
+}
+impl From<openssl::error::ErrorStack> for EndpointError {
+    fn from(x: openssl::error::ErrorStack) -> Self {
+        EndpointError::Tls(x.into())
+    }
+}
 
 impl Endpoint {
-    pub fn new(log: Logger, config: Config, cert: Option<CertConfig>, listen: Option<ListenKeys>) -> Result<Self, EndpointError> {
+    pub fn new(
+        log: Logger,
+        config: Config,
+        cert: Option<CertConfig>,
+        listen: Option<ListenKeys>,
+    ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
 
@@ -290,12 +315,19 @@ impl Endpoint {
         tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
         tls.set_max_proto_version(Some(SslVersion::TLS1_3))?;
         tls.set_options(
-            SslOptions::NO_COMPRESSION | SslOptions::NO_SSLV2 | SslOptions::NO_SSLV3 | SslOptions::NO_TLSV1 |
-            SslOptions::NO_TLSV1_1 | SslOptions::NO_TLSV1_2 | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS
+            SslOptions::NO_COMPRESSION
+                | SslOptions::NO_SSLV2
+                | SslOptions::NO_SSLV3
+                | SslOptions::NO_TLSV1
+                | SslOptions::NO_TLSV1_1
+                | SslOptions::NO_TLSV1_2
+                | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS,
         );
         tls.clear_options(SslOptions::ENABLE_MIDDLEBOX_COMPAT);
         tls.set_mode(
-            SslMode::ACCEPT_MOVING_WRITE_BUFFER | SslMode::ENABLE_PARTIAL_WRITE | SslMode::RELEASE_BUFFERS
+            SslMode::ACCEPT_MOVING_WRITE_BUFFER
+                | SslMode::ENABLE_PARTIAL_WRITE
+                | SslMode::RELEASE_BUFFERS,
         );
         tls.set_default_verify_paths()?;
         if !config.use_stateless_retry {
@@ -317,33 +349,42 @@ impl Endpoint {
         }
         let reset_key = listen.as_ref().map(|x| x.reset);
         tls.add_custom_ext(
-            26, ssl::ExtensionContext::TLS1_3_ONLY | ssl::ExtensionContext::CLIENT_HELLO | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
-            { let config = config.clone();
-              move |tls, ctx, _| {
-                  let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                  let mut buf = Vec::new();
-                  let mut params = TransportParameters {
-                      initial_max_streams_bidi: config.max_remote_bi_streams,
-                      initial_max_streams_uni: config.max_remote_uni_streams,
-                      initial_max_data: config.receive_window,
-                      initial_max_stream_data: config.stream_receive_window,
-                      ack_delay_exponent: ACK_DELAY_EXPONENT,
-                      ..TransportParameters::default()
-                  };
-                  let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
-                  let side;
-                  if am_server {
-                      params.stateless_reset_token = Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
-                      side = Side::Server;
-                  } else {
-                      side = Side::Client;
-                  }
-                  params.write(side, &mut buf);
-                  Ok(Some(buf))
-              }
+            26,
+            ssl::ExtensionContext::TLS1_3_ONLY
+                | ssl::ExtensionContext::CLIENT_HELLO
+                | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
+            {
+                let config = config.clone();
+                move |tls, ctx, _| {
+                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                    let mut buf = Vec::new();
+                    let mut params = TransportParameters {
+                        initial_max_streams_bidi: config.max_remote_bi_streams,
+                        initial_max_streams_uni: config.max_remote_uni_streams,
+                        initial_max_data: config.receive_window,
+                        initial_max_stream_data: config.stream_receive_window,
+                        ack_delay_exponent: ACK_DELAY_EXPONENT,
+                        ..TransportParameters::default()
+                    };
+                    let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
+                    let side;
+                    if am_server {
+                        params.stateless_reset_token =
+                            Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
+                        side = Side::Server;
+                    } else {
+                        side = Side::Client;
+                    }
+                    params.write(side, &mut buf);
+                    Ok(Some(buf))
+                }
             },
             |tls, ctx, data, _| {
-                let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO { Side::Server } else { Side::Client };
+                let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO {
+                    Side::Server
+                } else {
+                    Side::Client
+                };
                 match TransportParameters::read(side, &mut data.into_buf()) {
                     Ok(params) => {
                         tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
@@ -359,7 +400,7 @@ impl Endpoint {
                         })
                     }
                 }
-            }
+            },
         )?;
 
         if let Some(ref cert) = cert {
@@ -371,7 +412,9 @@ impl Endpoint {
         if !config.protocols.is_empty() {
             let mut buf = Vec::new();
             for protocol in &config.protocols {
-                if protocol.len() > 255 { return Err(EndpointError::ProtocolTooLong(protocol.clone())); }
+                if protocol.len() > 255 {
+                    return Err(EndpointError::ProtocolTooLong(protocol.clone()));
+                }
                 buf.push(protocol.len() as u8);
                 buf.extend_from_slice(protocol);
             }
@@ -401,7 +444,9 @@ impl Endpoint {
             let session_ticket_buffer = session_ticket_buffer.clone();
             tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
             tls.set_new_session_callback(move |tls, session| {
-                if tls.is_server() { return; }
+                if tls.is_server() {
+                    return;
+                }
                 let mut buffer = session_ticket_buffer.lock().unwrap();
                 match session.max_early_data() {
                     0 | TLS_MAX_EARLY_DATA => {}
@@ -413,10 +458,16 @@ impl Endpoint {
             });
         }
 
-        let verify_flag = if config.require_client_certs { ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT } else { ssl::SslVerifyMode::empty() };
+        let verify_flag = if config.require_client_certs {
+            ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT
+        } else {
+            ssl::SslVerifyMode::empty()
+        };
         if config.client_cert_verifier.is_some() {
             let config = config.clone();
-            tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| (config.client_cert_verifier.as_ref().unwrap())(x, y));
+            tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| {
+                (config.client_cert_verifier.as_ref().unwrap())(x, y)
+            });
         } else {
             tls.set_verify(verify_flag);
         }
@@ -424,7 +475,10 @@ impl Endpoint {
         let tls = tls.build();
 
         Ok(Self {
-            log, rng, config, tls,
+            log,
+            rng,
+            config,
+            tls,
             listen_keys: listen,
             initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
             connection_ids_initial: FnvHashMap::default(),
@@ -441,17 +495,25 @@ impl Endpoint {
         })
     }
 
-    fn listen(&self) -> bool { self.listen_keys.is_some() }
+    fn listen(&self) -> bool {
+        self.listen_keys.is_some()
+    }
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        if let Some(x) = self.events.pop_front() { return Some(x); }
+        if let Some(x) = self.events.pop_front() {
+            return Some(x);
+        }
         loop {
             let &conn = self.readable_conns.iter().next()?;
             if let Some(&stream) = self.connections[conn.0].readable_streams.iter().next() {
                 self.connections[conn.0].readable_streams.remove(&stream);
-                let rs = self.connections[conn.0].streams.get_mut(&stream).unwrap()
-                    .recv_mut().unwrap();
+                let rs = self.connections[conn.0]
+                    .streams
+                    .get_mut(&stream)
+                    .unwrap()
+                    .recv_mut()
+                    .unwrap();
                 let fresh = mem::replace(&mut rs.fresh, false);
                 return Some((conn, Event::StreamReadable { stream, fresh }));
             }
@@ -462,7 +524,9 @@ impl Endpoint {
     /// Get a pending IO operation
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
         loop {
-            if let Some(x) = self.io.pop_front() { return Some(x); }
+            if let Some(x) = self.io.pop_front() {
+                return Some(x);
+            }
             let &conn = self.dirty_conns.iter().next()?;
             // TODO: Only determine a single operation; only remove from dirty set if that fails
             self.flush_pending(now, conn);
@@ -476,7 +540,10 @@ impl Endpoint {
         while !data.is_empty() {
             let (packet, rest) = match Packet::decode(&data, LOCAL_ID_LEN) {
                 Ok(x) => x,
-                Err(HeaderError::UnsupportedVersion { source, destination }) => {
+                Err(HeaderError::UnsupportedVersion {
+                    source,
+                    destination,
+                }) => {
                     if !self.listen() {
                         debug!(self.log, "dropping packet with unsupported version");
                         return;
@@ -484,10 +551,17 @@ impl Endpoint {
                     trace!(self.log, "sending version negotiation");
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
-                    Header::VersionNegotiate { ty: self.rng.gen(), source_id: destination, destination_id: source }.encode(&mut buf);
+                    Header::VersionNegotiate {
+                        ty: self.rng.gen(),
+                        source_id: destination,
+                        destination_id: source,
+                    }.encode(&mut buf);
                     buf.write::<u32>(0x0a1a2a3a); // reserved version
                     buf.write(VERSION); // supported version
-                    self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: buf.into(),
+                    });
                     return;
                 }
                 Err(e) => {
@@ -500,7 +574,13 @@ impl Endpoint {
         }
     }
 
-    fn handle_packet(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, datagram_len: usize) {
+    fn handle_packet(
+        &mut self,
+        now: u64,
+        remote: SocketAddrV6,
+        packet: Packet,
+        datagram_len: usize,
+    ) {
         //
         // Handle packet on existing connection, if any
         //
@@ -516,13 +596,34 @@ impl Endpoint {
         }
         if let Some(&conn) = self.connection_remotes.get(&remote) {
             if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
-                if packet.payload.len() >= 16 && &packet.payload[packet.payload.len() - 16..] == token {
-                    if !self.connections[conn.0].state.as_ref().unwrap().is_drained() {
+                if packet.payload.len() >= 16
+                    && &packet.payload[packet.payload.len() - 16..] == token
+                {
+                    if !self.connections[conn.0]
+                        .state
+                        .as_ref()
+                        .unwrap()
+                        .is_drained()
+                    {
                         debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
-                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
-                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Close });
-                        self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
-                        self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::Reset }));
+                        self.io.push_back(Io::TimerStop {
+                            connection: conn,
+                            timer: Timer::LossDetection,
+                        });
+                        self.io.push_back(Io::TimerStop {
+                            connection: conn,
+                            timer: Timer::Close,
+                        });
+                        self.io.push_back(Io::TimerStop {
+                            connection: conn,
+                            timer: Timer::Idle,
+                        });
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: ConnectionError::Reset,
+                            },
+                        ));
                         self.connections[conn.0].state = Some(State::Drained);
                     }
                     return;
@@ -539,19 +640,41 @@ impl Endpoint {
             return;
         }
         let key_phase = packet.header.key_phase();
-        if let Header::Long { ty, destination_id, source_id, number } = packet.header {
+        if let Header::Long {
+            ty,
+            destination_id,
+            source_id,
+            number,
+        } = packet.header
+        {
             match ty {
                 packet::INITIAL => {
                     if datagram_len >= MIN_INITIAL_SIZE {
-                        self.handle_initial(now, remote, destination_id, source_id, number, &packet.header_data, &packet.payload);
+                        self.handle_initial(
+                            now,
+                            remote,
+                            destination_id,
+                            source_id,
+                            number,
+                            &packet.header_data,
+                            &packet.payload,
+                        );
                     } else {
-                        debug!(self.log, "ignoring short initial on {connection}", connection=destination_id.clone());
+                        debug!(
+                            self.log,
+                            "ignoring short initial on {connection}",
+                            connection = destination_id.clone()
+                        );
                     }
                     return;
                 }
                 packet::ZERO_RTT => {
                     // MAY buffer a limited amount
-                    trace!(self.log, "dropping 0-RTT packet for unknown connection {connection}", connection=destination_id.clone());
+                    trace!(
+                        self.log,
+                        "dropping 0-RTT packet for unknown connection {connection}",
+                        connection = destination_id.clone()
+                    );
                     return;
                 }
                 _ => {
@@ -570,29 +693,50 @@ impl Endpoint {
             debug!(self.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
-            let padding = self.rng.gen_range(0, cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE);
+            let padding = self.rng.gen_range(
+                0,
+                cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE,
+            );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
-                id: ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8), number: PacketNumber::U8(self.rng.gen()), key_phase
+                id: ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8),
+                number: PacketNumber::U8(self.rng.gen()),
+                key_phase,
             }.encode(&mut buf);
             {
                 let start = buf.len();
                 buf.resize(start + padding, 0);
-                self.rng.fill_bytes(&mut buf[start..start+padding]);
+                self.rng.fill_bytes(&mut buf[start..start + padding]);
             }
-            buf.extend(&reset_token_for(&self.listen_keys.as_ref().unwrap().reset, &dest_id));
-            self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+            buf.extend(&reset_token_for(
+                &self.listen_keys.as_ref().unwrap().reset,
+                &dest_id,
+            ));
+            self.io.push_back(Io::Transmit {
+                destination: remote,
+                packet: buf.into(),
+            });
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
         }
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, remote: SocketAddrV6, config: ClientConfig) -> Result<ConnectionHandle, ConnectError> {
+    pub fn connect(
+        &mut self,
+        remote: SocketAddrV6,
+        config: ClientConfig,
+    ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
-        let conn = self.add_connection(remote_id.clone(), local_id.clone(), remote_id, remote, Side::Client);
+        let conn = self.add_connection(
+            remote_id.clone(),
+            local_id.clone(),
+            remote_id,
+            remote,
+            Side::Client,
+        );
         let mut tls = Ssl::new(&self.tls)?;
         if !config.accept_insecure_certs {
             tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
@@ -600,29 +744,55 @@ impl Endpoint {
             if let Some(name) = config.server_name {
                 param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
                 match name.parse() {
-                    Ok(ip) => { param.set_ip(ip).expect("failed to inform TLS of remote ip"); }
-                    Err(_) => { param.set_host(name).expect("failed to inform TLS of remote hostname"); }
+                    Ok(ip) => {
+                        param.set_ip(ip).expect("failed to inform TLS of remote ip");
+                    }
+                    Err(_) => {
+                        param
+                            .set_host(name)
+                            .expect("failed to inform TLS of remote hostname");
+                    }
                 }
             }
         } else {
             tls.set_verify(ssl::SslVerifyMode::NONE);
         }
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
-        if let Some(name) = config.server_name { tls.set_hostname(name)?; }
+        tls.set_ex_data(
+            *CONNECTION_INFO_INDEX,
+            ConnectionInfo {
+                id: local_id.clone(),
+                remote,
+            },
+        );
+        if let Some(name) = config.server_name {
+            tls.set_hostname(name)?;
+        }
         let result = if let Some(session) = config.session_ticket {
-            if session.len() < 2 { return Err(ConnectError::MalformedSession); }
+            if session.len() < 2 {
+                return Err(ConnectError::MalformedSession);
+            }
             let mut buf = io::Cursor::new(session);
-            let len = buf.get::<u16>().map_err(|_| ConnectError::MalformedSession)? as usize;
-            if buf.remaining() < len { return Err(ConnectError::MalformedSession); }
-            let session = SslSession::from_der(&buf.bytes()[0..len]).map_err(|_| ConnectError::MalformedSession)?;
+            let len = buf
+                .get::<u16>()
+                .map_err(|_| ConnectError::MalformedSession)? as usize;
+            if buf.remaining() < len {
+                return Err(ConnectError::MalformedSession);
+            }
+            let session = SslSession::from_der(&buf.bytes()[0..len])
+                .map_err(|_| ConnectError::MalformedSession)?;
             buf.advance(len);
-            let params = TransportParameters::read(Side::Client, &mut buf).map_err(|_| ConnectError::MalformedSession)?;
+            let params = TransportParameters::read(Side::Client, &mut buf)
+                .map_err(|_| ConnectError::MalformedSession)?;
             self.connections[conn.0].set_params(params);
             unsafe { tls.set_session(&session) }?;
             let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
             tls.set_connect_state();
             if session.max_early_data() == TLS_MAX_EARLY_DATA {
-                trace!(self.log, "{connection} enabling 0rtt", connection=local_id.clone());
+                trace!(
+                    self.log,
+                    "{connection} enabling 0rtt",
+                    connection = local_id.clone()
+                );
                 tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
                 self.connections[conn.0].zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
             }
@@ -637,28 +807,56 @@ impl Endpoint {
         };
         self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-            tls, clienthello_packet: None, remote_id_set: false
+            tls,
+            clienthello_packet: None,
+            remote_id_set: false,
         }));
         self.dirty_conns.insert(conn);
         Ok(conn)
     }
 
-    fn gen_initial_packet_num(&mut self) -> u32 { self.initial_packet_number.sample(&mut self.rng) as u32 }
+    fn gen_initial_packet_num(&mut self) -> u32 {
+        self.initial_packet_number.sample(&mut self.rng) as u32
+    }
 
-    fn add_connection(&mut self, initial_id: ConnectionId, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6, side: Side) -> ConnectionHandle {
+    fn add_connection(
+        &mut self,
+        initial_id: ConnectionId,
+        local_id: ConnectionId,
+        remote_id: ConnectionId,
+        remote: SocketAddrV6,
+        side: Side,
+    ) -> ConnectionHandle {
         debug_assert!(!local_id.is_empty());
         let packet_num = self.gen_initial_packet_num();
-        let i = self.connections.insert(Connection::new(initial_id, local_id.clone(), remote_id, remote, packet_num.into(), side, &self.config));
+        let i = self.connections.insert(Connection::new(
+            initial_id,
+            local_id.clone(),
+            remote_id,
+            remote,
+            packet_num.into(),
+            side,
+            &self.config,
+        ));
         self.connection_ids.insert(local_id, ConnectionHandle(i));
         self.connection_remotes.insert(remote, ConnectionHandle(i));
         ConnectionHandle(i)
     }
 
-    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, dest_id: ConnectionId, source_id: ConnectionId,
-                      packet_number: u32, header: &[u8], payload: &[u8])
-    {
+    fn handle_initial(
+        &mut self,
+        now: u64,
+        remote: SocketAddrV6,
+        dest_id: ConnectionId,
+        source_id: ConnectionId,
+        packet_number: u32,
+        header: &[u8],
+        payload: &[u8],
+    ) {
         let crypto = CryptoContext::handshake(&dest_id, Side::Server);
-        let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) { x.into() } else {
+        let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) {
+            x.into()
+        } else {
             debug!(self.log, "failed to authenticate initial packet");
             return;
         };
@@ -669,16 +867,31 @@ impl Endpoint {
             let n = self.gen_initial_packet_num();
             self.io.push_back(Io::Transmit {
                 destination: remote,
-                packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::SERVER_BUSY, None),
+                packet: handshake_close(
+                    &crypto,
+                    &source_id,
+                    &local_id,
+                    n,
+                    TransportError::SERVER_BUSY,
+                    None,
+                ),
             });
             return;
         }
 
         let mut stream = MemoryStream::new();
-        if !parse_initial(&self.log, &mut stream, payload) { return; } // TODO: Send close?
+        if !parse_initial(&self.log, &mut stream, payload) {
+            return;
+        } // TODO: Send close?
         trace!(self.log, "got initial");
         let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(*CONNECTION_INFO_INDEX, ConnectionInfo { id: local_id.clone(), remote });
+        tls.set_ex_data(
+            *CONNECTION_INFO_INDEX,
+            ConnectionInfo {
+                id: local_id.clone(),
+                remote,
+            },
+        );
         let mut tls = SslStreamBuilder::new(tls, stream);
         tls.set_accept_state();
 
@@ -686,7 +899,7 @@ impl Endpoint {
         if self.config.use_stateless_retry {
             zero_rtt_crypto = None;
             match tls.stateless() {
-                Ok(true) => {}  // Continue on to the below accept call
+                Ok(true) => {} // Continue on to the below accept call
                 Ok(false) => {
                     let data = tls.get_mut().take_outgoing();
                     trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
@@ -694,7 +907,8 @@ impl Endpoint {
                     Header::Long {
                         ty: packet::RETRY,
                         number: packet_number,
-                        destination_id: source_id, source_id: local_id,
+                        destination_id: source_id,
+                        source_id: local_id,
                     }.encode(&mut buf);
                     let header_len = buf.len();
                     let mut ack = RangeSet::new();
@@ -707,11 +921,18 @@ impl Endpoint {
                         data: data,
                     }.encode(false, &mut buf);
                     set_payload_length(&mut buf, header_len);
-                    let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
+                    let payload = crypto.encrypt(
+                        packet_number as u64,
+                        &buf[0..header_len],
+                        &buf[header_len..],
+                    );
                     debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
                     buf.truncate(header_len);
                     buf.extend_from_slice(&payload);
-                    self.io.push_back(Io::Transmit { destination: remote, packet: buf.into() });
+                    self.io.push_back(Io::Transmit {
+                        destination: remote,
+                        packet: buf.into(),
+                    });
                     return;
                 }
                 Err(e) => {
@@ -719,26 +940,45 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, 
-                                                Some(&tls.get_mut().take_outgoing())),
+                        packet: handshake_close(
+                            &crypto,
+                            &source_id,
+                            &local_id,
+                            n,
+                            TransportError::TLS_HANDSHAKE_FAILED,
+                            Some(&tls.get_mut().take_outgoing()),
+                        ),
                     });
                     return;
                 }
             }
         } else {
             match tls.read_early_data(&mut [0; 1]) {
-                Ok(0) => { zero_rtt_crypto = None; }
+                Ok(0) => {
+                    zero_rtt_crypto = None;
+                }
                 Ok(_) => {
                     debug!(self.log, "got TLS early data"; "connection" => local_id.clone());
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::PROTOCOL_VIOLATION, None),
+                        packet: handshake_close(
+                            &crypto,
+                            &source_id,
+                            &local_id,
+                            n,
+                            TransportError::PROTOCOL_VIOLATION,
+                            None,
+                        ),
                     });
                     return;
                 }
                 Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
-                    trace!(self.log, "{connection} enabled 0rtt", connection=local_id.clone());
+                    trace!(
+                        self.log,
+                        "{connection} enabled 0rtt",
+                        connection = local_id.clone()
+                    );
                     zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
                 }
                 Err(e) => {
@@ -746,7 +986,14 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TLS_HANDSHAKE_FAILED, None),
+                        packet: handshake_close(
+                            &crypto,
+                            &source_id,
+                            &local_id,
+                            n,
+                            TransportError::TLS_HANDSHAKE_FAILED,
+                            None,
+                        ),
                     });
                     return;
                 }
@@ -758,14 +1005,23 @@ impl Endpoint {
             Err(HandshakeError::WouldBlock(mut tls)) => {
                 trace!(self.log, "performing handshake"; "connection" => local_id.clone());
                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                    let params = params.expect("transport parameter errors should have aborted the handshake");
-                    let conn = self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
+                    let params = params
+                        .expect("transport parameter errors should have aborted the handshake");
+                    let conn = self.add_connection(
+                        dest_id.clone(),
+                        local_id,
+                        source_id,
+                        remote,
+                        Side::Server,
+                    );
                     self.connection_ids_initial.insert(dest_id, conn);
                     self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
                     self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                     self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                        tls, clienthello_packet: None, remote_id_set: true,
+                        tls,
+                        clienthello_packet: None,
+                        remote_id_set: true,
                     }));
                     self.connections[conn.0].set_params(params);
                     self.dirty_conns.insert(conn);
@@ -775,12 +1031,23 @@ impl Endpoint {
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
-                        packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::TRANSPORT_PARAMETER_ERROR, None),
+                        packet: handshake_close(
+                            &crypto,
+                            &source_id,
+                            &local_id,
+                            n,
+                            TransportError::TRANSPORT_PARAMETER_ERROR,
+                            None,
+                        ),
                     });
                 }
             }
             Err(HandshakeError::Failure(mut tls)) => {
-                let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
+                let code = if let Some(params_err) = tls
+                    .ssl()
+                    .ex_data(*TRANSPORT_PARAMS_INDEX)
+                    .and_then(|x| x.err())
+                {
                     debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
                     TransportError::TRANSPORT_PARAMETER_ERROR
                 } else {
@@ -790,7 +1057,14 @@ impl Endpoint {
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, code, Some(&tls.get_mut().take_outgoing())),
+                    packet: handshake_close(
+                        &crypto,
+                        &source_id,
+                        &local_id,
+                        n,
+                        code,
+                        Some(&tls.get_mut().take_outgoing()),
+                    ),
                 });
             }
             Err(HandshakeError::SetupFailure(e)) => {
@@ -798,15 +1072,27 @@ impl Endpoint {
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&crypto, &source_id, &local_id, n, TransportError::INTERNAL_ERROR, None),
+                    packet: handshake_close(
+                        &crypto,
+                        &source_id,
+                        &local_id,
+                        n,
+                        TransportError::INTERNAL_ERROR,
+                        None,
+                    ),
                 });
             }
         }
     }
 
-    fn process_payload(&mut self, now: u64, conn: ConnectionHandle, number: u64, payload: Bytes, tls: &mut MemoryStream)
-                       -> Result<bool, state::CloseReason>
-    {
+    fn process_payload(
+        &mut self,
+        now: u64,
+        conn: ConnectionHandle,
+        number: u64,
+        payload: Bytes,
+        tls: &mut MemoryStream,
+    ) -> Result<bool, state::CloseReason> {
         let cid = self.connections[conn.0].local_id.clone();
         for frame in frame::Iter::new(payload) {
             match frame {
@@ -817,7 +1103,9 @@ impl Endpoint {
             }
             match frame {
                 Frame::Ack(_) => {}
-                _ => { self.connections[conn.0].permit_ack_only = true; }
+                _ => {
+                    self.connections[conn.0].permit_ack_only = true;
+                }
             }
             match frame {
                 Frame::Stream(frame) => {
@@ -827,7 +1115,8 @@ impl Endpoint {
                     let new_bytes = match self.connections[conn.0].get_recv_stream(frame.id) {
                         Err(e) => {
                             debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
-                            self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            self.events
+                                .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                             return Err(e.into());
                         }
                         Ok(None) => {
@@ -840,7 +1129,12 @@ impl Endpoint {
                             if let Some(final_offset) = rs.final_offset() {
                                 if end > final_offset || (frame.fin && end != final_offset) {
                                     debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::FINAL_OFFSET_ERROR.into(),
+                                        },
+                                    ));
                                     return Err(TransportError::FINAL_OFFSET_ERROR.into());
                                 }
                             }
@@ -850,12 +1144,19 @@ impl Endpoint {
                                 debug!(self.log, "flow control error";
                                        "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
                                        "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FLOW_CONTROL_ERROR.into() }));
+                                self.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::FLOW_CONTROL_ERROR.into(),
+                                    },
+                                ));
                                 return Err(TransportError::FLOW_CONTROL_ERROR.into());
                             }
                             if frame.fin {
                                 match rs.state {
-                                    stream::RecvState::Recv { ref mut size } => { *size = Some(end); }
+                                    stream::RecvState::Recv { ref mut size } => {
+                                        *size = Some(end);
+                                    }
                                     _ => {}
                                 }
                             }
@@ -863,7 +1164,12 @@ impl Endpoint {
                             if frame.id == StreamId(0) {
                                 if frame.fin {
                                     debug!(self.log, "got fin on stream 0"; "connection" => cid);
-                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 tls.insert(frame.offset, &frame.data);
@@ -871,7 +1177,9 @@ impl Endpoint {
                                 rs.buffer(frame.data, frame.offset);
                             }
                             if let stream::RecvState::Recv { size: Some(size) } = rs.state {
-                                if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
+                                if rs.recvd.len() == 1
+                                    && rs.recvd.iter().next().unwrap() == (0..size)
+                                {
                                     rs.state = stream::RecvState::DataRecvd { size };
                                 }
                             }
@@ -887,21 +1195,37 @@ impl Endpoint {
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, conn, ack);
                     for stream in self.connections[conn.0].finished_streams.drain(..) {
-                        self.events.push_back((conn, Event::StreamFinished { stream }));
+                        self.events
+                            .push_back((conn, Event::StreamFinished { stream }));
                     }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
-                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ConnectionClosed { reason } }));
+                    self.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: ConnectionError::ConnectionClosed { reason },
+                        },
+                    ));
                     return Ok(true);
                 }
                 Frame::ApplicationClose(reason) => {
-                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed { reason } }));
+                    self.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: ConnectionError::ApplicationClosed { reason },
+                        },
+                    ));
                     return Ok(true);
                 }
                 Frame::Invalid(ty) => {
                     debug!(self.log, "received malformed frame"; "type" => %ty);
-                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::frame(ty).into() }));
+                    self.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::frame(ty).into(),
+                        },
+                    ));
                     return Err(TransportError::frame(ty).into());
                 }
                 Frame::PathChallenge(x) => {
@@ -909,22 +1233,36 @@ impl Endpoint {
                 }
                 Frame::PathResponse(_) => {
                     debug!(self.log, "unsolicited PATH_RESPONSE");
-                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::UNSOLICITED_PATH_RESPONSE.into() }));
+                    self.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
+                        },
+                    ));
                     return Err(TransportError::UNSOLICITED_PATH_RESPONSE.into());
                 }
                 Frame::MaxData(bytes) => {
                     let was_blocked = self.connections[conn.0].blocked();
-                    self.connections[conn.0].max_data = cmp::max(bytes, self.connections[conn.0].max_data);
+                    self.connections[conn.0].max_data =
+                        cmp::max(bytes, self.connections[conn.0].max_data);
                     if was_blocked && !self.connections[conn.0].blocked() {
                         for stream in self.connections[conn.0].blocked_streams.drain() {
-                            self.events.push_back((conn, Event::StreamWritable { stream }));
+                            self.events
+                                .push_back((conn, Event::StreamWritable { stream }));
                         }
                     }
                 }
                 Frame::MaxStreamData { id, offset } => {
-                    if id.initiator() != self.connections[conn.0].side && id.directionality() == Directionality::Uni {
+                    if id.initiator() != self.connections[conn.0].side
+                        && id.directionality() == Directionality::Uni
+                    {
                         debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
@@ -933,13 +1271,19 @@ impl Endpoint {
                             trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
-                                self.events.push_back((conn, Event::StreamWritable { stream: id }));
+                                self.events
+                                    .push_back((conn, Event::StreamWritable { stream: id }));
                             }
                             ss.max_data = offset;
                         }
                     } else {
                         debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                 }
@@ -950,19 +1294,34 @@ impl Endpoint {
                     };
                     if id.index() > *limit {
                         *limit = id.index();
-                        self.events.push_back((conn, Event::StreamAvailable { directionality: id.directionality() }));
+                        self.events.push_back((
+                            conn,
+                            Event::StreamAvailable {
+                                directionality: id.directionality(),
+                            },
+                        ));
                     }
                 }
-                Frame::RstStream(frame::RstStream { id, error_code, final_offset }) => {
+                Frame::RstStream(frame::RstStream {
+                    id,
+                    error_code,
+                    final_offset,
+                }) => {
                     if id == StreamId(0) {
                         debug!(self.log, "got RST_STREAM on stream 0");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     let offset = match self.connections[conn.0].get_recv_stream(id) {
                         Err(e) => {
                             debug!(self.log, "received illegal RST_STREAM");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            self.events
+                                .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                             return Err(e.into());
                         }
                         Ok(None) => {
@@ -973,12 +1332,20 @@ impl Endpoint {
                             let rs = stream.recv_mut().unwrap();
                             if let Some(offset) = rs.final_offset() {
                                 if offset != final_offset {
-                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::FINAL_OFFSET_ERROR.into() }));
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::FINAL_OFFSET_ERROR.into(),
+                                        },
+                                    ));
                                     return Err(TransportError::FINAL_OFFSET_ERROR.into());
                                 }
                             }
                             if !rs.is_closed() {
-                                rs.state = stream::RecvState::ResetRecvd { size: final_offset, error_code };
+                                rs.state = stream::RecvState::ResetRecvd {
+                                    size: final_offset,
+                                    error_code,
+                                };
                             }
                             rs.limit()
                         }
@@ -997,20 +1364,41 @@ impl Endpoint {
                     debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => id);
                 }
                 Frame::StopSending { id, error_code } => {
-                    if self.connections[conn.0].streams.get(&id).map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0)) {
+                    if self.connections[conn.0]
+                        .streams
+                        .get(&id)
+                        .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
+                    {
                         debug!(self.log, "got STOP_SENDING on invalid stream");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     self.reset(conn, id, 0);
-                    self.connections[conn.0].streams.get_mut(&id).unwrap().send_mut().unwrap().state =
-                        stream::SendState::ResetSent { stop_reason: Some(error_code) };
+                    self.connections[conn.0]
+                        .streams
+                        .get_mut(&id)
+                        .unwrap()
+                        .send_mut()
+                        .unwrap()
+                        .state = stream::SendState::ResetSent {
+                        stop_reason: Some(error_code),
+                    };
                 }
                 Frame::NewConnectionId { .. } => {
                     if self.connections[conn.0].remote_id.is_empty() {
                         debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
                                connection=self.connections[conn.0].local_id.clone());
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
@@ -1020,36 +1408,65 @@ impl Endpoint {
         Ok(false)
     }
 
-    fn drive_tls(&mut self, conn: ConnectionHandle, tls: &mut SslStream<MemoryStream>) -> Result<(), TransportError> {
-        if tls.get_ref().read_blocked() { return Ok(()); }
+    fn drive_tls(
+        &mut self,
+        conn: ConnectionHandle,
+        tls: &mut SslStream<MemoryStream>,
+    ) -> Result<(), TransportError> {
+        if tls.get_ref().read_blocked() {
+            return Ok(());
+        }
         let prev_offset = tls.get_ref().read_offset();
         let status = tls.ssl_read(&mut [0; 1]);
         let progress = tls.get_ref().read_offset() - prev_offset;
-        trace!(self.log, "stream 0 read {bytes} bytes", bytes=progress);
-        self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-            .recv_mut().unwrap().max_data += progress;
-        self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
+        trace!(self.log, "stream 0 read {bytes} bytes", bytes = progress);
+        self.connections[conn.0]
+            .streams
+            .get_mut(&StreamId(0))
+            .unwrap()
+            .recv_mut()
+            .unwrap()
+            .max_data += progress;
+        self.connections[conn.0]
+            .pending
+            .max_stream_data
+            .insert(StreamId(0));
 
         // Process any new session tickets that might have been delivered
         {
             let mut buffer = self.session_ticket_buffer.lock().unwrap();
             for session in buffer.drain(..) {
                 if let Ok(session) = session {
-                    trace!(self.log, "{connection} got session ticket", connection=self.connections[conn.0].local_id.clone());
+                    trace!(
+                        self.log,
+                        "{connection} got session ticket",
+                        connection = self.connections[conn.0].local_id.clone()
+                    );
 
                     let params = &self.connections[conn.0].params;
-                    let session = session.to_der().expect("failed to serialize session ticket");
+                    let session = session
+                        .to_der()
+                        .expect("failed to serialize session ticket");
 
                     let mut buf = Vec::new();
                     buf.put_u16_be(session.len() as u16);
                     buf.extend_from_slice(&session);
                     params.write(Side::Server, &mut buf);
 
-                    self.events.push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
+                    self.events
+                        .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
                 } else {
-                    debug!(self.log, "{connection} got malformed session ticket",
-                           connection=self.connections[conn.0].local_id.clone());
-                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                    debug!(
+                        self.log,
+                        "{connection} got malformed session ticket",
+                        connection = self.connections[conn.0].local_id.clone()
+                    );
+                    self.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                        },
+                    ));
                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                 }
             }
@@ -1059,332 +1476,600 @@ impl Endpoint {
             Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
             Ok(_) => {
                 debug!(self.log, "got TLS application data");
-                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                self.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                    },
+                ));
                 Err(TransportError::PROTOCOL_VIOLATION.into())
             }
             Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
                 debug!(self.log, "TLS error"; "error" => %e);
-                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into() }));
+                self.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
+                    },
+                ));
                 Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
             }
             Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
                 debug!(self.log, "TLS session terminated unexpectedly");
-                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
+                self.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                    },
+                ));
                 Err(TransportError::PROTOCOL_VIOLATION.into())
             }
             Err(e) => {
                 error!(self.log, "unexpected TLS error"; "error" => %e);
-                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
+                self.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::INTERNAL_ERROR.into(),
+                    },
+                ));
                 Err(TransportError::INTERNAL_ERROR.into())
             }
         }
     }
 
-    fn handle_connected_inner(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet, state: State) -> State { match state {
-        State::Handshake(mut state) => {
-            match packet.header {
-                Header::Long { ty: packet::RETRY, number, destination_id: conn_id, source_id: remote_id, .. } => {
-                    // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
-                    if state.clienthello_packet.is_none() {
-                        // Received Retry as a server
-                        debug!(self.log, "received retry from client"; "connection" => %conn_id);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
-                    } else if state.clienthello_packet.unwrap() > number {
-                        // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
-                        State::Handshake(state)
-                    } else if state.tls.get_ref().read_offset() != 0 {
-                        // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
-                        debug!(self.log, "received retry after a handshake packet");
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION,None)
-                    } else if let Some(payload) = self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload) {
-                        let mut new_stream = MemoryStream::new();
-                        if !parse_initial(&self.log, &mut new_stream, payload.into()) {
-                            debug!(self.log, "invalid retry payload");
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                            return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
-                        }
-                        *state.tls.get_mut() = new_stream;
-                        match state.tls.handshake() {
-                            Err(HandshakeError::WouldBlock(mut tls)) => {
-                                self.on_packet_authenticated(now, conn, number as u64);
-                                trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
-                                let local_id = self.connections[conn.0].local_id.clone();
-                                // Discard transport state
-                                self.connections[conn.0] = Connection::new(
-                                    remote_id.clone(), local_id, remote_id, remote,
-                                    self.initial_packet_number.sample(&mut self.rng).into(), Side::Client, &self.config
+    fn handle_connected_inner(
+        &mut self,
+        now: u64,
+        conn: ConnectionHandle,
+        remote: SocketAddrV6,
+        packet: Packet,
+        state: State,
+    ) -> State {
+        match state {
+            State::Handshake(mut state) => {
+                match packet.header {
+                    Header::Long {
+                        ty: packet::RETRY,
+                        number,
+                        destination_id: conn_id,
+                        source_id: remote_id,
+                        ..
+                    } => {
+                        // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
+                        if state.clienthello_packet.is_none() {
+                            // Received Retry as a server
+                            debug!(self.log, "received retry from client"; "connection" => %conn_id);
+                            self.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                        } else if state.clienthello_packet.unwrap() > number {
+                            // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
+                            State::Handshake(state)
+                        } else if state.tls.get_ref().read_offset() != 0 {
+                            // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
+                            debug!(self.log, "received retry after a handshake packet");
+                            self.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                        } else if let Some(payload) = self.connections[conn.0].decrypt(
+                            true,
+                            number as u64,
+                            &packet.header_data,
+                            &packet.payload,
+                        ) {
+                            let mut new_stream = MemoryStream::new();
+                            if !parse_initial(&self.log, &mut new_stream, payload.into()) {
+                                debug!(self.log, "invalid retry payload");
+                                self.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                    },
+                                ));
+                                return State::handshake_failed(
+                                    TransportError::PROTOCOL_VIOLATION,
+                                    None,
                                 );
-                                // Send updated ClientHello
-                                self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                                // Prepare to receive Handshake packets that start stream 0 from offset 0
-                                tls.get_mut().reset_read();
-                                State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
-                            },
-                            Ok(_) => {
-                                debug!(self.log, "unexpectedly completed handshake in RETRY packet");
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                                State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                            }
+                            *state.tls.get_mut() = new_stream;
+                            match state.tls.handshake() {
+                                Err(HandshakeError::WouldBlock(mut tls)) => {
+                                    self.on_packet_authenticated(now, conn, number as u64);
+                                    trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
+                                    let local_id = self.connections[conn.0].local_id.clone();
+                                    // Discard transport state
+                                    self.connections[conn.0] = Connection::new(
+                                        remote_id.clone(),
+                                        local_id,
+                                        remote_id,
+                                        remote,
+                                        self.initial_packet_number.sample(&mut self.rng).into(),
+                                        Side::Client,
+                                        &self.config,
+                                    );
+                                    // Send updated ClientHello
+                                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                                    // Prepare to receive Handshake packets that start stream 0 from offset 0
+                                    tls.get_mut().reset_read();
+                                    State::Handshake(state::Handshake {
+                                        tls,
+                                        clienthello_packet: state.clienthello_packet,
+                                        remote_id_set: state.remote_id_set,
+                                    })
+                                }
+                                Ok(_) => {
+                                    debug!(
+                                        self.log,
+                                        "unexpectedly completed handshake in RETRY packet"
+                                    );
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    )
+                                }
+                                Err(HandshakeError::Failure(mut tls)) => {
+                                    debug!(self.log, "handshake failed"; "reason" => %tls.error());
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(
+                                        TransportError::TLS_HANDSHAKE_FAILED,
+                                        Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                    )
+                                }
+                                Err(HandshakeError::SetupFailure(e)) => {
+                                    error!(self.log, "handshake setup failed"; "reason" => %e);
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::INTERNAL_ERROR.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(TransportError::INTERNAL_ERROR, None)
+                                }
+                            }
+                        } else {
+                            debug!(self.log, "failed to authenticate retry packet");
+                            State::Handshake(state)
+                        }
+                    }
+                    Header::Long {
+                        ty: packet::HANDSHAKE,
+                        destination_id: id,
+                        source_id: remote_id,
+                        number,
+                        ..
+                    } => {
+                        if !state.remote_id_set {
+                            trace!(self.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
+                            self.connections[conn.0].remote_id = remote_id;
+                            state.remote_id_set = true;
+                        }
+                        let payload = if let Some(x) = self.connections[conn.0].decrypt(
+                            true,
+                            number as u64,
+                            &packet.header_data,
+                            &packet.payload,
+                        ) {
+                            x
+                        } else {
+                            debug!(self.log, "failed to authenticate handshake packet");
+                            return State::Handshake(state);
+                        };
+                        self.on_packet_authenticated(now, conn, number as u64);
+                        // Complete handshake (and ultimately send Finished)
+                        for frame in frame::Iter::new(payload.into()) {
+                            match frame {
+                                Frame::Ack(_) => {}
+                                _ => {
+                                    self.connections[conn.0].permit_ack_only = true;
+                                }
+                            }
+                            match frame {
+                                Frame::Padding => {}
+                                Frame::Stream(frame::Stream {
+                                    id: StreamId(0),
+                                    offset,
+                                    data,
+                                    ..
+                                }) => {
+                                    state.tls.get_mut().insert(offset, &data);
+                                }
+                                Frame::Stream(frame::Stream { .. }) => {
+                                    debug!(self.log, "non-stream-0 stream frame in handshake");
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    return State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    );
+                                }
+                                Frame::Ack(ack) => {
+                                    self.on_ack_received(now, conn, ack);
+                                }
+                                Frame::ConnectionClose(reason) => {
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: ConnectionError::ConnectionClosed { reason },
+                                        },
+                                    ));
+                                    return State::Draining(state.into());
+                                }
+                                Frame::ApplicationClose(reason) => {
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: ConnectionError::ApplicationClosed { reason },
+                                        },
+                                    ));
+                                    return State::Draining(state.into());
+                                }
+                                Frame::PathChallenge(value) => {
+                                    self.connections[conn.0]
+                                        .handshake_pending
+                                        .path_challenge(number as u64, value);
+                                }
+                                _ => {
+                                    debug!(self.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
+                                    self.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    return State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        if state.tls.get_ref().read_blocked() {
+                            return State::Handshake(state);
+                        }
+                        let prev_offset = state.tls.get_ref().read_offset();
+                        match state.tls.handshake() {
+                            Ok(mut tls) => {
+                                if self.connections[conn.0].side == Side::Client {
+                                    if let Some(params) =
+                                        tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned()
+                                    {
+                                        self.connections[conn.0].set_params(params.expect(
+                                            "transport param errors should fail the handshake",
+                                        ));
+                                    } else {
+                                        debug!(self.log, "server didn't send transport params");
+                                        self.events.push_back((
+                                            conn,
+                                            Event::ConnectionLost {
+                                                reason: TransportError::TRANSPORT_PARAMETER_ERROR
+                                                    .into(),
+                                            },
+                                        ));
+                                        return State::handshake_failed(
+                                            TransportError::TLS_HANDSHAKE_FAILED,
+                                            Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                        );
+                                    }
+                                }
+                                trace!(
+                                    self.log,
+                                    "{connection} established",
+                                    connection = id.clone()
+                                );
+                                self.connections[conn.0].handshake_cleanup(&self.config);
+                                if self.connections[conn.0].side == Side::Client {
+                                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                                } else {
+                                    self.connections[conn.0].transmit(
+                                        StreamId(0),
+                                        tls.get_mut().take_outgoing()[..].into(),
+                                    );
+                                }
+                                match self.connections[conn.0].side {
+                                    Side::Client => {
+                                        self.events.push_back((
+                                            conn,
+                                            Event::Connected {
+                                                protocol: tls
+                                                    .ssl()
+                                                    .selected_alpn_protocol()
+                                                    .map(|x| x.into()),
+                                            },
+                                        ));
+                                    }
+                                    Side::Server => {
+                                        self.incoming_handshakes -= 1;
+                                        self.incoming.push_back(conn);
+                                    }
+                                }
+                                self.connections[conn.0].crypto = Some(CryptoContext::established(
+                                    tls.ssl(),
+                                    self.connections[conn.0].side,
+                                ));
+                                self.connections[conn.0]
+                                    .streams
+                                    .get_mut(&StreamId(0))
+                                    .unwrap()
+                                    .recv_mut()
+                                    .unwrap()
+                                    .max_data += tls.get_ref().read_offset() - prev_offset;
+                                self.connections[conn.0]
+                                    .pending
+                                    .max_stream_data
+                                    .insert(StreamId(0));
+                                State::Established(state::Established { tls })
+                            }
+                            Err(HandshakeError::WouldBlock(mut tls)) => {
+                                trace!(self.log, "handshake ongoing"; "connection" => %id);
+                                self.connections[conn.0].handshake_cleanup(&self.config);
+                                self.connections[conn.0]
+                                    .streams
+                                    .get_mut(&StreamId(0))
+                                    .unwrap()
+                                    .recv_mut()
+                                    .unwrap()
+                                    .max_data += tls.get_ref().read_offset() - prev_offset;
+                                {
+                                    let response = tls.get_mut().take_outgoing();
+                                    if !response.is_empty() {
+                                        self.transmit_handshake(conn, &response);
+                                    }
+                                }
+                                State::Handshake(state::Handshake {
+                                    tls,
+                                    clienthello_packet: state.clienthello_packet,
+                                    remote_id_set: state.remote_id_set,
+                                })
                             }
                             Err(HandshakeError::Failure(mut tls)) => {
-                                debug!(self.log, "handshake failed"; "reason" => %tls.error());
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TLS_HANDSHAKE_FAILED.into() }));
-                                State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, Some(tls.get_mut().take_outgoing().to_owned().into()))
+                                let code = if let Some(params_err) = tls
+                                    .ssl()
+                                    .ex_data(*TRANSPORT_PARAMS_INDEX)
+                                    .and_then(|x| x.err())
+                                {
+                                    debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
+                                    TransportError::TRANSPORT_PARAMETER_ERROR
+                                } else {
+                                    debug!(self.log, "handshake failed"; "reason" => %tls.error());
+                                    TransportError::TLS_HANDSHAKE_FAILED
+                                };
+                                self.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: code.into(),
+                                    },
+                                ));
+                                State::handshake_failed(
+                                    code,
+                                    Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                )
                             }
                             Err(HandshakeError::SetupFailure(e)) => {
-                                error!(self.log, "handshake setup failed"; "reason" => %e);
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
+                                error!(self.log, "handshake failed"; "connection" => %id, "reason" => %e);
+                                self.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::INTERNAL_ERROR.into(),
+                                    },
+                                ));
                                 State::handshake_failed(TransportError::INTERNAL_ERROR, None)
                             }
                         }
-                    } else {
-                        debug!(self.log, "failed to authenticate retry packet");
+                    }
+                    Header::Long {
+                        ty: packet::INITIAL,
+                        ..
+                    } if self.connections[conn.0].side == Side::Server =>
+                    {
+                        trace!(self.log, "dropping duplicate Initial");
+                        State::Handshake(state)
+                    }
+                    Header::Long {
+                        ty: packet::ZERO_RTT,
+                        number,
+                        destination_id: ref id,
+                        ..
+                    } if self.connections[conn.0].side == Side::Server =>
+                    {
+                        let payload = if let Some(ref crypto) =
+                            self.connections[conn.0].zero_rtt_crypto
+                        {
+                            if let Some(x) =
+                                crypto.decrypt(number as u64, &packet.header_data, &packet.payload)
+                            {
+                                x
+                            } else {
+                                debug!(
+                                    self.log,
+                                    "{connection} failed to authenticate 0-RTT packet",
+                                    connection = id.clone()
+                                );
+                                return State::Handshake(state);
+                            }
+                        } else {
+                            debug!(
+                                self.log,
+                                "{connection} ignoring unsupported 0-RTT packet",
+                                connection = id.clone()
+                            );
+                            return State::Handshake(state);
+                        };
+                        self.on_packet_authenticated(now, conn, number as u64);
+                        match self.process_payload(
+                            now,
+                            conn,
+                            number as u64,
+                            payload.into(),
+                            state.tls.get_mut(),
+                        ) {
+                            Err(e) => State::HandshakeFailed(state::HandshakeFailed {
+                                reason: e,
+                                app_closed: false,
+                                alert: None,
+                            }),
+                            Ok(true) => State::Draining(state.into()),
+                            Ok(false) => State::Handshake(state),
+                        }
+                    }
+                    Header::Long { ty, .. } => {
+                        debug!(self.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                    }
+                    Header::VersionNegotiate {
+                        destination_id: id, ..
+                    } => {
+                        let mut payload = io::Cursor::new(&packet.payload[..]);
+                        if packet.payload.len() % 4 != 0 {
+                            debug!(self.log, "malformed version negotiation"; "connection" => %id);
+                            self.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            return State::handshake_failed(
+                                TransportError::PROTOCOL_VIOLATION,
+                                None,
+                            );
+                        }
+                        while payload.has_remaining() {
+                            let version = payload.get::<u32>().unwrap();
+                            if version == VERSION {
+                                // Our version is supported, so this packet is spurious
+                                return State::Handshake(state);
+                            }
+                        }
+                        debug!(self.log, "remote doesn't support our version");
+                        self.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: ConnectionError::VersionMismatch,
+                            },
+                        ));
+                        State::Draining(state.into())
+                    }
+                    // TODO: SHOULD buffer these to improve reordering tolerance.
+                    Header::Short { .. } => {
+                        trace!(self.log, "dropping short packet during handshake");
                         State::Handshake(state)
                     }
                 }
-                Header::Long { ty: packet::HANDSHAKE, destination_id: id, source_id: remote_id, number, .. } => {
-                    if !state.remote_id_set {
-                        trace!(self.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
-                        self.connections[conn.0].remote_id = remote_id;
-                        state.remote_id_set = true;
-                    }
-                    let payload = if let Some(x) = self.connections[conn.0].decrypt(true, number as u64, &packet.header_data, &packet.payload) { x } else {
-                        debug!(self.log, "failed to authenticate handshake packet");
-                        return State::Handshake(state);
-                    };
-                    self.on_packet_authenticated(now, conn, number as u64);
-                    // Complete handshake (and ultimately send Finished)
-                    for frame in frame::Iter::new(payload.into()) {
-                        match frame {
-                            Frame::Ack(_) => {}
-                            _ => { self.connections[conn.0].permit_ack_only = true; }
-                        }
-                        match frame {
-                            Frame::Padding => {}
-                            Frame::Stream(frame::Stream { id: StreamId(0), offset, data, .. }) => {
-                                state.tls.get_mut().insert(offset, &data);
-                            }
-                            Frame::Stream(frame::Stream { .. }) => {
-                                debug!(self.log, "non-stream-0 stream frame in handshake");
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                                return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
-                            }
-                            Frame::Ack(ack) => {
-                                self.on_ack_received(now, conn, ack);
-                            }
-                            Frame::ConnectionClose(reason) => {
-                                self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ConnectionClosed { reason } }));
-                                return State::Draining(state.into());
-                            }
-                            Frame::ApplicationClose(reason) => {
-                                self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed { reason } }));
-                                return State::Draining(state.into());
-                            }
-                            Frame::PathChallenge(value) => {
-                                self.connections[conn.0].handshake_pending.path_challenge(number as u64, value);
-                            }
-                            _ => {
-                                debug!(self.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
-                                self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                                return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
-                            }
-                        }
-                    }
-                    if state.tls.get_ref().read_blocked() {
-                        return State::Handshake(state);
-                    }
-                    let prev_offset = state.tls.get_ref().read_offset();
-                    match state.tls.handshake() {
-                        Ok(mut tls) => {
-                            if self.connections[conn.0].side == Side::Client {
-                                if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                                    self.connections[conn.0].set_params(params.expect("transport param errors should fail the handshake"));
-                                } else {
-                                    debug!(self.log, "server didn't send transport params");
-                                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::TRANSPORT_PARAMETER_ERROR.into() }));
-                                    return State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED,
-                                                                   Some(tls.get_mut().take_outgoing().to_owned().into()));
-                                }
-                            }
-                            trace!(self.log, "{connection} established", connection=id.clone());
-                            self.connections[conn.0].handshake_cleanup(&self.config);
-                            if self.connections[conn.0].side == Side::Client {
-                                self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
-                            } else {
-                                self.connections[conn.0].transmit(StreamId(0), tls.get_mut().take_outgoing()[..].into());
-                            }
-                            match self.connections[conn.0].side {
-                                Side::Client => {
-                                    self.events.push_back((conn, Event::Connected {
-                                        protocol: tls.ssl().selected_alpn_protocol().map(|x| x.into()),
-                                    }));
-                                }
-                                Side::Server => {
-                                    self.incoming_handshakes -= 1;
-                                    self.incoming.push_back(conn);
-                                }
-                            }
-                            self.connections[conn.0].crypto = Some(CryptoContext::established(tls.ssl(), self.connections[conn.0].side));
-                            self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-                                .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
-                            self.connections[conn.0].pending.max_stream_data.insert(StreamId(0));
-                            State::Established(state::Established { tls })
-                        }
-                        Err(HandshakeError::WouldBlock(mut tls)) => {
-                            trace!(self.log, "handshake ongoing"; "connection" => %id);
-                            self.connections[conn.0].handshake_cleanup(&self.config);
-                            self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap()
-                                .recv_mut().unwrap().max_data += tls.get_ref().read_offset() - prev_offset;
-                            {
-                                let response = tls.get_mut().take_outgoing();
-                                if !response.is_empty() {
-                                    self.transmit_handshake(conn, &response);
-                                }
-                            }
-                            State::Handshake(state::Handshake { tls, clienthello_packet: state.clienthello_packet, remote_id_set: state.remote_id_set })
-                        }
-                        Err(HandshakeError::Failure(mut tls)) => {
-                            let code = if let Some(params_err) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).and_then(|x| x.err()) {
-                                debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
-                                TransportError::TRANSPORT_PARAMETER_ERROR
-                            } else {
-                                debug!(self.log, "handshake failed"; "reason" => %tls.error());
-                                TransportError::TLS_HANDSHAKE_FAILED
-                            };
-                            self.events.push_back((conn, Event::ConnectionLost { reason: code.into() }));
-                            State::handshake_failed(code, Some(tls.get_mut().take_outgoing().to_owned().into()))
-                        }
-                        Err(HandshakeError::SetupFailure(e)) => {
-                            error!(self.log, "handshake failed"; "connection" => %id, "reason" => %e);
-                            self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::INTERNAL_ERROR.into() }));
-                            State::handshake_failed(TransportError::INTERNAL_ERROR, None)
-                        }
-                    }
-                }
-                Header::Long { ty: packet::INITIAL, .. } if self.connections[conn.0].side == Side::Server => {
-                    trace!(self.log, "dropping duplicate Initial");
-                    State::Handshake(state)
-                }
-                Header::Long { ty: packet::ZERO_RTT, number, destination_id: ref id, .. } if self.connections[conn.0].side == Side::Server => {
-                    let payload = if let Some(ref crypto) = self.connections[conn.0].zero_rtt_crypto {
-                        if let Some(x) = crypto.decrypt(number as u64, &packet.header_data, &packet.payload) { x }
-                        else {
-                            debug!(self.log, "{connection} failed to authenticate 0-RTT packet", connection=id.clone());
-                            return State::Handshake(state);
-                        }
-                    } else {
-                        debug!(self.log, "{connection} ignoring unsupported 0-RTT packet", connection=id.clone());
-                        return State::Handshake(state);
-                    };
-                    self.on_packet_authenticated(now, conn, number as u64);
-                    match self.process_payload(now, conn, number as u64, payload.into(), state.tls.get_mut()) {
-                        Err(e) => State::HandshakeFailed(state::HandshakeFailed { reason: e, app_closed: false, alert: None }),
-                        Ok(true) => State::Draining(state.into()),
-                        Ok(false) => State::Handshake(state),
-                    }
-                }
-                Header::Long { ty, .. } => {
-                    debug!(self.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
-                    self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                    State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
-                }
-                Header::VersionNegotiate { destination_id: id, .. } => {
-                    let mut payload = io::Cursor::new(&packet.payload[..]);
-                    if packet.payload.len() % 4 != 0 {
-                        debug!(self.log, "malformed version negotiation"; "connection" => %id);
-                        self.events.push_back((conn, Event::ConnectionLost { reason: TransportError::PROTOCOL_VIOLATION.into() }));
-                        return State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None);
-                    }
-                    while payload.has_remaining() {
-                        let version = payload.get::<u32>().unwrap();
-                        if version == VERSION {
-                            // Our version is supported, so this packet is spurious
-                            return State::Handshake(state);
-                        }
-                    }
-                    debug!(self.log, "remote doesn't support our version");
-                    self.events.push_back((conn, Event::ConnectionLost { reason: ConnectionError::VersionMismatch }));
-                    State::Draining(state.into())
-                }
-                // TODO: SHOULD buffer these to improve reordering tolerance.
-                Header::Short { .. } => {
-                    trace!(self.log, "dropping short packet during handshake");
-                    State::Handshake(state)
-                }
             }
-        }
-        State::Established(mut state) => {
-            let id = self.connections[conn.0].local_id.clone();
-            if let Header::Long { .. } = packet.header {
-                trace!(self.log, "discarding unprotected packet"; "connection" => %id);
-                return State::Established(state);
-            }
-            let (payload, number) = match self.connections[conn.0].decrypt_packet(false, packet) {
-                Ok(x) => x,
-                Err(None) => {
-                    trace!(self.log, "failed to authenticate packet"; "connection" => %id);
+            State::Established(mut state) => {
+                let id = self.connections[conn.0].local_id.clone();
+                if let Header::Long { .. } = packet.header {
+                    trace!(self.log, "discarding unprotected packet"; "connection" => %id);
                     return State::Established(state);
                 }
-                Err(Some(e)) => {
-                    warn!(self.log, "got illegal packet"; "connection" => %id);
-                    self.events.push_back((conn, Event::ConnectionLost { reason: e.into() }));
-                    return State::closed(e);
+                let (payload, number) = match self.connections[conn.0].decrypt_packet(false, packet)
+                {
+                    Ok(x) => x,
+                    Err(None) => {
+                        trace!(self.log, "failed to authenticate packet"; "connection" => %id);
+                        return State::Established(state);
+                    }
+                    Err(Some(e)) => {
+                        warn!(self.log, "got illegal packet"; "connection" => %id);
+                        self.events
+                            .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                        return State::closed(e);
+                    }
+                };
+                self.on_packet_authenticated(now, conn, number);
+                if self.connections[conn.0].awaiting_handshake {
+                    assert_eq!(
+                        self.connections[conn.0].side,
+                        Side::Client,
+                        "only the client confirms handshake completion based on a protected packet"
+                    );
+                    // Forget about unacknowledged handshake packets
+                    self.connections[conn.0].handshake_cleanup(&self.config);
                 }
-            };
-            self.on_packet_authenticated(now, conn, number);
-            if self.connections[conn.0].awaiting_handshake {
-                assert_eq!(self.connections[conn.0].side, Side::Client,
-                           "only the client confirms handshake completion based on a protected packet");
-                // Forget about unacknowledged handshake packets
-                self.connections[conn.0].handshake_cleanup(&self.config);
-            }
-            match self.process_payload(now, conn, number, payload.into(), state.tls.get_mut())
-                .and_then(|x| { self.drive_tls(conn, &mut state.tls)?; Ok(x) })
-            {
-                Err(e) => State::closed(e),
-                Ok(true) => {
-                    // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable
-                    // session is not erased from the anti-replay cache as it otherwise might be.
-                    state.tls.shutdown().unwrap();
-                    State::Draining(state.into())
+                match self
+                    .process_payload(now, conn, number, payload.into(), state.tls.get_mut())
+                    .and_then(|x| {
+                        self.drive_tls(conn, &mut state.tls)?;
+                        Ok(x)
+                    }) {
+                    Err(e) => State::closed(e),
+                    Ok(true) => {
+                        // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable
+                        // session is not erased from the anti-replay cache as it otherwise might be.
+                        state.tls.shutdown().unwrap();
+                        State::Draining(state.into())
+                    }
+                    Ok(false) => State::Established(state),
                 }
-                Ok(false) => State::Established(state),
             }
-        }
-        State::HandshakeFailed(state) => {
-            if let Ok((payload, _)) = self.connections[conn.0].decrypt_packet(true, packet) {
-                for frame in frame::Iter::new(payload.into()) {
-                    match frame {
-                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(self.log, "draining");
-                            return State::Draining(state.into());
+            State::HandshakeFailed(state) => {
+                if let Ok((payload, _)) = self.connections[conn.0].decrypt_packet(true, packet) {
+                    for frame in frame::Iter::new(payload.into()) {
+                        match frame {
+                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                                trace!(self.log, "draining");
+                                return State::Draining(state.into());
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
+                State::HandshakeFailed(state)
             }
-            State::HandshakeFailed(state)
-        }
-        State::Closed(state) => {
-            if let Ok((payload, _)) = self.connections[conn.0].decrypt_packet(false, packet) {
-                for frame in frame::Iter::new(payload.into()) {
-                    match frame {
-                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(self.log, "draining");
-                            return State::Draining(state.into());
+            State::Closed(state) => {
+                if let Ok((payload, _)) = self.connections[conn.0].decrypt_packet(false, packet) {
+                    for frame in frame::Iter::new(payload.into()) {
+                        match frame {
+                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                                trace!(self.log, "draining");
+                                return State::Draining(state.into());
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
+                State::Closed(state)
             }
-            State::Closed(state)
+            State::Draining(x) => State::Draining(x),
+            State::Drained => State::Drained,
         }
-        State::Draining(x) => State::Draining(x),
-        State::Drained => State::Drained,
-    }}
+    }
 
-    fn handle_connected(&mut self, now: u64, conn: ConnectionHandle, remote: SocketAddrV6, packet: Packet) {
+    fn handle_connected(
+        &mut self,
+        now: u64,
+        conn: ConnectionHandle,
+        remote: SocketAddrV6,
+        packet: Packet,
+    ) {
         trace!(self.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
@@ -1405,10 +2090,14 @@ impl Endpoint {
                 let n = self.connections[conn.0].get_tx_number();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(&self.connections[conn.0].handshake_crypto,
-                                            &self.connections[conn.0].remote_id,
-                                            &self.connections[conn.0].local_id,
-                                            n as u32, state.reason.clone(), state.alert.as_ref().map(|x| &x[..])),
+                    packet: handshake_close(
+                        &self.connections[conn.0].handshake_crypto,
+                        &self.connections[conn.0].remote_id,
+                        &self.connections[conn.0].local_id,
+                        n as u32,
+                        state.reason.clone(),
+                        state.alert.as_ref().map(|x| &x[..]),
+                    ),
                 });
                 self.reset_idle_timeout(now, conn);
             }
@@ -1427,13 +2116,17 @@ impl Endpoint {
     }
 
     fn reset_idle_timeout(&mut self, now: u64, conn: ConnectionHandle) {
-        let dt = cmp::min(self.config.idle_timeout, self.connections[conn.0].params.idle_timeout) as u64 * 1000000;
+        let dt = cmp::min(
+            self.config.idle_timeout,
+            self.connections[conn.0].params.idle_timeout,
+        ) as u64 * 1000000;
         self.connections[conn.0].set_idle = Some(Some(now + dt));
     }
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
         let mut sent = false;
-        while let Some(packet) = self.connections[conn.0].next_packet(&self.log, &self.config, now) {
+        while let Some(packet) = self.connections[conn.0].next_packet(&self.log, &self.config, now)
+        {
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: packet.into(),
@@ -1447,16 +2140,30 @@ impl Endpoint {
             let c = &mut self.connections[conn.0];
             if let Some(setting) = c.set_idle.take() {
                 if let Some(time) = setting {
-                    self.io.push_back(Io::TimerStart { connection: conn, timer: Timer::Idle, time });
+                    self.io.push_back(Io::TimerStart {
+                        connection: conn,
+                        timer: Timer::Idle,
+                        time,
+                    });
                 } else {
-                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
+                    self.io.push_back(Io::TimerStop {
+                        connection: conn,
+                        timer: Timer::Idle,
+                    });
                 }
             }
             if let Some(setting) = c.set_loss_detection.take() {
                 if let Some(time) = setting {
-                    self.io.push_back(Io::TimerStart { connection: conn, timer: Timer::LossDetection, time });
+                    self.io.push_back(Io::TimerStart {
+                        connection: conn,
+                        timer: Timer::LossDetection,
+                        time,
+                    });
                 } else {
-                    self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::LossDetection });
+                    self.io.push_back(Io::TimerStop {
+                        connection: conn,
+                        timer: Timer::LossDetection,
+                    });
                 }
             }
         }
@@ -1464,10 +2171,13 @@ impl Endpoint {
 
     fn forget(&mut self, conn: ConnectionHandle) {
         if self.connections[conn.0].side == Side::Server {
-            self.connection_ids_initial.remove(&self.connections[conn.0].initial_id);
+            self.connection_ids_initial
+                .remove(&self.connections[conn.0].initial_id);
         }
-        self.connection_ids.remove(&self.connections[conn.0].local_id);
-        self.connection_remotes.remove(&self.connections[conn.0].remote);
+        self.connection_ids
+            .remove(&self.connections[conn.0].local_id);
+        self.connection_remotes
+            .remove(&self.connections[conn.0].remote);
         self.dirty_conns.remove(&conn);
         self.readable_conns.remove(&conn);
         self.connections.remove(conn.0);
@@ -1477,9 +2187,17 @@ impl Endpoint {
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
-                self.io.push_back(Io::TimerStop { connection: conn, timer: Timer::Idle });
+                self.io.push_back(Io::TimerStop {
+                    connection: conn,
+                    timer: Timer::Idle,
+                });
                 self.events.push_back((conn, Event::ConnectionDrained));
-                if self.connections[conn.0].state.as_ref().unwrap().is_app_closed() {
+                if self.connections[conn.0]
+                    .state
+                    .as_ref()
+                    .unwrap()
+                    .is_app_closed()
+                {
                     self.forget(conn);
                 } else {
                     self.connections[conn.0].state = Some(State::Drained);
@@ -1496,19 +2214,29 @@ impl Endpoint {
                     State::Drained => unreachable!(),
                 });
                 self.connections[conn.0].state = Some(state);
-                self.events.push_back((conn, Event::ConnectionLost {
-                    reason: ConnectionError::TimedOut,
-                }));
+                self.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: ConnectionError::TimedOut,
+                    },
+                ));
                 self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
             }
             Timer::LossDetection => {
                 if self.connections[conn.0].awaiting_handshake {
                     trace!(self.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
-                    let packets = self.connections[conn.0].sent_packets.iter()
-                        .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
+                    let packets = self.connections[conn.0]
+                        .sent_packets
+                        .iter()
+                        .filter_map(
+                            |(&packet, info)| if info.handshake { Some(packet) } else { None },
+                        )
                         .collect::<Vec<_>>();
                     for number in packets {
-                        let mut info = self.connections[conn.0].sent_packets.remove(&number).unwrap();
+                        let mut info = self.connections[conn.0]
+                            .sent_packets
+                            .remove(&number)
+                            .unwrap();
                         self.connections[conn.0].handshake_pending += info.retransmits;
                         self.connections[conn.0].bytes_in_flight -= info.bytes as u64;
                     }
@@ -1536,7 +2264,8 @@ impl Endpoint {
                            "in flight" => self.connections[conn.0].bytes_in_flight);
                     // RTO
                     if self.connections[conn.0].rto_count == 0 {
-                        self.connections[conn.0].largest_sent_before_rto = self.connections[conn.0].largest_sent_packet;
+                        self.connections[conn.0].largest_sent_before_rto =
+                            self.connections[conn.0].largest_sent_packet;
                     }
                     for _ in 0..2 {
                         self.io.push_back(Io::Transmit {
@@ -1555,13 +2284,26 @@ impl Endpoint {
 
     fn transmit_handshake(&mut self, conn: ConnectionHandle, messages: &[u8]) {
         let offset = {
-            let ss = self.connections[conn.0].streams.get_mut(&StreamId(0)).unwrap().send_mut().unwrap();
+            let ss = self.connections[conn.0]
+                .streams
+                .get_mut(&StreamId(0))
+                .unwrap()
+                .send_mut()
+                .unwrap();
             let x = ss.offset;
             ss.offset += messages.len() as u64;
             ss.bytes_in_flight += messages.len() as u64;
             x
         };
-        self.connections[conn.0].handshake_pending.stream.push_back(frame::Stream { id: StreamId(0), fin: false, offset, data: messages.into()});
+        self.connections[conn.0]
+            .handshake_pending
+            .stream
+            .push_back(frame::Stream {
+                id: StreamId(0),
+                fin: false,
+                offset,
+                data: messages.into(),
+            });
         self.connections[conn.0].awaiting_handshake = true;
     }
 
@@ -1571,7 +2313,8 @@ impl Endpoint {
         self.connections[conn.0].on_ack_received(&self.config, now, ack);
         if was_blocked && !self.connections[conn.0].blocked() {
             for stream in self.connections[conn.0].blocked_streams.drain() {
-                self.events.push_back((conn, Event::StreamWritable { stream }));
+                self.events
+                    .push_back((conn, Event::StreamWritable { stream }));
             }
         }
     }
@@ -1582,7 +2325,12 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
-    pub fn write(&mut self, conn: ConnectionHandle, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+    pub fn write(
+        &mut self,
+        conn: ConnectionHandle,
+        stream: StreamId,
+        data: &[u8],
+    ) -> Result<usize, WriteError> {
         let r = self.connections[conn.0].write(stream, data);
         match r {
             Ok(n) => {
@@ -1619,14 +2367,19 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
-    pub fn read(&mut self, conn: ConnectionHandle, stream: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
+    pub fn read(
+        &mut self,
+        conn: ConnectionHandle,
+        stream: StreamId,
+        buf: &mut [u8],
+    ) -> Result<usize, ReadError> {
         self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
-            x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
+            x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
-            x => x
+            x => x,
         }
     }
 
@@ -1641,14 +2394,18 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
-    pub fn read_unordered(&mut self, conn: ConnectionHandle, stream: StreamId) -> Result<(Bytes, u64), ReadError> {
+    pub fn read_unordered(
+        &mut self,
+        conn: ConnectionHandle,
+        stream: StreamId,
+    ) -> Result<(Bytes, u64), ReadError> {
         self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
-            x@Err(ReadError::Finished) | x@Err(ReadError::Reset { .. }) => {
+            x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
-            x => x
+            x => x,
         }
     }
 
@@ -1657,18 +2414,32 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.connections[conn.0].side,
-                "only streams supporting outgoing data may be reset");
+        assert!(
+            stream.directionality() == Directionality::Bi
+                || stream.initiator() == self.connections[conn.0].side,
+            "only streams supporting outgoing data may be reset"
+        );
         {
             // reset is a noop on a closed stream
-            let stream = if let Some(x) = self.connections[conn.0].streams.get_mut(&stream) { x.send_mut().unwrap() } else { return; };
+            let stream = if let Some(x) = self.connections[conn.0].streams.get_mut(&stream) {
+                x.send_mut().unwrap()
+            } else {
+                return;
+            };
             match stream.state {
-                stream::SendState::DataRecvd | stream::SendState::ResetSent { .. } | stream::SendState::ResetRecvd { .. } => { return; } // Nothing to do
+                stream::SendState::DataRecvd
+                | stream::SendState::ResetSent { .. }
+                | stream::SendState::ResetRecvd { .. } => {
+                    return;
+                } // Nothing to do
                 _ => {}
             }
             stream.state = stream::SendState::ResetSent { stop_reason: None };
         }
-        self.connections[conn.0].pending.rst_stream.push((stream, error_code));
+        self.connections[conn.0]
+            .pending
+            .rst_stream
+            .push((stream, error_code));
         self.dirty_conns.insert(conn);
     }
 
@@ -1716,14 +2487,16 @@ impl Endpoint {
             return;
         }
 
-        if let State::Established(ref mut state) = *self.connections[conn.0].state.as_mut().unwrap() {
+        if let State::Established(ref mut state) = *self.connections[conn.0].state.as_mut().unwrap()
+        {
             // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable session is
             // not erased from the anti-replay cache as it otherwise might be.
             state.tls.shutdown().unwrap();
         }
 
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
-        let reason = state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
+        let reason =
+            state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
             self.close_common(now, conn);
             self.io.push_back(Io::Transmit {
@@ -1733,14 +2506,31 @@ impl Endpoint {
             self.reset_idle_timeout(now, conn);
             self.dirty_conns.insert(conn);
         }
-        self.connections[conn.0].state = Some(match self.connections[conn.0].state.take().unwrap() {
-            State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed { reason, alert: None, app_closed: true }),
-            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed { app_closed: true, ..x }),
-            State::Established(_) => State::Closed(state::Closed { reason, app_closed: true }),
-            State::Closed(x) => State::Closed(state::Closed { app_closed: true, ..x}),
-            State::Draining(x) => State::Draining(state::Draining { app_closed: true, ..x}),
-            State::Drained => unreachable!(),
-        });
+        self.connections[conn.0].state =
+            Some(match self.connections[conn.0].state.take().unwrap() {
+                State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
+                    reason,
+                    alert: None,
+                    app_closed: true,
+                }),
+                State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed {
+                    app_closed: true,
+                    ..x
+                }),
+                State::Established(_) => State::Closed(state::Closed {
+                    reason,
+                    app_closed: true,
+                }),
+                State::Closed(x) => State::Closed(state::Closed {
+                    app_closed: true,
+                    ..x
+                }),
+                State::Draining(x) => State::Draining(state::Draining {
+                    app_closed: true,
+                    ..x
+                }),
+                State::Drained => unreachable!(),
+            });
     }
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
@@ -1750,20 +2540,32 @@ impl Endpoint {
     }
 
     /// Look up whether we're the client or server of `conn`.
-    pub fn get_side(&self, conn: ConnectionHandle) -> Side { self.connections[conn.0].side }
+    pub fn get_side(&self, conn: ConnectionHandle) -> Side {
+        self.connections[conn.0].side
+    }
 
     /// The `ConnectionId` used for `conn` locally.
-    pub fn get_local_id(&self, conn: ConnectionHandle) -> &ConnectionId { &self.connections[conn.0].local_id }
+    pub fn get_local_id(&self, conn: ConnectionHandle) -> &ConnectionId {
+        &self.connections[conn.0].local_id
+    }
     /// The `ConnectionId` used for `conn` by the peer.
-    pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId { &self.connections[conn.0].remote_id }
-    pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 { &self.connections[conn.0].remote }
+    pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId {
+        &self.connections[conn.0].remote_id
+    }
+    pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 {
+        &self.connections[conn.0].remote
+    }
     pub fn get_protocol(&self, conn: ConnectionHandle) -> Option<&[u8]> {
         if let State::Established(ref state) = *self.connections[conn.0].state.as_ref().unwrap() {
             state.tls.ssl().selected_alpn_protocol()
-        } else { None }
+        } else {
+            None
+        }
     }
     /// The number of bytes of packets containing retransmittable frames that have not been acknowleded or declared lost
-    pub fn get_bytes_in_flight(&self, conn: ConnectionHandle) -> u64 { self.connections[conn.0].bytes_in_flight }
+    pub fn get_bytes_in_flight(&self, conn: ConnectionHandle) -> u64 {
+        self.connections[conn.0].bytes_in_flight
+    }
 
     /// Number of bytes worth of non-ack-only packets that may be sent.
     pub fn get_congestion_state(&self, conn: ConnectionHandle) -> u64 {
@@ -1786,10 +2588,14 @@ impl Endpoint {
     pub fn get_session_resumed(&self, conn: ConnectionHandle) -> bool {
         if let State::Established(ref state) = self.connections[conn.0].state.as_ref().unwrap() {
             state.tls.ssl().session_reused()
-        } else { false }
+        } else {
+            false
+        }
     }
 
-    pub fn accept(&mut self) -> Option<ConnectionHandle> { self.incoming.pop_front() }
+    pub fn accept(&mut self) -> Option<ConnectionHandle> {
+        self.incoming.pop_front()
+    }
 }
 
 /// Protocol-level identifier for a connection.
@@ -1800,11 +2606,15 @@ pub struct ConnectionId(ArrayVec<[u8; MAX_CID_SIZE]>);
 
 impl ::std::ops::Deref for ConnectionId {
     type Target = [u8];
-    fn deref(&self) -> &[u8] { &self.0 }
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl ::std::ops::DerefMut for ConnectionId {
-    fn deref_mut(&mut self) -> &mut [u8] { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
 }
 
 impl ConnectionId {
@@ -1833,7 +2643,12 @@ impl fmt::Display for ConnectionId {
 }
 
 impl slog::Value for ConnectionId {
-    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{}", self))
     }
 }
@@ -1875,8 +2690,7 @@ struct Connection {
 
     //
     // Loss Detection
-    // 
-
+    //
     /// The number of times the handshake packets have been retransmitted without receiving an ack.
     handshake_count: u32,
     /// The number of times a tail loss probe has been sent without receiving an ack.
@@ -1917,7 +2731,6 @@ struct Connection {
     //
     // Congestion Control
     //
-
     /// The sum of the size in bytes of all sent packets that contain at least one retransmittable frame, and have not
     /// been acked or declared lost.
     ///
@@ -1935,7 +2748,6 @@ struct Connection {
     //
     // Handshake retransmit state
     //
-
     /// Whether we've sent handshake packets that have not been either explicitly acknowledged or rendered moot by
     /// handshake completion, i.e. whether we're waiting for proof that the peer has advanced their handshake state
     /// machine.
@@ -1946,14 +2758,12 @@ struct Connection {
     //
     // Transmit queue
     //
-
     pending: Retransmits,
     pending_acks: RangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
     permit_ack_only: bool,
 
     // Timer updates: None if no change, Some(None) to stop, Some(Some(_)) to reset
-
     set_idle: Option<Option<u64>>,
     set_loss_detection: Option<Option<u64>>,
 
@@ -1980,11 +2790,13 @@ struct SentPacket {
     bytes: u16,
     handshake: bool,
     acks: RangeSet,
-    retransmits: Retransmits
+    retransmits: Retransmits,
 }
 
 impl SentPacket {
-    fn ack_only(&self) -> bool { self.bytes == 0 }
+    fn ack_only(&self) -> bool {
+        self.bytes == 0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2000,37 +2812,50 @@ struct Retransmits {
     rst_stream: Vec<(StreamId, u16)>,
     stop_sending: Vec<(StreamId, u16)>,
     max_stream_data: FnvHashSet<StreamId>,
- }
+}
 
 impl Retransmits {
     fn is_empty(&self) -> bool {
-        !self.max_data && !self.max_uni_stream_id && !self.max_bi_stream_id && !self.ping
-            && self.new_connection_id.is_none() && self.stream.is_empty() && self.path_response.is_none()
-            && self.rst_stream.is_empty() && self.stop_sending.is_empty() && self.max_stream_data.is_empty()
+        !self.max_data
+            && !self.max_uni_stream_id
+            && !self.max_bi_stream_id
+            && !self.ping
+            && self.new_connection_id.is_none()
+            && self.stream.is_empty()
+            && self.path_response.is_none()
+            && self.rst_stream.is_empty()
+            && self.stop_sending.is_empty()
+            && self.max_stream_data.is_empty()
     }
 
     fn path_challenge(&mut self, packet: u64, token: u64) {
         match self.path_response {
-            None => { self.path_response = Some((packet, token)); }
-            Some((existing, _)) if packet > existing => { self.path_response = Some((packet, token)); }
+            None => {
+                self.path_response = Some((packet, token));
+            }
+            Some((existing, _)) if packet > existing => {
+                self.path_response = Some((packet, token));
+            }
             Some(_) => {}
         }
     }
 }
 
 impl Default for Retransmits {
-    fn default() -> Self { Self {
-        max_data: false,
-        max_uni_stream_id: false,
-        max_bi_stream_id: false,
-        ping: false,
-        new_connection_id: None,
-        stream: VecDeque::new(),
-        path_response: None,
-        rst_stream: Vec::new(),
-        stop_sending: Vec::new(),
-        max_stream_data: FnvHashSet::default(),
-    }}
+    fn default() -> Self {
+        Self {
+            max_data: false,
+            max_uni_stream_id: false,
+            max_bi_stream_id: false,
+            ping: false,
+            new_connection_id: None,
+            stream: VecDeque::new(),
+            path_response: None,
+            rst_stream: Vec::new(),
+            stop_sending: Vec::new(),
+            max_stream_data: FnvHashSet::default(),
+        }
+    }
 }
 
 impl ::std::ops::AddAssign for Retransmits {
@@ -2039,9 +2864,13 @@ impl ::std::ops::AddAssign for Retransmits {
         self.ping |= rhs.ping;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
         self.max_bi_stream_id |= rhs.max_bi_stream_id;
-        if let Some(x) = rhs.new_connection_id { self.new_connection_id = Some(x); }
+        if let Some(x) = rhs.new_connection_id {
+            self.new_connection_id = Some(x);
+        }
         self.stream.extend(rhs.stream.into_iter());
-        if let Some((packet, token)) = rhs.path_response { self.path_challenge(packet, token); }
+        if let Some((packet, token)) = rhs.path_response {
+            self.path_challenge(packet, token);
+        }
         self.rst_stream.extend_from_slice(&rhs.rst_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);
@@ -2050,7 +2879,8 @@ impl ::std::ops::AddAssign for Retransmits {
 
 impl ::std::iter::FromIterator<Retransmits> for Retransmits {
     fn from_iter<T>(iter: T) -> Self
-        where T: IntoIterator<Item = Retransmits>
+    where
+        T: IntoIterator<Item = Retransmits>,
     {
         let mut result = Retransmits::default();
         for packet in iter {
@@ -2061,21 +2891,47 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
 }
 
 impl Connection {
-    fn new(initial_id: ConnectionId, local_id: ConnectionId, remote_id: ConnectionId, remote: SocketAddrV6,
-           initial_packet_number: u64, side: Side, config: &Config) -> Self
-    {
+    fn new(
+        initial_id: ConnectionId,
+        local_id: ConnectionId,
+        remote_id: ConnectionId,
+        remote: SocketAddrV6,
+        initial_packet_number: u64,
+        side: Side,
+        config: &Config,
+    ) -> Self {
         let handshake_crypto = CryptoContext::handshake(&initial_id, side);
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
-            streams.insert(StreamId::new(!side, Directionality::Uni, i as u64), stream::Recv::new(config.stream_receive_window as u64).into());
+            streams.insert(
+                StreamId::new(!side, Directionality::Uni, i as u64),
+                stream::Recv::new(config.stream_receive_window as u64).into(),
+            );
         }
-        streams.insert(StreamId(0), Stream::new_bi(config.stream_receive_window as u64));
-        let max_remote_bi_streams = config.max_remote_bi_streams as u64 + match side { Side::Server => 1, _ => 0 };
-        for i in match side { Side::Server => 1, _ => 0 }..max_remote_bi_streams {
-            streams.insert(StreamId::new(!side, Directionality::Bi, i as u64), Stream::new_bi(config.stream_receive_window as u64));
+        streams.insert(
+            StreamId(0),
+            Stream::new_bi(config.stream_receive_window as u64),
+        );
+        let max_remote_bi_streams = config.max_remote_bi_streams as u64 + match side {
+            Side::Server => 1,
+            _ => 0,
+        };
+        for i in match side {
+            Side::Server => 1,
+            _ => 0,
+        }..max_remote_bi_streams
+        {
+            streams.insert(
+                StreamId::new(!side, Directionality::Bi, i as u64),
+                Stream::new_bi(config.stream_receive_window as u64),
+            );
         }
         Self {
-            initial_id, local_id, remote_id, remote, side,
+            initial_id,
+            local_id,
+            remote_id,
+            remote,
+            side,
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
@@ -2095,7 +2951,11 @@ impl Connection {
             handshake_count: 0,
             tlp_count: 0,
             rto_count: 0,
-            reordering_threshold: if config.using_time_loss_detection { u32::max_value() } else { config.reordering_threshold },
+            reordering_threshold: if config.using_time_loss_detection {
+                u32::max_value()
+            } else {
+                config.reordering_threshold
+            },
             loss_time: 0,
             latest_rtt: 0,
             smoothed_rtt: 0,
@@ -2127,7 +2987,10 @@ impl Connection {
 
             streams,
             next_uni_stream: 0,
-            next_bi_stream: match side { Side::Client => 1, Side::Server => 0 },
+            next_bi_stream: match side {
+                Side::Client => 1,
+                Side::Server => 0,
+            },
             max_uni_streams: 0,
             max_bi_streams: 0,
             max_remote_uni_streams: config.max_remote_uni_streams as u64,
@@ -2139,11 +3002,17 @@ impl Connection {
     fn get_tx_number(&mut self) -> u64 {
         self.largest_sent_packet = self.largest_sent_packet.overflowing_add(1).0;
         // TODO: Handle packet number overflow gracefully
-        assert!(self.largest_sent_packet <= 2u64.pow(62)-1);
+        assert!(self.largest_sent_packet <= 2u64.pow(62) - 1);
         self.largest_sent_packet
     }
 
-    fn on_packet_sent(&mut self, config: &Config, now: u64, packet_number: u64, packet: SentPacket) {
+    fn on_packet_sent(
+        &mut self,
+        config: &Config,
+        now: u64,
+        packet_number: u64,
+        packet: SentPacket,
+    ) {
         self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
         let handshake = packet.handshake;
@@ -2171,7 +3040,11 @@ impl Connection {
         }
         for range in &ack {
             // Avoid DoS from unreasonably huge ack ranges
-            let packets = self.sent_packets.range(range).map(|(&n, _)| n).collect::<Vec<_>>();
+            let packets = self
+                .sent_packets
+                .range(range)
+                .map(|(&n, _)| n)
+                .collect::<Vec<_>>();
             for packet in packets {
                 self.on_packet_acked(config, packet);
             }
@@ -2200,7 +3073,11 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from high-latency handshakes
     fn on_packet_acked(&mut self, config: &Config, packet: u64) {
-        let info = if let Some(x) = self.sent_packets.remove(&packet) { x } else { return; };
+        let info = if let Some(x) = self.sent_packets.remove(&packet) {
+            x
+        } else {
+            return;
+        };
         if info.bytes != 0 {
             // Congestion control
             self.bytes_in_flight -= info.bytes as u64;
@@ -2211,7 +3088,8 @@ impl Connection {
                     self.congestion_window += info.bytes as u64;
                 } else {
                     // Congestion avoidance.
-                    self.congestion_window += config.default_mss * info.bytes as u64 / self.congestion_window;
+                    self.congestion_window +=
+                        config.default_mss * info.bytes as u64 / self.congestion_window;
                 }
             }
         }
@@ -2230,8 +3108,11 @@ impl Connection {
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
-            if let stream::SendState::ResetSent { stop_reason } = self.streams.get_mut(&id).unwrap().send_mut().unwrap().state {
-                self.streams.get_mut(&id).unwrap().send_mut().unwrap().state = stream::SendState::ResetRecvd { stop_reason };
+            if let stream::SendState::ResetSent { stop_reason } =
+                self.streams.get_mut(&id).unwrap().send_mut().unwrap().state
+            {
+                self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
+                    stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.maybe_cleanup(id);
                 }
@@ -2239,12 +3120,18 @@ impl Connection {
         }
         for frame in info.retransmits.stream {
             let recvd = {
-                let ss = if let Some(x) = self.streams.get_mut(&frame.id) { x.send_mut().unwrap() } else { continue; };
+                let ss = if let Some(x) = self.streams.get_mut(&frame.id) {
+                    x.send_mut().unwrap()
+                } else {
+                    continue;
+                };
                 ss.bytes_in_flight -= frame.data.len() as u64;
                 if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
                     ss.state = stream::SendState::DataRecvd;
                     true
-                } else { false }
+                } else {
+                    false
+                }
             };
             if recvd {
                 self.maybe_cleanup(frame.id);
@@ -2297,14 +3184,17 @@ impl Connection {
             if lost_nonack && !self.in_recovery(largest_lost) {
                 self.end_of_recovery = self.largest_sent_packet;
                 // *= factor
-                self.congestion_window = (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
+                self.congestion_window =
+                    (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
                 self.congestion_window = cmp::max(self.congestion_window, config.minimum_window);
                 self.ssthresh = self.congestion_window;
             }
         }
     }
 
-    fn in_recovery(&self, packet: u64) -> bool { packet <= self.end_of_recovery }
+    fn in_recovery(&self, packet: u64) -> bool {
+        packet <= self.end_of_recovery
+    }
 
     fn set_loss_detection_alarm(&mut self, config: &Config) {
         if self.bytes_in_flight == 0 {
@@ -2320,10 +3210,11 @@ impl Connection {
             } else {
                 alarm_duration = 2 * self.smoothed_rtt;
             }
-            alarm_duration = cmp::max(alarm_duration + self.max_ack_delay,
-                                      config.min_tlp_timeout);
+            alarm_duration = cmp::max(alarm_duration + self.max_ack_delay, config.min_tlp_timeout);
             alarm_duration = alarm_duration * 2u64.pow(self.handshake_count);
-            self.set_loss_detection = Some(Some(self.time_of_last_sent_handshake_packet + alarm_duration));
+            self.set_loss_detection = Some(Some(
+                self.time_of_last_sent_handshake_packet + alarm_duration,
+            ));
             return;
         }
 
@@ -2335,12 +3226,16 @@ impl Connection {
             alarm_duration = self.rto(config);
             if self.tlp_count < config.max_tlps {
                 // Tail Loss Probe
-                let tlp_duration = cmp::max((3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
-                                            config.min_tlp_timeout);
+                let tlp_duration = cmp::max(
+                    (3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
+                    config.min_tlp_timeout,
+                );
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
         }
-        self.set_loss_detection = Some(Some(self.time_of_last_sent_retransmittable_packet + alarm_duration));
+        self.set_loss_detection = Some(Some(
+            self.time_of_last_sent_retransmittable_packet + alarm_duration,
+        ));
     }
 
     /// Retransmit time-out
@@ -2362,12 +3257,16 @@ impl Connection {
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we receive a new handshake packet.
     fn handshake_cleanup(&mut self, config: &Config) {
-        if !self.awaiting_handshake { return; }
+        if !self.awaiting_handshake {
+            return;
+        }
         self.awaiting_handshake = false;
         self.handshake_pending = Retransmits::default();
         let mut packets = Vec::new();
         for (&packet, info) in &self.sent_packets {
-            if info.handshake { packets.push(packet); }
+            if info.handshake {
+                packets.push(packet);
+            }
         }
         for packet in packets {
             self.on_packet_acked(config, packet);
@@ -2384,7 +3283,13 @@ impl Connection {
         Some(data)
     }
 
-    fn decrypt(&self, handshake: bool, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+    fn decrypt(
+        &self,
+        handshake: bool,
+        packet: u64,
+        header: &[u8],
+        payload: &[u8],
+    ) -> Option<Vec<u8>> {
         if handshake {
             self.handshake_crypto.decrypt(packet, header, payload)
         } else {
@@ -2393,7 +3298,10 @@ impl Connection {
                     return prev.decrypt(packet, header, payload);
                 }
             }
-            self.crypto.as_ref().unwrap().decrypt(packet, header, payload)
+            self.crypto
+                .as_ref()
+                .unwrap()
+                .decrypt(packet, header, payload)
         }
     }
 
@@ -2407,7 +3315,9 @@ impl Connection {
             self.data_sent += data.len() as u64;
         }
         self.pending.stream.push_back(frame::Stream {
-            offset, fin: false, data,
+            offset,
+            fin: false,
+            data,
             id: stream,
         });
     }
@@ -2416,7 +3326,10 @@ impl Connection {
         let established = match *self.state.as_ref().unwrap() {
             State::Handshake(_) => false,
             State::Established(_) => true,
-            ref e => { assert!(e.is_closed()); return None; }
+            ref e => {
+                assert!(e.is_closed());
+                return None;
+            }
         };
 
         let mut buf = Vec::new();
@@ -2430,12 +3343,21 @@ impl Connection {
 
         {
             let pending;
-            if (!established || self.awaiting_handshake) && (!self.handshake_pending.is_empty() || (!self.pending_acks.is_empty() && self.permit_ack_only)) {
+            if (!established || self.awaiting_handshake)
+                && (!self.handshake_pending.is_empty()
+                    || (!self.pending_acks.is_empty() && self.permit_ack_only))
+            {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
-                let ty = if self.side == Side::Client && self.handshake_pending.stream.front().map_or(false, |x| x.offset == 0) {
+                let ty = if self.side == Side::Client
+                    && self
+                        .handshake_pending
+                        .stream
+                        .front()
+                        .map_or(false, |x| x.offset == 0)
+                {
                     match *self.state.as_mut().unwrap() {
                         State::Handshake(ref mut state) => {
                             if state.clienthello_packet.is_none() {
@@ -2451,14 +3373,19 @@ impl Connection {
                     packet::HANDSHAKE
                 };
                 Header::Long {
-                    ty, number: number as u32, source_id: self.local_id.clone(), destination_id: self.remote_id.clone()
+                    ty,
+                    number: number as u32,
+                    source_id: self.local_id.clone(),
+                    destination_id: self.remote_id.clone(),
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
                 crypto = Crypto::Handshake;
             } else if established || (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
                 // Send 0RTT or 1RTT data
                 is_initial = false;
-                if self.congestion_blocked() || self.pending.is_empty() && (!self.permit_ack_only || self.pending_acks.is_empty())
+                if self.congestion_blocked()
+                    || self.pending.is_empty()
+                        && (!self.permit_ack_only || self.pending_acks.is_empty())
                 {
                     return None;
                 }
@@ -2469,15 +3396,17 @@ impl Connection {
                 if !established {
                     crypto = Crypto::ZeroRtt;
                     Header::Long {
-                        ty: packet::ZERO_RTT, number: number as u32,
-                        source_id: self.local_id.clone(), destination_id: self.initial_id.clone()
+                        ty: packet::ZERO_RTT,
+                        number: number as u32,
+                        source_id: self.local_id.clone(),
+                        destination_id: self.initial_id.clone(),
                     }.encode(&mut buf);
                 } else {
                     crypto = Crypto::OneRtt;
                     Header::Short {
                         id: self.remote_id.clone(),
                         number: PacketNumber::new(number, self.largest_acked_packet),
-                        key_phase: self.key_phase
+                        key_phase: self.key_phase,
                     }.encode(&mut buf);
                 }
 
@@ -2522,21 +3451,40 @@ impl Connection {
 
             // RST_STREAM
             while buf.len() + 19 < max_size {
-                let (id, error_code) = if let Some(x) = pending.rst_stream.pop() { x } else { break; };
-                let stream = if let Some(x) = self.streams.get(&id) { x } else { continue; };
+                let (id, error_code) = if let Some(x) = pending.rst_stream.pop() {
+                    x
+                } else {
+                    break;
+                };
+                let stream = if let Some(x) = self.streams.get(&id) {
+                    x
+                } else {
+                    continue;
+                };
                 trace!(log, "RST_STREAM"; "stream" => id.0);
                 sent.rst_stream.push((id, error_code));
                 frame::RstStream {
-                    id, error_code,
+                    id,
+                    error_code,
                     final_offset: stream.send().unwrap().offset,
                 }.encode(&mut buf);
             }
 
             // STOP_SENDING
             while buf.len() + 11 < max_size {
-                let (id, error_code) = if let Some(x) = pending.stop_sending.pop() { x } else { break; };
-                let stream = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
-                if stream.is_finished() { continue; }
+                let (id, error_code) = if let Some(x) = pending.stop_sending.pop() {
+                    x
+                } else {
+                    break;
+                };
+                let stream = if let Some(x) = self.streams.get(&id) {
+                    x.recv().unwrap()
+                } else {
+                    continue;
+                };
+                if stream.is_finished() {
+                    continue;
+                }
                 trace!(log, "STOP_SENDING"; "stream" => id.0);
                 sent.stop_sending.push((id, error_code));
                 buf.write(frame::Type::STOP_SENDING);
@@ -2555,10 +3503,20 @@ impl Connection {
 
             // MAX_STREAM_DATA
             while buf.len() + 17 < max_size {
-                let id = if let Some(x) = pending.max_stream_data.iter().next() { *x } else { break; };
+                let id = if let Some(x) = pending.max_stream_data.iter().next() {
+                    *x
+                } else {
+                    break;
+                };
                 pending.max_stream_data.remove(&id);
-                let rs = if let Some(x) = self.streams.get(&id) { x.recv().unwrap() } else { continue; };
-                if rs.is_finished() { continue; }
+                let rs = if let Some(x) = self.streams.get(&id) {
+                    x.recv().unwrap()
+                } else {
+                    continue;
+                };
+                if rs.is_finished() {
+                    continue;
+                }
                 sent.max_stream_data.insert(id);
                 trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
                 buf.write(frame::Type::MAX_STREAM_DATA);
@@ -2572,7 +3530,11 @@ impl Connection {
                 sent.max_uni_stream_id = true;
                 trace!(log, "MAX_STREAM_ID (unidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(!self.side, Directionality::Uni, self.max_remote_uni_streams - 1));
+                buf.write(StreamId::new(
+                    !self.side,
+                    Directionality::Uni,
+                    self.max_remote_uni_streams - 1,
+                ));
             }
 
             // MAX_STREAM_ID bi
@@ -2581,13 +3543,26 @@ impl Connection {
                 sent.max_bi_stream_id = true;
                 trace!(log, "MAX_STREAM_ID (bidirectional)");
                 buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(!self.side, Directionality::Bi, self.max_remote_bi_streams - 1));
+                buf.write(StreamId::new(
+                    !self.side,
+                    Directionality::Bi,
+                    self.max_remote_bi_streams - 1,
+                ));
             }
 
             // STREAM
             while buf.len() + 25 < max_size {
-                let mut stream = if let Some(x) = pending.stream.pop_front() { x } else { break; };
-                if stream.id != StreamId(0) && self.streams.get(&stream.id).map_or(true, |s| s.send().unwrap().state.was_reset()) {
+                let mut stream = if let Some(x) = pending.stream.pop_front() {
+                    x
+                } else {
+                    break;
+                };
+                if stream.id != StreamId(0)
+                    && self
+                        .streams
+                        .get(&stream.id)
+                        .map_or(true, |s| s.send().unwrap().state.was_reset())
+                {
                     continue;
                 }
                 let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
@@ -2603,14 +3578,20 @@ impl Connection {
                 frame.encode(true, &mut buf);
                 sent.stream.push_back(frame);
                 if !stream.data.is_empty() {
-                    let stream = frame::Stream { offset: stream.offset + len as u64, ..stream };
+                    let stream = frame::Stream {
+                        offset: stream.offset + len as u64,
+                        ..stream
+                    };
                     pending.stream.push_front(stream);
                 }
             }
         }
 
         if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-            buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, frame::Type::PADDING.into());
+            buf.resize(
+                MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
+                frame::Type::PADDING.into(),
+            );
         }
         if crypto != Crypto::OneRtt {
             set_payload_length(&mut buf, header_len as usize);
@@ -2622,23 +3603,44 @@ impl Connection {
         // double-transmitting acks all the time.
         self.permit_ack_only &= acks.is_empty();
 
-        self.on_packet_sent(config, now, number, SentPacket {
-            acks,
-            time: now, bytes: if ack_only { 0 } else { buf.len() as u16 },
-            handshake: crypto == Crypto::Handshake,
-            retransmits: sent,
-        });
+        self.on_packet_sent(
+            config,
+            now,
+            number,
+            SentPacket {
+                acks,
+                time: now,
+                bytes: if ack_only { 0 } else { buf.len() as u16 },
+                handshake: crypto == Crypto::Handshake,
+                retransmits: sent,
+            },
+        );
 
         Some(buf)
     }
 
     fn encrypt(&self, crypto: Crypto, number: u64, buf: &mut Vec<u8>, header_len: u16) {
         let payload = match crypto {
-            Crypto::ZeroRtt => self.zero_rtt_crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
-            Crypto::Handshake => self.handshake_crypto.encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
-            Crypto::OneRtt => self.crypto.as_ref().unwrap().encrypt(number, &buf[0..header_len as usize], &buf[header_len as usize..]),
+            Crypto::ZeroRtt => self.zero_rtt_crypto.as_ref().unwrap().encrypt(
+                number,
+                &buf[0..header_len as usize],
+                &buf[header_len as usize..],
+            ),
+            Crypto::Handshake => self.handshake_crypto.encrypt(
+                number,
+                &buf[0..header_len as usize],
+                &buf[header_len as usize..],
+            ),
+            Crypto::OneRtt => self.crypto.as_ref().unwrap().encrypt(
+                number,
+                &buf[0..header_len as usize],
+                &buf[header_len as usize..],
+            ),
         };
-        debug_assert_eq!(payload.len(), buf.len() - header_len as usize + AEAD_TAG_SIZE);
+        debug_assert_eq!(
+            payload.len(),
+            buf.len() - header_len as usize + AEAD_TAG_SIZE
+        );
         buf.truncate(header_len as usize);
         buf.extend_from_slice(&payload);
     }
@@ -2650,14 +3652,23 @@ impl Connection {
         Header::Short {
             id: self.remote_id.clone(),
             number: PacketNumber::new(number, self.largest_acked_packet),
-            key_phase: self.key_phase
+            key_phase: self.key_phase,
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
         self.encrypt(Crypto::OneRtt, number, &mut buf, header_len);
-        self.on_packet_sent(config, now, number, SentPacket {
-            time: now, bytes: buf.len() as u16, handshake: false, acks: RangeSet::new(), retransmits: Retransmits::default()
-        });
+        self.on_packet_sent(
+            config,
+            now,
+            number,
+            SentPacket {
+                time: now,
+                bytes: buf.len() as u16,
+                handshake: false,
+                acks: RangeSet::new(),
+                retransmits: Retransmits::default(),
+            },
+        );
         buf.into()
     }
 
@@ -2667,7 +3678,7 @@ impl Connection {
         Header::Short {
             id: self.remote_id.clone(),
             number: PacketNumber::new(number, self.largest_acked_packet),
-            key_phase: self.key_phase
+            key_phase: self.key_phase,
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         let max_len = self.mtu - header_len - AEAD_TAG_SIZE as u16;
@@ -2681,12 +3692,19 @@ impl Connection {
 
     fn set_params(&mut self, params: TransportParameters) {
         self.max_bi_streams = params.initial_max_streams_bidi as u64;
-        if self.side == Side::Client { self.max_bi_streams += 1; } // Account for TLS stream
+        if self.side == Side::Client {
+            self.max_bi_streams += 1;
+        } // Account for TLS stream
         self.max_uni_streams = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.max_remote_bi_streams {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
-            self.streams.get_mut(&id).unwrap().send_mut().unwrap().max_data = params.initial_max_stream_data as u64;
+            self.streams
+                .get_mut(&id)
+                .unwrap()
+                .send_mut()
+                .unwrap()
+                .max_data = params.initial_max_stream_data as u64;
         }
         self.params = params;
     }
@@ -2695,13 +3713,21 @@ impl Connection {
         let (id, mut stream) = match direction {
             Directionality::Uni if self.next_uni_stream < self.max_uni_streams => {
                 self.next_uni_stream += 1;
-                (StreamId::new(self.side, direction, self.next_uni_stream - 1), stream::Send::new().into())
+                (
+                    StreamId::new(self.side, direction, self.next_uni_stream - 1),
+                    stream::Send::new().into(),
+                )
             }
             Directionality::Bi if self.next_bi_stream < self.max_bi_streams => {
                 self.next_bi_stream += 1;
-                (StreamId::new(self.side, direction, self.next_bi_stream - 1), Stream::new_bi(config.stream_receive_window as u64))
+                (
+                    StreamId::new(self.side, direction, self.next_bi_stream - 1),
+                    Stream::new_bi(config.stream_receive_window as u64),
+                )
             }
-            _ => { return None; } // TODO: Queue STREAM_ID_BLOCKED
+            _ => {
+                return None;
+            } // TODO: Queue STREAM_ID_BLOCKED
         };
         stream.send_mut().unwrap().max_data = self.params.initial_max_stream_data as u64;
         let old = self.streams.insert(id, stream);
@@ -2736,7 +3762,12 @@ impl Connection {
     }
 
     fn finish(&mut self, id: StreamId) {
-        let ss = self.streams.get_mut(&id).expect("unknown stream").send_mut().expect("recv-only stream");
+        let ss = self
+            .streams
+            .get_mut(&id)
+            .expect("unknown stream")
+            .send_mut()
+            .expect("recv-only stream");
         assert_eq!(ss.state, stream::SendState::Ready);
         ss.state = stream::SendState::DataSent;
         for frame in &mut self.pending.stream {
@@ -2745,7 +3776,12 @@ impl Connection {
                 return;
             }
         }
-        self.pending.stream.push_back(frame::Stream { id, data: Bytes::new(), offset: ss.offset, fin: true });
+        self.pending.stream.push_back(frame::Stream {
+            id,
+            data: Bytes::new(),
+            offset: ss.offset,
+            fin: true,
+        });
     }
 
     fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
@@ -2784,7 +3820,10 @@ impl Connection {
     fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
-        assert!(!rs.unordered, "cannot perform ordered reads following unordered reads on a stream");
+        assert!(
+            !rs.unordered,
+            "cannot perform ordered reads following unordered reads on a stream"
+        );
 
         for (data, offset) in rs.buffered.drain(..) {
             rs.assembler.insert(offset, &data);
@@ -2818,10 +3857,16 @@ impl Connection {
     }
 
     fn stop_sending(&mut self, id: StreamId, error_code: u16) {
-        assert!(id.directionality() == Directionality::Bi || id.initiator() != self.side,
-                "only streams supporting incoming data may be reset");
-        let stream = self.streams.get(&id).expect("stream must have begun sending to be stopped")
-            .recv().unwrap();
+        assert!(
+            id.directionality() == Directionality::Bi || id.initiator() != self.side,
+            "only streams supporting incoming data may be reset"
+        );
+        let stream = self
+            .streams
+            .get(&id)
+            .expect("stream must have begun sending to be stopped")
+            .recv()
+            .unwrap();
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
             self.pending.stop_sending.push((id, error_code));
@@ -2836,11 +3881,22 @@ impl Connection {
         self.data_sent >= self.max_data || self.congestion_blocked()
     }
 
-    fn decrypt_packet(&mut self, handshake: bool, packet: Packet) -> Result<(Vec<u8>, u64), Option<TransportError>> {
+    fn decrypt_packet(
+        &mut self,
+        handshake: bool,
+        packet: Packet,
+    ) -> Result<(Vec<u8>, u64), Option<TransportError>> {
         let (key_phase, number) = match packet.header {
-            Header::Short { key_phase, number, .. } if !handshake => (key_phase, number),
+            Header::Short {
+                key_phase, number, ..
+            } if !handshake =>
+            {
+                (key_phase, number)
+            }
             Header::Long { number, .. } if handshake => (false, PacketNumber::U32(number)),
-            _ => { return Err(None); }
+            _ => {
+                return Err(None);
+            }
         };
         let number = number.expand(self.rx_packet);
         if key_phase != self.key_phase {
@@ -2854,7 +3910,9 @@ impl Connection {
                 // Invalid key update
                 Err(None)
             }
-        } else if let Some(payload) = self.decrypt(handshake, number, &packet.header_data, &packet.payload) {
+        } else if let Some(payload) =
+            self.decrypt(handshake, number, &packet.header_data, &packet.payload)
+        {
             Ok((payload, number))
         } else {
             // Unable to authenticate
@@ -2865,8 +3923,12 @@ impl Connection {
     fn get_recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Stream>, TransportError> {
         if self.side == id.initiator() {
             match id.directionality() {
-                Directionality::Uni => { return Err(TransportError::STREAM_STATE_ERROR); }
-                Directionality::Bi if id.index() >= self.next_bi_stream => { return Err(TransportError::STREAM_STATE_ERROR); }
+                Directionality::Uni => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
+                Directionality::Bi if id.index() >= self.next_bi_stream => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
                 Directionality::Bi => {}
             };
         } else {
@@ -2882,20 +3944,33 @@ impl Connection {
     }
 
     fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
-        if self.state.as_ref().unwrap().is_closed() { return Err(WriteError::Blocked); }
+        if self.state.as_ref().unwrap().is_closed() {
+            return Err(WriteError::Blocked);
+        }
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
         if self.blocked() {
             self.blocked_streams.insert(stream);
             return Err(WriteError::Blocked);
         }
         let (stop_reason, stream_budget) = {
-            let ss = self.streams.get_mut(&stream).expect("stream already closed").send_mut().unwrap();
-            (match ss.state {
-                stream::SendState::ResetSent  { ref mut stop_reason }
-                | stream::SendState::ResetRecvd { ref mut stop_reason } => stop_reason.take(),
-                _ => None,
-            },
-             ss.max_data - ss.offset)
+            let ss = self
+                .streams
+                .get_mut(&stream)
+                .expect("stream already closed")
+                .send_mut()
+                .unwrap();
+            (
+                match ss.state {
+                    stream::SendState::ResetSent {
+                        ref mut stop_reason,
+                    }
+                    | stream::SendState::ResetRecvd {
+                        ref mut stop_reason,
+                    } => stop_reason.take(),
+                    _ => None,
+                },
+                ss.max_data - ss.offset,
+            )
         };
 
         if let Some(error_code) = stop_reason {
@@ -2945,8 +4020,16 @@ pub enum ConnectError {
     Tls(ssl::Error),
 }
 
-impl From<ssl::Error> for ConnectError { fn from(x: ssl::Error) -> Self { ConnectError::Tls(x) } }
-impl From<openssl::error::ErrorStack> for ConnectError { fn from(x: openssl::error::ErrorStack) -> Self { ConnectError::Tls(x.into()) } }
+impl From<ssl::Error> for ConnectError {
+    fn from(x: ssl::Error) -> Self {
+        ConnectError::Tls(x)
+    }
+}
+impl From<openssl::error::ErrorStack> for ConnectError {
+    fn from(x: openssl::error::ErrorStack) -> Self {
+        ConnectError::Tls(x.into())
+    }
+}
 
 #[derive(Debug, Clone)]
 enum Header {
@@ -2965,16 +4048,20 @@ enum Header {
         ty: u8,
         source_id: ConnectionId,
         destination_id: ConnectionId,
-    }
+    },
 }
 
 impl Header {
     fn destination_id(&self) -> &ConnectionId {
         use self::Header::*;
         match *self {
-            Long { ref destination_id, .. } => destination_id,
+            Long {
+                ref destination_id, ..
+            } => destination_id,
             Short { ref id, .. } => id,
-            VersionNegotiate { ref destination_id, .. } => destination_id,
+            VersionNegotiate {
+                ref destination_id, ..
+            } => destination_id,
         }
     }
 
@@ -2996,7 +4083,9 @@ enum PacketNumber {
 
 impl PacketNumber {
     fn new(n: u64, largest_acked: u64) -> Self {
-        if largest_acked == 0 { return PacketNumber::U32(n as u32); }
+        if largest_acked == 0 {
+            return PacketNumber::U32(n as u32);
+        }
         let range = (n - largest_acked) / 2;
         if range < 1 << 8 {
             PacketNumber::U8(n as u8)
@@ -3041,8 +4130,8 @@ impl PacketNumber {
             U16(x) => x as u64,
             U32(x) => x as u64,
         };
-        if t > d/2 {
-            x + d * ((t + d/2 - x) / d)
+        if t > d / 2 {
+            x + d * ((t + d / 2 - x) / d)
         } else {
             x % d
         }
@@ -3055,33 +4144,53 @@ impl Header {
     fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
         match *self {
-            Long { ty, ref source_id, ref destination_id, number } => {
+            Long {
+                ty,
+                ref source_id,
+                ref destination_id,
+                number,
+            } => {
                 w.write(0b10000000 | ty);
                 w.write(VERSION);
                 let mut dcil = destination_id.len() as u8;
-                if dcil > 0 { dcil -= 3; }
+                if dcil > 0 {
+                    dcil -= 3;
+                }
                 let mut scil = source_id.len() as u8;
-                if scil > 0 { scil -= 3; }
+                if scil > 0 {
+                    scil -= 3;
+                }
                 w.write(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 w.write(number);
             }
-            Short { ref id, number, key_phase } => {
-                let ty = number.ty() | 0x30
-                    | if key_phase { KEY_PHASE_BIT } else { 0 };
+            Short {
+                ref id,
+                number,
+                key_phase,
+            } => {
+                let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
                 w.write(ty);
                 w.put_slice(id);
                 number.encode(w);
             }
-            VersionNegotiate { ty, ref source_id, ref destination_id } => {
+            VersionNegotiate {
+                ty,
+                ref source_id,
+                ref destination_id,
+            } => {
                 w.write(0x80 | ty);
                 w.write::<u32>(0);
                 let mut dcil = destination_id.len() as u8;
-                if dcil > 0 { dcil -= 3; }
+                if dcil > 0 {
+                    dcil -= 3;
+                }
                 let mut scil = source_id.len() as u8;
-                if scil > 0 { scil -= 3; }
+                if scil > 0 {
+                    scil -= 3;
+                }
                 w.write(dcil << 4 | scil);
                 w.put_slice(destination_id);
                 w.put_slice(source_id);
@@ -3099,13 +4208,18 @@ struct Packet {
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum HeaderError {
     #[fail(display = "unsupported version")]
-    UnsupportedVersion { source: ConnectionId, destination: ConnectionId },
+    UnsupportedVersion {
+        source: ConnectionId,
+        destination: ConnectionId,
+    },
     #[fail(display = "invalid header: {}", _0)]
     InvalidHeader(&'static str),
 }
 
 impl From<coding::UnexpectedEnd> for HeaderError {
-    fn from(_: coding::UnexpectedEnd) -> Self { HeaderError::InvalidHeader("unexpected end of packet") }
+    fn from(_: coding::UnexpectedEnd) -> Self {
+        HeaderError::InvalidHeader("unexpected end of packet")
+    }
 }
 
 impl Packet {
@@ -3119,10 +4233,18 @@ impl Packet {
             let version = buf.get::<u32>()?;
             let ci_lengths = buf.get::<u8>()?;
             let mut dcil = ci_lengths >> 4;
-            if dcil > 0 { dcil += 3 };
+            if dcil > 0 {
+                dcil += 3
+            };
             let mut scil = ci_lengths & 0xF;
-            if scil > 0 { scil += 3 };
-            if buf.remaining() < (dcil + scil) as usize { return Err(HeaderError::InvalidHeader("connection IDs longer than packet")); }
+            if scil > 0 {
+                scil += 3
+            };
+            if buf.remaining() < (dcil + scil) as usize {
+                return Err(HeaderError::InvalidHeader(
+                    "connection IDs longer than packet",
+                ));
+            }
             buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
             let destination_id = ConnectionId::new(cid_stage, dcil as usize);
             buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
@@ -3131,26 +4253,58 @@ impl Packet {
                 0 => {
                     let header_data = packet.slice(0, buf.position() as usize);
                     let payload = packet.slice(buf.position() as usize, packet.len());
-                    (Packet {
-                        header: Header::VersionNegotiate { ty, source_id, destination_id },
-                        header_data, payload,
-                    }, Bytes::new())
+                    (
+                        Packet {
+                            header: Header::VersionNegotiate {
+                                ty,
+                                source_id,
+                                destination_id,
+                            },
+                            header_data,
+                            payload,
+                        },
+                        Bytes::new(),
+                    )
                 }
                 VERSION => {
                     let len = buf.get_var()?;
                     let number = buf.get()?;
                     let header_data = packet.slice(0, buf.position() as usize);
-                    if buf.position() + len > packet.len() as u64 { return Err(HeaderError::InvalidHeader("payload longer than packet")); }
-                    let payload = if len == 0 { Bytes::new() } else { packet.slice(buf.position() as usize, (buf.position() + len) as usize) };
-                    (Packet {
-                        header: Header::Long { ty, source_id, destination_id, number },
-                        header_data, payload,
-                    }, packet.slice((buf.position() + len) as usize, packet.len()))
+                    if buf.position() + len > packet.len() as u64 {
+                        return Err(HeaderError::InvalidHeader("payload longer than packet"));
+                    }
+                    let payload = if len == 0 {
+                        Bytes::new()
+                    } else {
+                        packet.slice(buf.position() as usize, (buf.position() + len) as usize)
+                    };
+                    (
+                        Packet {
+                            header: Header::Long {
+                                ty,
+                                source_id,
+                                destination_id,
+                                number,
+                            },
+                            header_data,
+                            payload,
+                        },
+                        packet.slice((buf.position() + len) as usize, packet.len()),
+                    )
                 }
-                _ => return Err(HeaderError::UnsupportedVersion { source: source_id, destination: destination_id }),
+                _ => {
+                    return Err(HeaderError::UnsupportedVersion {
+                        source: source_id,
+                        destination: destination_id,
+                    })
+                }
             })
         } else {
-            if buf.remaining() < dest_id_len { return Err(HeaderError::InvalidHeader("destination connection ID longer than packet")); }
+            if buf.remaining() < dest_id_len {
+                return Err(HeaderError::InvalidHeader(
+                    "destination connection ID longer than packet",
+                ));
+            }
             buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
             let id = ConnectionId::new(cid_stage, dest_id_len);
             let key_phase = ty & KEY_PHASE_BIT != 0;
@@ -3158,14 +4312,24 @@ impl Packet {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
                 0x2 => PacketNumber::U32(buf.get()?),
-                _ => { return Err(HeaderError::InvalidHeader("unknown packet type")); }
+                _ => {
+                    return Err(HeaderError::InvalidHeader("unknown packet type"));
+                }
             };
             let header_data = packet.slice(0, buf.position() as usize);
             let payload = packet.slice(buf.position() as usize, packet.len());
-            Ok((Packet {
-                header: Header::Short { id, number, key_phase },
-                header_data, payload,
-            }, Bytes::new()))
+            Ok((
+                Packet {
+                    header: Header::Short {
+                        id,
+                        number,
+                        key_phase,
+                    },
+                    header_data,
+                    payload,
+                },
+                Bytes::new(),
+            ))
         }
     }
 }
@@ -3183,13 +4347,16 @@ enum State {
 impl State {
     fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
         State::Closed(state::Closed {
-            reason: reason.into(), app_closed: false,
+            reason: reason.into(),
+            app_closed: false,
         })
     }
 
     fn handshake_failed<R: Into<state::CloseReason>>(reason: R, alert: Option<Box<[u8]>>) -> Self {
         State::HandshakeFailed(state::HandshakeFailed {
-            reason: reason.into(), alert, app_closed: false,
+            reason: reason.into(),
+            alert,
+            app_closed: false,
         })
     }
 
@@ -3213,7 +4380,11 @@ impl State {
     }
 
     fn is_drained(&self) -> bool {
-        if let State::Drained = *self { true } else { false }
+        if let State::Drained = *self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -3232,7 +4403,8 @@ mod state {
         pub tls: SslStream<MemoryStream>,
     }
 
-    pub struct HandshakeFailed { // Closed
+    pub struct HandshakeFailed {
+        // Closed
         pub reason: CloseReason,
         pub alert: Option<Box<[u8]>>,
         pub app_closed: bool,
@@ -3244,9 +4416,21 @@ mod state {
         Application(frame::ApplicationClose),
     }
 
-    impl From<TransportError> for CloseReason { fn from(x: TransportError) -> Self { CloseReason::Connection(x.into()) } }
-    impl From<frame::ConnectionClose> for CloseReason { fn from(x: frame::ConnectionClose) -> Self { CloseReason::Connection(x) } }
-    impl From<frame::ApplicationClose> for CloseReason { fn from(x: frame::ApplicationClose) -> Self { CloseReason::Application(x) } }
+    impl From<TransportError> for CloseReason {
+        fn from(x: TransportError) -> Self {
+            CloseReason::Connection(x.into())
+        }
+    }
+    impl From<frame::ConnectionClose> for CloseReason {
+        fn from(x: frame::ConnectionClose) -> Self {
+            CloseReason::Connection(x)
+        }
+    }
+    impl From<frame::ApplicationClose> for CloseReason {
+        fn from(x: frame::ApplicationClose) -> Self {
+            CloseReason::Application(x)
+        }
+    }
 
     pub struct Closed {
         pub reason: CloseReason,
@@ -3258,24 +4442,36 @@ mod state {
     }
 
     impl From<Handshake> for Draining {
-        fn from(_: Handshake) -> Self { Draining { app_closed: false } }
+        fn from(_: Handshake) -> Self {
+            Draining { app_closed: false }
+        }
     }
 
     impl From<HandshakeFailed> for Draining {
-        fn from(x: HandshakeFailed) -> Self { Draining { app_closed: x.app_closed } }
+        fn from(x: HandshakeFailed) -> Self {
+            Draining {
+                app_closed: x.app_closed,
+            }
+        }
     }
 
     impl From<Established> for Draining {
-        fn from(_: Established) -> Self { Draining { app_closed: false } }
+        fn from(_: Established) -> Self {
+            Draining { app_closed: false }
+        }
     }
 
     impl From<Closed> for Draining {
-        fn from(x: Closed) -> Self { Draining { app_closed: x.app_closed } }
+        fn from(x: Closed) -> Self {
+            Draining {
+                app_closed: x.app_closed,
+            }
+        }
     }
 }
 
 struct CookieFactory {
-    mac_key: [u8; 64]
+    mac_key: [u8; 64],
 }
 
 const COOKIE_MAC_BYTES: usize = 64;
@@ -3306,7 +4502,9 @@ impl CookieFactory {
 
     fn verify(&self, conn: &ConnectionInfo, cookie_data: &[u8]) -> bool {
         let expected = self.generate_mac(conn);
-        if !constant_time_eq(cookie_data, &expected) { return false; }
+        if !constant_time_eq(cookie_data, &expected) {
+            return false;
+        }
         true
     }
 }
@@ -3317,9 +4515,10 @@ struct ConnectionInfo {
 }
 
 lazy_static! {
-    static ref CONNECTION_INFO_INDEX: ex_data::Index<Ssl, ConnectionInfo> = Ssl::new_ex_index().unwrap();
-    static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, Result<TransportParameters, ::transport_parameters::Error>>
-        = Ssl::new_ex_index().unwrap();
+    static ref CONNECTION_INFO_INDEX: ex_data::Index<Ssl, ConnectionInfo> =
+        Ssl::new_ex_index().unwrap();
+    static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, Result<TransportParameters, ::transport_parameters::Error>> =
+        Ssl::new_ex_index().unwrap();
 }
 
 /// Events of interest to the application
@@ -3331,7 +4530,7 @@ pub enum Event {
     },
     /// A connection was lost.
     ConnectionLost {
-        reason: ConnectionError
+        reason: ConnectionError,
     },
     /// A closed connection was dropped.
     ConnectionDrained,
@@ -3376,7 +4575,7 @@ pub enum Io {
     TimerStop {
         connection: ConnectionHandle,
         timer: Timer,
-    }
+    },
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -3387,7 +4586,12 @@ pub enum Timer {
 }
 
 impl slog::Value for Timer {
-    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
@@ -3416,7 +4620,9 @@ pub enum ConnectionError {
 }
 
 impl From<TransportError> for ConnectionError {
-    fn from(x: TransportError) -> Self { ConnectionError::TransportError { error_code: x } }
+    fn from(x: TransportError) -> Self {
+        ConnectionError::TransportError { error_code: x }
+    }
 }
 
 impl From<ConnectionError> for io::Error {
@@ -3425,9 +4631,17 @@ impl From<ConnectionError> for io::Error {
         match x {
             TimedOut => io::Error::new(io::ErrorKind::TimedOut, "timed out"),
             Reset => io::Error::new(io::ErrorKind::ConnectionReset, "reset by peer"),
-            ApplicationClosed { reason } => io::Error::new(io::ErrorKind::ConnectionAborted, format!("closed by peer application: {}", reason)),
-            ConnectionClosed { reason } => io::Error::new(io::ErrorKind::ConnectionAborted, format!("peer detected an error: {}", reason)),
-            TransportError { error_code } => io::Error::new(io::ErrorKind::Other, format!("{}", error_code)),
+            ApplicationClosed { reason } => io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("closed by peer application: {}", reason),
+            ),
+            ConnectionClosed { reason } => io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("peer detected an error: {}", reason),
+            ),
+            TransportError { error_code } => {
+                io::Error::new(io::ErrorKind::Other, format!("{}", error_code))
+            }
             VersionMismatch => io::Error::new(io::ErrorKind::Other, "version mismatch"),
         }
     }
@@ -3446,26 +4660,46 @@ fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) -> boo
         match frame {
             Frame::Padding => {}
             Frame::Ack(_) => {}
-            Frame::Stream(frame::Stream { id: StreamId(0), fin: false, offset, data, .. }) => {
+            Frame::Stream(frame::Stream {
+                id: StreamId(0),
+                fin: false,
+                offset,
+                data,
+                ..
+            }) => {
                 stream.insert(offset, &data);
             }
-            x => { debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty()); return false; } // Invalid packet
+            x => {
+                debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
+                return false;
+            } // Invalid packet
         }
     }
     if stream.read_blocked() {
         debug!(log, "initial/retry packet missing stream frame(s)");
         false
-    } else { true }
+    } else {
+        true
+    }
 }
 
-fn handshake_close<R>(crypto: &CryptoContext,
-                      remote_id: &ConnectionId, local_id: &ConnectionId, packet_number: u32,
-                      reason: R, tls_alert: Option<&[u8]>) -> Box<[u8]>
-    where R: Into<state::CloseReason>
+fn handshake_close<R>(
+    crypto: &CryptoContext,
+    remote_id: &ConnectionId,
+    local_id: &ConnectionId,
+    packet_number: u32,
+    reason: R,
+    tls_alert: Option<&[u8]>,
+) -> Box<[u8]>
+where
+    R: Into<state::CloseReason>,
 {
     let mut buf = Vec::<u8>::new();
     Header::Long {
-        ty: packet::HANDSHAKE, destination_id: remote_id.clone(), source_id: local_id.clone(), number: packet_number
+        ty: packet::HANDSHAKE,
+        destination_id: remote_id.clone(),
+        source_id: local_id.clone(),
+        number: packet_number,
     }.encode(&mut buf);
     let header_len = buf.len();
     let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
@@ -3475,11 +4709,20 @@ fn handshake_close<R>(crypto: &CryptoContext,
     }
     if let Some(data) = tls_alert {
         if !data.is_empty() {
-            frame::Stream { id: StreamId(0), fin: false, offset: 0, data }.encode(false, &mut buf);
+            frame::Stream {
+                id: StreamId(0),
+                fin: false,
+                offset: 0,
+                data,
+            }.encode(false, &mut buf);
         }
     }
     set_payload_length(&mut buf, header_len);
-    let payload = crypto.encrypt(packet_number as u64, &buf[0..header_len], &buf[header_len..]);
+    let payload = crypto.encrypt(
+        packet_number as u64,
+        &buf[0..header_len],
+        &buf[header_len..],
+    );
     debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
     buf.truncate(header_len);
     buf.extend_from_slice(&payload);
@@ -3489,10 +4732,13 @@ fn handshake_close<R>(crypto: &CryptoContext,
 fn set_payload_length(packet: &mut [u8], header_len: usize) {
     let len = packet.len() - header_len + AEAD_TAG_SIZE;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
-    BigEndian::write_u16(&mut packet[header_len-6..], len as u16 | 0b01 << 14);
+    BigEndian::write_u16(&mut packet[header_len - 6..], len as u16 | 0b01 << 14);
 }
 
-const HANDSHAKE_SALT: [u8; 20] = [0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f, 0xe0, 0x6d, 0x6c, 0x38];
+const HANDSHAKE_SALT: [u8; 20] = [
+    0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f,
+    0xe0, 0x6d, 0x6c, 0x38,
+];
 
 #[derive(Clone)]
 pub struct CryptoState {
@@ -3509,7 +4755,16 @@ impl CryptoState {
     }
 
     fn update(&self, digest: MessageDigest, cipher: Cipher, side: Side) -> CryptoState {
-        let secret = hkdf::qexpand(digest, &self.secret, if side == Side::Client { b"client 1rtt" } else { b"server 1rtt" }, digest.size() as u16);
+        let secret = hkdf::qexpand(
+            digest,
+            &self.secret,
+            if side == Side::Client {
+                b"client 1rtt"
+            } else {
+                b"server 1rtt"
+            },
+            digest.size() as u16,
+        );
         Self::new(digest, cipher, secret)
     }
 }
@@ -3528,10 +4783,11 @@ impl ZeroRttCrypto {
         const LABEL: &str = "EXPORTER-QUIC 0rtt";
 
         let mut secret = vec![0; digest.size()];
-        tls.export_keying_material_early(&mut secret, &LABEL, b"").unwrap();
+        tls.export_keying_material_early(&mut secret, &LABEL, b"")
+            .unwrap();
         Self {
             state: CryptoState::new(digest, cipher, secret.into()),
-            cipher
+            cipher,
         }
     }
 
@@ -3542,7 +4798,14 @@ impl ZeroRttCrypto {
         for i in 0..12 {
             nonce[i] ^= self.state.iv[i];
         }
-        let mut buf = encrypt_aead(self.cipher, &self.state.key, Some(&nonce), header, payload, &mut tag).unwrap();
+        let mut buf = encrypt_aead(
+            self.cipher,
+            &self.state.key,
+            Some(&nonce),
+            header,
+            payload,
+            &mut tag,
+        ).unwrap();
         buf.extend_from_slice(&tag);
         buf
     }
@@ -3553,9 +4816,18 @@ impl ZeroRttCrypto {
         for i in 0..12 {
             nonce[i] ^= self.state.iv[i];
         }
-        if payload.len() < AEAD_TAG_SIZE { return None; }
+        if payload.len() < AEAD_TAG_SIZE {
+            return None;
+        }
         let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
-        decrypt_aead(self.cipher, &self.state.key, Some(&nonce), header, payload, tag).ok()
+        decrypt_aead(
+            self.cipher,
+            &self.state.key,
+            Some(&nonce),
+            header,
+            payload,
+            tag,
+        ).ok()
     }
 }
 
@@ -3572,11 +4844,26 @@ impl CryptoContext {
         let digest = MessageDigest::sha256();
         let cipher = Cipher::aes_128_gcm();
         let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
-        let (local_label, remote_label) = if side == Side::Client { (b"client hs", b"server hs") } else { (b"server hs", b"client hs") };
-        let local = CryptoState::new(digest, cipher, hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16));
-        let remote = CryptoState::new(digest, cipher, hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16));
+        let (local_label, remote_label) = if side == Side::Client {
+            (b"client hs", b"server hs")
+        } else {
+            (b"server hs", b"client hs")
+        };
+        let local = CryptoState::new(
+            digest,
+            cipher,
+            hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16),
+        );
+        let remote = CryptoState::new(
+            digest,
+            cipher,
+            hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16),
+        );
         CryptoContext {
-            local, remote, digest, cipher,
+            local,
+            remote,
+            digest,
+            cipher,
         }
     }
 
@@ -3588,16 +4875,25 @@ impl CryptoContext {
         const SERVER_LABEL: &str = "EXPORTER-QUIC server 1rtt";
         const CLIENT_LABEL: &str = "EXPORTER-QUIC client 1rtt";
 
-        let (local_label, remote_label) = if side == Side::Client { (CLIENT_LABEL, SERVER_LABEL) } else { (SERVER_LABEL, CLIENT_LABEL) };
+        let (local_label, remote_label) = if side == Side::Client {
+            (CLIENT_LABEL, SERVER_LABEL)
+        } else {
+            (SERVER_LABEL, CLIENT_LABEL)
+        };
         let mut local_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut local_secret, local_label, Some(b"")).unwrap();
+        tls.export_keying_material(&mut local_secret, local_label, Some(b""))
+            .unwrap();
         let local = CryptoState::new(digest, cipher, local_secret.into());
-        
+
         let mut remote_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut remote_secret, remote_label, Some(b"")).unwrap();
+        tls.export_keying_material(&mut remote_secret, remote_label, Some(b""))
+            .unwrap();
         let remote = CryptoState::new(digest, cipher, remote_secret.into());
         CryptoContext {
-            local, remote, digest, cipher
+            local,
+            remote,
+            digest,
+            cipher,
         }
     }
 
@@ -3605,7 +4901,8 @@ impl CryptoContext {
         CryptoContext {
             local: self.local.update(self.digest, self.cipher, side),
             remote: self.local.update(self.digest, self.cipher, !side),
-            digest: self.digest, cipher: self.cipher,
+            digest: self.digest,
+            cipher: self.cipher,
         }
     }
 
@@ -3617,7 +4914,14 @@ impl CryptoContext {
         for i in 0..12 {
             nonce[i] ^= self.local.iv[i];
         }
-        let mut buf = encrypt_aead(self.cipher, &self.local.key, Some(&nonce), header, payload, &mut tag).unwrap();
+        let mut buf = encrypt_aead(
+            self.cipher,
+            &self.local.key,
+            Some(&nonce),
+            header,
+            payload,
+            &mut tag,
+        ).unwrap();
         buf.extend_from_slice(&tag);
         buf
     }
@@ -3628,9 +4932,18 @@ impl CryptoContext {
         for i in 0..12 {
             nonce[i] ^= self.remote.iv[i];
         }
-        if payload.len() < AEAD_TAG_SIZE { return None; }
+        if payload.len() < AEAD_TAG_SIZE {
+            return None;
+        }
         let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
-        decrypt_aead(self.cipher, &self.remote.key, Some(&nonce), header, payload, tag).ok()
+        decrypt_aead(
+            self.cipher,
+            &self.remote.key,
+            Some(&nonce),
+            header,
+            payload,
+            tag,
+        ).ok()
     }
 }
 
@@ -3646,7 +4959,7 @@ mod test {
         for prev in 0..1024 {
             for x in 0..256 {
                 let found = PacketNumber::U8(x as u8).expand(prev);
-                assert!(found as i64 - (prev+1) as i64 <= 128 || prev < 128 );
+                assert!(found as i64 - (prev + 1) as i64 <= 128 || prev < 128);
             }
         }
         // Order of operations regression test
@@ -3667,42 +4980,66 @@ mod test {
 
     #[test]
     fn key_derivation() {
-        let id = ConnectionId([0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08].iter().cloned().collect());
+        let id = ConnectionId(
+            [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]
+                .iter()
+                .cloned()
+                .collect(),
+        );
         let digest = MessageDigest::sha256();
         let cipher = Cipher::aes_128_gcm();
         let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
-        assert_eq!(&hs_secret[..],
-                   [0xa5, 0x72, 0xb0, 0x24, 0x5a, 0xf1, 0xed, 0xdf,
-                    0x5c, 0x61, 0xc6, 0xe3, 0xf7, 0xf9, 0x30, 0x4c,
-                    0xa6, 0x6b, 0xfb, 0x4c, 0xaa, 0xf7, 0x65, 0x67,
-                    0xd5, 0xcb, 0x8d, 0xd1, 0xdc, 0x4e, 0x82, 0x0b]);
-        
+        assert_eq!(
+            &hs_secret[..],
+            [
+                0xa5, 0x72, 0xb0, 0x24, 0x5a, 0xf1, 0xed, 0xdf, 0x5c, 0x61, 0xc6, 0xe3, 0xf7, 0xf9,
+                0x30, 0x4c, 0xa6, 0x6b, 0xfb, 0x4c, 0xaa, 0xf7, 0x65, 0x67, 0xd5, 0xcb, 0x8d, 0xd1,
+                0xdc, 0x4e, 0x82, 0x0b
+            ]
+        );
+
         let client_secret = hkdf::qexpand(digest, &hs_secret, b"client hs", digest.size() as u16);
-        assert_eq!(&client_secret[..],
-                   [0x83, 0x55, 0xf2, 0x1a, 0x3d, 0x8f, 0x83, 0xec,
-                    0xb3, 0xd0, 0xf9, 0x71, 0x08, 0xd3, 0xf9, 0x5e,
-                    0x0f, 0x65, 0xb4, 0xd8, 0xae, 0x88, 0xa0, 0x61,
-                    0x1e, 0xe4, 0x9d, 0xb0, 0xb5, 0x23, 0x59, 0x1d]);
+        assert_eq!(
+            &client_secret[..],
+            [
+                0x83, 0x55, 0xf2, 0x1a, 0x3d, 0x8f, 0x83, 0xec, 0xb3, 0xd0, 0xf9, 0x71, 0x08, 0xd3,
+                0xf9, 0x5e, 0x0f, 0x65, 0xb4, 0xd8, 0xae, 0x88, 0xa0, 0x61, 0x1e, 0xe4, 0x9d, 0xb0,
+                0xb5, 0x23, 0x59, 0x1d
+            ]
+        );
         let client_state = CryptoState::new(digest, cipher, client_secret);
-        assert_eq!(&client_state.key[..],
-                   [0x3a, 0xd0, 0x54, 0x2c, 0x4a, 0x85, 0x84, 0x74,
-                    0x00, 0x63, 0x04, 0x9e, 0x3b, 0x3c, 0xaa, 0xb2]);
-        assert_eq!(&client_state.iv[..],
-                   [0xd1, 0xfd, 0x26, 0x05, 0x42, 0x75, 0x3a, 0xba,
-                    0x38, 0x58, 0x9b, 0xad]);
+        assert_eq!(
+            &client_state.key[..],
+            [
+                0x3a, 0xd0, 0x54, 0x2c, 0x4a, 0x85, 0x84, 0x74, 0x00, 0x63, 0x04, 0x9e, 0x3b, 0x3c,
+                0xaa, 0xb2
+            ]
+        );
+        assert_eq!(
+            &client_state.iv[..],
+            [0xd1, 0xfd, 0x26, 0x05, 0x42, 0x75, 0x3a, 0xba, 0x38, 0x58, 0x9b, 0xad]
+        );
 
         let server_secret = hkdf::qexpand(digest, &hs_secret, b"server hs", digest.size() as u16);
-        assert_eq!(&server_secret[..],
-                   [0xf8, 0x0e, 0x57, 0x71, 0x48, 0x4b, 0x21, 0xcd,
-                    0xeb, 0xb5, 0xaf, 0xe0, 0xa2, 0x56, 0xa3, 0x17,
-                    0x41, 0xef, 0xe2, 0xb5, 0xc6, 0xb6, 0x17, 0xba,
-                    0xe1, 0xb2, 0xf1, 0x5a, 0x83, 0x04, 0x83, 0xd6]);
+        assert_eq!(
+            &server_secret[..],
+            [
+                0xf8, 0x0e, 0x57, 0x71, 0x48, 0x4b, 0x21, 0xcd, 0xeb, 0xb5, 0xaf, 0xe0, 0xa2, 0x56,
+                0xa3, 0x17, 0x41, 0xef, 0xe2, 0xb5, 0xc6, 0xb6, 0x17, 0xba, 0xe1, 0xb2, 0xf1, 0x5a,
+                0x83, 0x04, 0x83, 0xd6
+            ]
+        );
         let server_state = CryptoState::new(digest, cipher, server_secret);
-        assert_eq!(&server_state.key[..],
-                   [0xbe, 0xe4, 0xc2, 0x4d, 0x2a, 0xf1, 0x33, 0x80,
-                    0xa9, 0xfa, 0x24, 0xa5, 0xe2, 0xba, 0x2c, 0xff]);
-        assert_eq!(&server_state.iv[..],
-                   [0x25, 0xb5, 0x8e, 0x24, 0x6d, 0x9e, 0x7d, 0x5f,
-                    0xfe, 0x43, 0x23, 0xfe]);
+        assert_eq!(
+            &server_state.key[..],
+            [
+                0xbe, 0xe4, 0xc2, 0x4d, 0x2a, 0xf1, 0x33, 0x80, 0xa9, 0xfa, 0x24, 0xa5, 0xe2, 0xba,
+                0x2c, 0xff
+            ]
+        );
+        assert_eq!(
+            &server_state.iv[..],
+            [0x25, 0xb5, 0x8e, 0x24, 0x6d, 0x9e, 0x7d, 0x5f, 0xfe, 0x43, 0x23, 0xfe]
+        );
     }
 }

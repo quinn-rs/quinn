@@ -1,21 +1,35 @@
-use std::{mem, fmt, io};
 use std::ops::Range;
+use std::{fmt, io, mem};
 
-use bytes::{Bytes, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 
-use {varint, TransportError, StreamId, ConnectionId, MIN_CID_SIZE, MAX_CID_SIZE, RESET_TOKEN_SIZE};
-use range_set::RangeSet;
 use coding::{self, BufExt, BufMutExt, UnexpectedEnd};
+use range_set::RangeSet;
+use {
+    varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
+};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Type(u8);
 
-impl From<u8> for Type { fn from(x: u8) -> Self { Type(x) } }
-impl From<Type> for u8 { fn from(x: Type) -> Self { x.0 } }
+impl From<u8> for Type {
+    fn from(x: u8) -> Self {
+        Type(x)
+    }
+}
+impl From<Type> for u8 {
+    fn from(x: Type) -> Self {
+        x.0
+    }
+}
 
 impl Type {
     fn stream(&self) -> Option<StreamInfo> {
-        if self.0 >= 0x10 && self.0 <= 0x17 { Some(StreamInfo(self.0)) } else { None }
+        if self.0 >= 0x10 && self.0 <= 0x17 {
+            Some(StreamInfo(self.0))
+        } else {
+            None
+        }
     }
 }
 
@@ -50,9 +64,15 @@ macro_rules! frame_types {
 struct StreamInfo(u8);
 
 impl StreamInfo {
-    fn fin(&self) -> bool { self.0 & 0x01 != 0 }
-    fn len(&self) -> bool { self.0 & 0x02 != 0 }
-    fn off(&self) -> bool { self.0 & 0x04 != 0 }
+    fn fin(&self) -> bool {
+        self.0 & 0x01 != 0
+    }
+    fn len(&self) -> bool {
+        self.0 & 0x02 != 0
+    }
+    fn off(&self) -> bool {
+        self.0 & 0x04 != 0
+    }
 }
 
 frame_types!{
@@ -132,8 +152,12 @@ impl Frame {
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
-                if x.fin { ty |= 0x01; }
-                if x.offset != 0 { ty |= 0x04; }
+                if x.fin {
+                    ty |= 0x01;
+                }
+                if x.offset != 0 {
+                    ty |= 0x04;
+                }
                 Type(ty)
             }
             PathChallenge(_) => Type::PATH_CHALLENGE,
@@ -151,7 +175,8 @@ pub struct ConnectionClose<T = Bytes> {
 }
 
 impl<T> fmt::Display for ConnectionClose<T>
-    where T: AsRef<[u8]>
+where
+    T: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.error_code.fmt(f)?;
@@ -164,16 +189,23 @@ impl<T> fmt::Display for ConnectionClose<T>
 }
 
 impl From<TransportError> for ConnectionClose {
-    fn from(x: TransportError) -> Self { ConnectionClose { error_code: x, reason: Bytes::new() } }
+    fn from(x: TransportError) -> Self {
+        ConnectionClose {
+            error_code: x,
+            reason: Bytes::new(),
+        }
+    }
 }
 
 impl<T> ConnectionClose<T>
-    where T: AsRef<[u8]>
+where
+    T: AsRef<[u8]>,
 {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.write(Type::CONNECTION_CLOSE);
         out.write(self.error_code);
-        let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let max_len =
+            max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
         out.put_slice(&self.reason.as_ref()[0..actual_len]);
@@ -187,7 +219,8 @@ pub struct ApplicationClose<T = Bytes> {
 }
 
 impl<T> fmt::Display for ApplicationClose<T>
-    where T: AsRef<[u8]>
+where
+    T: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !self.reason.as_ref().is_empty() {
@@ -203,12 +236,14 @@ impl<T> fmt::Display for ApplicationClose<T>
 }
 
 impl<T> ApplicationClose<T>
-    where T: AsRef<[u8]>
+where
+    T: AsRef<[u8]>,
 {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.write(Type::APPLICATION_CLOSE);
         out.write(self.error_code);
-        let max_len = max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+        let max_len =
+            max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
         varint::write(actual_len as u64, out).unwrap();
         out.put_slice(&self.reason.as_ref()[0..actual_len]);
@@ -241,7 +276,7 @@ impl Ack {
         varint::write(largest, buf).unwrap();
         varint::write(delay, buf).unwrap();
         varint::write(ranges.len() as u64 - 1, buf).unwrap();
-        varint::write(first_size-1, buf).unwrap();
+        varint::write(first_size - 1, buf).unwrap();
         let mut prev = first.start;
         for block in rest {
             let size = block.end - block.start;
@@ -251,7 +286,9 @@ impl Ack {
         }
     }
 
-    pub fn iter(&self) -> AckIter { self.into_iter() }
+    pub fn iter(&self) -> AckIter {
+        self.into_iter()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -263,17 +300,28 @@ pub struct Stream<T = Bytes> {
 }
 
 impl<T> Stream<T>
-    where T: AsRef<[u8]>
+where
+    T: AsRef<[u8]>,
 {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
         let mut ty = 0x10;
-        if self.offset != 0 { ty |= 0x04; }
-        if length { ty |= 0x02; }
-        if self.fin { ty |= 0x01; }
+        if self.offset != 0 {
+            ty |= 0x04;
+        }
+        if length {
+            ty |= 0x02;
+        }
+        if self.fin {
+            ty |= 0x01;
+        }
         out.put_u8(ty);
         varint::write(self.id.0, out).unwrap();
-        if self.offset != 0 { varint::write(self.offset, out).unwrap(); }
-        if length { varint::write(self.data.as_ref().len() as u64, out).unwrap(); }
+        if self.offset != 0 {
+            varint::write(self.offset, out).unwrap();
+        }
+        if length {
+            varint::write(self.data.as_ref().len() as u64, out).unwrap();
+        }
         out.put_slice(self.data.as_ref());
     }
 }
@@ -290,14 +338,25 @@ enum IterErr {
     Malformed,
 }
 
-impl From<UnexpectedEnd> for IterErr { fn from(_: UnexpectedEnd) -> Self { IterErr::UnexpectedEnd } }
+impl From<UnexpectedEnd> for IterErr {
+    fn from(_: UnexpectedEnd) -> Self {
+        IterErr::UnexpectedEnd
+    }
+}
 
 impl Iter {
-    pub fn new(payload: Bytes) -> Self { Iter { bytes: io::Cursor::new(payload), last_ty: None } }
+    pub fn new(payload: Bytes) -> Self {
+        Iter {
+            bytes: io::Cursor::new(payload),
+            last_ty: None,
+        }
+    }
 
     fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
         let len = self.bytes.get_var()?;
-        if len > self.bytes.remaining() as u64 { return Err(UnexpectedEnd); }
+        if len > self.bytes.remaining() as u64 {
+            return Err(UnexpectedEnd);
+        }
         let start = self.bytes.position() as usize;
         self.bytes.advance(len as usize);
         Ok(self.bytes.get_ref().slice(start, start + len as usize))
@@ -347,10 +406,12 @@ impl Iter {
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
                 let start = self.bytes.position() as usize;
-                let len = scan_ack_blocks(&self.bytes.bytes()[..], largest, extra_blocks).ok_or(UnexpectedEnd)?;
+                let len = scan_ack_blocks(&self.bytes.bytes()[..], largest, extra_blocks)
+                    .ok_or(UnexpectedEnd)?;
                 self.bytes.advance(len);
                 Frame::Ack(Ack {
-                    delay, largest,
+                    delay,
+                    largest,
                     additional: self.bytes.get_ref().slice(start, start + len),
                 })
             }
@@ -359,16 +420,24 @@ impl Iter {
             Type::NEW_CONNECTION_ID => {
                 let sequence = self.bytes.get_var()?;
                 let length = self.bytes.get::<u8>()? as usize;
-                if length < MIN_CID_SIZE || length > MAX_CID_SIZE { return Err(IterErr::Malformed); }
-                if length > self.bytes.remaining() { return Err(IterErr::UnexpectedEnd); }
+                if length < MIN_CID_SIZE || length > MAX_CID_SIZE {
+                    return Err(IterErr::Malformed);
+                }
+                if length > self.bytes.remaining() {
+                    return Err(IterErr::UnexpectedEnd);
+                }
                 let mut stage = [0; MAX_CID_SIZE];
                 self.bytes.copy_to_slice(&mut stage[0..length]);
                 let id = ConnectionId::new(stage, length);
-                if self.bytes.remaining() < 16 { return Err(IterErr::UnexpectedEnd); }
+                if self.bytes.remaining() < 16 {
+                    return Err(IterErr::UnexpectedEnd);
+                }
                 let mut reset_token = [0; RESET_TOKEN_SIZE];
                 self.bytes.copy_to_slice(&mut reset_token);
                 Frame::NewConnectionId {
-                    sequence, id, reset_token
+                    sequence,
+                    id,
+                    reset_token,
                 }
             }
             _ => match ty.stream() {
@@ -376,15 +445,19 @@ impl Iter {
                     id: self.bytes.get()?,
                     offset: if s.off() { self.bytes.get_var()? } else { 0 },
                     fin: s.fin(),
-                    data: if s.len() { self.take_len()? } else {
+                    data: if s.len() {
+                        self.take_len()?
+                    } else {
                         let mut x = mem::replace(self.bytes.get_mut(), Bytes::new());
                         x.advance(self.bytes.position() as usize);
                         self.bytes.set_position(0);
                         x
-                    }
+                    },
                 }),
-                None => { return Err(IterErr::InvalidFrameId); }
-            }
+                None => {
+                    return Err(IterErr::InvalidFrameId);
+                }
+            },
         })
     }
 }
@@ -392,7 +465,9 @@ impl Iter {
 impl Iterator for Iter {
     type Item = Frame;
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.bytes.has_remaining() { return None; }
+        if !self.bytes.has_remaining() {
+            return None;
+        }
         match self.try_next() {
             Ok(x) => Some(x),
             Err(_) => {
@@ -433,13 +508,15 @@ impl<'a> AckIter<'a> {
 impl<'a> Iterator for AckIter<'a> {
     type Item = Range<u64>;
     fn next(&mut self) -> Option<Range<u64>> {
-        if !self.data.has_remaining() { return None; }
+        if !self.data.has_remaining() {
+            return None;
+        }
         let block = varint::read(&mut self.data).unwrap();
         let largest = self.largest;
         if let Some(gap) = varint::read(&mut self.data) {
             self.largest -= block + gap + 2;
         }
-        Some(largest - block .. largest + 1)
+        Some(largest - block..largest + 1)
     }
 }
 
@@ -467,7 +544,9 @@ mod test {
     fn ack_coding() {
         const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
         let mut ranges = RangeSet::new();
-        for &packet in PACKETS { ranges.insert(packet..packet+1); }
+        for &packet in PACKETS {
+            ranges.insert(packet..packet + 1);
+        }
         let mut buf = Vec::new();
         Ack::encode(42, &ranges, &mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
@@ -477,7 +556,7 @@ mod test {
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
             }
-            ref x => { panic!("incorrect frame {:?}", x) }
+            ref x => panic!("incorrect frame {:?}", x),
         }
     }
 }

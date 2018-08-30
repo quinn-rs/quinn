@@ -15,34 +15,50 @@ pub trait Value: Sized {
 
 impl Value for u8 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u8> {
-        if buf.remaining() < 1 { return Err(UnexpectedEnd); }
+        if buf.remaining() < 1 {
+            return Err(UnexpectedEnd);
+        }
         Ok(buf.get_u8())
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) { buf.put_u8(*self); }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u8(*self);
+    }
 }
 
 impl Value for u16 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u16> {
-        if buf.remaining() < 2 { return Err(UnexpectedEnd); }
+        if buf.remaining() < 2 {
+            return Err(UnexpectedEnd);
+        }
         Ok(buf.get_u16_be())
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) { buf.put_u16_be(*self); }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u16_be(*self);
+    }
 }
 
 impl Value for u32 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u32> {
-        if buf.remaining() < 4 { return Err(UnexpectedEnd); }
+        if buf.remaining() < 4 {
+            return Err(UnexpectedEnd);
+        }
         Ok(buf.get_u32_be())
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) { buf.put_u32_be(*self); }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u32_be(*self);
+    }
 }
 
 impl Value for u64 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u64> {
-        if buf.remaining() < 8 { return Err(UnexpectedEnd); }
+        if buf.remaining() < 8 {
+            return Err(UnexpectedEnd);
+        }
         Ok(buf.get_u64_be())
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) { buf.put_u64_be(*self); }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_u64_be(*self);
+    }
 }
 
 pub trait BufExt {

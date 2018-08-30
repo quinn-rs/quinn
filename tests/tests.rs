@@ -1,5 +1,5 @@
-extern crate quicr_core as quicr;
 extern crate openssl;
+extern crate quicr_core as quicr;
 extern crate rand;
 #[macro_use]
 extern crate slog;
@@ -12,17 +12,17 @@ extern crate bytes;
 extern crate hex_literal;
 extern crate byteorder;
 
+use std::collections::VecDeque;
+use std::io::{self, Write};
 use std::net::SocketAddrV6;
 use std::{fmt, str};
-use std::io::{self, Write};
-use std::collections::VecDeque;
 
+use byteorder::{BigEndian, ByteOrder};
+use openssl::asn1::Asn1Time;
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::X509;
-use openssl::asn1::Asn1Time;
-use slog::{Logger, Drain, KV};
-use byteorder::{ByteOrder, BigEndian};
+use slog::{Drain, Logger, KV};
 
 use quicr::*;
 
@@ -34,15 +34,23 @@ impl Drain for TestDrain {
     fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<(), io::Error> {
         let mut vals = Vec::new();
         values.serialize(&record, &mut TestSerializer(&mut vals))?;
-        record.kv().serialize(&record, &mut TestSerializer(&mut vals))?;
-        println!("{} {}{}", record.level(), record.msg(), str::from_utf8(&vals).unwrap());
+        record
+            .kv()
+            .serialize(&record, &mut TestSerializer(&mut vals))?;
+        println!(
+            "{} {}{}",
+            record.level(),
+            record.msg(),
+            str::from_utf8(&vals).unwrap()
+        );
         Ok(())
     }
 }
 
 struct TestSerializer<'a, W: 'a>(&'a mut W);
 impl<'a, W> slog::Serializer for TestSerializer<'a, W>
-    where W: Write + 'a
+where
+    W: Write + 'a,
 {
     fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments) -> slog::Result {
         write!(self.0, ", {}: {}", key, val).unwrap();
@@ -59,9 +67,12 @@ lazy_static! {
     static ref CERT: X509 = {
         let mut cert = X509::builder().unwrap();
         cert.set_pubkey(&KEY).unwrap();
-        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap()).unwrap();
-        cert.set_not_after(&Asn1Time::days_from_now(u32::max_value()).unwrap()).unwrap();
-        cert.sign(&KEY, openssl::hash::MessageDigest::sha256()).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(u32::max_value()).unwrap())
+            .unwrap();
+        cert.sign(&KEY, openssl::hash::MessageDigest::sha256())
+            .unwrap();
         cert.build()
     };
     static ref LISTEN_KEYS: ListenKeys = ListenKeys::new(&mut rand::thread_rng());
@@ -78,8 +89,14 @@ struct Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        Pair::new(Config { max_remote_uni_streams: 32, max_remote_bi_streams: 32, ..Config::default() },
-                  Config::default())
+        Pair::new(
+            Config {
+                max_remote_uni_streams: 32,
+                max_remote_bi_streams: 32,
+                ..Config::default()
+            },
+            Config::default(),
+        )
     }
 }
 
@@ -94,9 +111,11 @@ impl Pair {
                 private_key: &KEY,
                 cert: &CERT,
             }),
-            Some(*LISTEN_KEYS)).unwrap();
+            Some(*LISTEN_KEYS),
+        ).unwrap();
         let client_addr = "[::2]:7890".parse().unwrap();
-        let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None, None).unwrap();
+        let client =
+            Endpoint::new(log.new(o!("side" => "Client")), client_config, None, None).unwrap();
 
         Self {
             log,
@@ -113,29 +132,35 @@ impl Pair {
         self.drive_server();
         let client_t = self.client.next_wakeup();
         let server_t = self.server.next_wakeup();
-        if client_t == self.client.idle && server_t == self.server.idle { return false; }
+        if client_t == self.client.idle && server_t == self.server.idle {
+            return false;
+        }
         if client_t < server_t {
             if client_t != self.time {
                 self.time = self.time.max(client_t);
-                trace!(self.log, "advancing to {time} for client", time=self.time);
+                trace!(self.log, "advancing to {time} for client", time = self.time);
             }
         } else {
             if server_t != self.time {
                 self.time = self.time.max(server_t);
-                trace!(self.log, "advancing to {time} for server", time=self.time);
+                trace!(self.log, "advancing to {time} for server", time = self.time);
             }
         }
         true
     }
 
     /// Advance time until both connections are idle
-    fn drive(&mut self) { while self.step() {} }
+    fn drive(&mut self) {
+        while self.step() {}
+    }
 
     fn drive_client(&mut self) {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
         for packet in self.client.outbound.drain(..) {
-            self.server.inbound.push_back((self.time + self.latency, packet));
+            self.server
+                .inbound
+                .push_back((self.time + self.latency, packet));
         }
     }
 
@@ -143,18 +168,30 @@ impl Pair {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
         for packet in self.server.outbound.drain(..) {
-            self.client.inbound.push_back((self.time + self.latency, packet));
+            self.client
+                .inbound
+                .push_back((self.time + self.latency, packet));
         }
     }
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, ClientConfig {
-            accept_insecure_certs: true,
-            ..ClientConfig::default()
-        }).unwrap();
+        let client_conn = self
+            .client
+            .connect(
+                self.server.addr,
+                ClientConfig {
+                    accept_insecure_certs: true,
+                    ..ClientConfig::default()
+                },
+            )
+            .unwrap();
         self.drive();
-        let server_conn = if let Some(c) = self.server.accept() { c } else { panic!("server didn't connect"); };
+        let server_conn = if let Some(c) = self.server.accept() {
+            c
+        } else {
+            panic!("server didn't connect");
+        };
         assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
         (client_conn, server_conn)
     }
@@ -173,73 +210,132 @@ struct TestEndpoint {
 }
 
 impl TestEndpoint {
-    fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self { Self {
-        side, endpoint, addr,
-        idle: u64::max_value(),
-        loss: u64::max_value(),
-        close: u64::max_value(),
-        conn: None,
-        outbound: VecDeque::new(),
-        inbound: VecDeque::new(),
-    }}
+    fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self {
+        Self {
+            side,
+            endpoint,
+            addr,
+            idle: u64::max_value(),
+            loss: u64::max_value(),
+            close: u64::max_value(),
+            conn: None,
+            outbound: VecDeque::new(),
+            inbound: VecDeque::new(),
+        }
+    }
 
     fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
         if let Some(conn) = self.conn {
             if self.loss <= now {
-                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::LossDetection);
+                trace!(
+                    log,
+                    "{side:?} {timer:?} timeout",
+                    side = self.side,
+                    timer = Timer::LossDetection
+                );
                 self.loss = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::LossDetection);
             }
             if self.idle <= now {
-                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::Idle);
+                trace!(
+                    log,
+                    "{side:?} {timer:?} timeout",
+                    side = self.side,
+                    timer = Timer::Idle
+                );
                 self.idle = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::Idle);
             }
             if self.close <= now {
-                trace!(log, "{side:?} {timer:?} timeout", side=self.side, timer=Timer::Close);
+                trace!(
+                    log,
+                    "{side:?} {timer:?} timeout",
+                    side = self.side,
+                    timer = Timer::Close
+                );
                 self.close = u64::max_value();
                 self.endpoint.timeout(now, conn, Timer::Close);
             }
         }
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
-            self.endpoint.handle(now, remote, Vec::from(self.inbound.pop_front().unwrap().1).into());
+            self.endpoint.handle(
+                now,
+                remote,
+                Vec::from(self.inbound.pop_front().unwrap().1).into(),
+            );
         }
-        while let Some(x) = self.endpoint.poll_io(now) { match x {
-            Io::Transmit { packet, .. } => {
-                self.outbound.push_back(packet);
-            }
-            Io::TimerStart { timer, time, connection } => {
-                self.conn = Some(connection);
-                trace!(log, "{side:?} {timer:?} start: {dt}", side=self.side, timer=timer, dt=(time - now));
-                match timer {
-                    Timer::LossDetection => { self.loss = time; }
-                    Timer::Idle => { self.idle = time; }
-                    Timer::Close => { self.close = time; }
+        while let Some(x) = self.endpoint.poll_io(now) {
+            match x {
+                Io::Transmit { packet, .. } => {
+                    self.outbound.push_back(packet);
+                }
+                Io::TimerStart {
+                    timer,
+                    time,
+                    connection,
+                } => {
+                    self.conn = Some(connection);
+                    trace!(
+                        log,
+                        "{side:?} {timer:?} start: {dt}",
+                        side = self.side,
+                        timer = timer,
+                        dt = (time - now)
+                    );
+                    match timer {
+                        Timer::LossDetection => {
+                            self.loss = time;
+                        }
+                        Timer::Idle => {
+                            self.idle = time;
+                        }
+                        Timer::Close => {
+                            self.close = time;
+                        }
+                    }
+                }
+                Io::TimerStop { timer, .. } => {
+                    trace!(
+                        log,
+                        "{side:?} {timer:?} stop",
+                        side = self.side,
+                        timer = timer
+                    );
+                    match timer {
+                        Timer::LossDetection => {
+                            self.loss = u64::max_value();
+                        }
+                        Timer::Idle => {
+                            self.idle = u64::max_value();
+                        }
+                        Timer::Close => {
+                            self.close = u64::max_value();
+                        }
+                    }
                 }
             }
-            Io::TimerStop { timer, .. } => {
-                trace!(log, "{side:?} {timer:?} stop", side=self.side, timer=timer);
-                match timer {
-                    Timer::LossDetection => { self.loss = u64::max_value(); }
-                    Timer::Idle => { self.idle = u64::max_value(); }
-                    Timer::Close => { self.close = u64::max_value(); }
-                }
-            }
-        }}
+        }
     }
 
     fn next_wakeup(&self) -> u64 {
-        self.idle.min(self.loss).min(self.close).min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
+        self.idle
+            .min(self.loss)
+            .min(self.close)
+            .min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
     }
 }
 
 impl ::std::ops::Deref for TestEndpoint {
     type Target = Endpoint;
-    fn deref(&self) -> &Endpoint { &self.endpoint }
+    fn deref(&self) -> &Endpoint {
+        &self.endpoint
+    }
 }
 
 impl ::std::ops::DerefMut for TestEndpoint {
-    fn deref_mut(&mut self) -> &mut Endpoint { &mut self.endpoint }
+    fn deref_mut(&mut self) -> &mut Endpoint {
+        &mut self.endpoint
+    }
 }
 
 #[test]
@@ -253,18 +349,29 @@ fn version_negotiate() {
             private_key: &KEY,
             cert: &CERT,
         }),
-        Some(*LISTEN_KEYS)).unwrap();
-    server.handle(0, client_addr,
-                  // Long-header packet with reserved version number
-                  hex!("80 0a1a2a3a
+        Some(*LISTEN_KEYS),
+    ).unwrap();
+    server.handle(
+        0,
+        client_addr,
+        // Long-header packet with reserved version number
+        hex!(
+            "80 0a1a2a3a
                         11 00000000 00000000
-                        00")[..].into());
+                        00"
+        )[..]
+            .into(),
+    );
     let io = server.poll_io(0);
     assert_matches!(io, Some(Io::Transmit { .. }));
     if let Some(Io::Transmit { packet, .. }) = io {
         assert!(packet[0] | 0x80 != 0);
         assert!(&packet[1..14] == hex!("00000000 11 00000000 00000000"));
-        assert!(packet[14..].chunks(4).any(|x| BigEndian::read_u32(x) == VERSION));
+        assert!(
+            packet[14..]
+                .chunks(4)
+                .any(|x| BigEndian::read_u32(x) == VERSION)
+        );
     }
     assert_matches!(server.poll_io(0), None);
     assert_matches!(server.poll(), None);
@@ -290,7 +397,13 @@ fn lifecycle() {
 
 #[test]
 fn stateless_retry() {
-    let mut pair = Pair::new(Config { use_stateless_retry: true, ..Config::default() }, Config::default());
+    let mut pair = Pair::new(
+        Config {
+            use_stateless_retry: true,
+            ..Config::default()
+        },
+        Config::default(),
+    );
     pair.connect();
 }
 
@@ -306,7 +419,8 @@ fn stateless_reset() {
             private_key: &KEY,
             cert: &CERT,
         }),
-        Some(*LISTEN_KEYS)).unwrap();
+        Some(*LISTEN_KEYS),
+    ).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
@@ -333,7 +447,10 @@ fn finish_stream() {
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Finished));
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Finished)
+    );
 }
 
 #[test]
@@ -356,7 +473,10 @@ fn reset_stream() {
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: ERROR }));
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Reset { error_code: ERROR })
+    );
     assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), None);
 }
@@ -379,16 +499,25 @@ fn stop_stream() {
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Err(ReadError::Reset { error_code: 0 }));
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Reset { error_code: 0 })
+    );
 
-    assert_matches!(pair.client.write(client_conn, s, b"foo"), Err(WriteError::Stopped { error_code: ERROR }));
+    assert_matches!(
+        pair.client.write(client_conn, s, b"foo"),
+        Err(WriteError::Stopped { error_code: ERROR })
+    );
 }
 
 #[test]
 fn reject_self_signed_cert() {
     let mut pair = Pair::new(Config::default(), Config::default());
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server.addr, ClientConfig::default()).unwrap();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, ClientConfig::default())
+        .unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
@@ -405,9 +534,16 @@ fn congestion() {
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     loop {
         match pair.client.write(client_conn, s, &[42; 1024]) {
-            Ok(n) => { assert!(n <= 1024); pair.drive_client(); }
-            Err(WriteError::Blocked) => { break; }
-            Err(e) => { panic!("unexpected write error: {}", e); }
+            Ok(n) => {
+                assert!(n <= 1024);
+                pair.drive_client();
+            }
+            Err(WriteError::Blocked) => {
+                break;
+            }
+            Err(e) => {
+                panic!("unexpected write error: {}", e);
+            }
         }
     }
     pair.drive();
@@ -419,9 +555,22 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair.client.connect(pair.server.addr, ClientConfig { accept_insecure_certs: true, ..ClientConfig::default() }).unwrap();
+    let client_conn = pair
+        .client
+        .connect(
+            pair.server.addr,
+            ClientConfig {
+                accept_insecure_certs: true,
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
     pair.drive();
-    let server_conn = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
+    let server_conn = if let Some(c) = pair.server.accept() {
+        c
+    } else {
+        panic!("server didn't connect");
+    };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
     assert_eq!(pair.client.get_bytes_in_flight(client_conn), 0);
     assert_eq!(pair.server.get_bytes_in_flight(server_conn), 0);
@@ -439,17 +588,26 @@ fn zero_rtt() {
     pair.client.close(pair.time, c, 42, (&[][..]).into());
     pair.drive();
     info!(pair.log, "resuming");
-    let cc = pair.client.connect(pair.server.addr,
-                                 ClientConfig {
-                                     accept_insecure_certs: true,
-                                     session_ticket: Some(&ticket),
-                                     ..ClientConfig::default()
-                                 }).unwrap();
+    let cc = pair
+        .client
+        .connect(
+            pair.server.addr,
+            ClientConfig {
+                accept_insecure_certs: true,
+                session_ticket: Some(&ticket),
+                ..ClientConfig::default()
+            },
+        )
+        .unwrap();
     let s = pair.client.open(cc, Directionality::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
     pair.client.write(cc, s, MSG).unwrap();
     pair.drive();
     assert!(pair.client.get_session_resumed(c));
-    let sc = if let Some(c) = pair.server.accept() { c } else { panic!("server didn't connect"); };
+    let sc = if let Some(c) = pair.server.accept() {
+        c
+    } else {
+        panic!("server didn't connect");
+    };
     assert_matches!(pair.server.read_unordered(sc, s), Ok((ref data, 0)) if data == MSG);
 }

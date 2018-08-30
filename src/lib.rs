@@ -1,13 +1,13 @@
-extern crate bytes;
 extern crate byteorder;
-extern crate rand;
+extern crate bytes;
 extern crate openssl;
+extern crate rand;
 extern crate slab;
 #[macro_use]
 extern crate failure;
-extern crate digest;
 extern crate blake2;
 extern crate constant_time_eq;
+extern crate digest;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -23,25 +23,26 @@ extern crate fnv;
 
 use std::fmt;
 
-mod varint;
-mod memory_stream;
-mod transport_parameters;
 mod coding;
 mod hkdf;
+mod memory_stream;
 mod range_set;
 mod stream;
+mod transport_parameters;
+mod varint;
 
 mod frame;
 use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Endpoint, Config, CertConfig, ListenKeys, ConnectionHandle, Event, Io, Timer, ConnectionError, ReadError, WriteError, ConnectError,
-                   ConnectionId, EndpointError, ClientConfig};
+pub use endpoint::{
+    CertConfig, ClientConfig, Config, ConnectError, ConnectionError, ConnectionHandle,
+    ConnectionId, Endpoint, EndpointError, Event, Io, ListenKeys, ReadError, Timer, WriteError,
+};
 
 mod transport_error;
 pub use transport_error::Error as TransportError;
-
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00000B;
@@ -57,11 +58,21 @@ pub enum Side {
 
 impl ::std::ops::Not for Side {
     type Output = Side;
-    fn not(self) -> Side { match self { Side::Client => Side::Server, Side::Server => Side::Client } }
+    fn not(self) -> Side {
+        match self {
+            Side::Client => Side::Server,
+            Side::Server => Side::Client,
+        }
+    }
 }
 
 impl slog::Value for Side {
-    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
@@ -81,14 +92,31 @@ pub struct StreamId(pub(crate) u64);
 
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let initiator = match self.initiator() { Side::Client => "client", Side::Server => "server" };
-        let directionality = match self.directionality() { Directionality::Uni => "uni", Directionality::Bi => "bi" };
-        write!(f, "{} {}directional stream {}", initiator, directionality, self.index())
+        let initiator = match self.initiator() {
+            Side::Client => "client",
+            Side::Server => "server",
+        };
+        let directionality = match self.directionality() {
+            Directionality::Uni => "uni",
+            Directionality::Bi => "bi",
+        };
+        write!(
+            f,
+            "{} {}directional stream {}",
+            initiator,
+            directionality,
+            self.index()
+        )
     }
 }
 
 impl slog::Value for StreamId {
-    fn serialize(&self, _: &slog::Record, key: slog::Key, serializer: &mut slog::Serializer) -> slog::Result {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
@@ -98,11 +126,25 @@ impl StreamId {
         StreamId(index << 2 | (directionality as u64) << 1 | initiator as u64)
     }
     /// Which side of a connection initiated the stream
-    pub fn initiator(&self) -> Side { if self.0 & 0x1 == 0 { Side::Client } else { Side::Server } }
+    pub fn initiator(&self) -> Side {
+        if self.0 & 0x1 == 0 {
+            Side::Client
+        } else {
+            Side::Server
+        }
+    }
     /// Which directions data flows in
-    pub fn directionality(&self) -> Directionality { if self.0 & 0x2 == 0 { Directionality::Bi } else { Directionality::Uni } }
+    pub fn directionality(&self) -> Directionality {
+        if self.0 & 0x2 == 0 {
+            Directionality::Bi
+        } else {
+            Directionality::Uni
+        }
+    }
     /// Distinguishes streams of the same initiator and directionality
-    pub fn index(&self) -> u64 { self.0 >> 2 }
+    pub fn index(&self) -> u64 {
+        self.0 >> 2
+    }
 }
 
 impl coding::Value for StreamId {

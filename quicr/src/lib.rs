@@ -48,48 +48,48 @@
 #![warn(missing_docs)]
 
 extern crate quicr_core as quicr;
-extern crate tokio_reactor;
-extern crate tokio_udp;
 extern crate tokio_io;
+extern crate tokio_reactor;
 extern crate tokio_timer;
+extern crate tokio_udp;
 #[macro_use]
 extern crate slog;
-extern crate futures;
 extern crate fnv;
+extern crate futures;
 extern crate openssl;
 #[macro_use]
 extern crate failure;
 extern crate bytes;
 extern crate rand;
 
-use std::{io, mem};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::{hash_map, VecDeque};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::collections::{VecDeque, hash_map};
-use std::time::{Instant, Duration};
-use std::borrow::Cow;
+use std::time::{Duration, Instant};
+use std::{io, mem};
 
-use tokio_udp::UdpSocket;
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
-use slog::Logger;
-use futures::{Future, Poll, Async};
-use futures::Stream as FuturesStream;
-use futures::unsync::{oneshot, mpsc};
-use futures::task::{self, Task};
-use futures::stream::FuturesUnordered;
+use bytes::Bytes;
 use fnv::FnvHashMap;
-use openssl::ssl;
+use futures::stream::FuturesUnordered;
+use futures::task::{self, Task};
+use futures::unsync::{mpsc, oneshot};
+use futures::Stream as FuturesStream;
+use futures::{Async, Future, Poll};
+use openssl::asn1::Asn1Time;
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
+use openssl::ssl;
 use openssl::x509::X509;
-use openssl::asn1::Asn1Time;
-use bytes::Bytes;
+use slog::Logger;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_timer::Delay;
+use tokio_udp::UdpSocket;
 
-use quicr::{Directionality, StreamId, ConnectionHandle, Side, CertConfig};
+use quicr::{CertConfig, ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quicr::{Config, ClientConfig, ConnectionError, ConnectionId, ListenKeys, ConnectError};
+pub use quicr::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -134,7 +134,9 @@ struct EndpointInner {
 
 impl EndpointInner {
     /// Wake up a blocked `Driver` task to process I/O
-    fn notify(&self) { self.driver.as_ref().map(|x| x.notify()); }
+    fn notify(&self) {
+        self.driver.as_ref().map(|x| x.notify());
+    }
 }
 
 struct Pending {
@@ -156,23 +158,25 @@ struct Pending {
 }
 
 impl Pending {
-    fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self { Self {
-        blocked_writers: FnvHashMap::default(),
-        blocked_readers: FnvHashMap::default(),
-        connecting,
-        uni_opening: VecDeque::new(),
-        bi_opening: VecDeque::new(),
-        cancel_loss_detect: None,
-        cancel_idle: None,
-        incoming_streams: VecDeque::new(),
-        incoming_streams_reader: None,
-        finishing: FnvHashMap::default(),
-        error: None,
-        draining: None,
-        drained: false,
-        incoming_session_tickets: VecDeque::new(),
-        incoming_session_tickets_reader: None,
-    }}
+    fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self {
+        Self {
+            blocked_writers: FnvHashMap::default(),
+            blocked_readers: FnvHashMap::default(),
+            connecting,
+            uni_opening: VecDeque::new(),
+            bi_opening: VecDeque::new(),
+            cancel_loss_detect: None,
+            cancel_idle: None,
+            incoming_streams: VecDeque::new(),
+            incoming_streams_reader: None,
+            finishing: FnvHashMap::default(),
+            error: None,
+            draining: None,
+            drained: false,
+            incoming_session_tickets: VecDeque::new(),
+            incoming_session_tickets_reader: None,
+        }
+    }
 
     fn fail(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
@@ -227,15 +231,30 @@ pub struct EndpointBuilder<'a> {
 
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
-    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self { self.reactor = Some(handle); self }
-    pub fn logger(&mut self, logger: Logger) -> &mut Self { self.logger = logger; self }
-    pub fn config(&mut self, config: Config) -> &mut Self { self.config = config; self }
+    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
+        self.reactor = Some(handle);
+        self
+    }
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.logger = logger;
+        self
+    }
+    pub fn config(&mut self, config: Config) -> &mut Self {
+        self.config = config;
+        self
+    }
 
     /// Prefer `listen_with_keys`.
-    pub fn listen(&mut self) -> &mut Self { self.listen = Some(ListenKeys::new(&mut rand::thread_rng())); self }
+    pub fn listen(&mut self) -> &mut Self {
+        self.listen = Some(ListenKeys::new(&mut rand::thread_rng()));
+        self
+    }
 
     /// Use with persistent `keys` instead of `listen` to allow graceful reset of clients when the server restarts.
-    pub fn listen_with_keys(&mut self, keys: ListenKeys) -> &mut Self { self.listen = Some(keys); self }
+    pub fn listen_with_keys(&mut self, keys: ListenKeys) -> &mut Self {
+        self.listen = Some(keys);
+        self
+    }
 
     pub fn private_key_pem(&mut self, key: &[u8]) -> Result<&mut Self, ssl::Error> {
         self.private_key = Some(PKey::<Private>::private_key_from_pem(key)?);
@@ -272,10 +291,20 @@ impl<'a> EndpointBuilder<'a> {
         Ok(self)
     }
 
-    pub fn from_socket(self, socket: std::net::UdpSocket) -> Result<(Endpoint, Driver, Incoming), Error> {
+    pub fn from_socket(
+        self,
+        socket: std::net::UdpSocket,
+    ) -> Result<(Endpoint, Driver, Incoming), Error> {
         let cert = self.cert;
-        let cert_config = self.private_key.as_ref().and_then(|private_key| cert.as_ref().map(|cert| CertConfig { private_key, cert }));
-        let reactor = if let Some(x) = self.reactor { Cow::Borrowed(x) } else { Cow::Owned(tokio_reactor::Handle::current()) };
+        let cert_config = self
+            .private_key
+            .as_ref()
+            .and_then(|private_key| cert.as_ref().map(|cert| CertConfig { private_key, cert }));
+        let reactor = if let Some(x) = self.reactor {
+            Cow::Borrowed(x)
+        } else {
+            Cow::Owned(tokio_reactor::Handle::current())
+        };
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
         let (send, recv) = mpsc::unbounded();
         let rc = Rc::new(RefCell::new(EndpointInner {
@@ -299,31 +328,41 @@ impl<'a> EndpointBuilder<'a> {
 }
 
 impl<'a> Default for EndpointBuilder<'a> {
-    fn default() -> Self { Endpoint::new() }
+    fn default() -> Self {
+        Endpoint::new()
+    }
 }
 
 impl Endpoint {
     /// Begin constructing an `Endpoint`
-    pub fn new<'a>() -> EndpointBuilder<'a> { EndpointBuilder {
-        reactor: None,
-        logger: Logger::root(slog::Discard, o!()),
-        listen: None,
-        config: Config::default(),
-        cert: None,
-        private_key: None,
-    }}
+    pub fn new<'a>() -> EndpointBuilder<'a> {
+        EndpointBuilder {
+            reactor: None,
+            logger: Logger::root(slog::Discard, o!()),
+            listen: None,
+            config: Config::default(),
+            cert: None,
+            private_key: None,
+        }
+    }
 
     /// Connect to a remote endpoint.
     ///
     /// May fail immediately due to configuration errors, or in the future if the connection could not be established.
-    pub fn connect(&self, addr: &SocketAddr, config: ClientConfig)
-        -> Result<impl Future<Item=NewClientConnection, Error=ConnectionError>, ConnectError>
+    pub fn connect(
+        &self,
+        addr: &SocketAddr,
+        config: ClientConfig,
+    ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
     {
         let (fut, conn) = self.connect_inner(addr, config)?;
-        Ok(fut.map_err(|_| unreachable!())
-           .and_then(move |err| if let Some(err) = err { Err(err) } else {
-               Ok(NewClientConnection::new(Rc::new(conn)))
-           }))
+        Ok(fut.map_err(|_| unreachable!()).and_then(move |err| {
+            if let Some(err) = err {
+                Err(err)
+            } else {
+                Ok(NewClientConnection::new(Rc::new(conn)))
+            }
+        }))
     }
 
     /// Connect to a remote endpoint, with support for transmitting data before the connection is established
@@ -339,18 +378,41 @@ impl Endpoint {
     ///
     /// # Panics
     /// - If `config.session_ticket` is `None`. A session ticket is necessary for 0-RTT to be possible.
-    pub fn connect_zero_rtt(&self, addr: &SocketAddr, config: ClientConfig)
-        -> Result<(NewClientConnection, impl Future<Item=(), Error=ConnectionError>), ConnectError>
-    {
-        assert!(config.session_ticket.is_some(), "a session ticket must be supplied for zero-rtt transmits to be possible");
+    pub fn connect_zero_rtt(
+        &self,
+        addr: &SocketAddr,
+        config: ClientConfig,
+    ) -> Result<
+        (
+            NewClientConnection,
+            impl Future<Item = (), Error = ConnectionError>,
+        ),
+        ConnectError,
+    > {
+        assert!(
+            config.session_ticket.is_some(),
+            "a session ticket must be supplied for zero-rtt transmits to be possible"
+        );
         let (fut, conn) = self.connect_inner(addr, config)?;
         let conn = NewClientConnection::new(Rc::new(conn));
-        Ok((conn, fut.map_err(|_| unreachable!()).and_then(move |err| err.map_or(Ok(()), Err) )))
+        Ok((
+            conn,
+            fut.map_err(|_| unreachable!())
+                .and_then(move |err| err.map_or(Ok(()), Err)),
+        ))
     }
 
-    fn connect_inner(&self, addr: &SocketAddr, config: ClientConfig)
-        -> Result<(impl Future<Item=Option<ConnectionError>, Error=futures::Canceled>, ConnectionInner), ConnectError>
-    {
+    fn connect_inner(
+        &self,
+        addr: &SocketAddr,
+        config: ClientConfig,
+    ) -> Result<
+        (
+            impl Future<Item = Option<ConnectionError>, Error = futures::Canceled>,
+            ConnectionInner,
+        ),
+        ConnectError,
+    > {
         let (send, recv) = oneshot::channel();
         let handle = {
             let mut endpoint = self.0.borrow_mut();
@@ -415,25 +477,40 @@ impl Future for Driver {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut buf = [0; 64 * 1024];
         let endpoint = &mut *self.0.borrow_mut();
-        if endpoint.driver.is_none() { endpoint.driver = Some(task::current()); }
+        if endpoint.driver.is_none() {
+            endpoint.driver = Some(task::current());
+        }
         let now = micros_from(endpoint.epoch.elapsed());
         loop {
             loop {
                 match endpoint.socket.poll_recv_from(&mut buf) {
                     Ok(Async::Ready((n, addr))) => {
-                        endpoint.inner.handle(now, normalize(addr), (&buf[0..n]).into());
+                        endpoint
+                            .inner
+                            .handle(now, normalize(addr), (&buf[0..n]).into());
                     }
-                    Ok(Async::NotReady) => { break; }
+                    Ok(Async::NotReady) => {
+                        break;
+                    }
                     // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an attacker
-                    Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => { continue; }
-                    Err(e) => { return Err(e); }
+                    Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
             }
             while let Some((connection, event)) = endpoint.inner.poll() {
                 use quicr::Event::*;
                 match event {
                     Connected { .. } => {
-                        let _ = endpoint.pending.get_mut(&connection).unwrap().connecting.take()
+                        let _ = endpoint
+                            .pending
+                            .get_mut(&connection)
+                            .unwrap()
+                            .connecting
+                            .take()
                             .expect("got Connected event for unknown connection")
                             .send(None);
                     }
@@ -445,12 +522,21 @@ impl Future for Driver {
                         }
                     }
                     ConnectionDrained => {
-                        if let Some(x) = endpoint.pending.get_mut(&connection).and_then(|p| { p.drained = true; p.draining.take() }) {
+                        if let Some(x) = endpoint.pending.get_mut(&connection).and_then(|p| {
+                            p.drained = true;
+                            p.draining.take()
+                        }) {
                             let _ = x.send(());
                         }
                     }
                     StreamWritable { stream } => {
-                        if let Some(writer) = endpoint.pending.get_mut(&connection).unwrap().blocked_writers.remove(&stream) {
+                        if let Some(writer) = endpoint
+                            .pending
+                            .get_mut(&connection)
+                            .unwrap()
+                            .blocked_writers
+                            .remove(&stream)
+                        {
                             writer.notify();
                         }
                     }
@@ -461,7 +547,9 @@ impl Future for Driver {
                         }
                         if fresh {
                             pending.incoming_streams.push_back(stream);
-                            if let Some(x) = pending.incoming_streams_reader.take() { x.notify(); }
+                            if let Some(x) = pending.incoming_streams_reader.take() {
+                                x.notify();
+                            }
                         }
                     }
                     StreamAvailable { directionality } => {
@@ -480,8 +568,14 @@ impl Future for Driver {
                         }
                     }
                     StreamFinished { stream } => {
-                        let _ = endpoint.pending.get_mut(&connection).unwrap()
-                            .finishing.remove(&stream).unwrap().send(None);
+                        let _ = endpoint
+                            .pending
+                            .get_mut(&connection)
+                            .unwrap()
+                            .finishing
+                            .remove(&stream)
+                            .unwrap()
+                            .send(None);
                     }
                     NewSessionTicket { ticket } => {
                         let pending = endpoint.pending.get_mut(&connection).unwrap();
@@ -502,9 +596,17 @@ impl Future for Driver {
                     let front = endpoint.outgoing.front().unwrap();
                     match endpoint.socket.poll_send_to(&front.1, &front.0.into()) {
                         Ok(Async::Ready(_)) => {}
-                        Ok(Async::NotReady) => { blocked = true; break; }
-                        Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => { blocked = true; break; }
-                        Err(e) => { return Err(e); }
+                        Ok(Async::NotReady) => {
+                            blocked = true;
+                            break;
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                            blocked = true;
+                            break;
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
                     }
                 }
                 endpoint.outgoing.pop_front();
@@ -512,20 +614,33 @@ impl Future for Driver {
             while let Some(io) = endpoint.inner.poll_io(now) {
                 use quicr::Io::*;
                 match io {
-                    Transmit { destination, packet } => {
+                    Transmit {
+                        destination,
+                        packet,
+                    } => {
                         if !blocked {
                             match endpoint.socket.poll_send_to(&packet, &destination.into()) {
                                 Ok(Async::Ready(_)) => {}
-                                Ok(Async::NotReady) => { blocked = true; }
-                                Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => { blocked = true; }
-                                Err(e) => { return Err(e); }
+                                Ok(Async::NotReady) => {
+                                    blocked = true;
+                                }
+                                Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                                    blocked = true;
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
                             }
                         }
                         if blocked {
                             endpoint.outgoing.push_front((destination, packet));
                         }
                     }
-                    TimerStart { connection, timer: timer@quicr::Timer::Close, time } => {
+                    TimerStart {
+                        connection,
+                        timer: timer @ quicr::Timer::Close,
+                        time,
+                    } => {
                         let instant = endpoint.epoch + duration_micros(time);
                         endpoint.timers.push(Timer {
                             conn: connection,
@@ -534,14 +649,21 @@ impl Future for Driver {
                             cancel: None,
                         });
                     }
-                    TimerStart { connection, timer, time } => {
+                    TimerStart {
+                        connection,
+                        timer,
+                        time,
+                    } => {
                         // Loss detection and idle timers start before the connection is established
-                        let pending = endpoint.pending.entry(connection).or_insert_with(|| Pending::new(None));
+                        let pending = endpoint
+                            .pending
+                            .entry(connection)
+                            .or_insert_with(|| Pending::new(None));
                         use quicr::Timer::*;
                         let mut cancel = match timer {
                             LossDetection => &mut pending.cancel_loss_detect,
                             Idle => &mut pending.cancel_idle,
-                            Close => unreachable!()
+                            Close => unreachable!(),
                         };
                         let instant = endpoint.epoch + duration_micros(time);
                         if let Some(cancel) = cancel.take() {
@@ -563,8 +685,14 @@ impl Future for Driver {
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
                             use quicr::Timer::*;
                             match timer {
-                                LossDetection => { pending.cancel_loss_detect.take().map(|x| { let _ = x.send(()); }); }
-                                Idle => { pending.cancel_idle.take().map(|x| x.send(())); }
+                                LossDetection => {
+                                    pending.cancel_loss_detect.take().map(|x| {
+                                        let _ = x.send(());
+                                    });
+                                }
+                                Idle => {
+                                    pending.cancel_idle.take().map(|x| x.send(()));
+                                }
                                 Close => {} // Arises from stateless reset
                             }
                         }
@@ -572,7 +700,9 @@ impl Future for Driver {
                 }
             }
             while let Some(x) = endpoint.inner.accept() {
-                let _ = endpoint.incoming.unbounded_send(NewConnection::new(Endpoint(self.0.clone()), x));
+                let _ = endpoint
+                    .incoming
+                    .unbounded_send(NewConnection::new(Endpoint(self.0.clone()), x));
             }
             let mut fired = false;
             loop {
@@ -583,18 +713,26 @@ impl Future for Driver {
                         fired = true;
                     }
                     Ok(Async::Ready(Some(None))) => {}
-                    Ok(Async::Ready(None)) | Ok(Async::NotReady) => { break; }
-                    Err(()) => unreachable!()
+                    Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
+                        break;
+                    }
+                    Err(()) => unreachable!(),
                 }
             }
-            if !fired { break; }
+            if !fired {
+                break;
+            }
         }
         Ok(Async::NotReady)
     }
 }
 
-fn duration_micros(x: u64) -> Duration { Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000) }
-fn micros_from(x: Duration) -> u64 { x.as_secs() * 1000 * 1000 + (x.subsec_nanos() / 1000) as u64 }
+fn duration_micros(x: u64) -> Duration {
+    Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
+}
+fn micros_from(x: Duration) -> u64 {
+    x.as_secs() * 1000 * 1000 + (x.subsec_nanos() / 1000) as u64
+}
 
 fn normalize(x: SocketAddr) -> SocketAddrV6 {
     match x {
@@ -617,7 +755,7 @@ pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
     /// Initite a new outgoing unidirectional stream.
-    pub fn open_uni(&self) -> impl Future<Item=SendStream, Error=ConnectionError> {
+    pub fn open_uni(&self) -> impl Future<Item = SendStream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.0.borrow_mut();
@@ -636,7 +774,7 @@ impl Connection {
     }
 
     /// Initiate a new outgoing bidirectional stream.
-    pub fn open_bi(&self) -> impl Future<Item=Stream, Error=ConnectionError> {
+    pub fn open_bi(&self) -> impl Future<Item = Stream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.0.borrow_mut();
@@ -651,9 +789,7 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| {
-                Stream::new(conn.clone(), stream)
-            })
+            .map(move |stream| Stream::new(conn.clone(), stream))
     }
 
     /// Close the connection immediately.
@@ -666,39 +802,77 @@ impl Connection {
     /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
     /// should be kept under 1KiB.
     // FIXME: Infallible
-    pub fn close(self, error_code: u16, reason: &[u8]) -> impl Future<Item=(), Error=()> {
+    pub fn close(self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
         let (send, recv) = oneshot::channel();
         {
             let endpoint = &mut *self.0.endpoint.0.borrow_mut();
-            endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.0.conn, error_code, reason.into());
+            endpoint.inner.close(
+                micros_from(endpoint.epoch.elapsed()),
+                self.0.conn,
+                error_code,
+                reason.into(),
+            );
             let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
             pending.draining = Some(send);
         }
-        recv.then(move |_| { let _ = self; Ok(()) })
+        recv.then(move |_| {
+            let _ = self;
+            Ok(())
+        })
     }
 
     /// The peer's UDP address.
     pub fn remote_address(&self) -> SocketAddr {
-        (*self.0.endpoint.0.borrow().inner.get_remote_address(self.0.conn)).into()
+        (*self
+            .0
+            .endpoint
+            .0
+            .borrow()
+            .inner
+            .get_remote_address(self.0.conn))
+            .into()
     }
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn local_id(&self) -> ConnectionId {
-        self.0.endpoint.0.borrow().inner.get_local_id(self.0.conn).clone()
+        self.0
+            .endpoint
+            .0
+            .borrow()
+            .inner
+            .get_local_id(self.0.conn)
+            .clone()
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn).clone()
+        self.0
+            .endpoint
+            .0
+            .borrow()
+            .inner
+            .get_remote_id(self.0.conn)
+            .clone()
     }
 
     /// The negotiated application protocol
     pub fn protocol(&self) -> Option<Box<[u8]>> {
-        self.0.endpoint.0.borrow().inner.get_protocol(self.0.conn).map(|x| x.into())
+        self.0
+            .endpoint
+            .0
+            .borrow()
+            .inner
+            .get_protocol(self.0.conn)
+            .map(|x| x.into())
     }
 
     /// Whether the cryptographic session was resumed
     pub fn session_resumed(&self) -> bool {
-        self.0.endpoint.0.borrow().inner.get_session_resumed(self.0.conn)
+        self.0
+            .endpoint
+            .0
+            .borrow()
+            .inner
+            .get_session_resumed(self.0.conn)
     }
 }
 
@@ -707,11 +881,18 @@ impl Drop for ConnectionInner {
         let endpoint = &mut *self.endpoint.0.borrow_mut();
         if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.conn) {
             if pending.get().draining.is_none() && !pending.get().drained {
-                endpoint.inner.close(micros_from(endpoint.epoch.elapsed()), self.conn, 0, (&[][..]).into());
+                endpoint.inner.close(
+                    micros_from(endpoint.epoch.elapsed()),
+                    self.conn,
+                    0,
+                    (&[][..]).into(),
+                );
                 endpoint.driver.as_ref().map(|x| x.notify());
             }
             pending.remove_entry();
-        } else { unreachable!() }
+        } else {
+            unreachable!()
+        }
     }
 }
 
@@ -774,12 +955,15 @@ pub struct Stream {
 }
 
 impl Stream {
-    fn new(conn: Rc<ConnectionInner>, stream: StreamId) -> Self { Self {
-        conn, stream,
-        finishing: None,
-        finished: false,
-        recvd: false,
-    }}
+    fn new(conn: Rc<ConnectionInner>, stream: StreamId) -> Self {
+        Self {
+            conn,
+            stream,
+            finishing: None,
+            finished: false,
+            recvd: false,
+        }
+    }
 }
 
 impl Write for Stream {
@@ -790,7 +974,9 @@ impl Write for Stream {
             Ok(n) => n,
             Err(Blocked) => {
                 let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
-                if let Some(ref x) = pending.error { return Err(WriteError::ConnectionClosed(x.clone())); }
+                if let Some(ref x) = pending.error {
+                    return Err(WriteError::ConnectionClosed(x.clone()));
+                }
                 pending.blocked_writers.insert(self.stream, task::current());
                 return Ok(Async::NotReady);
             }
@@ -808,7 +994,12 @@ impl Write for Stream {
             endpoint.inner.finish(self.conn.conn, self.stream);
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
-            endpoint.pending.get_mut(&self.conn.conn).unwrap().finishing.insert(self.stream, send);
+            endpoint
+                .pending
+                .get_mut(&self.conn.conn)
+                .unwrap()
+                .finishing
+                .insert(self.stream, send);
             endpoint.notify();
         }
         let r = self.finishing.as_mut().unwrap().poll().unwrap();
@@ -824,7 +1015,9 @@ impl Write for Stream {
 
     fn reset(&mut self, error_code: u16) {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
-        endpoint.inner.reset(self.conn.conn, self.stream, error_code);
+        endpoint
+            .inner
+            .reset(self.conn.conn, self.stream, error_code);
         endpoint.notify();
     }
 }
@@ -837,7 +1030,9 @@ impl Read for Stream {
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
             Err(Blocked) => {
-                if let Some(ref x) = pending.error { return Err(ReadError::ConnectionClosed(x.clone())); }
+                if let Some(ref x) = pending.error {
+                    return Err(ReadError::ConnectionClosed(x.clone()));
+                }
                 pending.blocked_readers.insert(self.stream, task::current());
                 Ok(Async::NotReady)
             }
@@ -859,7 +1054,9 @@ impl Read for Stream {
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
             Err(Blocked) => {
-                if let Some(ref x) = pending.error { return Err(ReadError::ConnectionClosed(x.clone())); }
+                if let Some(ref x) = pending.error {
+                    return Err(ReadError::ConnectionClosed(x.clone()));
+                }
                 pending.blocked_readers.insert(self.stream, task::current());
                 Ok(Async::NotReady)
             }
@@ -876,7 +1073,9 @@ impl Read for Stream {
 
     fn stop(&mut self, error_code: u16) {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
-        endpoint.inner.stop_sending(self.conn.conn, self.stream, error_code);
+        endpoint
+            .inner
+            .stop_sending(self.conn.conn, self.stream, error_code);
         endpoint.notify();
         self.recvd = true;
     }
@@ -887,18 +1086,30 @@ impl io::Write for Stream {
         match Write::poll_write(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(WriteError::Stopped { error_code }) =>
-                Err(io::Error::new(io::ErrorKind::ConnectionReset, format!("stream stopped by peer: error {}", error_code))),
-            Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
+            Err(WriteError::Stopped { error_code }) => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                format!("stream stopped by peer: error {}", error_code),
+            )),
+            Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("connection closed: {}", e),
+            )),
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl AsyncWrite for Stream {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.poll_finish().map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e)))
+        self.poll_finish().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("connection closed: {}", e),
+            )
+        })
     }
 }
 
@@ -927,7 +1138,7 @@ pub enum WriteError {
     #[fail(display = "sending stopped by peer: error {}", error_code)]
     Stopped {
         /// The error code supplied by the peer.
-        error_code: u16
+        error_code: u16,
     },
     /// The connection was closed.
     #[fail(display = "connection closed: {}", _0)]
@@ -941,49 +1152,79 @@ impl io::Read for Stream {
             Ok(Async::Ready(n)) => Ok(n),
             Err(Finished) => Ok(0),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(Reset { error_code }) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("stream reset by peer: error {}", error_code))),
-            Err(ConnectionClosed(e)) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, format!("connection closed: {}", e))),
+            Err(Reset { error_code }) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("stream reset by peer: error {}", error_code),
+            )),
+            Err(ConnectionClosed(e)) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("connection closed: {}", e),
+            )),
         }
     }
 }
 
 impl AsyncRead for Stream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool { false }
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
+        false
+    }
 }
 
 /// A stream that can only be used to send data
 pub struct SendStream(Stream);
 
 impl Write for SendStream {
-    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> { Write::poll_write(&mut self.0, buf) }
-    fn poll_finish(&mut self) -> Poll<(), ConnectionError> { self.0.poll_finish() }
-    fn reset(&mut self, error_code: u16) { self.0.reset(error_code); }
+    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
+        Write::poll_write(&mut self.0, buf)
+    }
+    fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
+        self.0.poll_finish()
+    }
+    fn reset(&mut self, error_code: u16) {
+        self.0.reset(error_code);
+    }
 }
 
 impl io::Write for SendStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl AsyncWrite for SendStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> { self.0.shutdown() }
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.0.shutdown()
+    }
 }
 
 /// A stream that can only be used to receive data
 pub struct RecvStream(Stream);
 
 impl Read for RecvStream {
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> { self.0.poll_read_unordered() }
-    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> { Read::poll_read(&mut self.0, buf) }
-    fn stop(&mut self, error_code: u16) { self.0.stop(error_code) }
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
+        self.0.poll_read_unordered()
+    }
+    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+        Read::poll_read(&mut self.0, buf)
+    }
+    fn stop(&mut self, error_code: u16) {
+        self.0.stop(error_code)
+    }
 }
 
 impl io::Read for RecvStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
 }
 
 impl AsyncRead for RecvStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool { false }
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
+        false
+    }
 }
 
 /// Errors that arise from reading from a stream.
@@ -993,7 +1234,7 @@ pub enum ReadError {
     #[fail(display = "stream reset by peer: error {}", error_code)]
     Reset {
         /// The error code supplied by the peer.
-        error_code: u16
+        error_code: u16,
     },
     /// The data on this stream has been fully delivered and no more will be transmitted.
     #[fail(display = "the stream has been completely received")]
@@ -1012,11 +1253,11 @@ struct Timer {
 
 impl Future for Timer {
     type Item = Option<(ConnectionHandle, quicr::Timer)>;
-    type Error = ();            // FIXME
+    type Error = (); // FIXME
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Some(ref mut cancel) = self.cancel {
-            if let Ok(Async::NotReady) = cancel.poll() {}
-            else {
+            if let Ok(Async::NotReady) = cancel.poll() {
+            } else {
                 return Ok(Async::Ready(None));
             }
         }
@@ -1088,7 +1329,11 @@ impl FuturesStream for IncomingSessionTickets {
 
 /// Uses unordered reads to be more efficient than using `AsyncRead` would allow
 pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
-    ReadToEnd { stream: Some(stream), size_limit, buffer: Vec::new() }
+    ReadToEnd {
+        stream: Some(stream),
+        size_limit,
+        buffer: Vec::new(),
+    }
 }
 
 /// Future produced by `read_to_end`
@@ -1106,15 +1351,25 @@ impl<T: Read> Future for ReadToEnd<T> {
             match self.stream.as_mut().unwrap().poll_read_unordered() {
                 Ok(Async::Ready((data, offset))) => {
                     let len = self.buffer.len().max(offset as usize + data.len());
-                    if len > self.size_limit { return Err(ReadError::Finished); }
+                    if len > self.size_limit {
+                        return Err(ReadError::Finished);
+                    }
                     self.buffer.resize(len, 0);
-                    self.buffer[offset as usize..offset as usize+data.len()].copy_from_slice(&data);
+                    self.buffer[offset as usize..offset as usize + data.len()]
+                        .copy_from_slice(&data);
                 }
-                Ok(Async::NotReady) => { return Ok(Async::NotReady); }
+                Ok(Async::NotReady) => {
+                    return Ok(Async::NotReady);
+                }
                 Err(ReadError::Finished) => {
-                    return Ok(Async::Ready((self.stream.take().unwrap(), mem::replace(&mut self.buffer, Vec::new()).into())));
+                    return Ok(Async::Ready((
+                        self.stream.take().unwrap(),
+                        mem::replace(&mut self.buffer, Vec::new()).into(),
+                    )));
                 }
-                Err(e) => { return Err(e); }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
     }

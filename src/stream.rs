@@ -12,13 +12,15 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn new_bi(window: u64) -> Self { Stream::Both(Send::new(), Recv::new(window)) }
+    pub fn new_bi(window: u64) -> Self {
+        Stream::Both(Send::new(), Recv::new(window))
+    }
 
     pub fn send(&self) -> Option<&Send> {
         match *self {
             Stream::Send(ref x) => Some(x),
             Stream::Both(ref x, _) => Some(x),
-            _ => None
+            _ => None,
         }
     }
 
@@ -26,7 +28,7 @@ impl Stream {
         match *self {
             Stream::Recv(ref x) => Some(x),
             Stream::Both(_, ref x) => Some(x),
-            _ => None
+            _ => None,
         }
     }
 
@@ -34,7 +36,7 @@ impl Stream {
         match *self {
             Stream::Send(ref mut x) => Some(x),
             Stream::Both(ref mut x, _) => Some(x),
-            _ => None
+            _ => None,
         }
     }
 
@@ -42,19 +44,26 @@ impl Stream {
         match *self {
             Stream::Recv(ref mut x) => Some(x),
             Stream::Both(_, ref mut x) => Some(x),
-            _ => None
+            _ => None,
         }
     }
 
     /// Safe to free
     pub fn is_closed(&self) -> bool {
-        self.send().map_or(true, |x| x.is_closed())
-            && self.recv().map_or(true, |x| x.is_closed())
+        self.send().map_or(true, |x| x.is_closed()) && self.recv().map_or(true, |x| x.is_closed())
     }
 }
 
-impl From<Send> for Stream { fn from(x: Send) -> Stream { Stream::Send(x) } }
-impl From<Recv> for Stream { fn from(x: Recv) -> Stream { Stream::Recv(x) } }
+impl From<Send> for Stream {
+    fn from(x: Send) -> Stream {
+        Stream::Send(x)
+    }
+}
+impl From<Recv> for Stream {
+    fn from(x: Recv) -> Stream {
+        Stream::Recv(x)
+    }
+}
 
 #[derive(Debug)]
 pub struct Send {
@@ -66,12 +75,14 @@ pub struct Send {
 }
 
 impl Send {
-    pub fn new() -> Self { Self {
-        offset: 0,
-        max_data: 0,
-        state: SendState::Ready,
-        bytes_in_flight: 0,
-    }}
+    pub fn new() -> Self {
+        Self {
+            offset: 0,
+            max_data: 0,
+            state: SendState::Ready,
+            bytes_in_flight: 0,
+        }
+    }
 
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
     pub fn is_closed(&self) -> bool {
@@ -98,15 +109,17 @@ pub struct Recv {
 }
 
 impl Recv {
-    pub fn new(max_data: u64) -> Self { Self {
-        state: RecvState::Recv { size: None },
-        recvd: RangeSet::new(),
-        buffered: VecDeque::new(),
-        max_data,
-        unordered: false,
-        assembler: Assembler::new(),
-        fresh: true,
-    }}
+    pub fn new(max_data: u64) -> Self {
+        Self {
+            state: RecvState::Recv { size: None },
+            recvd: RangeSet::new(),
+            buffered: VecDeque::new(),
+            max_data,
+            unordered: false,
+            assembler: Assembler::new(),
+            fresh: true,
+        }
+    }
 
     /// No more data expected from peer
     pub fn is_finished(&self) -> bool {
@@ -127,7 +140,9 @@ impl Recv {
     }
 
     /// Offset after the largest byte received
-    pub fn limit(&self) -> u64 { self.recvd.max().map_or(0, |x| x+1) }
+    pub fn limit(&self) -> u64 {
+        self.recvd.max().map_or(0, |x| x + 1)
+    }
 
     pub fn final_offset(&self) -> Option<u64> {
         match self.state {
@@ -141,7 +156,11 @@ impl Recv {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SendState {
-    Ready, DataSent, ResetSent { stop_reason: Option<u16> }, DataRecvd, ResetRecvd { stop_reason: Option<u16> },
+    Ready,
+    DataSent,
+    ResetSent { stop_reason: Option<u16> },
+    DataRecvd,
+    ResetRecvd { stop_reason: Option<u16> },
 }
 
 impl SendState {
@@ -157,7 +176,8 @@ impl SendState {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RecvState {
     Recv { size: Option<u64> },
-    DataRecvd { size: u64 }, ResetRecvd { size: u64, error_code: u16 },
+    DataRecvd { size: u64 },
+    ResetRecvd { size: u64, error_code: u16 },
     Closed,
 }
 
@@ -173,12 +193,14 @@ pub struct Assembler {
 }
 
 impl Assembler {
-    pub fn new() -> Self { Self {
-        offset: 0,
-        data: VecDeque::new(),
-        written: VecDeque::new(),
-        written_offset: 0,
-    }}
+    pub fn new() -> Self {
+        Self {
+            offset: 0,
+            data: VecDeque::new(),
+            written: VecDeque::new(),
+            written_offset: 0,
+        }
+    }
 
     /// Whether `peek` will return at least one nonempty slice
     pub fn blocked(&self) -> bool {
@@ -186,13 +208,17 @@ impl Assembler {
         self.written.front().map_or(true, |x| x & mask == mask)
     }
 
-    pub fn offset(&self) -> u64 { self.offset }
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
 
     /// Leading written bytes
     fn prefix_len(&self) -> usize {
         for i in 0..self.written.len() {
             let x = self.written[i];
-            if x == 0 || (i == 0 && x << self.written_offset == 0) { continue; }
+            if x == 0 || (i == 0 && x << self.written_offset == 0) {
+                continue;
+            }
             return (i * 8 + x.leading_zeros() as usize) - self.written_offset as usize;
         }
         self.written.len()
@@ -208,7 +234,7 @@ impl Assembler {
             let a_n = a.len().min(buf.len());
             buf[0..a_n].copy_from_slice(&a[0..a_n]);
             let b_n = b.len().min(buf.len().saturating_sub(a.len()));
-            buf[a_n..(a_n+b_n)].copy_from_slice(&b[0..b_n]);
+            buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
             n = a_n + b_n;
         }
 
@@ -218,7 +244,7 @@ impl Assembler {
         let r = n % 8;
         let carry = (self.written_offset as usize + r) / 8;
         self.written.drain(0..(q + carry));
-        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;        
+        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;
 
         n
     }
@@ -228,12 +254,18 @@ impl Assembler {
         let mut buf = Vec::new();
         buf.resize(self.prefix_len(), 0);
         self.read(&mut buf);
-        if !buf.is_empty() { Some(buf.into()) } else { None }
+        if !buf.is_empty() {
+            Some(buf.into())
+        } else {
+            None
+        }
     }
 
     pub fn insert(&mut self, mut offset: u64, mut data: &[u8]) {
         if let Some(advance) = self.offset.checked_sub(offset) {
-            if advance >= data.len() as u64 { return; }
+            if advance >= data.len() as u64 {
+                return;
+            }
             data = &data[advance as usize..];
             offset += advance;
         }
@@ -242,7 +274,8 @@ impl Assembler {
         if end > self.data.len() {
             self.data.resize(end, 0);
             // 1 extra to leave room for written_extra
-            self.written.resize(end/8 + (end % 8 != 0) as usize + 1, !0);
+            self.written
+                .resize(end / 8 + (end % 8 != 0) as usize + 1, !0);
         }
         for i in 0..data.len() {
             let position = start + i;

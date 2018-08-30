@@ -6,23 +6,28 @@ extern crate failure;
 extern crate slog;
 extern crate slog_term;
 
-use std::net::{UdpSocket, SocketAddr, SocketAddrV6, ToSocketAddrs};
-use std::time::{Instant, Duration};
 use std::io::{self, Write};
+use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
 use std::str;
+use std::time::{Duration, Instant};
 
 use failure::Error;
-use quicr::{Endpoint, Config, Io, Timer, Event, Directionality, ReadError, ClientConfig};
-use slog::{Logger, Drain};
+use quicr::{ClientConfig, Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
+use slog::{Drain, Logger};
 
 fn main() {
     let code = {
         let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-        let drain = slog_term::FullFormat::new(decorator).use_original_order().build().fuse();
+        let drain = slog_term::FullFormat::new(decorator)
+            .use_original_order()
+            .build()
+            .fuse();
         if let Err(e) = run(Logger::root(drain, o!())) {
             eprintln!("ERROR: {}", e);
             1
-        } else { 0 }
+        } else {
+            0
+        }
     };
     ::std::process::exit(code);
 }
@@ -37,7 +42,9 @@ fn normalize(x: SocketAddr) -> SocketAddrV6 {
 type Result<T> = ::std::result::Result<T, Error>;
 
 fn run(log: Logger) -> Result<()> {
-    let remote = ::std::env::args().nth(1).ok_or(format_err!("missing address argument"))?;
+    let remote = ::std::env::args()
+        .nth(1)
+        .ok_or(format_err!("missing address argument"))?;
     let mut ctx = Context::new(log, remote)?;
     ctx.run()?;
     Ok(())
@@ -57,8 +64,15 @@ struct Context {
 impl Context {
     fn new(log: Logger, mut remote_host: String) -> Result<Self> {
         let socket = UdpSocket::bind("[::]:0")?;
-        let remote = normalize(remote_host.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?);
-        if let Some(x) = remote_host.rfind(':') { remote_host.truncate(x); }
+        let remote = normalize(
+            remote_host
+                .to_socket_addrs()?
+                .next()
+                .ok_or(format_err!("couldn't resolve to an address"))?,
+        );
+        if let Some(x) = remote_host.rfind(':') {
+            remote_host.truncate(x);
+        }
         let config = Config {
             protocols: vec![b"hq-11"[..].into()],
             //receive_window: 256,
@@ -68,7 +82,9 @@ impl Context {
         Ok(Self {
             socket,
             client: Endpoint::new(log.clone(), config, None, None)?,
-            log, remote_host, remote,
+            log,
+            remote_host,
+            remote,
             loss_timer: None,
             close_timer: None,
             idle_timer: None,
@@ -77,65 +93,127 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(self.remote, ClientConfig { server_name: Some(&self.remote_host), ..ClientConfig::default() })?;
+        let c = self.client.connect(
+            self.remote,
+            ClientConfig {
+                server_name: Some(&self.remote_host),
+                ..ClientConfig::default()
+            },
+        )?;
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;
         let mut recvd = 0;
         loop {
-            while let Some((connection, e)) = self.client.poll() { match e {
-                Event::Connected { protocol, .. } => {
-                    info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
-                    let s = self.client.open(c, Directionality::Bi).ok_or(format_err!("no streams available"))?;
-                    self.client.write(c, s, b"GET /index.html\r\n"[..].into()).unwrap();
-                    self.client.finish(c, s);
-                }
-                Event::ConnectionLost { reason, .. } => {
-                    self.client.close(time, c, 0, b""[..].into());
-                    bail!("connection lost: {}", reason);
-                }
-                Event::StreamReadable { stream, .. } => {
-                    assert_eq!(c, connection);
-                    loop { match self.client.read_unordered(connection, stream) {
-                        Ok((data, offset)) => {
-                            let len = buf.len().max(offset as usize + data.len());
-                            buf.resize(len, 0);
-                            buf[offset as usize..offset as usize+data.len()].copy_from_slice(&data);
+            while let Some((connection, e)) = self.client.poll() {
+                match e {
+                    Event::Connected { protocol, .. } => {
+                        info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
+                        let s = self
+                            .client
+                            .open(c, Directionality::Bi)
+                            .ok_or(format_err!("no streams available"))?;
+                        self.client
+                            .write(c, s, b"GET /index.html\r\n"[..].into())
+                            .unwrap();
+                        self.client.finish(c, s);
+                    }
+                    Event::ConnectionLost { reason, .. } => {
+                        self.client.close(time, c, 0, b""[..].into());
+                        bail!("connection lost: {}", reason);
+                    }
+                    Event::StreamReadable { stream, .. } => {
+                        assert_eq!(c, connection);
+                        loop {
+                            match self.client.read_unordered(connection, stream) {
+                                Ok((data, offset)) => {
+                                    let len = buf.len().max(offset as usize + data.len());
+                                    buf.resize(len, 0);
+                                    buf[offset as usize..offset as usize + data.len()]
+                                        .copy_from_slice(&data);
+                                }
+                                Err(ReadError::Finished) => {
+                                    info!(self.log, "done, closing");
+                                    io::stdout().write_all(&buf)?;
+                                    io::stdout().flush()?;
+                                    self.client.close(time, c, 0, b"finished"[..].into());
+                                    break;
+                                }
+                                Err(ReadError::Blocked) => {
+                                    break;
+                                }
+                                Err(e) => {
+                                    error!(self.log, "read error"; "error" => %e);
+                                    self.client
+                                        .close(time, c, 1, b"unexpected error"[..].into());
+                                }
+                            }
                         }
-                        Err(ReadError::Finished) => {
-                            info!(self.log, "done, closing");
-                            io::stdout().write_all(&buf)?;
-                            io::stdout().flush()?;
-                            self.client.close(time, c, 0, b"finished"[..].into());
-                            break;
-                        }
-                        Err(ReadError::Blocked) => { break; }
-                        Err(e) => {
-                            error!(self.log, "read error"; "error" => %e);
-                            self.client.close(time, c, 1, b"unexpected error"[..].into());
-                        }
-                    }}
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }}
-            while let Some(io) = self.client.poll_io(time) { match io {
-                Io::Transmit { destination, packet } => { sent += 1; self.socket.send_to(&packet, destination)?; }
-                Io::TimerStart { timer: Timer::LossDetection, time, .. } => { self.loss_timer = Some(time); }
-                Io::TimerStart { timer: Timer::Close, time, .. } => { self.close_timer = Some(time); }
-                Io::TimerStart { timer: Timer::Idle, time, .. } => { self.idle_timer = Some(time); }
-                Io::TimerStop { timer: Timer::LossDetection, .. } => { self.loss_timer = None; }
-                Io::TimerStop { timer: Timer::Close, .. } => { self.close_timer = None; }
-                Io::TimerStop { timer: Timer::Idle, .. } => { unreachable!() }
-            }}
+            }
+            while let Some(io) = self.client.poll_io(time) {
+                match io {
+                    Io::Transmit {
+                        destination,
+                        packet,
+                    } => {
+                        sent += 1;
+                        self.socket.send_to(&packet, destination)?;
+                    }
+                    Io::TimerStart {
+                        timer: Timer::LossDetection,
+                        time,
+                        ..
+                    } => {
+                        self.loss_timer = Some(time);
+                    }
+                    Io::TimerStart {
+                        timer: Timer::Close,
+                        time,
+                        ..
+                    } => {
+                        self.close_timer = Some(time);
+                    }
+                    Io::TimerStart {
+                        timer: Timer::Idle,
+                        time,
+                        ..
+                    } => {
+                        self.idle_timer = Some(time);
+                    }
+                    Io::TimerStop {
+                        timer: Timer::LossDetection,
+                        ..
+                    } => {
+                        self.loss_timer = None;
+                    }
+                    Io::TimerStop {
+                        timer: Timer::Close,
+                        ..
+                    } => {
+                        self.close_timer = None;
+                    }
+                    Io::TimerStop {
+                        timer: Timer::Idle, ..
+                    } => unreachable!(),
+                }
+            }
             let mut buf = [0; 2048];
-            let (timeout, timer) = (self.loss_timer.unwrap_or(u64::max_value()), Timer::LossDetection)
-                .min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
+            let (timeout, timer) = (
+                self.loss_timer.unwrap_or(u64::max_value()),
+                Timer::LossDetection,
+            ).min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
                 .min((self.idle_timer.unwrap_or(u64::max_value()), Timer::Idle));
             if timeout != u64::max_value() {
                 trace!(self.log, "setting timeout"; "type" => ?timer, "time" => time);
                 let dt = timeout - time;
                 let seconds = dt / (1000 * 1000);
-                self.socket.set_read_timeout(Some(Duration::new(seconds, (dt - (seconds * 1000 * 1000)) as u32 * 1000)))?;
+                self.socket.set_read_timeout(Some(Duration::new(
+                    seconds,
+                    (dt - (seconds * 1000 * 1000)) as u32 * 1000,
+                )))?;
             } else {
                 self.socket.set_read_timeout(None)?;
             }
@@ -145,7 +223,8 @@ impl Context {
             match r {
                 Ok((n, addr)) => {
                     recvd += 1;
-                    self.client.handle(time, normalize(addr), (&buf[0..n]).into());
+                    self.client
+                        .handle(time, normalize(addr), (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     trace!(self.log, "timeout"; "type" => ?timer);
@@ -160,7 +239,9 @@ impl Context {
                         }
                     }
                 }
-                Err(e) => { return Err(e.into()); }
+                Err(e) => {
+                    return Err(e.into());
+                }
             }
         }
     }
