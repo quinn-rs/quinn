@@ -15,7 +15,8 @@ use openssl::ssl::{
 use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
 use openssl::x509::X509Ref;
 
-use endpoint::{Config, ConnectionId, EndpointError, ListenKeys};
+use connection::ConnectionId;
+use endpoint::{Config, EndpointError, ListenKeys};
 use transport_parameters::TransportParameters;
 use {hkdf, Side, RESET_TOKEN_SIZE};
 

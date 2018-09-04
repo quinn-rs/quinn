@@ -31,6 +31,9 @@ mod stream;
 mod transport_parameters;
 mod varint;
 
+mod connection;
+pub use connection::{ConnectError, ConnectionHandle, ConnectionId, ReadError, WriteError};
+
 mod crypto;
 pub use crypto::CertConfig;
 
@@ -40,8 +43,7 @@ pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use endpoint::{
-    ClientConfig, Config, ConnectError, ConnectionError, ConnectionHandle, ConnectionId, Endpoint,
-    EndpointError, Event, Io, ListenKeys, ReadError, Timer, WriteError,
+    ClientConfig, Config, ConnectionError, Endpoint, EndpointError, Event, Io, ListenKeys, Timer,
 };
 
 mod transport_error;
