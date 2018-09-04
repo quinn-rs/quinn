@@ -228,7 +228,7 @@ pub struct Endpoint {
     readable_conns: FnvHashSet<ConnectionHandle>,
     incoming: VecDeque<ConnectionHandle>,
     incoming_handshakes: usize,
-    session_ticket_buffer: Arc<Mutex<Vec<Result<SslSession, ()>>>>,
+    session_ticket_buffer: SessionTicketBuffer,
 }
 
 const MIN_INITIAL_SIZE: usize = 1200;
@@ -310,169 +310,7 @@ impl Endpoint {
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
-
-        let mut tls = SslContext::builder(SslMethod::tls())?;
-        tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
-        tls.set_max_proto_version(Some(SslVersion::TLS1_3))?;
-        tls.set_options(
-            SslOptions::NO_COMPRESSION
-                | SslOptions::NO_SSLV2
-                | SslOptions::NO_SSLV3
-                | SslOptions::NO_TLSV1
-                | SslOptions::NO_TLSV1_1
-                | SslOptions::NO_TLSV1_2
-                | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS,
-        );
-        tls.clear_options(SslOptions::ENABLE_MIDDLEBOX_COMPAT);
-        tls.set_mode(
-            SslMode::ACCEPT_MOVING_WRITE_BUFFER
-                | SslMode::ENABLE_PARTIAL_WRITE
-                | SslMode::RELEASE_BUFFERS,
-        );
-        tls.set_default_verify_paths()?;
-        if !config.use_stateless_retry {
-            tls.set_max_early_data(TLS_MAX_EARLY_DATA)?;
-        }
-        if let Some(ref listen) = listen {
-            let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
-            {
-                let cookie_factory = cookie_factory.clone();
-                tls.set_stateless_cookie_generate_cb(move |tls, buf| {
-                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                    Ok(cookie_factory.generate(conn, buf))
-                });
-            }
-            tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
-                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                cookie_factory.verify(conn, cookie)
-            });
-        }
-        let reset_key = listen.as_ref().map(|x| x.reset);
-        tls.add_custom_ext(
-            26,
-            ssl::ExtensionContext::TLS1_3_ONLY
-                | ssl::ExtensionContext::CLIENT_HELLO
-                | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
-            {
-                let config = config.clone();
-                move |tls, ctx, _| {
-                    let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                    let mut buf = Vec::new();
-                    let mut params = TransportParameters {
-                        initial_max_streams_bidi: config.max_remote_bi_streams,
-                        initial_max_streams_uni: config.max_remote_uni_streams,
-                        initial_max_data: config.receive_window,
-                        initial_max_stream_data: config.stream_receive_window,
-                        ack_delay_exponent: ACK_DELAY_EXPONENT,
-                        ..TransportParameters::default()
-                    };
-                    let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
-                    let side;
-                    if am_server {
-                        params.stateless_reset_token =
-                            Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
-                        side = Side::Server;
-                    } else {
-                        side = Side::Client;
-                    }
-                    params.write(side, &mut buf);
-                    Ok(Some(buf))
-                }
-            },
-            |tls, ctx, data, _| {
-                let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO {
-                    Side::Server
-                } else {
-                    Side::Client
-                };
-                match TransportParameters::read(side, &mut data.into_buf()) {
-                    Ok(params) => {
-                        tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
-                        Ok(())
-                    }
-                    Err(e) => {
-                        use transport_parameters::Error::*;
-                        tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Err(e));
-                        Err(match e {
-                            VersionNegotiation => SslAlert::ILLEGAL_PARAMETER,
-                            IllegalValue => SslAlert::ILLEGAL_PARAMETER,
-                            Malformed => SslAlert::DECODE_ERROR,
-                        })
-                    }
-                }
-            },
-        )?;
-
-        if let Some(ref cert) = cert {
-            tls.set_private_key(cert.private_key)?;
-            tls.set_certificate(cert.cert)?;
-            tls.check_private_key()?;
-        }
-
-        if !config.protocols.is_empty() {
-            let mut buf = Vec::new();
-            for protocol in &config.protocols {
-                if protocol.len() > 255 {
-                    return Err(EndpointError::ProtocolTooLong(protocol.clone()));
-                }
-                buf.push(protocol.len() as u8);
-                buf.extend_from_slice(protocol);
-            }
-            tls.set_alpn_protos(&buf)?;
-            tls.set_alpn_select_callback(move |_ssl, protos| {
-                if let Some(x) = ssl::select_next_proto(&buf, protos) {
-                    Ok(x)
-                } else {
-                    Err(ssl::AlpnError::ALERT_FATAL)
-                }
-            });
-        }
-
-        if let Some(ref path) = config.keylog {
-            let file = ::std::fs::File::create(path).map_err(EndpointError::Keylog)?;
-            let file = Mutex::new(file);
-            tls.set_keylog_callback(move |_, line| {
-                use std::io::Write;
-                let mut file = file.lock().unwrap();
-                let _ = file.write_all(line.as_bytes());
-                let _ = file.write_all(b"\n");
-            });
-        }
-
-        let session_ticket_buffer = Arc::new(Mutex::new(Vec::new()));
-        {
-            let session_ticket_buffer = session_ticket_buffer.clone();
-            tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
-            tls.set_new_session_callback(move |tls, session| {
-                if tls.is_server() {
-                    return;
-                }
-                let mut buffer = session_ticket_buffer.lock().unwrap();
-                match session.max_early_data() {
-                    0 | TLS_MAX_EARLY_DATA => {}
-                    _ => {
-                        buffer.push(Err(()));
-                    }
-                }
-                buffer.push(Ok(session));
-            });
-        }
-
-        let verify_flag = if config.require_client_certs {
-            ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT
-        } else {
-            ssl::SslVerifyMode::empty()
-        };
-        if config.client_cert_verifier.is_some() {
-            let config = config.clone();
-            tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| {
-                (config.client_cert_verifier.as_ref().unwrap())(x, y)
-            });
-        } else {
-            tls.set_verify(verify_flag);
-        }
-
-        let tls = tls.build();
+        let (tls, session_ticket_buffer) = new_tls_ctx(config.clone(), cert, listen)?;
 
         Ok(Self {
             log,
@@ -4735,6 +4573,175 @@ fn set_payload_length(packet: &mut [u8], header_len: usize) {
     BigEndian::write_u16(&mut packet[header_len - 6..], len as u16 | 0b01 << 14);
 }
 
+fn new_tls_ctx(
+    config: Arc<Config>,
+    cert: Option<CertConfig>,
+    listen: Option<ListenKeys>,
+) -> Result<(SslContext, SessionTicketBuffer), EndpointError> {
+    let mut tls = SslContext::builder(SslMethod::tls())?;
+    tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
+    tls.set_max_proto_version(Some(SslVersion::TLS1_3))?;
+    tls.set_options(
+        SslOptions::NO_COMPRESSION
+            | SslOptions::NO_SSLV2
+            | SslOptions::NO_SSLV3
+            | SslOptions::NO_TLSV1
+            | SslOptions::NO_TLSV1_1
+            | SslOptions::NO_TLSV1_2
+            | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS,
+    );
+    tls.clear_options(SslOptions::ENABLE_MIDDLEBOX_COMPAT);
+    tls.set_mode(
+        SslMode::ACCEPT_MOVING_WRITE_BUFFER
+            | SslMode::ENABLE_PARTIAL_WRITE
+            | SslMode::RELEASE_BUFFERS,
+    );
+    tls.set_default_verify_paths()?;
+    if !config.use_stateless_retry {
+        tls.set_max_early_data(TLS_MAX_EARLY_DATA)?;
+    }
+    if let Some(ref listen) = listen {
+        let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
+        {
+            let cookie_factory = cookie_factory.clone();
+            tls.set_stateless_cookie_generate_cb(move |tls, buf| {
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                Ok(cookie_factory.generate(conn, buf))
+            });
+        }
+        tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
+            let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+            cookie_factory.verify(conn, cookie)
+        });
+    }
+    let reset_key = listen.as_ref().map(|x| x.reset);
+    tls.add_custom_ext(
+        26,
+        ssl::ExtensionContext::TLS1_3_ONLY
+            | ssl::ExtensionContext::CLIENT_HELLO
+            | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
+        {
+            let config = config.clone();
+            move |tls, ctx, _| {
+                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
+                let mut buf = Vec::new();
+                let mut params = TransportParameters {
+                    initial_max_streams_bidi: config.max_remote_bi_streams,
+                    initial_max_streams_uni: config.max_remote_uni_streams,
+                    initial_max_data: config.receive_window,
+                    initial_max_stream_data: config.stream_receive_window,
+                    ack_delay_exponent: ACK_DELAY_EXPONENT,
+                    ..TransportParameters::default()
+                };
+                let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
+                let side;
+                if am_server {
+                    params.stateless_reset_token =
+                        Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
+                    side = Side::Server;
+                } else {
+                    side = Side::Client;
+                }
+                params.write(side, &mut buf);
+                Ok(Some(buf))
+            }
+        },
+        |tls, ctx, data, _| {
+            let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO {
+                Side::Server
+            } else {
+                Side::Client
+            };
+            match TransportParameters::read(side, &mut data.into_buf()) {
+                Ok(params) => {
+                    tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
+                    Ok(())
+                }
+                Err(e) => {
+                    use transport_parameters::Error::*;
+                    tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Err(e));
+                    Err(match e {
+                        VersionNegotiation => SslAlert::ILLEGAL_PARAMETER,
+                        IllegalValue => SslAlert::ILLEGAL_PARAMETER,
+                        Malformed => SslAlert::DECODE_ERROR,
+                    })
+                }
+            }
+        },
+    )?;
+
+    if let Some(ref cert) = cert {
+        tls.set_private_key(cert.private_key)?;
+        tls.set_certificate(cert.cert)?;
+        tls.check_private_key()?;
+    }
+
+    if !config.protocols.is_empty() {
+        let mut buf = Vec::new();
+        for protocol in &config.protocols {
+            if protocol.len() > 255 {
+                return Err(EndpointError::ProtocolTooLong(protocol.clone()));
+            }
+            buf.push(protocol.len() as u8);
+            buf.extend_from_slice(protocol);
+        }
+        tls.set_alpn_protos(&buf)?;
+        tls.set_alpn_select_callback(move |_ssl, protos| {
+            if let Some(x) = ssl::select_next_proto(&buf, protos) {
+                Ok(x)
+            } else {
+                Err(ssl::AlpnError::ALERT_FATAL)
+            }
+        });
+    }
+
+    if let Some(ref path) = config.keylog {
+        let file = ::std::fs::File::create(path).map_err(EndpointError::Keylog)?;
+        let file = Mutex::new(file);
+        tls.set_keylog_callback(move |_, line| {
+            use std::io::Write;
+            let mut file = file.lock().unwrap();
+            let _ = file.write_all(line.as_bytes());
+            let _ = file.write_all(b"\n");
+        });
+    }
+
+    let session_ticket_buffer = Arc::new(Mutex::new(Vec::new()));
+    {
+        let session_ticket_buffer = session_ticket_buffer.clone();
+        tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
+        tls.set_new_session_callback(move |tls, session| {
+            if tls.is_server() {
+                return;
+            }
+            let mut buffer = session_ticket_buffer.lock().unwrap();
+            match session.max_early_data() {
+                0 | TLS_MAX_EARLY_DATA => {}
+                _ => {
+                    buffer.push(Err(()));
+                }
+            }
+            buffer.push(Ok(session));
+        });
+    }
+
+    let verify_flag = if config.require_client_certs {
+        ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT
+    } else {
+        ssl::SslVerifyMode::empty()
+    };
+    if config.client_cert_verifier.is_some() {
+        let config = config.clone();
+        tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| {
+            (config.client_cert_verifier.as_ref().unwrap())(x, y)
+        });
+    } else {
+        tls.set_verify(verify_flag);
+    }
+
+    Ok((tls.build(), session_ticket_buffer))
+}
+
 const HANDSHAKE_SALT: [u8; 20] = [
     0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f,
     0xe0, 0x6d, 0x6c, 0x38,
@@ -5043,3 +5050,5 @@ mod test {
         );
     }
 }
+
+type SessionTicketBuffer = Arc<Mutex<Vec<Result<SslSession, ()>>>>;
