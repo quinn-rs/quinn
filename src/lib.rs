@@ -31,14 +31,17 @@ mod stream;
 mod transport_parameters;
 mod varint;
 
+mod crypto;
+pub use crypto::CertConfig;
+
 mod frame;
 use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use endpoint::{
-    CertConfig, ClientConfig, Config, ConnectError, ConnectionError, ConnectionHandle,
-    ConnectionId, Endpoint, EndpointError, Event, Io, ListenKeys, ReadError, Timer, WriteError,
+    ClientConfig, Config, ConnectError, ConnectionError, ConnectionHandle, ConnectionId, Endpoint,
+    EndpointError, Event, Io, ListenKeys, ReadError, Timer, WriteError,
 };
 
 mod transport_error;
