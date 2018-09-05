@@ -219,6 +219,12 @@ pub struct Context {
     pub initial_packet_number: distributions::Range<u64>,
 }
 
+impl Context {
+    fn gen_initial_packet_num(&mut self) -> u32 {
+        self.initial_packet_number.sample(&mut self.rng) as u32
+    }
+}
+
 pub const MIN_INITIAL_SIZE: usize = 1200;
 pub const MIN_MTU: u16 = 1232;
 const LOCAL_ID_LEN: usize = 8;
@@ -633,10 +639,6 @@ impl Endpoint {
         Ok(conn)
     }
 
-    fn gen_initial_packet_num(&mut self) -> u32 {
-        self.ctx.initial_packet_number.sample(&mut self.ctx.rng) as u32
-    }
-
     fn add_connection(
         &mut self,
         initial_id: ConnectionId,
@@ -646,7 +648,7 @@ impl Endpoint {
         side: Side,
     ) -> ConnectionHandle {
         debug_assert!(!local_id.is_empty());
-        let packet_num = self.gen_initial_packet_num();
+        let packet_num = self.ctx.gen_initial_packet_num();
         let i = self.connections.insert(Connection::new(
             initial_id,
             local_id.clone(),
@@ -687,7 +689,7 @@ impl Endpoint {
                 self.ctx.log,
                 "rejecting connection due to full accept buffer"
             );
-            let n = self.gen_initial_packet_num();
+            let n = self.ctx.gen_initial_packet_num();
             self.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: handshake_close(
@@ -760,7 +762,7 @@ impl Endpoint {
                 }
                 Err(e) => {
                     debug!(self.ctx.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
-                    let n = self.gen_initial_packet_num();
+                    let n = self.ctx.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: handshake_close(
@@ -782,7 +784,7 @@ impl Endpoint {
                 }
                 Ok(_) => {
                     debug!(self.ctx.log, "got TLS early data"; "connection" => local_id.clone());
-                    let n = self.gen_initial_packet_num();
+                    let n = self.ctx.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: handshake_close(
@@ -806,7 +808,7 @@ impl Endpoint {
                 }
                 Err(e) => {
                     debug!(self.ctx.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
-                    let n = self.gen_initial_packet_num();
+                    let n = self.ctx.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: handshake_close(
@@ -854,7 +856,7 @@ impl Endpoint {
                         self.ctx.log,
                         "ClientHello missing transport params extension"
                     );
-                    let n = self.gen_initial_packet_num();
+                    let n = self.ctx.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: handshake_close(
@@ -880,7 +882,7 @@ impl Endpoint {
                     debug!(self.ctx.log, "accept failed"; "reason" => %tls.error());
                     TransportError::TLS_HANDSHAKE_FAILED
                 };
-                let n = self.gen_initial_packet_num();
+                let n = self.ctx.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
@@ -895,7 +897,7 @@ impl Endpoint {
             }
             Err(HandshakeError::SetupFailure(e)) => {
                 error!(self.ctx.log, "accept setup failed"; "reason" => %e);
-                let n = self.gen_initial_packet_num();
+                let n = self.ctx.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
