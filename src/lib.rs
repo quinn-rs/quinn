@@ -28,6 +28,8 @@ mod hkdf;
 mod memory_stream;
 mod range_set;
 mod stream;
+#[cfg(test)]
+mod tests;
 mod transport_parameters;
 mod varint;
 

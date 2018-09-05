@@ -1,17 +1,3 @@
-extern crate openssl;
-extern crate quicr_core as quicr;
-extern crate rand;
-#[macro_use]
-extern crate slog;
-#[macro_use]
-extern crate assert_matches;
-#[macro_use]
-extern crate lazy_static;
-extern crate bytes;
-#[macro_use]
-extern crate hex_literal;
-extern crate byteorder;
-
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::net::SocketAddrV6;
@@ -24,7 +10,7 @@ use openssl::rsa::Rsa;
 use openssl::x509::X509;
 use slog::{Drain, Logger, KV};
 
-use quicr::*;
+use super::*;
 
 struct TestDrain;
 
