@@ -629,7 +629,7 @@ impl Endpoint {
             Err(HandshakeError::WouldBlock(tls)) => tls,
             Err(e) => panic!("unexpected TLS error: {}", e),
         };
-        self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+        self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
         self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
             tls,
             clienthello_packet: None,
@@ -842,7 +842,7 @@ impl Endpoint {
                     self.connection_ids_initial.insert(dest_id, conn);
                     self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
                     self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
-                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                    self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
                     self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                         tls,
                         clienthello_packet: None,
@@ -1429,12 +1429,16 @@ impl Endpoint {
                                         local_id,
                                         remote_id,
                                         remote,
-                                        self.ctx.initial_packet_number.sample(&mut self.ctx.rng).into(),
+                                        self.ctx
+                                            .initial_packet_number
+                                            .sample(&mut self.ctx.rng)
+                                            .into(),
                                         Side::Client,
                                         &self.ctx.config,
                                     );
                                     // Send updated ClientHello
-                                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                                    self.connections[conn.0]
+                                        .transmit_handshake(&tls.get_mut().take_outgoing());
                                     // Prepare to receive Handshake packets that start stream 0 from offset 0
                                     tls.get_mut().reset_read();
                                     State::Handshake(state::Handshake {
@@ -1619,7 +1623,8 @@ impl Endpoint {
                                 );
                                 self.connections[conn.0].handshake_cleanup(&self.ctx.config);
                                 if self.connections[conn.0].side == Side::Client {
-                                    self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
+                                    self.connections[conn.0]
+                                        .transmit_handshake(&tls.get_mut().take_outgoing());
                                 } else {
                                     self.connections[conn.0].transmit(
                                         StreamId(0),
@@ -1673,7 +1678,7 @@ impl Endpoint {
                                 {
                                     let response = tls.get_mut().take_outgoing();
                                     if !response.is_empty() {
-                                        self.transmit_handshake(conn, &response);
+                                        self.connections[conn.0].transmit_handshake(&response);
                                     }
                                 }
                                 State::Handshake(state::Handshake {
@@ -2120,31 +2125,6 @@ impl Endpoint {
                 self.ctx.dirty_conns.insert(conn);
             }
         }
-    }
-
-    fn transmit_handshake(&mut self, conn: ConnectionHandle, messages: &[u8]) {
-        let offset = {
-            let ss = self.connections[conn.0]
-                .streams
-                .get_mut(&StreamId(0))
-                .unwrap()
-                .send_mut()
-                .unwrap();
-            let x = ss.offset;
-            ss.offset += messages.len() as u64;
-            ss.bytes_in_flight += messages.len() as u64;
-            x
-        };
-        self.connections[conn.0]
-            .handshake_pending
-            .stream
-            .push_back(frame::Stream {
-                id: StreamId(0),
-                fin: false,
-                offset,
-                data: messages.into(),
-            });
-        self.connections[conn.0].awaiting_handshake = true;
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {

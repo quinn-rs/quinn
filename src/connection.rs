@@ -731,6 +731,28 @@ impl Connection {
         }
     }
 
+    pub fn transmit_handshake(&mut self, messages: &[u8]) {
+        let offset = {
+            let ss = self
+                .streams
+                .get_mut(&StreamId(0))
+                .unwrap()
+                .send_mut()
+                .unwrap();
+            let x = ss.offset;
+            ss.offset += messages.len() as u64;
+            ss.bytes_in_flight += messages.len() as u64;
+            x
+        };
+        self.handshake_pending.stream.push_back(frame::Stream {
+            id: StreamId(0),
+            fin: false,
+            offset,
+            data: messages.into(),
+        });
+        self.awaiting_handshake = true;
+    }
+
     pub fn transmit(&mut self, stream: StreamId, data: Bytes) {
         let ss = self.streams.get_mut(&stream).unwrap().send_mut().unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
