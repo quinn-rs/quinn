@@ -196,11 +196,11 @@ impl<'a> Default for ClientConfig<'a> {
 /// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a backend to perform
 /// via `poll_io`, and consumes incoming packets and timer expirations via `handle` and `timeout`.
 pub struct Endpoint {
-    ctx: Context,
+    pub(crate) ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
-    connections: Slab<Connection>,
+    pub(crate) connections: Slab<Connection>,
     listen_keys: Option<ListenKeys>,
     io: VecDeque<Io>,
     session_ticket_buffer: SessionTicketBuffer,
@@ -1211,7 +1211,7 @@ impl Endpoint {
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    self.reset(conn, id, 0);
+                    self.connections[conn.0].reset(&mut self.ctx, id, 0, conn);
                     self.connections[conn.0]
                         .streams
                         .get_mut(&id)
@@ -2235,33 +2235,7 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        assert!(
-            stream.directionality() == Directionality::Bi
-                || stream.initiator() == self.connections[conn.0].side,
-            "only streams supporting outgoing data may be reset"
-        );
-        {
-            // reset is a noop on a closed stream
-            let stream = if let Some(x) = self.connections[conn.0].streams.get_mut(&stream) {
-                x.send_mut().unwrap()
-            } else {
-                return;
-            };
-            match stream.state {
-                stream::SendState::DataRecvd
-                | stream::SendState::ResetSent { .. }
-                | stream::SendState::ResetRecvd { .. } => {
-                    return;
-                } // Nothing to do
-                _ => {}
-            }
-            stream.state = stream::SendState::ResetSent { stop_reason: None };
-        }
-        self.connections[conn.0]
-            .pending
-            .rst_stream
-            .push((stream, error_code));
-        self.ctx.dirty_conns.insert(conn);
+        self.connections[conn.0].reset(&mut self.ctx, stream, error_code, conn)
     }
 
     /// Instruct the peer to abandon transmitting data on a stream

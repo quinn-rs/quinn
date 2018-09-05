@@ -13,7 +13,7 @@ use slog::{self, Logger};
 use coding::BufMutExt;
 use crypto::{Crypto, CryptoContext, ZeroRttCrypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE};
 use endpoint::{
-    packet, set_payload_length, Config, Header, Packet, PacketNumber, MAX_ACK_BLOCKS,
+    packet, set_payload_length, Config, Context, Header, Packet, PacketNumber, MAX_ACK_BLOCKS,
     MIN_INITIAL_SIZE, MIN_MTU,
 };
 use memory_stream::MemoryStream;
@@ -768,6 +768,42 @@ impl Connection {
             data,
             id: stream,
         });
+    }
+
+    /// Abandon transmitting data on a stream
+    ///
+    /// # Panics
+    /// - when applied to a receive stream or an unopened send stream
+    pub fn reset(
+        &mut self,
+        ctx: &mut Context,
+        stream: StreamId,
+        error_code: u16,
+        conn_h: ConnectionHandle,
+    ) {
+        assert!(
+            stream.directionality() == Directionality::Bi || stream.initiator() == self.side,
+            "only streams supporting outgoing data may be reset"
+        );
+        {
+            // reset is a noop on a closed stream
+            let stream = if let Some(x) = self.streams.get_mut(&stream) {
+                x.send_mut().unwrap()
+            } else {
+                return;
+            };
+            match stream.state {
+                stream::SendState::DataRecvd
+                | stream::SendState::ResetSent { .. }
+                | stream::SendState::ResetRecvd { .. } => {
+                    return;
+                } // Nothing to do
+                _ => {}
+            }
+            stream.state = stream::SendState::ResetSent { stop_reason: None };
+        }
+        self.pending.rst_stream.push((stream, error_code));
+        ctx.dirty_conns.insert(conn_h);
     }
 
     pub fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
