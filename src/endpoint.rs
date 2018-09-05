@@ -196,23 +196,27 @@ impl<'a> Default for ClientConfig<'a> {
 /// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a backend to perform
 /// via `poll_io`, and consumes incoming packets and timer expirations via `handle` and `timeout`.
 pub struct Endpoint {
-    log: Logger,
-    rng: OsRng,
-    initial_packet_number: distributions::Range<u64>,
-    tls: SslContext,
+    ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     connections: Slab<Connection>,
-    config: Arc<Config>,
     listen_keys: Option<ListenKeys>,
-    events: VecDeque<(ConnectionHandle, Event)>,
     io: VecDeque<Io>,
-    dirty_conns: FnvHashSet<ConnectionHandle>,
-    readable_conns: FnvHashSet<ConnectionHandle>,
-    incoming: VecDeque<ConnectionHandle>,
-    incoming_handshakes: usize,
     session_ticket_buffer: SessionTicketBuffer,
+}
+
+pub struct Context {
+    pub log: Logger,
+    pub tls: SslContext,
+    pub rng: OsRng,
+    pub config: Arc<Config>,
+    pub events: VecDeque<(ConnectionHandle, Event)>,
+    pub incoming: VecDeque<ConnectionHandle>,
+    pub incoming_handshakes: usize,
+    pub dirty_conns: FnvHashSet<ConnectionHandle>,
+    pub readable_conns: FnvHashSet<ConnectionHandle>,
+    pub initial_packet_number: distributions::Range<u64>,
 }
 
 pub const MIN_INITIAL_SIZE: usize = 1200;
@@ -284,22 +288,24 @@ impl Endpoint {
         let (tls, session_ticket_buffer) = new_tls_ctx(config.clone(), cert, listen)?;
 
         Ok(Self {
-            log,
-            rng,
-            config,
-            tls,
+            ctx: Context {
+                log,
+                tls,
+                rng,
+                config,
+                initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
+                events: VecDeque::new(),
+                dirty_conns: FnvHashSet::default(),
+                readable_conns: FnvHashSet::default(),
+                incoming: VecDeque::new(),
+                incoming_handshakes: 0,
+            },
             listen_keys: listen,
-            initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
-            events: VecDeque::new(),
             io: VecDeque::new(),
-            dirty_conns: FnvHashSet::default(),
-            readable_conns: FnvHashSet::default(),
-            incoming: VecDeque::new(),
-            incoming_handshakes: 0,
             session_ticket_buffer,
         })
     }
@@ -310,11 +316,11 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        if let Some(x) = self.events.pop_front() {
+        if let Some(x) = self.ctx.events.pop_front() {
             return Some(x);
         }
         loop {
-            let &conn = self.readable_conns.iter().next()?;
+            let &conn = self.ctx.readable_conns.iter().next()?;
             if let Some(&stream) = self.connections[conn.0].readable_streams.iter().next() {
                 self.connections[conn.0].readable_streams.remove(&stream);
                 let rs = self.connections[conn.0]
@@ -326,7 +332,7 @@ impl Endpoint {
                 let fresh = mem::replace(&mut rs.fresh, false);
                 return Some((conn, Event::StreamReadable { stream, fresh }));
             }
-            self.readable_conns.remove(&conn);
+            self.ctx.readable_conns.remove(&conn);
         }
     }
 
@@ -336,10 +342,10 @@ impl Endpoint {
             if let Some(x) = self.io.pop_front() {
                 return Some(x);
             }
-            let &conn = self.dirty_conns.iter().next()?;
+            let &conn = self.ctx.dirty_conns.iter().next()?;
             // TODO: Only determine a single operation; only remove from dirty set if that fails
             self.flush_pending(now, conn);
-            self.dirty_conns.remove(&conn);
+            self.ctx.dirty_conns.remove(&conn);
         }
     }
 
@@ -354,14 +360,14 @@ impl Endpoint {
                     destination,
                 }) => {
                     if !self.listen() {
-                        debug!(self.log, "dropping packet with unsupported version");
+                        debug!(self.ctx.log, "dropping packet with unsupported version");
                         return;
                     }
-                    trace!(self.log, "sending version negotiation");
+                    trace!(self.ctx.log, "sending version negotiation");
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
-                        ty: self.rng.gen(),
+                        ty: self.ctx.rng.gen(),
                         source_id: destination,
                         destination_id: source,
                     }.encode(&mut buf);
@@ -374,7 +380,7 @@ impl Endpoint {
                     return;
                 }
                 Err(e) => {
-                    trace!(self.log, "unable to process packet"; "reason" => %e);
+                    trace!(self.ctx.log, "unable to process packet"; "reason" => %e);
                     return;
                 }
             };
@@ -414,7 +420,7 @@ impl Endpoint {
                         .unwrap()
                         .is_drained()
                     {
-                        debug!(self.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
+                        debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
                         self.io.push_back(Io::TimerStop {
                             connection: conn,
                             timer: Timer::LossDetection,
@@ -427,7 +433,7 @@ impl Endpoint {
                             connection: conn,
                             timer: Timer::Idle,
                         });
-                        self.events.push_back((
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: ConnectionError::Reset,
@@ -445,7 +451,7 @@ impl Endpoint {
         //
 
         if !self.listen() {
-            debug!(self.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
+            debug!(self.ctx.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
             return;
         }
         let key_phase = packet.header.key_phase();
@@ -470,7 +476,7 @@ impl Endpoint {
                         );
                     } else {
                         debug!(
-                            self.log,
+                            self.ctx.log,
                             "ignoring short initial on {connection}",
                             connection = destination_id.clone()
                         );
@@ -480,14 +486,14 @@ impl Endpoint {
                 packet::ZERO_RTT => {
                     // MAY buffer a limited amount
                     trace!(
-                        self.log,
+                        self.ctx.log,
                         "dropping 0-RTT packet for unknown connection {connection}",
                         connection = destination_id.clone()
                     );
                     return;
                 }
                 _ => {
-                    debug!(self.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
+                    debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
                            connection=destination_id.clone(), type=ty);
                     return;
                 }
@@ -499,23 +505,23 @@ impl Endpoint {
         //
 
         if !dest_id.is_empty() {
-            debug!(self.log, "sending stateless reset");
+            debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
-            let padding = self.rng.gen_range(
+            let padding = self.ctx.rng.gen_range(
                 0,
                 cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE,
             );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
-                id: ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8),
-                number: PacketNumber::U8(self.rng.gen()),
+                id: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8),
+                number: PacketNumber::U8(self.ctx.rng.gen()),
                 key_phase,
             }.encode(&mut buf);
             {
                 let start = buf.len();
                 buf.resize(start + padding, 0);
-                self.rng.fill_bytes(&mut buf[start..start + padding]);
+                self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
                 &self.listen_keys.as_ref().unwrap().reset,
@@ -526,7 +532,10 @@ impl Endpoint {
                 packet: buf.into(),
             });
         } else {
-            trace!(self.log, "dropping unrecognized short packet without ID");
+            trace!(
+                self.ctx.log,
+                "dropping unrecognized short packet without ID"
+            );
         }
     }
 
@@ -536,9 +545,9 @@ impl Endpoint {
         remote: SocketAddrV6,
         config: ClientConfig,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
-        let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE as u8);
-        trace!(self.log, "initial dcid"; "value" => %remote_id);
+        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
+        let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
+        trace!(self.ctx.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id.clone(),
             local_id.clone(),
@@ -546,7 +555,7 @@ impl Endpoint {
             remote,
             Side::Client,
         );
-        let mut tls = Ssl::new(&self.tls)?;
+        let mut tls = Ssl::new(&self.ctx.tls)?;
         if !config.accept_insecure_certs {
             tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
             let param = tls.param_mut();
@@ -598,7 +607,7 @@ impl Endpoint {
             tls.set_connect_state();
             if session.max_early_data() == TLS_MAX_EARLY_DATA {
                 trace!(
-                    self.log,
+                    self.ctx.log,
                     "{connection} enabling 0rtt",
                     connection = local_id.clone()
                 );
@@ -620,12 +629,12 @@ impl Endpoint {
             clienthello_packet: None,
             remote_id_set: false,
         }));
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
 
     fn gen_initial_packet_num(&mut self) -> u32 {
-        self.initial_packet_number.sample(&mut self.rng) as u32
+        self.ctx.initial_packet_number.sample(&mut self.ctx.rng) as u32
     }
 
     fn add_connection(
@@ -645,7 +654,7 @@ impl Endpoint {
             remote,
             packet_num.into(),
             side,
-            &self.config,
+            &self.ctx.config,
         ));
         self.connection_ids.insert(local_id, ConnectionHandle(i));
         self.connection_remotes.insert(remote, ConnectionHandle(i));
@@ -666,13 +675,18 @@ impl Endpoint {
         let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) {
             x.into()
         } else {
-            debug!(self.log, "failed to authenticate initial packet");
+            debug!(self.ctx.log, "failed to authenticate initial packet");
             return;
         };
-        let local_id = ConnectionId::random(&mut self.rng, LOCAL_ID_LEN as u8);
+        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
 
-        if self.incoming.len() + self.incoming_handshakes == self.config.accept_buffer as usize {
-            debug!(self.log, "rejecting connection due to full accept buffer");
+        if self.ctx.incoming.len() + self.ctx.incoming_handshakes
+            == self.ctx.config.accept_buffer as usize
+        {
+            debug!(
+                self.ctx.log,
+                "rejecting connection due to full accept buffer"
+            );
             let n = self.gen_initial_packet_num();
             self.io.push_back(Io::Transmit {
                 destination: remote,
@@ -689,11 +703,11 @@ impl Endpoint {
         }
 
         let mut stream = MemoryStream::new();
-        if !parse_initial(&self.log, &mut stream, payload) {
+        if !parse_initial(&self.ctx.log, &mut stream, payload) {
             return;
         } // TODO: Send close?
-        trace!(self.log, "got initial");
-        let mut tls = Ssl::new(&self.tls).unwrap(); // TODO: is this reliable?
+        trace!(self.ctx.log, "got initial");
+        let mut tls = Ssl::new(&self.ctx.tls).unwrap(); // TODO: is this reliable?
         tls.set_ex_data(
             *CONNECTION_INFO_INDEX,
             ConnectionInfo {
@@ -705,13 +719,13 @@ impl Endpoint {
         tls.set_accept_state();
 
         let zero_rtt_crypto;
-        if self.config.use_stateless_retry {
+        if self.ctx.config.use_stateless_retry {
             zero_rtt_crypto = None;
             match tls.stateless() {
                 Ok(true) => {} // Continue on to the below accept call
                 Ok(false) => {
                     let data = tls.get_mut().take_outgoing();
-                    trace!(self.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
+                    trace!(self.ctx.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
                     let mut buf = Vec::<u8>::new();
                     Header::Long {
                         ty: packet::RETRY,
@@ -745,7 +759,7 @@ impl Endpoint {
                     return;
                 }
                 Err(e) => {
-                    debug!(self.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
+                    debug!(self.ctx.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
@@ -767,7 +781,7 @@ impl Endpoint {
                     zero_rtt_crypto = None;
                 }
                 Ok(_) => {
-                    debug!(self.log, "got TLS early data"; "connection" => local_id.clone());
+                    debug!(self.ctx.log, "got TLS early data"; "connection" => local_id.clone());
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
@@ -784,14 +798,14 @@ impl Endpoint {
                 }
                 Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
                     trace!(
-                        self.log,
+                        self.ctx.log,
                         "{connection} enabled 0rtt",
                         connection = local_id.clone()
                     );
                     zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
                 }
                 Err(e) => {
-                    debug!(self.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
+                    debug!(self.ctx.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
@@ -812,7 +826,7 @@ impl Endpoint {
         match tls.handshake() {
             Ok(_) => unreachable!(),
             Err(HandshakeError::WouldBlock(mut tls)) => {
-                trace!(self.log, "performing handshake"; "connection" => local_id.clone());
+                trace!(self.ctx.log, "performing handshake"; "connection" => local_id.clone());
                 if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
                     let params = params
                         .expect("transport parameter errors should have aborted the handshake");
@@ -833,10 +847,13 @@ impl Endpoint {
                         remote_id_set: true,
                     }));
                     self.connections[conn.0].set_params(params);
-                    self.dirty_conns.insert(conn);
-                    self.incoming_handshakes += 1;
+                    self.ctx.dirty_conns.insert(conn);
+                    self.ctx.incoming_handshakes += 1;
                 } else {
-                    debug!(self.log, "ClientHello missing transport params extension");
+                    debug!(
+                        self.ctx.log,
+                        "ClientHello missing transport params extension"
+                    );
                     let n = self.gen_initial_packet_num();
                     self.io.push_back(Io::Transmit {
                         destination: remote,
@@ -857,10 +874,10 @@ impl Endpoint {
                     .ex_data(*TRANSPORT_PARAMS_INDEX)
                     .and_then(|x| x.err())
                 {
-                    debug!(self.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
+                    debug!(self.ctx.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
                     TransportError::TRANSPORT_PARAMETER_ERROR
                 } else {
-                    debug!(self.log, "accept failed"; "reason" => %tls.error());
+                    debug!(self.ctx.log, "accept failed"; "reason" => %tls.error());
                     TransportError::TLS_HANDSHAKE_FAILED
                 };
                 let n = self.gen_initial_packet_num();
@@ -877,7 +894,7 @@ impl Endpoint {
                 });
             }
             Err(HandshakeError::SetupFailure(e)) => {
-                error!(self.log, "accept setup failed"; "reason" => %e);
+                error!(self.ctx.log, "accept setup failed"; "reason" => %e);
                 let n = self.gen_initial_packet_num();
                 self.io.push_back(Io::Transmit {
                     destination: remote,
@@ -907,7 +924,7 @@ impl Endpoint {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(self.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
+                    trace!(self.ctx.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
                 }
             }
             match frame {
@@ -918,18 +935,19 @@ impl Endpoint {
             }
             match frame {
                 Frame::Stream(frame) => {
-                    trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
+                    trace!(self.ctx.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.connections[conn.0].data_recvd;
                     let max_data = self.connections[conn.0].local_max_data;
                     let new_bytes = match self.connections[conn.0].get_recv_stream(frame.id) {
                         Err(e) => {
-                            debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
-                            self.events
+                            debug!(self.ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
+                            self.ctx
+                                .events
                                 .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                             return Err(e.into());
                         }
                         Ok(None) => {
-                            trace!(self.log, "dropping frame for closed stream");
+                            trace!(self.ctx.log, "dropping frame for closed stream");
                             continue;
                         }
                         Ok(Some(stream)) => {
@@ -937,8 +955,8 @@ impl Endpoint {
                             let rs = stream.recv_mut().unwrap();
                             if let Some(final_offset) = rs.final_offset() {
                                 if end > final_offset || (frame.fin && end != final_offset) {
-                                    debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                                    self.events.push_back((
+                                    debug!(self.ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::FINAL_OFFSET_ERROR.into(),
@@ -950,10 +968,10 @@ impl Endpoint {
                             let prev_end = rs.limit();
                             let new_bytes = end.saturating_sub(prev_end);
                             if end > rs.max_data || data_recvd + new_bytes > max_data {
-                                debug!(self.log, "flow control error";
+                                debug!(self.ctx.log, "flow control error";
                                        "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
                                        "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
-                                self.events.push_back((
+                                self.ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
                                         reason: TransportError::FLOW_CONTROL_ERROR.into(),
@@ -972,8 +990,8 @@ impl Endpoint {
                             rs.recvd.insert(frame.offset..end);
                             if frame.id == StreamId(0) {
                                 if frame.fin {
-                                    debug!(self.log, "got fin on stream 0"; "connection" => cid);
-                                    self.events.push_back((
+                                    debug!(self.ctx.log, "got fin on stream 0"; "connection" => cid);
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -997,20 +1015,21 @@ impl Endpoint {
                     };
                     if frame.id != StreamId(0) {
                         self.connections[conn.0].readable_streams.insert(frame.id);
-                        self.readable_conns.insert(conn);
+                        self.ctx.readable_conns.insert(conn);
                     }
                     self.connections[conn.0].data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, conn, ack);
                     for stream in self.connections[conn.0].finished_streams.drain(..) {
-                        self.events
+                        self.ctx
+                            .events
                             .push_back((conn, Event::StreamFinished { stream }));
                     }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
-                    self.events.push_back((
+                    self.ctx.events.push_back((
                         conn,
                         Event::ConnectionLost {
                             reason: ConnectionError::ConnectionClosed { reason },
@@ -1019,7 +1038,7 @@ impl Endpoint {
                     return Ok(true);
                 }
                 Frame::ApplicationClose(reason) => {
-                    self.events.push_back((
+                    self.ctx.events.push_back((
                         conn,
                         Event::ConnectionLost {
                             reason: ConnectionError::ApplicationClosed { reason },
@@ -1028,8 +1047,8 @@ impl Endpoint {
                     return Ok(true);
                 }
                 Frame::Invalid(ty) => {
-                    debug!(self.log, "received malformed frame"; "type" => %ty);
-                    self.events.push_back((
+                    debug!(self.ctx.log, "received malformed frame"; "type" => %ty);
+                    self.ctx.events.push_back((
                         conn,
                         Event::ConnectionLost {
                             reason: TransportError::frame(ty).into(),
@@ -1041,8 +1060,8 @@ impl Endpoint {
                     self.connections[conn.0].pending.path_challenge(number, x);
                 }
                 Frame::PathResponse(_) => {
-                    debug!(self.log, "unsolicited PATH_RESPONSE");
-                    self.events.push_back((
+                    debug!(self.ctx.log, "unsolicited PATH_RESPONSE");
+                    self.ctx.events.push_back((
                         conn,
                         Event::ConnectionLost {
                             reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
@@ -1056,7 +1075,8 @@ impl Endpoint {
                         cmp::max(bytes, self.connections[conn.0].max_data);
                     if was_blocked && !self.connections[conn.0].blocked() {
                         for stream in self.connections[conn.0].blocked_streams.drain() {
-                            self.events
+                            self.ctx
+                                .events
                                 .push_back((conn, Event::StreamWritable { stream }));
                         }
                     }
@@ -1065,8 +1085,8 @@ impl Endpoint {
                     if id.initiator() != self.connections[conn.0].side
                         && id.directionality() == Directionality::Uni
                     {
-                        debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
-                        self.events.push_back((
+                        debug!(self.ctx.log, "got MAX_STREAM_DATA on recv-only stream");
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1077,17 +1097,18 @@ impl Endpoint {
                     if let Some(stream) = self.connections[conn.0].streams.get_mut(&id) {
                         let ss = stream.send_mut().unwrap();
                         if offset > ss.max_data {
-                            trace!(self.log, "stream limit increased"; "stream" => id.0,
+                            trace!(self.ctx.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
-                                self.events
+                                self.ctx
+                                    .events
                                     .push_back((conn, Event::StreamWritable { stream: id }));
                             }
                             ss.max_data = offset;
                         }
                     } else {
-                        debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
-                        self.events.push_back((
+                        debug!(self.ctx.log, "got MAX_STREAM_DATA on unopened stream");
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1103,7 +1124,7 @@ impl Endpoint {
                     };
                     if id.index() > *limit {
                         *limit = id.index();
-                        self.events.push_back((
+                        self.ctx.events.push_back((
                             conn,
                             Event::StreamAvailable {
                                 directionality: id.directionality(),
@@ -1117,8 +1138,8 @@ impl Endpoint {
                     final_offset,
                 }) => {
                     if id == StreamId(0) {
-                        debug!(self.log, "got RST_STREAM on stream 0");
-                        self.events.push_back((
+                        debug!(self.ctx.log, "got RST_STREAM on stream 0");
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1128,20 +1149,21 @@ impl Endpoint {
                     }
                     let offset = match self.connections[conn.0].get_recv_stream(id) {
                         Err(e) => {
-                            debug!(self.log, "received illegal RST_STREAM");
-                            self.events
+                            debug!(self.ctx.log, "received illegal RST_STREAM");
+                            self.ctx
+                                .events
                                 .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                             return Err(e.into());
                         }
                         Ok(None) => {
-                            trace!(self.log, "received RST_STREAM on closed stream");
+                            trace!(self.ctx.log, "received RST_STREAM on closed stream");
                             continue;
                         }
                         Ok(Some(stream)) => {
                             let rs = stream.recv_mut().unwrap();
                             if let Some(offset) = rs.final_offset() {
                                 if offset != final_offset {
-                                    self.events.push_back((
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::FINAL_OFFSET_ERROR.into(),
@@ -1161,16 +1183,16 @@ impl Endpoint {
                     };
                     self.connections[conn.0].data_recvd += final_offset.saturating_sub(offset);
                     self.connections[conn.0].readable_streams.insert(id);
-                    self.readable_conns.insert(conn);
+                    self.ctx.readable_conns.insert(conn);
                 }
                 Frame::Blocked { offset } => {
-                    debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
+                    debug!(self.ctx.log, "peer claims to be blocked at connection level"; "offset" => offset);
                 }
                 Frame::StreamBlocked { id, offset } => {
-                    debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
+                    debug!(self.ctx.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
                 }
                 Frame::StreamIdBlocked { id } => {
-                    debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => id);
+                    debug!(self.ctx.log, "peer claims to be blocked at stream ID level"; "stream" => id);
                 }
                 Frame::StopSending { id, error_code } => {
                     if self.connections[conn.0]
@@ -1178,8 +1200,8 @@ impl Endpoint {
                         .get(&id)
                         .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
                     {
-                        debug!(self.log, "got STOP_SENDING on invalid stream");
-                        self.events.push_back((
+                        debug!(self.ctx.log, "got STOP_SENDING on invalid stream");
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1200,9 +1222,9 @@ impl Endpoint {
                 }
                 Frame::NewConnectionId { .. } => {
                     if self.connections[conn.0].remote_id.is_empty() {
-                        debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
+                        debug!(self.ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
                                connection=self.connections[conn.0].local_id.clone());
-                        self.events.push_back((
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1210,7 +1232,7 @@ impl Endpoint {
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                    trace!(self.ctx.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
                 }
             }
         }
@@ -1228,7 +1250,11 @@ impl Endpoint {
         let prev_offset = tls.get_ref().read_offset();
         let status = tls.ssl_read(&mut [0; 1]);
         let progress = tls.get_ref().read_offset() - prev_offset;
-        trace!(self.log, "stream 0 read {bytes} bytes", bytes = progress);
+        trace!(
+            self.ctx.log,
+            "stream 0 read {bytes} bytes",
+            bytes = progress
+        );
         self.connections[conn.0]
             .streams
             .get_mut(&StreamId(0))
@@ -1247,7 +1273,7 @@ impl Endpoint {
             for session in buffer.drain(..) {
                 if let Ok(session) = session {
                     trace!(
-                        self.log,
+                        self.ctx.log,
                         "{connection} got session ticket",
                         connection = self.connections[conn.0].local_id.clone()
                     );
@@ -1262,15 +1288,16 @@ impl Endpoint {
                     buf.extend_from_slice(&session);
                     params.write(Side::Server, &mut buf);
 
-                    self.events
+                    self.ctx
+                        .events
                         .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
                 } else {
                     debug!(
-                        self.log,
+                        self.ctx.log,
                         "{connection} got malformed session ticket",
                         connection = self.connections[conn.0].local_id.clone()
                     );
-                    self.events.push_back((
+                    self.ctx.events.push_back((
                         conn,
                         Event::ConnectionLost {
                             reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1284,8 +1311,8 @@ impl Endpoint {
         match status {
             Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
             Ok(_) => {
-                debug!(self.log, "got TLS application data");
-                self.events.push_back((
+                debug!(self.ctx.log, "got TLS application data");
+                self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1294,8 +1321,8 @@ impl Endpoint {
                 Err(TransportError::PROTOCOL_VIOLATION.into())
             }
             Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
-                debug!(self.log, "TLS error"; "error" => %e);
-                self.events.push_back((
+                debug!(self.ctx.log, "TLS error"; "error" => %e);
+                self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
                         reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
@@ -1304,8 +1331,8 @@ impl Endpoint {
                 Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
             }
             Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
-                debug!(self.log, "TLS session terminated unexpectedly");
-                self.events.push_back((
+                debug!(self.ctx.log, "TLS session terminated unexpectedly");
+                self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1314,8 +1341,8 @@ impl Endpoint {
                 Err(TransportError::PROTOCOL_VIOLATION.into())
             }
             Err(e) => {
-                error!(self.log, "unexpected TLS error"; "error" => %e);
-                self.events.push_back((
+                error!(self.ctx.log, "unexpected TLS error"; "error" => %e);
+                self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
                         reason: TransportError::INTERNAL_ERROR.into(),
@@ -1347,8 +1374,8 @@ impl Endpoint {
                         // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
                         if state.clienthello_packet.is_none() {
                             // Received Retry as a server
-                            debug!(self.log, "received retry from client"; "connection" => %conn_id);
-                            self.events.push_back((
+                            debug!(self.ctx.log, "received retry from client"; "connection" => %conn_id);
+                            self.ctx.events.push_back((
                                 conn,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1360,8 +1387,8 @@ impl Endpoint {
                             State::Handshake(state)
                         } else if state.tls.get_ref().read_offset() != 0 {
                             // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
-                            debug!(self.log, "received retry after a handshake packet");
-                            self.events.push_back((
+                            debug!(self.ctx.log, "received retry after a handshake packet");
+                            self.ctx.events.push_back((
                                 conn,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1375,9 +1402,9 @@ impl Endpoint {
                             &packet.payload,
                         ) {
                             let mut new_stream = MemoryStream::new();
-                            if !parse_initial(&self.log, &mut new_stream, payload.into()) {
-                                debug!(self.log, "invalid retry payload");
-                                self.events.push_back((
+                            if !parse_initial(&self.ctx.log, &mut new_stream, payload.into()) {
+                                debug!(self.ctx.log, "invalid retry payload");
+                                self.ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
                                         reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1392,7 +1419,7 @@ impl Endpoint {
                             match state.tls.handshake() {
                                 Err(HandshakeError::WouldBlock(mut tls)) => {
                                     self.on_packet_authenticated(now, conn, number as u64);
-                                    trace!(self.log, "resending ClientHello"; "remote_id" => %remote_id);
+                                    trace!(self.ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
                                     let local_id = self.connections[conn.0].local_id.clone();
                                     // Discard transport state
                                     self.connections[conn.0] = Connection::new(
@@ -1400,9 +1427,9 @@ impl Endpoint {
                                         local_id,
                                         remote_id,
                                         remote,
-                                        self.initial_packet_number.sample(&mut self.rng).into(),
+                                        self.ctx.initial_packet_number.sample(&mut self.ctx.rng).into(),
                                         Side::Client,
-                                        &self.config,
+                                        &self.ctx.config,
                                     );
                                     // Send updated ClientHello
                                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
@@ -1416,10 +1443,10 @@ impl Endpoint {
                                 }
                                 Ok(_) => {
                                     debug!(
-                                        self.log,
+                                        self.ctx.log,
                                         "unexpectedly completed handshake in RETRY packet"
                                     );
-                                    self.events.push_back((
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1431,8 +1458,8 @@ impl Endpoint {
                                     )
                                 }
                                 Err(HandshakeError::Failure(mut tls)) => {
-                                    debug!(self.log, "handshake failed"; "reason" => %tls.error());
-                                    self.events.push_back((
+                                    debug!(self.ctx.log, "handshake failed"; "reason" => %tls.error());
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
@@ -1444,8 +1471,8 @@ impl Endpoint {
                                     )
                                 }
                                 Err(HandshakeError::SetupFailure(e)) => {
-                                    error!(self.log, "handshake setup failed"; "reason" => %e);
-                                    self.events.push_back((
+                                    error!(self.ctx.log, "handshake setup failed"; "reason" => %e);
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::INTERNAL_ERROR.into(),
@@ -1455,7 +1482,7 @@ impl Endpoint {
                                 }
                             }
                         } else {
-                            debug!(self.log, "failed to authenticate retry packet");
+                            debug!(self.ctx.log, "failed to authenticate retry packet");
                             State::Handshake(state)
                         }
                     }
@@ -1467,7 +1494,7 @@ impl Endpoint {
                         ..
                     } => {
                         if !state.remote_id_set {
-                            trace!(self.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
+                            trace!(self.ctx.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
                             self.connections[conn.0].remote_id = remote_id;
                             state.remote_id_set = true;
                         }
@@ -1479,7 +1506,7 @@ impl Endpoint {
                         ) {
                             x
                         } else {
-                            debug!(self.log, "failed to authenticate handshake packet");
+                            debug!(self.ctx.log, "failed to authenticate handshake packet");
                             return State::Handshake(state);
                         };
                         self.on_packet_authenticated(now, conn, number as u64);
@@ -1502,8 +1529,8 @@ impl Endpoint {
                                     state.tls.get_mut().insert(offset, &data);
                                 }
                                 Frame::Stream(frame::Stream { .. }) => {
-                                    debug!(self.log, "non-stream-0 stream frame in handshake");
-                                    self.events.push_back((
+                                    debug!(self.ctx.log, "non-stream-0 stream frame in handshake");
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1518,7 +1545,7 @@ impl Endpoint {
                                     self.on_ack_received(now, conn, ack);
                                 }
                                 Frame::ConnectionClose(reason) => {
-                                    self.events.push_back((
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: ConnectionError::ConnectionClosed { reason },
@@ -1527,7 +1554,7 @@ impl Endpoint {
                                     return State::Draining(state.into());
                                 }
                                 Frame::ApplicationClose(reason) => {
-                                    self.events.push_back((
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: ConnectionError::ApplicationClosed { reason },
@@ -1541,8 +1568,8 @@ impl Endpoint {
                                         .path_challenge(number as u64, value);
                                 }
                                 _ => {
-                                    debug!(self.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
-                                    self.events.push_back((
+                                    debug!(self.ctx.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
+                                    self.ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1569,8 +1596,8 @@ impl Endpoint {
                                             "transport param errors should fail the handshake",
                                         ));
                                     } else {
-                                        debug!(self.log, "server didn't send transport params");
-                                        self.events.push_back((
+                                        debug!(self.ctx.log, "server didn't send transport params");
+                                        self.ctx.events.push_back((
                                             conn,
                                             Event::ConnectionLost {
                                                 reason: TransportError::TRANSPORT_PARAMETER_ERROR
@@ -1584,11 +1611,11 @@ impl Endpoint {
                                     }
                                 }
                                 trace!(
-                                    self.log,
+                                    self.ctx.log,
                                     "{connection} established",
                                     connection = id.clone()
                                 );
-                                self.connections[conn.0].handshake_cleanup(&self.config);
+                                self.connections[conn.0].handshake_cleanup(&self.ctx.config);
                                 if self.connections[conn.0].side == Side::Client {
                                     self.transmit_handshake(conn, &tls.get_mut().take_outgoing());
                                 } else {
@@ -1599,7 +1626,7 @@ impl Endpoint {
                                 }
                                 match self.connections[conn.0].side {
                                     Side::Client => {
-                                        self.events.push_back((
+                                        self.ctx.events.push_back((
                                             conn,
                                             Event::Connected {
                                                 protocol: tls
@@ -1610,8 +1637,8 @@ impl Endpoint {
                                         ));
                                     }
                                     Side::Server => {
-                                        self.incoming_handshakes -= 1;
-                                        self.incoming.push_back(conn);
+                                        self.ctx.incoming_handshakes -= 1;
+                                        self.ctx.incoming.push_back(conn);
                                     }
                                 }
                                 self.connections[conn.0].crypto = Some(CryptoContext::established(
@@ -1632,8 +1659,8 @@ impl Endpoint {
                                 State::Established(state::Established { tls })
                             }
                             Err(HandshakeError::WouldBlock(mut tls)) => {
-                                trace!(self.log, "handshake ongoing"; "connection" => %id);
-                                self.connections[conn.0].handshake_cleanup(&self.config);
+                                trace!(self.ctx.log, "handshake ongoing"; "connection" => %id);
+                                self.connections[conn.0].handshake_cleanup(&self.ctx.config);
                                 self.connections[conn.0]
                                     .streams
                                     .get_mut(&StreamId(0))
@@ -1659,13 +1686,13 @@ impl Endpoint {
                                     .ex_data(*TRANSPORT_PARAMS_INDEX)
                                     .and_then(|x| x.err())
                                 {
-                                    debug!(self.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
+                                    debug!(self.ctx.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
                                     TransportError::TRANSPORT_PARAMETER_ERROR
                                 } else {
-                                    debug!(self.log, "handshake failed"; "reason" => %tls.error());
+                                    debug!(self.ctx.log, "handshake failed"; "reason" => %tls.error());
                                     TransportError::TLS_HANDSHAKE_FAILED
                                 };
-                                self.events.push_back((
+                                self.ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
                                         reason: code.into(),
@@ -1677,8 +1704,8 @@ impl Endpoint {
                                 )
                             }
                             Err(HandshakeError::SetupFailure(e)) => {
-                                error!(self.log, "handshake failed"; "connection" => %id, "reason" => %e);
-                                self.events.push_back((
+                                error!(self.ctx.log, "handshake failed"; "connection" => %id, "reason" => %e);
+                                self.ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
                                         reason: TransportError::INTERNAL_ERROR.into(),
@@ -1693,7 +1720,7 @@ impl Endpoint {
                         ..
                     } if self.connections[conn.0].side == Side::Server =>
                     {
-                        trace!(self.log, "dropping duplicate Initial");
+                        trace!(self.ctx.log, "dropping duplicate Initial");
                         State::Handshake(state)
                     }
                     Header::Long {
@@ -1712,7 +1739,7 @@ impl Endpoint {
                                 x
                             } else {
                                 debug!(
-                                    self.log,
+                                    self.ctx.log,
                                     "{connection} failed to authenticate 0-RTT packet",
                                     connection = id.clone()
                                 );
@@ -1720,7 +1747,7 @@ impl Endpoint {
                             }
                         } else {
                             debug!(
-                                self.log,
+                                self.ctx.log,
                                 "{connection} ignoring unsupported 0-RTT packet",
                                 connection = id.clone()
                             );
@@ -1744,8 +1771,8 @@ impl Endpoint {
                         }
                     }
                     Header::Long { ty, .. } => {
-                        debug!(self.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
-                        self.events.push_back((
+                        debug!(self.ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1758,8 +1785,8 @@ impl Endpoint {
                     } => {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
                         if packet.payload.len() % 4 != 0 {
-                            debug!(self.log, "malformed version negotiation"; "connection" => %id);
-                            self.events.push_back((
+                            debug!(self.ctx.log, "malformed version negotiation"; "connection" => %id);
+                            self.ctx.events.push_back((
                                 conn,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
@@ -1777,8 +1804,8 @@ impl Endpoint {
                                 return State::Handshake(state);
                             }
                         }
-                        debug!(self.log, "remote doesn't support our version");
-                        self.events.push_back((
+                        debug!(self.ctx.log, "remote doesn't support our version");
+                        self.ctx.events.push_back((
                             conn,
                             Event::ConnectionLost {
                                 reason: ConnectionError::VersionMismatch,
@@ -1788,7 +1815,7 @@ impl Endpoint {
                     }
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     Header::Short { .. } => {
-                        trace!(self.log, "dropping short packet during handshake");
+                        trace!(self.ctx.log, "dropping short packet during handshake");
                         State::Handshake(state)
                     }
                 }
@@ -1796,19 +1823,20 @@ impl Endpoint {
             State::Established(mut state) => {
                 let id = self.connections[conn.0].local_id.clone();
                 if let Header::Long { .. } = packet.header {
-                    trace!(self.log, "discarding unprotected packet"; "connection" => %id);
+                    trace!(self.ctx.log, "discarding unprotected packet"; "connection" => %id);
                     return State::Established(state);
                 }
                 let (payload, number) = match self.connections[conn.0].decrypt_packet(false, packet)
                 {
                     Ok(x) => x,
                     Err(None) => {
-                        trace!(self.log, "failed to authenticate packet"; "connection" => %id);
+                        trace!(self.ctx.log, "failed to authenticate packet"; "connection" => %id);
                         return State::Established(state);
                     }
                     Err(Some(e)) => {
-                        warn!(self.log, "got illegal packet"; "connection" => %id);
-                        self.events
+                        warn!(self.ctx.log, "got illegal packet"; "connection" => %id);
+                        self.ctx
+                            .events
                             .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                         return State::closed(e);
                     }
@@ -1821,7 +1849,7 @@ impl Endpoint {
                         "only the client confirms handshake completion based on a protected packet"
                     );
                     // Forget about unacknowledged handshake packets
-                    self.connections[conn.0].handshake_cleanup(&self.config);
+                    self.connections[conn.0].handshake_cleanup(&self.ctx.config);
                 }
                 match self
                     .process_payload(now, conn, number, payload.into(), state.tls.get_mut())
@@ -1844,7 +1872,7 @@ impl Endpoint {
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                                trace!(self.log, "draining");
+                                trace!(self.ctx.log, "draining");
                                 return State::Draining(state.into());
                             }
                             _ => {}
@@ -1858,7 +1886,7 @@ impl Endpoint {
                     for frame in frame::Iter::new(payload.into()) {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                                trace!(self.log, "draining");
+                                trace!(self.ctx.log, "draining");
                                 return State::Draining(state.into());
                             }
                             _ => {}
@@ -1879,7 +1907,7 @@ impl Endpoint {
         remote: SocketAddrV6,
         packet: Packet,
     ) {
-        trace!(self.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
+        trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
         // State transitions
@@ -1894,7 +1922,7 @@ impl Endpoint {
         match state {
             State::HandshakeFailed(ref state) => {
                 if !was_closed && self.connections[conn.0].side == Side::Server {
-                    self.incoming_handshakes -= 1;
+                    self.ctx.incoming_handshakes -= 1;
                 }
                 let n = self.connections[conn.0].get_tx_number();
                 self.io.push_back(Io::Transmit {
@@ -1921,12 +1949,12 @@ impl Endpoint {
         }
         self.connections[conn.0].state = Some(state);
 
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
     }
 
     fn reset_idle_timeout(&mut self, now: u64, conn: ConnectionHandle) {
         let dt = cmp::min(
-            self.config.idle_timeout,
+            self.ctx.config.idle_timeout,
             self.connections[conn.0].params.idle_timeout,
         ) as u64 * 1000000;
         self.connections[conn.0].set_idle = Some(Some(now + dt));
@@ -1934,7 +1962,8 @@ impl Endpoint {
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
         let mut sent = false;
-        while let Some(packet) = self.connections[conn.0].next_packet(&self.log, &self.config, now)
+        while let Some(packet) =
+            self.connections[conn.0].next_packet(&self.ctx.log, &self.ctx.config, now)
         {
             self.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
@@ -1987,8 +2016,8 @@ impl Endpoint {
             .remove(&self.connections[conn.0].local_id);
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
-        self.dirty_conns.remove(&conn);
-        self.readable_conns.remove(&conn);
+        self.ctx.dirty_conns.remove(&conn);
+        self.ctx.readable_conns.remove(&conn);
         self.connections.remove(conn.0);
     }
 
@@ -2000,7 +2029,7 @@ impl Endpoint {
                     connection: conn,
                     timer: Timer::Idle,
                 });
-                self.events.push_back((conn, Event::ConnectionDrained));
+                self.ctx.events.push_back((conn, Event::ConnectionDrained));
                 if self.connections[conn.0]
                     .state
                     .as_ref()
@@ -2023,17 +2052,17 @@ impl Endpoint {
                     State::Drained => unreachable!(),
                 });
                 self.connections[conn.0].state = Some(state);
-                self.events.push_back((
+                self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
                         reason: ConnectionError::TimedOut,
                     },
                 ));
-                self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
+                self.ctx.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
             }
             Timer::LossDetection => {
                 if self.connections[conn.0].awaiting_handshake {
-                    trace!(self.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
+                    trace!(self.ctx.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
                     let packets = self.connections[conn.0]
                         .sent_packets
                         .iter()
@@ -2053,9 +2082,9 @@ impl Endpoint {
                 } else if self.connections[conn.0].loss_time != 0 {
                     // Early retransmit or Time Loss Detection
                     let largest = self.connections[conn.0].largest_acked_packet;
-                    self.connections[conn.0].detect_lost_packets(&self.config, now, largest);
-                } else if self.connections[conn.0].tlp_count < self.config.max_tlps {
-                    trace!(self.log, "sending TLP {number} in {pn}",
+                    self.connections[conn.0].detect_lost_packets(&self.ctx.config, now, largest);
+                } else if self.connections[conn.0].tlp_count < self.ctx.config.max_tlps {
+                    trace!(self.ctx.log, "sending TLP {number} in {pn}",
                            number=self.connections[conn.0].tlp_count,
                            pn=self.connections[conn.0].largest_sent_packet + 1;
                            "outstanding" => ?self.connections[conn.0].sent_packets.keys().collect::<Vec<_>>(),
@@ -2063,12 +2092,12 @@ impl Endpoint {
                     // Tail Loss Probe.
                     self.io.push_back(Io::Transmit {
                         destination: self.connections[conn.0].remote,
-                        packet: self.connections[conn.0].force_transmit(&self.config, now),
+                        packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                     });
                     self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].tlp_count += 1;
                 } else {
-                    trace!(self.log, "RTO fired, retransmitting"; "pn" => self.connections[conn.0].largest_sent_packet + 1,
+                    trace!(self.ctx.log, "RTO fired, retransmitting"; "pn" => self.connections[conn.0].largest_sent_packet + 1,
                            "outstanding" => ?self.connections[conn.0].sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.connections[conn.0].bytes_in_flight);
                     // RTO
@@ -2079,14 +2108,14 @@ impl Endpoint {
                     for _ in 0..2 {
                         self.io.push_back(Io::Transmit {
                             destination: self.connections[conn.0].remote,
-                            packet: self.connections[conn.0].force_transmit(&self.config, now),
+                            packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                         });
                     }
                     self.reset_idle_timeout(now, conn);
                     self.connections[conn.0].rto_count += 1;
                 }
-                self.connections[conn.0].set_loss_detection_alarm(&self.config);
-                self.dirty_conns.insert(conn);
+                self.connections[conn.0].set_loss_detection_alarm(&self.ctx.config);
+                self.ctx.dirty_conns.insert(conn);
             }
         }
     }
@@ -2117,12 +2146,13 @@ impl Endpoint {
     }
 
     fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
-        trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
+        trace!(self.ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.connections[conn.0].blocked();
-        self.connections[conn.0].on_ack_received(&self.config, now, ack);
+        self.connections[conn.0].on_ack_received(&self.ctx.config, now, ack);
         if was_blocked && !self.connections[conn.0].blocked() {
             for stream in self.connections[conn.0].blocked_streams.drain() {
-                self.events
+                self.ctx
+                    .events
                     .push_back((conn, Event::StreamWritable { stream }));
             }
         }
@@ -2143,14 +2173,14 @@ impl Endpoint {
         let r = self.connections[conn.0].write(stream, data);
         match r {
             Ok(n) => {
-                self.dirty_conns.insert(conn);
-                trace!(self.log, "write"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0, "len" => n)
+                self.ctx.dirty_conns.insert(conn);
+                trace!(self.ctx.log, "write"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0, "len" => n)
             }
             Err(WriteError::Blocked) => {
                 if self.connections[conn.0].congestion_blocked() {
-                    trace!(self.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].local_id);
+                    trace!(self.ctx.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].local_id);
                 } else {
-                    trace!(self.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0);
+                    trace!(self.ctx.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0);
                 }
             }
             _ => {}
@@ -2166,7 +2196,7 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn finish(&mut self, conn: ConnectionHandle, stream: StreamId) {
         self.connections[conn.0].finish(stream);
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
     }
 
     /// Read data from a stream
@@ -2182,7 +2212,7 @@ impl Endpoint {
         stream: StreamId,
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
-        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -2208,7 +2238,7 @@ impl Endpoint {
         conn: ConnectionHandle,
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
-        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -2249,7 +2279,7 @@ impl Endpoint {
             .pending
             .rst_stream
             .push((stream, error_code));
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
@@ -2258,14 +2288,14 @@ impl Endpoint {
     /// - when applied to a stream that has not begin receiving data
     pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[conn.0].stop_sending(stream, error_code);
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
     }
 
     /// Create a new stream
     ///
     /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint are already open.
     pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[conn.0].open(&self.config, direction)
+        self.connections[conn.0].open(&self.ctx.config, direction)
     }
 
     /// Ping the remote endpoint
@@ -2273,16 +2303,16 @@ impl Endpoint {
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self, conn: ConnectionHandle) {
         self.connections[conn.0].pending.ping = true;
-        self.dirty_conns.insert(conn);
+        self.ctx.dirty_conns.insert(conn);
     }
 
     fn close_common(&mut self, now: u64, conn: ConnectionHandle) {
-        trace!(self.log, "connection closed");
+        trace!(self.ctx.log, "connection closed");
         self.connections[conn.0].set_loss_detection = Some(None);
         self.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::Close,
-            time: now + 3 * self.connections[conn.0].rto(&self.config),
+            time: now + 3 * self.connections[conn.0].rto(&self.ctx.config),
         });
     }
 
@@ -2313,7 +2343,7 @@ impl Endpoint {
                 packet: self.connections[conn.0].make_close(&reason),
             });
             self.reset_idle_timeout(now, conn);
-            self.dirty_conns.insert(conn);
+            self.ctx.dirty_conns.insert(conn);
         }
         self.connections[conn.0].state =
             Some(match self.connections[conn.0].state.take().unwrap() {
@@ -2343,7 +2373,7 @@ impl Endpoint {
     }
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
-        trace!(self.log, "packet authenticated"; "connection" => %self.connections[conn.0].local_id, "pn" => packet);
+        trace!(self.ctx.log, "packet authenticated"; "connection" => %self.connections[conn.0].local_id, "pn" => packet);
         self.reset_idle_timeout(now, conn);
         self.connections[conn.0].on_packet_authenticated(now, packet);
     }
@@ -2403,7 +2433,7 @@ impl Endpoint {
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
-        self.incoming.pop_front()
+        self.ctx.incoming.pop_front()
     }
 }
 
