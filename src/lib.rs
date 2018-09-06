@@ -34,7 +34,9 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use connection::{ConnectError, ConnectionHandle, ConnectionId, ReadError, WriteError};
+pub use connection::{
+    ConnectError, ConnectionError, ConnectionHandle, ConnectionId, ReadError, WriteError,
+};
 
 mod crypto;
 pub use crypto::CertConfig;
@@ -44,9 +46,7 @@ use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{
-    ClientConfig, Config, ConnectionError, Endpoint, EndpointError, Event, Io, ListenKeys, Timer,
-};
+pub use endpoint::{ClientConfig, Config, Endpoint, EndpointError, Event, Io, ListenKeys, Timer};
 
 mod transport_error;
 pub use transport_error::Error as TransportError;

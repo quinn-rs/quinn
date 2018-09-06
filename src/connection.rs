@@ -1571,6 +1571,57 @@ impl Connection {
     }
 }
 
+/// Reasons why a connection might be lost.
+#[derive(Debug, Clone, Fail)]
+pub enum ConnectionError {
+    /// The peer doesn't implement any supported version.
+    #[fail(display = "peer doesn't implement any supported version")]
+    VersionMismatch,
+    /// The peer violated the QUIC specification as understood by this implementation.
+    #[fail(display = "{}", error_code)]
+    TransportError { error_code: TransportError },
+    /// The peer's QUIC stack aborted the connection automatically.
+    #[fail(display = "aborted by peer: {}", reason)]
+    ConnectionClosed { reason: frame::ConnectionClose },
+    /// The peer closed the connection.
+    #[fail(display = "closed by peer: {}", reason)]
+    ApplicationClosed { reason: frame::ApplicationClose },
+    /// The peer is unable to continue processing this connection, usually due to having restarted.
+    #[fail(display = "reset by peer")]
+    Reset,
+    /// The peer has become unreachable.
+    #[fail(display = "timed out")]
+    TimedOut,
+}
+
+impl From<TransportError> for ConnectionError {
+    fn from(x: TransportError) -> Self {
+        ConnectionError::TransportError { error_code: x }
+    }
+}
+
+impl From<ConnectionError> for io::Error {
+    fn from(x: ConnectionError) -> io::Error {
+        use self::ConnectionError::*;
+        match x {
+            TimedOut => io::Error::new(io::ErrorKind::TimedOut, "timed out"),
+            Reset => io::Error::new(io::ErrorKind::ConnectionReset, "reset by peer"),
+            ApplicationClosed { reason } => io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("closed by peer application: {}", reason),
+            ),
+            ConnectionClosed { reason } => io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("peer detected an error: {}", reason),
+            ),
+            TransportError { error_code } => {
+                io::Error::new(io::ErrorKind::Other, format!("{}", error_code))
+            }
+            VersionMismatch => io::Error::new(io::ErrorKind::Other, "version mismatch"),
+        }
+    }
+}
+
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
