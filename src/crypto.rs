@@ -1,21 +1,25 @@
 use std::net::SocketAddrV6;
-use std::str;
 use std::sync::{Arc, Mutex};
+use std::{io, str};
 
 use blake2::Blake2b;
-use bytes::{BigEndian, ByteOrder, IntoBuf};
+use bytes::{BigEndian, Buf, ByteOrder, IntoBuf};
 use constant_time_eq::constant_time_eq;
 use digest::{Input, VariableOutput};
-use openssl::ex_data;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKeyRef, Private};
 use openssl::ssl::{
-    self, Ssl, SslAlert, SslContext, SslMethod, SslMode, SslOptions, SslRef, SslSession, SslVersion,
+    self, HandshakeError, MidHandshakeSslStream, Ssl, SslAlert, SslContext, SslMethod, SslMode,
+    SslOptions, SslRef, SslSession, SslStreamBuilder, SslVersion,
 };
 use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
+use openssl::x509::verify::X509CheckFlags;
 use openssl::x509::X509Ref;
+use openssl::{self, ex_data};
 
-use endpoint::{Config, EndpointError, ListenKeys};
+use coding::BufExt;
+use endpoint::{Config, Context, EndpointError, ListenKeys};
+use memory_stream::MemoryStream;
 use packet::ConnectionId;
 use transport_parameters::TransportParameters;
 use {hkdf, Side, RESET_TOKEN_SIZE};
@@ -87,6 +91,7 @@ impl CookieFactory {
     }
 }
 
+#[derive(Clone)]
 pub struct ConnectionInfo {
     pub(crate) id: ConnectionId,
     pub(crate) remote: SocketAddrV6,
@@ -266,6 +271,117 @@ pub fn new_tls_ctx(
     }
 
     Ok((tls.build(), session_ticket_buffer))
+}
+
+pub fn new_client(
+    ctx: &Context,
+    config: ClientConfig,
+    info: ConnectionInfo,
+) -> Result<
+    (
+        MidHandshakeSslStream<MemoryStream>,
+        Option<TransportParameters>,
+        Option<ZeroRttCrypto>,
+    ),
+    ConnectError,
+> {
+    let mut tls = Ssl::new(&ctx.tls)?;
+    if !config.accept_insecure_certs {
+        tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
+        let param = tls.param_mut();
+        if let Some(name) = config.server_name {
+            param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
+            match name.parse() {
+                Ok(ip) => {
+                    param.set_ip(ip).expect("failed to inform TLS of remote ip");
+                }
+                Err(_) => {
+                    param
+                        .set_host(name)
+                        .expect("failed to inform TLS of remote hostname");
+                }
+            }
+        }
+    } else {
+        tls.set_verify(ssl::SslVerifyMode::NONE);
+    }
+
+    tls.set_ex_data(*CONNECTION_INFO_INDEX, info.clone());
+    if let Some(name) = config.server_name {
+        tls.set_hostname(name)?;
+    }
+
+    let (mut params, mut zero_rtt_crypto) = (None, None);
+    let result = if let Some(session) = config.session_ticket {
+        if session.len() < 2 {
+            return Err(ConnectError::MalformedSession);
+        }
+        let mut buf = io::Cursor::new(session);
+        let len = buf
+            .get::<u16>()
+            .map_err(|_| ConnectError::MalformedSession)? as usize;
+        if buf.remaining() < len {
+            return Err(ConnectError::MalformedSession);
+        }
+
+        let session =
+            SslSession::from_der(&buf.bytes()[0..len]).map_err(|_| ConnectError::MalformedSession)?;
+        buf.advance(len);
+        params = Some(
+            TransportParameters::read(Side::Client, &mut buf)
+                .map_err(|_| ConnectError::MalformedSession)?,
+        );
+        unsafe { tls.set_session(&session) }?;
+        let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
+        tls.set_connect_state();
+        if session.max_early_data() == TLS_MAX_EARLY_DATA {
+            trace!(ctx.log, "{connection} enabling 0rtt", connection = &info.id);
+            tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
+            zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
+        }
+        tls.handshake()
+    } else {
+        tls.connect(MemoryStream::new())
+    };
+    Ok((
+        match result {
+            Ok(_) => unreachable!(),
+            Err(HandshakeError::WouldBlock(tls)) => tls,
+            Err(e) => panic!("unexpected TLS error: {}", e),
+        },
+        params,
+        zero_rtt_crypto,
+    ))
+}
+
+pub struct ClientConfig<'a> {
+    /// The name of the server the client intends to connect to.
+    ///
+    /// Used for both certificate validation, and for disambiguating between multiple domains hosted by the same IP
+    /// address (using SNI).
+    pub server_name: Option<&'a str>,
+
+    /// A ticket to resume a previous session faster than performing a full handshake.
+    ///
+    /// Required for transmitting 0-RTT data.
+    // Encoding: u16 length, DER-encoded OpenSSL session ticket, transport params
+    pub session_ticket: Option<&'a [u8]>,
+
+    /// Whether to accept inauthentic or unverifiable peer certificates.
+    ///
+    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
+    /// connection, but allows them to connect to servers that are using self-signed certificates.
+    pub accept_insecure_certs: bool,
+}
+
+impl<'a> Default for ClientConfig<'a> {
+    fn default() -> Self {
+        Self {
+            server_name: None,
+            session_ticket: None,
+            accept_insecure_certs: false,
+        }
+    }
 }
 
 const HANDSHAKE_SALT: [u8; 20] = [
@@ -477,6 +593,25 @@ impl CryptoContext {
             payload,
             tag,
         ).ok()
+    }
+}
+
+#[derive(Debug, Fail)]
+pub enum ConnectError {
+    #[fail(display = "session ticket was malformed")]
+    MalformedSession,
+    #[fail(display = "TLS error: {}", _0)]
+    Tls(ssl::Error),
+}
+
+impl From<ssl::Error> for ConnectError {
+    fn from(x: ssl::Error) -> Self {
+        ConnectError::Tls(x)
+    }
+}
+impl From<openssl::error::ErrorStack> for ConnectError {
+    fn from(x: openssl::error::ErrorStack) -> Self {
+        ConnectError::Tls(x.into())
     }
 }
 

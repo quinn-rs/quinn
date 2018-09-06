@@ -16,12 +16,12 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    state, ConnectError, Connection, ConnectionError, ConnectionHandle, ReadError, State,
-    WriteError,
+    state, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
 };
 use crypto::{
-    new_tls_ctx, reset_token_for, CertConfig, ConnectionInfo, CryptoContext, SessionTicketBuffer,
-    ZeroRttCrypto, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX, TRANSPORT_PARAMS_INDEX,
+    new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo,
+    CryptoContext, SessionTicketBuffer, ZeroRttCrypto, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX,
+    TRANSPORT_PARAMS_INDEX,
 };
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
@@ -153,36 +153,6 @@ impl Default for Config {
 
             require_client_certs: false,
             client_cert_verifier: None,
-        }
-    }
-}
-
-pub struct ClientConfig<'a> {
-    /// The name of the server the client intends to connect to.
-    ///
-    /// Used for both certificate validation, and for disambiguating between multiple domains hosted by the same IP
-    /// address (using SNI).
-    pub server_name: Option<&'a str>,
-
-    /// A ticket to resume a previous session faster than performing a full handshake.
-    ///
-    /// Required for transmitting 0-RTT data.
-    // Encoding: u16 length, DER-encoded OpenSSL session ticket, transport params
-    pub session_ticket: Option<&'a [u8]>,
-
-    /// Whether to accept inauthentic or unverifiable peer certificates.
-    ///
-    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
-    /// connection, but allows them to connect to servers that are using self-signed certificates.
-    pub accept_insecure_certs: bool,
-}
-
-impl<'a> Default for ClientConfig<'a> {
-    fn default() -> Self {
-        Self {
-            server_name: None,
-            session_ticket: None,
-            accept_insecure_certs: false,
         }
     }
 }
@@ -553,7 +523,7 @@ impl Endpoint {
             remote,
             Side::Client,
         );
-        self.connections[conn.0].connect(&self.ctx, config)?;
+        self.connections[conn.0].connect(&mut self.ctx, config)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }

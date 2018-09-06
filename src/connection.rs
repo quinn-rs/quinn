@@ -4,20 +4,16 @@ use std::{cmp, io, mem};
 
 use bytes::{Buf, BufMut, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
-use openssl;
-use openssl::ssl::{
-    self, HandshakeError, MidHandshakeSslStream, Ssl, SslSession, SslStream, SslStreamBuilder,
-};
-use openssl::x509::verify::X509CheckFlags;
+use openssl::ssl::{self, HandshakeError, MidHandshakeSslStream, SslStream};
 use rand::distributions::Sample;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
-    ConnectionInfo, Crypto, CryptoContext, ZeroRttCrypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
-    CONNECTION_INFO_INDEX, TLS_MAX_EARLY_DATA, TRANSPORT_PARAMS_INDEX,
+    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, CryptoContext, ZeroRttCrypto,
+    ACK_DELAY_EXPONENT, AEAD_TAG_SIZE, TRANSPORT_PARAMS_INDEX,
 };
-use endpoint::{parse_initial, set_payload_length, ClientConfig, Config, Context, Event};
+use endpoint::{parse_initial, set_payload_length, Config, Context, Event};
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, Packet, PacketNumber};
 use range_set::RangeSet;
@@ -378,74 +374,19 @@ impl Connection {
 
     /// Initiate a connection
     pub fn connect(&mut self, ctx: &Context, config: ClientConfig) -> Result<(), ConnectError> {
-        let mut tls = Ssl::new(&ctx.tls)?;
-        if !config.accept_insecure_certs {
-            tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
-            let param = tls.param_mut();
-            if let Some(name) = config.server_name {
-                param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
-                match name.parse() {
-                    Ok(ip) => {
-                        param.set_ip(ip).expect("failed to inform TLS of remote ip");
-                    }
-                    Err(_) => {
-                        param
-                            .set_host(name)
-                            .expect("failed to inform TLS of remote hostname");
-                    }
-                }
-            }
-        } else {
-            tls.set_verify(ssl::SslVerifyMode::NONE);
-        }
-        tls.set_ex_data(
-            *CONNECTION_INFO_INDEX,
+        let (mut tls, params, zero_rtt_crypto) = crypto::new_client(
+            ctx,
+            config,
             ConnectionInfo {
                 id: self.local_id.clone(),
                 remote: self.remote,
             },
-        );
-        if let Some(name) = config.server_name {
-            tls.set_hostname(name)?;
-        }
-        let result = if let Some(session) = config.session_ticket {
-            if session.len() < 2 {
-                return Err(ConnectError::MalformedSession);
-            }
-            let mut buf = io::Cursor::new(session);
-            let len = buf
-                .get::<u16>()
-                .map_err(|_| ConnectError::MalformedSession)? as usize;
-            if buf.remaining() < len {
-                return Err(ConnectError::MalformedSession);
-            }
-            let session = SslSession::from_der(&buf.bytes()[0..len])
-                .map_err(|_| ConnectError::MalformedSession)?;
-            buf.advance(len);
-            let params = TransportParameters::read(Side::Client, &mut buf)
-                .map_err(|_| ConnectError::MalformedSession)?;
+        )?;
+        if let Some(params) = params {
             self.set_params(params);
-            unsafe { tls.set_session(&session) }?;
-            let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
-            tls.set_connect_state();
-            if session.max_early_data() == TLS_MAX_EARLY_DATA {
-                trace!(
-                    ctx.log,
-                    "{connection} enabling 0rtt",
-                    connection = self.local_id.clone()
-                );
-                tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
-                self.zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
-            }
-            tls.handshake()
-        } else {
-            tls.connect(MemoryStream::new())
-        };
-        let mut tls = match result {
-            Ok(_) => unreachable!(),
-            Err(HandshakeError::WouldBlock(tls)) => tls,
-            Err(e) => panic!("unexpected TLS error: {}", e),
-        };
+        }
+        self.zero_rtt_crypto = zero_rtt_crypto;
+
         self.transmit_handshake(&tls.get_mut().take_outgoing());
         self.state = Some(State::Handshake(state::Handshake {
             tls,
@@ -2547,25 +2488,6 @@ pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
     #[fail(display = "stopped by peer: error {}", error_code)]
     Stopped { error_code: u16 },
-}
-
-#[derive(Debug, Fail)]
-pub enum ConnectError {
-    #[fail(display = "session ticket was malformed")]
-    MalformedSession,
-    #[fail(display = "TLS error: {}", _0)]
-    Tls(ssl::Error),
-}
-
-impl From<ssl::Error> for ConnectError {
-    fn from(x: ssl::Error) -> Self {
-        ConnectError::Tls(x)
-    }
-}
-impl From<openssl::error::ErrorStack> for ConnectError {
-    fn from(x: openssl::error::ErrorStack) -> Self {
-        ConnectError::Tls(x.into())
-    }
 }
 
 pub enum State {
