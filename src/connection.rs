@@ -19,7 +19,7 @@ use crypto::{
     CONNECTION_INFO_INDEX, TLS_MAX_EARLY_DATA,
 };
 use endpoint::{
-    packet, set_payload_length, ClientConfig, Config, Context, Header, Packet, PacketNumber,
+    packet, set_payload_length, ClientConfig, Config, Context, Event, Header, Packet, PacketNumber,
     MAX_ACK_BLOCKS, MIN_INITIAL_SIZE, MIN_MTU,
 };
 use memory_stream::MemoryStream;
@@ -541,8 +541,15 @@ impl Connection {
         }
     }
 
-    /// Updates set_loss_detection
-    pub fn on_ack_received(&mut self, config: &Config, now: u64, ack: frame::Ack) {
+    pub fn on_ack_received(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        conn: ConnectionHandle,
+        ack: frame::Ack,
+    ) {
+        trace!(ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
+        let was_blocked = self.blocked();
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
@@ -557,11 +564,17 @@ impl Connection {
                 .map(|(&n, _)| n)
                 .collect::<Vec<_>>();
             for packet in packets {
-                self.on_packet_acked(config, packet);
+                self.on_packet_acked(&ctx.config, packet);
             }
         }
-        self.detect_lost_packets(config, now, ack.largest);
-        self.set_loss_detection_alarm(config);
+        self.detect_lost_packets(&ctx.config, now, ack.largest);
+        self.set_loss_detection_alarm(&ctx.config);
+        if was_blocked && !self.blocked() {
+            for stream in self.blocked_streams.drain() {
+                ctx.events
+                    .push_back((conn, Event::StreamWritable { stream }));
+            }
+        }
     }
 
     pub fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {

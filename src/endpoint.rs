@@ -944,7 +944,7 @@ impl Endpoint {
                     self.connections[conn.0].data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, conn, ack);
+                    self.connections[conn.0].on_ack_received(&mut self.ctx, now, conn, ack);
                     for stream in self.connections[conn.0].finished_streams.drain(..) {
                         self.ctx
                             .events
@@ -1470,7 +1470,12 @@ impl Endpoint {
                                     );
                                 }
                                 Frame::Ack(ack) => {
-                                    self.on_ack_received(now, conn, ack);
+                                    self.connections[conn.0].on_ack_received(
+                                        &mut self.ctx,
+                                        now,
+                                        conn,
+                                        ack,
+                                    );
                                 }
                                 Frame::ConnectionClose(reason) => {
                                     self.ctx.events.push_back((
@@ -2045,19 +2050,6 @@ impl Endpoint {
                 }
                 self.connections[conn.0].set_loss_detection_alarm(&self.ctx.config);
                 self.ctx.dirty_conns.insert(conn);
-            }
-        }
-    }
-
-    fn on_ack_received(&mut self, now: u64, conn: ConnectionHandle, ack: frame::Ack) {
-        trace!(self.ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
-        let was_blocked = self.connections[conn.0].blocked();
-        self.connections[conn.0].on_ack_received(&self.ctx.config, now, ack);
-        if was_blocked && !self.connections[conn.0].blocked() {
-            for stream in self.connections[conn.0].blocked_streams.drain() {
-                self.ctx
-                    .events
-                    .push_back((conn, Event::StreamWritable { stream }));
             }
         }
     }
