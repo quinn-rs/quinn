@@ -26,8 +26,8 @@ use crypto::{
 use memory_stream::MemoryStream;
 use range_set::RangeSet;
 use {
-    frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, RESET_TOKEN_SIZE,
-    VERSION,
+    frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    MIN_MTU, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// Parameters governing the core QUIC state machine.
@@ -220,11 +220,7 @@ impl Context {
     }
 }
 
-pub const MIN_INITIAL_SIZE: usize = 1200;
-pub const MIN_MTU: u16 = 1232;
 const LOCAL_ID_LEN: usize = 8;
-/// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
-pub const MAX_ACK_BLOCKS: usize = 64;
 
 /// Information that should be preserved between restarts for server endpoints.
 ///

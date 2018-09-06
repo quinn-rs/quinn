@@ -170,3 +170,5 @@ impl coding::Value for StreamId {
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 18;
 const MIN_CID_SIZE: usize = 4;
+const MIN_INITIAL_SIZE: usize = 1200;
+const MIN_MTU: u16 = 1232;

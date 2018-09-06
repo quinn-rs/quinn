@@ -20,13 +20,16 @@ use crypto::{
 };
 use endpoint::{
     packet, parse_initial, set_payload_length, ClientConfig, Config, Context, Event, Header,
-    Packet, PacketNumber, MAX_ACK_BLOCKS, MIN_INITIAL_SIZE, MIN_MTU,
+    Packet, PacketNumber,
 };
 use memory_stream::MemoryStream;
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;
-use {frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, VERSION};
+use {
+    frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    MIN_MTU, VERSION,
+};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
@@ -2762,3 +2765,6 @@ pub mod state {
         }
     }
 }
+
+/// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
+const MAX_ACK_BLOCKS: usize = 64;
