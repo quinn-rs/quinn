@@ -3,7 +3,7 @@ use std::net::SocketAddrV6;
 use std::{cmp, fmt, io, mem};
 
 use arrayvec::ArrayVec;
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
 use openssl::ssl::{
@@ -909,6 +909,112 @@ impl Connection {
         }
         self.pending.rst_stream.push((stream, error_code));
         ctx.dirty_conns.insert(conn_h);
+    }
+
+    pub fn drive_tls(
+        &mut self,
+        ctx: &mut Context,
+        conn: ConnectionHandle,
+        tls: &mut SslStream<MemoryStream>,
+    ) -> Result<(), TransportError> {
+        if tls.get_ref().read_blocked() {
+            return Ok(());
+        }
+        let prev_offset = tls.get_ref().read_offset();
+        let status = tls.ssl_read(&mut [0; 1]);
+        let progress = tls.get_ref().read_offset() - prev_offset;
+        trace!(ctx.log, "stream 0 read {bytes} bytes", bytes = progress);
+        self.streams
+            .get_mut(&StreamId(0))
+            .unwrap()
+            .recv_mut()
+            .unwrap()
+            .max_data += progress;
+        self.pending.max_stream_data.insert(StreamId(0));
+
+        // Process any new session tickets that might have been delivered
+        {
+            let mut buffer = ctx.session_ticket_buffer.lock().unwrap();
+            for session in buffer.drain(..) {
+                if let Ok(session) = session {
+                    trace!(
+                        ctx.log,
+                        "{connection} got session ticket",
+                        connection = self.local_id.clone()
+                    );
+
+                    let params = &self.params;
+                    let session = session
+                        .to_der()
+                        .expect("failed to serialize session ticket");
+
+                    let mut buf = Vec::new();
+                    buf.put_u16_be(session.len() as u16);
+                    buf.extend_from_slice(&session);
+                    params.write(Side::Server, &mut buf);
+
+                    ctx.events
+                        .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
+                } else {
+                    debug!(
+                        ctx.log,
+                        "{connection} got malformed session ticket",
+                        connection = self.local_id.clone()
+                    );
+                    ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                        },
+                    ));
+                    return Err(TransportError::PROTOCOL_VIOLATION.into());
+                }
+            }
+        }
+
+        match status {
+            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
+            Ok(_) => {
+                debug!(ctx.log, "got TLS application data");
+                ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                    },
+                ));
+                Err(TransportError::PROTOCOL_VIOLATION.into())
+            }
+            Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
+                debug!(ctx.log, "TLS error"; "error" => %e);
+                ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
+                    },
+                ));
+                Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
+            }
+            Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
+                debug!(ctx.log, "TLS session terminated unexpectedly");
+                ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                    },
+                ));
+                Err(TransportError::PROTOCOL_VIOLATION.into())
+            }
+            Err(e) => {
+                error!(ctx.log, "unexpected TLS error"; "error" => %e);
+                ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: TransportError::INTERNAL_ERROR.into(),
+                    },
+                ));
+                Err(TransportError::INTERNAL_ERROR.into())
+            }
+        }
     }
 
     pub fn process_payload(

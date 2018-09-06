@@ -7,7 +7,7 @@ use std::{cmp, io, mem, str};
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
-use openssl::ssl::{self, HandshakeError, Ssl, SslContext, SslStream, SslStreamBuilder};
+use openssl::ssl::{self, HandshakeError, Ssl, SslContext, SslStreamBuilder};
 use openssl::x509::X509StoreContextRef;
 use rand::distributions::Sample;
 use rand::{distributions, OsRng, Rng};
@@ -198,7 +198,6 @@ pub struct Endpoint {
     pub(crate) connections: Slab<Connection>,
     listen_keys: Option<ListenKeys>,
     io: VecDeque<Io>,
-    session_ticket_buffer: SessionTicketBuffer,
 }
 
 pub struct Context {
@@ -206,6 +205,7 @@ pub struct Context {
     pub tls: SslContext,
     pub rng: OsRng,
     pub config: Arc<Config>,
+    pub session_ticket_buffer: SessionTicketBuffer,
     pub events: VecDeque<(ConnectionHandle, Event)>,
     pub incoming: VecDeque<ConnectionHandle>,
     pub incoming_handshakes: usize,
@@ -294,6 +294,7 @@ impl Endpoint {
                 tls,
                 rng,
                 config,
+                session_ticket_buffer,
                 initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
                 events: VecDeque::new(),
                 dirty_conns: FnvHashSet::default(),
@@ -307,7 +308,6 @@ impl Endpoint {
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
             io: VecDeque::new(),
-            session_ticket_buffer,
         })
     }
 
@@ -835,120 +835,6 @@ impl Endpoint {
                         None,
                     ),
                 });
-            }
-        }
-    }
-
-    fn drive_tls(
-        &mut self,
-        conn: ConnectionHandle,
-        tls: &mut SslStream<MemoryStream>,
-    ) -> Result<(), TransportError> {
-        if tls.get_ref().read_blocked() {
-            return Ok(());
-        }
-        let prev_offset = tls.get_ref().read_offset();
-        let status = tls.ssl_read(&mut [0; 1]);
-        let progress = tls.get_ref().read_offset() - prev_offset;
-        trace!(
-            self.ctx.log,
-            "stream 0 read {bytes} bytes",
-            bytes = progress
-        );
-        self.connections[conn.0]
-            .streams
-            .get_mut(&StreamId(0))
-            .unwrap()
-            .recv_mut()
-            .unwrap()
-            .max_data += progress;
-        self.connections[conn.0]
-            .pending
-            .max_stream_data
-            .insert(StreamId(0));
-
-        // Process any new session tickets that might have been delivered
-        {
-            let mut buffer = self.session_ticket_buffer.lock().unwrap();
-            for session in buffer.drain(..) {
-                if let Ok(session) = session {
-                    trace!(
-                        self.ctx.log,
-                        "{connection} got session ticket",
-                        connection = self.connections[conn.0].local_id.clone()
-                    );
-
-                    let params = &self.connections[conn.0].params;
-                    let session = session
-                        .to_der()
-                        .expect("failed to serialize session ticket");
-
-                    let mut buf = Vec::new();
-                    buf.put_u16_be(session.len() as u16);
-                    buf.extend_from_slice(&session);
-                    params.write(Side::Server, &mut buf);
-
-                    self.ctx
-                        .events
-                        .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
-                } else {
-                    debug!(
-                        self.ctx.log,
-                        "{connection} got malformed session ticket",
-                        connection = self.connections[conn.0].local_id.clone()
-                    );
-                    self.ctx.events.push_back((
-                        conn,
-                        Event::ConnectionLost {
-                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                        },
-                    ));
-                    return Err(TransportError::PROTOCOL_VIOLATION.into());
-                }
-            }
-        }
-
-        match status {
-            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
-            Ok(_) => {
-                debug!(self.ctx.log, "got TLS application data");
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                    },
-                ));
-                Err(TransportError::PROTOCOL_VIOLATION.into())
-            }
-            Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
-                debug!(self.ctx.log, "TLS error"; "error" => %e);
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
-                    },
-                ));
-                Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
-            }
-            Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
-                debug!(self.ctx.log, "TLS session terminated unexpectedly");
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                    },
-                ));
-                Err(TransportError::PROTOCOL_VIOLATION.into())
-            }
-            Err(e) => {
-                error!(self.ctx.log, "unexpected TLS error"; "error" => %e);
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::INTERNAL_ERROR.into(),
-                    },
-                ));
-                Err(TransportError::INTERNAL_ERROR.into())
             }
         }
     }
@@ -1484,7 +1370,7 @@ impl Endpoint {
                         state.tls.get_mut(),
                     )
                     .and_then(|x| {
-                        self.drive_tls(conn, &mut state.tls)?;
+                        self.connections[conn.0].drive_tls(&mut self.ctx, conn, &mut state.tls)?;
                         Ok(x)
                     }) {
                     Err(e) => State::closed(e),
