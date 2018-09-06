@@ -1,8 +1,7 @@
 use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
-use std::{cmp, fmt, io, mem};
+use std::{cmp, io, mem};
 
-use arrayvec::ArrayVec;
 use bytes::{Buf, BufMut, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
@@ -10,25 +9,23 @@ use openssl::ssl::{
     self, HandshakeError, MidHandshakeSslStream, Ssl, SslSession, SslStream, SslStreamBuilder,
 };
 use openssl::x509::verify::X509CheckFlags;
-use rand::{distributions::Sample, Rng};
-use slog::{self, Logger};
+use rand::distributions::Sample;
+use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
     ConnectionInfo, Crypto, CryptoContext, ZeroRttCrypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
     CONNECTION_INFO_INDEX, TLS_MAX_EARLY_DATA, TRANSPORT_PARAMS_INDEX,
 };
-use endpoint::{
-    packet, parse_initial, set_payload_length, ClientConfig, Config, Context, Event, Header,
-    Packet, PacketNumber,
-};
+use endpoint::{parse_initial, set_payload_length, ClientConfig, Config, Context, Event};
 use memory_stream::MemoryStream;
+use packet::{types, ConnectionId, Header, Packet, PacketNumber};
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;
 use {
-    frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
-    MIN_MTU, VERSION,
+    frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
+    VERSION,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -37,61 +34,6 @@ pub struct ConnectionHandle(pub usize);
 impl From<ConnectionHandle> for usize {
     fn from(x: ConnectionHandle) -> usize {
         x.0
-    }
-}
-
-/// Protocol-level identifier for a connection.
-///
-/// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ConnectionId(pub(crate) ArrayVec<[u8; MAX_CID_SIZE]>);
-
-impl ::std::ops::Deref for ConnectionId {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl ::std::ops::DerefMut for ConnectionId {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
-}
-
-impl ConnectionId {
-    pub fn new(data: [u8; MAX_CID_SIZE], len: usize) -> Self {
-        let mut x = ConnectionId(data.into());
-        x.0.truncate(len);
-        x
-    }
-
-    pub fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
-        debug_assert!(len as usize <= MAX_CID_SIZE);
-        let mut v = ArrayVec::from([0; MAX_CID_SIZE]);
-        rng.fill_bytes(&mut v[0..len as usize]);
-        v.truncate(len as usize);
-        ConnectionId(v)
-    }
-}
-
-impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
-    }
-}
-
-impl slog::Value for ConnectionId {
-    fn serialize(
-        &self,
-        _: &slog::Record,
-        key: slog::Key,
-        serializer: &mut slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{}", self))
     }
 }
 
@@ -1033,7 +975,7 @@ impl Connection {
             State::Handshake(mut state) => {
                 match packet.header {
                     Header::Long {
-                        ty: packet::RETRY,
+                        ty: types::RETRY,
                         number,
                         destination_id: conn_id,
                         source_id: remote_id,
@@ -1153,7 +1095,7 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: packet::HANDSHAKE,
+                        ty: types::HANDSHAKE,
                         destination_id: id,
                         source_id: remote_id,
                         number,
@@ -1370,15 +1312,14 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: packet::INITIAL,
-                        ..
+                        ty: types::INITIAL, ..
                     } if self.side == Side::Server =>
                     {
                         trace!(ctx.log, "dropping duplicate Initial");
                         State::Handshake(state)
                     }
                     Header::Long {
-                        ty: packet::ZERO_RTT,
+                        ty: types::ZERO_RTT,
                         number,
                         destination_id: ref id,
                         ..
@@ -1912,10 +1853,10 @@ impl Connection {
                         _ => {}
                     }
                     is_initial = true;
-                    packet::INITIAL
+                    types::INITIAL
                 } else {
                     is_initial = false;
-                    packet::HANDSHAKE
+                    types::HANDSHAKE
                 };
                 Header::Long {
                     ty,
@@ -1941,7 +1882,7 @@ impl Connection {
                 if !established {
                     crypto = Crypto::ZeroRtt;
                     Header::Long {
-                        ty: packet::ZERO_RTT,
+                        ty: types::ZERO_RTT,
                         number: number as u32,
                         source_id: self.local_id.clone(),
                         destination_id: self.initial_id.clone(),

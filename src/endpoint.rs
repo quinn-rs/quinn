@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{cmp, io, mem, str};
 
-use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes};
+use bytes::{BigEndian, ByteOrder, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
 use openssl::ssl::{self, HandshakeError, Ssl, SslContext, SslStreamBuilder};
@@ -14,16 +14,17 @@ use rand::{distributions, OsRng, Rng};
 use slab::Slab;
 use slog::{self, Logger};
 
-use coding::{self, BufExt, BufMutExt};
+use coding::BufMutExt;
 use connection::{
-    state, ConnectError, Connection, ConnectionError, ConnectionHandle, ConnectionId, ReadError,
-    State, WriteError,
+    state, ConnectError, Connection, ConnectionError, ConnectionHandle, ReadError, State,
+    WriteError,
 };
 use crypto::{
     new_tls_ctx, reset_token_for, CertConfig, ConnectionInfo, CryptoContext, SessionTicketBuffer,
     ZeroRttCrypto, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX, TRANSPORT_PARAMS_INDEX,
 };
 use memory_stream::MemoryStream;
+use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
 use range_set::RangeSet;
 use {
     frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
@@ -460,7 +461,7 @@ impl Endpoint {
         } = packet.header
         {
             match ty {
-                packet::INITIAL => {
+                types::INITIAL => {
                     if datagram_len >= MIN_INITIAL_SIZE {
                         self.handle_initial(
                             now,
@@ -480,7 +481,7 @@ impl Endpoint {
                     }
                     return;
                 }
-                packet::ZERO_RTT => {
+                types::ZERO_RTT => {
                     // MAY buffer a limited amount
                     trace!(
                         self.ctx.log,
@@ -648,7 +649,7 @@ impl Endpoint {
                     trace!(self.ctx.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
                     let mut buf = Vec::<u8>::new();
                     Header::Long {
-                        ty: packet::RETRY,
+                        ty: types::RETRY,
                         number: packet_number,
                         destination_id: source_id,
                         source_id: local_id,
@@ -1301,309 +1302,6 @@ impl Endpoint {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Header {
-    Long {
-        ty: u8,
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
-        number: u32,
-    },
-    Short {
-        id: ConnectionId,
-        number: PacketNumber,
-        key_phase: bool,
-    },
-    VersionNegotiate {
-        ty: u8,
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
-    },
-}
-
-impl Header {
-    fn destination_id(&self) -> &ConnectionId {
-        use self::Header::*;
-        match *self {
-            Long {
-                ref destination_id, ..
-            } => destination_id,
-            Short { ref id, .. } => id,
-            VersionNegotiate {
-                ref destination_id, ..
-            } => destination_id,
-        }
-    }
-
-    fn key_phase(&self) -> bool {
-        match *self {
-            Header::Short { key_phase, .. } => key_phase,
-            _ => false,
-        }
-    }
-}
-
-// An encoded packet number
-#[derive(Debug, Copy, Clone)]
-pub enum PacketNumber {
-    U8(u8),
-    U16(u16),
-    U32(u32),
-}
-
-impl PacketNumber {
-    pub fn new(n: u64, largest_acked: u64) -> Self {
-        if largest_acked == 0 {
-            return PacketNumber::U32(n as u32);
-        }
-        let range = (n - largest_acked) / 2;
-        if range < 1 << 8 {
-            PacketNumber::U8(n as u8)
-        } else if range < 1 << 16 {
-            PacketNumber::U16(n as u16)
-        } else if range < 1 << 32 {
-            PacketNumber::U32(n as u32)
-        } else {
-            panic!("packet number too large to encode")
-        }
-    }
-
-    fn ty(&self) -> u8 {
-        use self::PacketNumber::*;
-        match *self {
-            U8(_) => 0x00,
-            U16(_) => 0x01,
-            U32(_) => 0x02,
-        }
-    }
-
-    pub fn encode<W: BufMut>(&self, w: &mut W) {
-        use self::PacketNumber::*;
-        match *self {
-            U8(x) => w.write(x),
-            U16(x) => w.write(x),
-            U32(x) => w.write(x),
-        }
-    }
-
-    pub fn expand(&self, prev: u64) -> u64 {
-        use self::PacketNumber::*;
-        let t = prev + 1;
-        // Compute missing bits that minimize the difference from expected
-        let d = match *self {
-            U8(_) => 1 << 8,
-            U16(_) => 1 << 16,
-            U32(_) => 1 << 32,
-        };
-        let x = match *self {
-            U8(x) => x as u64,
-            U16(x) => x as u64,
-            U32(x) => x as u64,
-        };
-        if t > d / 2 {
-            x + d * ((t + d / 2 - x) / d)
-        } else {
-            x % d
-        }
-    }
-}
-
-const KEY_PHASE_BIT: u8 = 0x40;
-
-impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) {
-        use self::Header::*;
-        match *self {
-            Long {
-                ty,
-                ref source_id,
-                ref destination_id,
-                number,
-            } => {
-                w.write(0b10000000 | ty);
-                w.write(VERSION);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
-                w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
-                w.write(number);
-            }
-            Short {
-                ref id,
-                number,
-                key_phase,
-            } => {
-                let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
-                w.write(ty);
-                w.put_slice(id);
-                number.encode(w);
-            }
-            VersionNegotiate {
-                ty,
-                ref source_id,
-                ref destination_id,
-            } => {
-                w.write(0x80 | ty);
-                w.write::<u32>(0);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
-            }
-        }
-    }
-}
-
-pub struct Packet {
-    pub header: Header,
-    pub header_data: Bytes,
-    pub payload: Bytes,
-}
-
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-enum HeaderError {
-    #[fail(display = "unsupported version")]
-    UnsupportedVersion {
-        source: ConnectionId,
-        destination: ConnectionId,
-    },
-    #[fail(display = "invalid header: {}", _0)]
-    InvalidHeader(&'static str),
-}
-
-impl From<coding::UnexpectedEnd> for HeaderError {
-    fn from(_: coding::UnexpectedEnd) -> Self {
-        HeaderError::InvalidHeader("unexpected end of packet")
-    }
-}
-
-impl Packet {
-    fn decode(packet: &Bytes, dest_id_len: usize) -> Result<(Self, Bytes), HeaderError> {
-        let mut buf = io::Cursor::new(&packet[..]);
-        let ty = buf.get::<u8>()?;
-        let long = ty & 0x80 != 0;
-        let ty = ty & !0x80;
-        let mut cid_stage = [0; MAX_CID_SIZE];
-        if long {
-            let version = buf.get::<u32>()?;
-            let ci_lengths = buf.get::<u8>()?;
-            let mut dcil = ci_lengths >> 4;
-            if dcil > 0 {
-                dcil += 3
-            };
-            let mut scil = ci_lengths & 0xF;
-            if scil > 0 {
-                scil += 3
-            };
-            if buf.remaining() < (dcil + scil) as usize {
-                return Err(HeaderError::InvalidHeader(
-                    "connection IDs longer than packet",
-                ));
-            }
-            buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-            let destination_id = ConnectionId::new(cid_stage, dcil as usize);
-            buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-            let source_id = ConnectionId::new(cid_stage, scil as usize);
-            Ok(match version {
-                0 => {
-                    let header_data = packet.slice(0, buf.position() as usize);
-                    let payload = packet.slice(buf.position() as usize, packet.len());
-                    (
-                        Packet {
-                            header: Header::VersionNegotiate {
-                                ty,
-                                source_id,
-                                destination_id,
-                            },
-                            header_data,
-                            payload,
-                        },
-                        Bytes::new(),
-                    )
-                }
-                VERSION => {
-                    let len = buf.get_var()?;
-                    let number = buf.get()?;
-                    let header_data = packet.slice(0, buf.position() as usize);
-                    if buf.position() + len > packet.len() as u64 {
-                        return Err(HeaderError::InvalidHeader("payload longer than packet"));
-                    }
-                    let payload = if len == 0 {
-                        Bytes::new()
-                    } else {
-                        packet.slice(buf.position() as usize, (buf.position() + len) as usize)
-                    };
-                    (
-                        Packet {
-                            header: Header::Long {
-                                ty,
-                                source_id,
-                                destination_id,
-                                number,
-                            },
-                            header_data,
-                            payload,
-                        },
-                        packet.slice((buf.position() + len) as usize, packet.len()),
-                    )
-                }
-                _ => {
-                    return Err(HeaderError::UnsupportedVersion {
-                        source: source_id,
-                        destination: destination_id,
-                    })
-                }
-            })
-        } else {
-            if buf.remaining() < dest_id_len {
-                return Err(HeaderError::InvalidHeader(
-                    "destination connection ID longer than packet",
-                ));
-            }
-            buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
-            let id = ConnectionId::new(cid_stage, dest_id_len);
-            let key_phase = ty & KEY_PHASE_BIT != 0;
-            let number = match ty & 0b11 {
-                0x0 => PacketNumber::U8(buf.get()?),
-                0x1 => PacketNumber::U16(buf.get()?),
-                0x2 => PacketNumber::U32(buf.get()?),
-                _ => {
-                    return Err(HeaderError::InvalidHeader("unknown packet type"));
-                }
-            };
-            let header_data = packet.slice(0, buf.position() as usize);
-            let payload = packet.slice(buf.position() as usize, packet.len());
-            Ok((
-                Packet {
-                    header: Header::Short {
-                        id,
-                        number,
-                        key_phase,
-                    },
-                    header_data,
-                    payload,
-                },
-                Bytes::new(),
-            ))
-        }
-    }
-}
-
 /// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
@@ -1679,13 +1377,6 @@ impl slog::Value for Timer {
     }
 }
 
-pub mod packet {
-    pub const INITIAL: u8 = 0x7F;
-    pub const RETRY: u8 = 0x7E;
-    pub const ZERO_RTT: u8 = 0x7C;
-    pub const HANDSHAKE: u8 = 0x7D;
-}
-
 /// Forward data from an Initial or Retry packet to a stream for a TLS context
 pub fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) -> bool {
     for frame in frame::Iter::new(payload) {
@@ -1728,7 +1419,7 @@ where
 {
     let mut buf = Vec::<u8>::new();
     Header::Long {
-        ty: packet::HANDSHAKE,
+        ty: types::HANDSHAKE,
         destination_id: remote_id.clone(),
         source_id: local_id.clone(),
         number: packet_number,

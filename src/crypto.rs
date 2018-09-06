@@ -15,8 +15,8 @@ use openssl::ssl::{
 use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
 use openssl::x509::X509Ref;
 
-use connection::ConnectionId;
 use endpoint::{Config, EndpointError, ListenKeys};
+use packet::ConnectionId;
 use transport_parameters::TransportParameters;
 use {hkdf, Side, RESET_TOKEN_SIZE};
 
@@ -485,7 +485,7 @@ pub const AEAD_TAG_SIZE: usize = 16;
 #[cfg(test)]
 mod test {
     use super::*;
-    use endpoint::PacketNumber;
+    use packet::PacketNumber;
     use rand;
     use MAX_CID_SIZE;
 
