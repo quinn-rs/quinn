@@ -1550,28 +1550,20 @@ impl Endpoint {
                         state.alert.as_ref().map(|x| &x[..]),
                     ),
                 });
-                self.reset_idle_timeout(now, conn);
+                self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
             }
             State::Closed(ref state) => {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: self.connections[conn.0].make_close(&state.reason),
                 });
-                self.reset_idle_timeout(now, conn);
+                self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
             }
             _ => {}
         }
         self.connections[conn.0].state = Some(state);
 
         self.ctx.dirty_conns.insert(conn);
-    }
-
-    fn reset_idle_timeout(&mut self, now: u64, conn: ConnectionHandle) {
-        let dt = cmp::min(
-            self.ctx.config.idle_timeout,
-            self.connections[conn.0].params.idle_timeout,
-        ) as u64 * 1000000;
-        self.connections[conn.0].set_idle = Some(Some(now + dt));
     }
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
@@ -1586,7 +1578,7 @@ impl Endpoint {
             sent = true;
         }
         if sent {
-            self.reset_idle_timeout(now, conn);
+            self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
         }
         {
             let c = &mut self.connections[conn.0];
@@ -1708,7 +1700,7 @@ impl Endpoint {
                         destination: self.connections[conn.0].remote,
                         packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                     });
-                    self.reset_idle_timeout(now, conn);
+                    self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
                     self.connections[conn.0].tlp_count += 1;
                 } else {
                     trace!(self.ctx.log, "RTO fired, retransmitting"; "pn" => self.connections[conn.0].largest_sent_packet + 1,
@@ -1725,7 +1717,7 @@ impl Endpoint {
                             packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                         });
                     }
-                    self.reset_idle_timeout(now, conn);
+                    self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
                     self.connections[conn.0].rto_count += 1;
                 }
                 self.connections[conn.0].set_loss_detection_alarm(&self.ctx.config);
@@ -1892,7 +1884,7 @@ impl Endpoint {
                 destination: self.connections[conn.0].remote,
                 packet: self.connections[conn.0].make_close(&reason),
             });
-            self.reset_idle_timeout(now, conn);
+            self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
             self.ctx.dirty_conns.insert(conn);
         }
         self.connections[conn.0].state =
@@ -1924,7 +1916,7 @@ impl Endpoint {
 
     fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
         trace!(self.ctx.log, "packet authenticated"; "connection" => %self.connections[conn.0].local_id, "pn" => packet);
-        self.reset_idle_timeout(now, conn);
+        self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
         self.connections[conn.0].on_packet_authenticated(now, packet);
     }
 
