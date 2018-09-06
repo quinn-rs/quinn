@@ -26,7 +26,7 @@ use memory_stream::MemoryStream;
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;
-use {frame, Directionality, Side, StreamId, TransportError, MAX_CID_SIZE};
+use {frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
@@ -902,6 +902,322 @@ impl Connection {
         }
         self.pending.rst_stream.push((stream, error_code));
         ctx.dirty_conns.insert(conn_h);
+    }
+
+    pub fn process_payload(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        conn: ConnectionHandle,
+        number: u64,
+        payload: Bytes,
+        tls: &mut MemoryStream,
+    ) -> Result<bool, state::CloseReason> {
+        let cid = self.local_id.clone();
+        for frame in frame::Iter::new(payload) {
+            match frame {
+                Frame::Padding => {}
+                _ => {
+                    trace!(ctx.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
+                }
+            }
+            match frame {
+                Frame::Ack(_) => {}
+                _ => {
+                    self.permit_ack_only = true;
+                }
+            }
+            match frame {
+                Frame::Stream(frame) => {
+                    trace!(ctx.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
+                    let data_recvd = self.data_recvd;
+                    let max_data = self.local_max_data;
+                    let new_bytes = match self.get_recv_stream(frame.id) {
+                        Err(e) => {
+                            debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
+                            ctx.events
+                                .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            return Err(e.into());
+                        }
+                        Ok(None) => {
+                            trace!(ctx.log, "dropping frame for closed stream");
+                            continue;
+                        }
+                        Ok(Some(stream)) => {
+                            let end = frame.offset + frame.data.len() as u64;
+                            let rs = stream.recv_mut().unwrap();
+                            if let Some(final_offset) = rs.final_offset() {
+                                if end > final_offset || (frame.fin && end != final_offset) {
+                                    debug!(ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::FINAL_OFFSET_ERROR.into(),
+                                        },
+                                    ));
+                                    return Err(TransportError::FINAL_OFFSET_ERROR.into());
+                                }
+                            }
+                            let prev_end = rs.limit();
+                            let new_bytes = end.saturating_sub(prev_end);
+                            if end > rs.max_data || data_recvd + new_bytes > max_data {
+                                debug!(ctx.log, "flow control error";
+                                       "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
+                                       "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
+                                ctx.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::FLOW_CONTROL_ERROR.into(),
+                                    },
+                                ));
+                                return Err(TransportError::FLOW_CONTROL_ERROR.into());
+                            }
+                            if frame.fin {
+                                match rs.state {
+                                    stream::RecvState::Recv { ref mut size } => {
+                                        *size = Some(end);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            rs.recvd.insert(frame.offset..end);
+                            if frame.id == StreamId(0) {
+                                if frame.fin {
+                                    debug!(ctx.log, "got fin on stream 0"; "connection" => cid);
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
+                                }
+                                tls.insert(frame.offset, &frame.data);
+                            } else {
+                                rs.buffer(frame.data, frame.offset);
+                            }
+                            if let stream::RecvState::Recv { size: Some(size) } = rs.state {
+                                if rs.recvd.len() == 1
+                                    && rs.recvd.iter().next().unwrap() == (0..size)
+                                {
+                                    rs.state = stream::RecvState::DataRecvd { size };
+                                }
+                            }
+                            new_bytes
+                        }
+                    };
+                    if frame.id != StreamId(0) {
+                        self.readable_streams.insert(frame.id);
+                        ctx.readable_conns.insert(conn);
+                    }
+                    self.data_recvd += new_bytes;
+                }
+                Frame::Ack(ack) => {
+                    self.on_ack_received(ctx, now, conn, ack);
+                    for stream in self.finished_streams.drain(..) {
+                        ctx.events
+                            .push_back((conn, Event::StreamFinished { stream }));
+                    }
+                }
+                Frame::Padding | Frame::Ping => {}
+                Frame::ConnectionClose(reason) => {
+                    ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: ConnectionError::ConnectionClosed { reason },
+                        },
+                    ));
+                    return Ok(true);
+                }
+                Frame::ApplicationClose(reason) => {
+                    ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: ConnectionError::ApplicationClosed { reason },
+                        },
+                    ));
+                    return Ok(true);
+                }
+                Frame::Invalid(ty) => {
+                    debug!(ctx.log, "received malformed frame"; "type" => %ty);
+                    ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::frame(ty).into(),
+                        },
+                    ));
+                    return Err(TransportError::frame(ty).into());
+                }
+                Frame::PathChallenge(x) => {
+                    self.pending.path_challenge(number, x);
+                }
+                Frame::PathResponse(_) => {
+                    debug!(ctx.log, "unsolicited PATH_RESPONSE");
+                    ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
+                        },
+                    ));
+                    return Err(TransportError::UNSOLICITED_PATH_RESPONSE.into());
+                }
+                Frame::MaxData(bytes) => {
+                    let was_blocked = self.blocked();
+                    self.max_data = cmp::max(bytes, self.max_data);
+                    if was_blocked && !self.blocked() {
+                        for stream in self.blocked_streams.drain() {
+                            ctx.events
+                                .push_back((conn, Event::StreamWritable { stream }));
+                        }
+                    }
+                }
+                Frame::MaxStreamData { id, offset } => {
+                    if id.initiator() != self.side && id.directionality() == Directionality::Uni {
+                        debug!(ctx.log, "got MAX_STREAM_DATA on recv-only stream");
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    if let Some(stream) = self.streams.get_mut(&id) {
+                        let ss = stream.send_mut().unwrap();
+                        if offset > ss.max_data {
+                            trace!(ctx.log, "stream limit increased"; "stream" => id.0,
+                                   "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
+                            if ss.offset == ss.max_data {
+                                ctx.events
+                                    .push_back((conn, Event::StreamWritable { stream: id }));
+                            }
+                            ss.max_data = offset;
+                        }
+                    } else {
+                        debug!(ctx.log, "got MAX_STREAM_DATA on unopened stream");
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                }
+                Frame::MaxStreamId(id) => {
+                    let limit = match id.directionality() {
+                        Directionality::Uni => &mut self.max_uni_streams,
+                        Directionality::Bi => &mut self.max_bi_streams,
+                    };
+                    if id.index() > *limit {
+                        *limit = id.index();
+                        ctx.events.push_back((
+                            conn,
+                            Event::StreamAvailable {
+                                directionality: id.directionality(),
+                            },
+                        ));
+                    }
+                }
+                Frame::RstStream(frame::RstStream {
+                    id,
+                    error_code,
+                    final_offset,
+                }) => {
+                    if id == StreamId(0) {
+                        debug!(ctx.log, "got RST_STREAM on stream 0");
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    let offset = match self.get_recv_stream(id) {
+                        Err(e) => {
+                            debug!(ctx.log, "received illegal RST_STREAM");
+                            ctx.events
+                                .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            return Err(e.into());
+                        }
+                        Ok(None) => {
+                            trace!(ctx.log, "received RST_STREAM on closed stream");
+                            continue;
+                        }
+                        Ok(Some(stream)) => {
+                            let rs = stream.recv_mut().unwrap();
+                            if let Some(offset) = rs.final_offset() {
+                                if offset != final_offset {
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::FINAL_OFFSET_ERROR.into(),
+                                        },
+                                    ));
+                                    return Err(TransportError::FINAL_OFFSET_ERROR.into());
+                                }
+                            }
+                            if !rs.is_closed() {
+                                rs.state = stream::RecvState::ResetRecvd {
+                                    size: final_offset,
+                                    error_code,
+                                };
+                            }
+                            rs.limit()
+                        }
+                    };
+                    self.data_recvd += final_offset.saturating_sub(offset);
+                    self.readable_streams.insert(id);
+                    ctx.readable_conns.insert(conn);
+                }
+                Frame::Blocked { offset } => {
+                    debug!(ctx.log, "peer claims to be blocked at connection level"; "offset" => offset);
+                }
+                Frame::StreamBlocked { id, offset } => {
+                    debug!(ctx.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
+                }
+                Frame::StreamIdBlocked { id } => {
+                    debug!(ctx.log, "peer claims to be blocked at stream ID level"; "stream" => id);
+                }
+                Frame::StopSending { id, error_code } => {
+                    if self
+                        .streams
+                        .get(&id)
+                        .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
+                    {
+                        debug!(ctx.log, "got STOP_SENDING on invalid stream");
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    self.reset(ctx, id, 0, conn);
+                    self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
+                        stream::SendState::ResetSent {
+                            stop_reason: Some(error_code),
+                        };
+                }
+                Frame::NewConnectionId { .. } => {
+                    if self.remote_id.is_empty() {
+                        debug!(ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
+                               connection=self.local_id.clone());
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    }
+                    trace!(ctx.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                }
+            }
+        }
+        Ok(false)
     }
 
     pub fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
