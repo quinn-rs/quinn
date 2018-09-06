@@ -763,7 +763,11 @@ impl Endpoint {
                     );
                     self.connection_ids_initial.insert(dest_id, conn);
                     self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
-                    self.connections[conn.0].on_packet_authenticated(now, packet_number as u64);
+                    self.connections[conn.0].on_packet_authenticated(
+                        &mut self.ctx,
+                        now,
+                        packet_number as u64,
+                    );
                     self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
                     self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
                         tls,
@@ -1014,7 +1018,11 @@ impl Endpoint {
                             *state.tls.get_mut() = new_stream;
                             match state.tls.handshake() {
                                 Err(HandshakeError::WouldBlock(mut tls)) => {
-                                    self.on_packet_authenticated(now, conn, number as u64);
+                                    self.connections[conn.0].on_packet_authenticated(
+                                        &mut self.ctx,
+                                        now,
+                                        number as u64,
+                                    );
                                     trace!(self.ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
                                     let local_id = self.connections[conn.0].local_id.clone();
                                     // Discard transport state
@@ -1109,7 +1117,11 @@ impl Endpoint {
                             debug!(self.ctx.log, "failed to authenticate handshake packet");
                             return State::Handshake(state);
                         };
-                        self.on_packet_authenticated(now, conn, number as u64);
+                        self.connections[conn.0].on_packet_authenticated(
+                            &mut self.ctx,
+                            now,
+                            number as u64,
+                        );
                         // Complete handshake (and ultimately send Finished)
                         for frame in frame::Iter::new(payload.into()) {
                             match frame {
@@ -1359,7 +1371,11 @@ impl Endpoint {
                             );
                             return State::Handshake(state);
                         };
-                        self.on_packet_authenticated(now, conn, number as u64);
+                        self.connections[conn.0].on_packet_authenticated(
+                            &mut self.ctx,
+                            now,
+                            number as u64,
+                        );
                         match self.connections[conn.0].process_payload(
                             &mut self.ctx,
                             now,
@@ -1448,7 +1464,7 @@ impl Endpoint {
                         return State::closed(e);
                     }
                 };
-                self.on_packet_authenticated(now, conn, number);
+                self.connections[conn.0].on_packet_authenticated(&mut self.ctx, now, number);
                 if self.connections[conn.0].awaiting_handshake {
                     assert_eq!(
                         self.connections[conn.0].side,
@@ -1912,12 +1928,6 @@ impl Endpoint {
                 }),
                 State::Drained => unreachable!(),
             });
-    }
-
-    fn on_packet_authenticated(&mut self, now: u64, conn: ConnectionHandle, packet: u64) {
-        trace!(self.ctx.log, "packet authenticated"; "connection" => %self.connections[conn.0].local_id, "pn" => packet);
-        self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-        self.connections[conn.0].on_packet_authenticated(now, packet);
     }
 
     /// Look up whether we're the client or server of `conn`.

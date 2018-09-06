@@ -768,7 +768,9 @@ impl Connection {
         cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    pub fn on_packet_authenticated(&mut self, now: u64, packet: u64) {
+    pub fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: u64) {
+        trace!(ctx.log, "packet authenticated"; "connection" => %self.local_id, "pn" => packet);
+        self.reset_idle_timeout(&ctx.config, now);
         self.pending_acks.insert_one(packet);
         if self.pending_acks.len() > MAX_ACK_BLOCKS {
             self.pending_acks.pop_min();
