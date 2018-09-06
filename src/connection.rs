@@ -10,23 +10,23 @@ use openssl::ssl::{
     self, HandshakeError, MidHandshakeSslStream, Ssl, SslSession, SslStream, SslStreamBuilder,
 };
 use openssl::x509::verify::X509CheckFlags;
-use rand::Rng;
+use rand::{distributions::Sample, Rng};
 use slog::{self, Logger};
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
     ConnectionInfo, Crypto, CryptoContext, ZeroRttCrypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
-    CONNECTION_INFO_INDEX, TLS_MAX_EARLY_DATA,
+    CONNECTION_INFO_INDEX, TLS_MAX_EARLY_DATA, TRANSPORT_PARAMS_INDEX,
 };
 use endpoint::{
-    packet, set_payload_length, ClientConfig, Config, Context, Event, Header, Packet, PacketNumber,
-    MAX_ACK_BLOCKS, MIN_INITIAL_SIZE, MIN_MTU,
+    packet, parse_initial, set_payload_length, ClientConfig, Config, Context, Event, Header,
+    Packet, PacketNumber, MAX_ACK_BLOCKS, MIN_INITIAL_SIZE, MIN_MTU,
 };
 use memory_stream::MemoryStream;
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;
-use {frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE};
+use {frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, VERSION};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
@@ -1014,6 +1014,537 @@ impl Connection {
                 ));
                 Err(TransportError::INTERNAL_ERROR.into())
             }
+        }
+    }
+
+    pub fn handle_connected_inner(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        conn: ConnectionHandle,
+        remote: SocketAddrV6,
+        packet: Packet,
+        state: State,
+    ) -> State {
+        match state {
+            State::Handshake(mut state) => {
+                match packet.header {
+                    Header::Long {
+                        ty: packet::RETRY,
+                        number,
+                        destination_id: conn_id,
+                        source_id: remote_id,
+                        ..
+                    } => {
+                        // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
+                        if state.clienthello_packet.is_none() {
+                            // Received Retry as a server
+                            debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
+                            ctx.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                        } else if state.clienthello_packet.unwrap() > number {
+                            // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
+                            State::Handshake(state)
+                        } else if state.tls.get_ref().read_offset() != 0 {
+                            // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
+                            debug!(ctx.log, "received retry after a handshake packet");
+                            ctx.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                        } else if let Some(payload) =
+                            self.decrypt(true, number as u64, &packet.header_data, &packet.payload)
+                        {
+                            let mut new_stream = MemoryStream::new();
+                            if !parse_initial(&ctx.log, &mut new_stream, payload.into()) {
+                                debug!(ctx.log, "invalid retry payload");
+                                ctx.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                    },
+                                ));
+                                return State::handshake_failed(
+                                    TransportError::PROTOCOL_VIOLATION,
+                                    None,
+                                );
+                            }
+                            *state.tls.get_mut() = new_stream;
+                            match state.tls.handshake() {
+                                Err(HandshakeError::WouldBlock(mut tls)) => {
+                                    self.on_packet_authenticated(ctx, now, number as u64);
+                                    trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
+                                    let local_id = self.local_id.clone();
+                                    // Discard transport state
+                                    let mut new = Connection::new(
+                                        remote_id.clone(),
+                                        local_id,
+                                        remote_id,
+                                        remote,
+                                        ctx.initial_packet_number.sample(&mut ctx.rng).into(),
+                                        Side::Client,
+                                        &ctx.config,
+                                    );
+                                    mem::replace(self, new);
+                                    // Send updated ClientHello
+                                    self.transmit_handshake(&tls.get_mut().take_outgoing());
+                                    // Prepare to receive Handshake packets that start stream 0 from offset 0
+                                    tls.get_mut().reset_read();
+                                    State::Handshake(state::Handshake {
+                                        tls,
+                                        clienthello_packet: state.clienthello_packet,
+                                        remote_id_set: state.remote_id_set,
+                                    })
+                                }
+                                Ok(_) => {
+                                    debug!(
+                                        ctx.log,
+                                        "unexpectedly completed handshake in RETRY packet"
+                                    );
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    )
+                                }
+                                Err(HandshakeError::Failure(mut tls)) => {
+                                    debug!(ctx.log, "handshake failed"; "reason" => %tls.error());
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(
+                                        TransportError::TLS_HANDSHAKE_FAILED,
+                                        Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                    )
+                                }
+                                Err(HandshakeError::SetupFailure(e)) => {
+                                    error!(ctx.log, "handshake setup failed"; "reason" => %e);
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::INTERNAL_ERROR.into(),
+                                        },
+                                    ));
+                                    State::handshake_failed(TransportError::INTERNAL_ERROR, None)
+                                }
+                            }
+                        } else {
+                            debug!(ctx.log, "failed to authenticate retry packet");
+                            State::Handshake(state)
+                        }
+                    }
+                    Header::Long {
+                        ty: packet::HANDSHAKE,
+                        destination_id: id,
+                        source_id: remote_id,
+                        number,
+                        ..
+                    } => {
+                        if !state.remote_id_set {
+                            trace!(ctx.log, "got remote connection id"; "connection" => %id, "remote_id" => %remote_id);
+                            self.remote_id = remote_id;
+                            state.remote_id_set = true;
+                        }
+                        let payload = if let Some(x) =
+                            self.decrypt(true, number as u64, &packet.header_data, &packet.payload)
+                        {
+                            x
+                        } else {
+                            debug!(ctx.log, "failed to authenticate handshake packet");
+                            return State::Handshake(state);
+                        };
+                        self.on_packet_authenticated(ctx, now, number as u64);
+                        // Complete handshake (and ultimately send Finished)
+                        for frame in frame::Iter::new(payload.into()) {
+                            match frame {
+                                Frame::Ack(_) => {}
+                                _ => {
+                                    self.permit_ack_only = true;
+                                }
+                            }
+                            match frame {
+                                Frame::Padding => {}
+                                Frame::Stream(frame::Stream {
+                                    id: StreamId(0),
+                                    offset,
+                                    data,
+                                    ..
+                                }) => {
+                                    state.tls.get_mut().insert(offset, &data);
+                                }
+                                Frame::Stream(frame::Stream { .. }) => {
+                                    debug!(ctx.log, "non-stream-0 stream frame in handshake");
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    return State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    );
+                                }
+                                Frame::Ack(ack) => {
+                                    self.on_ack_received(ctx, now, conn, ack);
+                                }
+                                Frame::ConnectionClose(reason) => {
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: ConnectionError::ConnectionClosed { reason },
+                                        },
+                                    ));
+                                    return State::Draining(state.into());
+                                }
+                                Frame::ApplicationClose(reason) => {
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: ConnectionError::ApplicationClosed { reason },
+                                        },
+                                    ));
+                                    return State::Draining(state.into());
+                                }
+                                Frame::PathChallenge(value) => {
+                                    self.handshake_pending.path_challenge(number as u64, value);
+                                }
+                                _ => {
+                                    debug!(ctx.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                        },
+                                    ));
+                                    return State::handshake_failed(
+                                        TransportError::PROTOCOL_VIOLATION,
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                        if state.tls.get_ref().read_blocked() {
+                            return State::Handshake(state);
+                        }
+                        let prev_offset = state.tls.get_ref().read_offset();
+                        match state.tls.handshake() {
+                            Ok(mut tls) => {
+                                if self.side == Side::Client {
+                                    if let Some(params) =
+                                        tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned()
+                                    {
+                                        self.set_params(params.expect(
+                                            "transport param errors should fail the handshake",
+                                        ));
+                                    } else {
+                                        debug!(ctx.log, "server didn't send transport params");
+                                        ctx.events.push_back((
+                                            conn,
+                                            Event::ConnectionLost {
+                                                reason: TransportError::TRANSPORT_PARAMETER_ERROR
+                                                    .into(),
+                                            },
+                                        ));
+                                        return State::handshake_failed(
+                                            TransportError::TLS_HANDSHAKE_FAILED,
+                                            Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                        );
+                                    }
+                                }
+                                trace!(
+                                    ctx.log,
+                                    "{connection} established",
+                                    connection = id.clone()
+                                );
+                                self.handshake_cleanup(&ctx.config);
+                                if self.side == Side::Client {
+                                    self.transmit_handshake(&tls.get_mut().take_outgoing());
+                                } else {
+                                    self.transmit(
+                                        StreamId(0),
+                                        tls.get_mut().take_outgoing()[..].into(),
+                                    );
+                                }
+                                match self.side {
+                                    Side::Client => {
+                                        ctx.events.push_back((
+                                            conn,
+                                            Event::Connected {
+                                                protocol: tls
+                                                    .ssl()
+                                                    .selected_alpn_protocol()
+                                                    .map(|x| x.into()),
+                                            },
+                                        ));
+                                    }
+                                    Side::Server => {
+                                        ctx.incoming_handshakes -= 1;
+                                        ctx.incoming.push_back(conn);
+                                    }
+                                }
+                                self.crypto =
+                                    Some(CryptoContext::established(tls.ssl(), self.side));
+                                self.streams
+                                    .get_mut(&StreamId(0))
+                                    .unwrap()
+                                    .recv_mut()
+                                    .unwrap()
+                                    .max_data += tls.get_ref().read_offset() - prev_offset;
+                                self.pending.max_stream_data.insert(StreamId(0));
+                                State::Established(state::Established { tls })
+                            }
+                            Err(HandshakeError::WouldBlock(mut tls)) => {
+                                trace!(ctx.log, "handshake ongoing"; "connection" => %id);
+                                self.handshake_cleanup(&ctx.config);
+                                self.streams
+                                    .get_mut(&StreamId(0))
+                                    .unwrap()
+                                    .recv_mut()
+                                    .unwrap()
+                                    .max_data += tls.get_ref().read_offset() - prev_offset;
+                                {
+                                    let response = tls.get_mut().take_outgoing();
+                                    if !response.is_empty() {
+                                        self.transmit_handshake(&response);
+                                    }
+                                }
+                                State::Handshake(state::Handshake {
+                                    tls,
+                                    clienthello_packet: state.clienthello_packet,
+                                    remote_id_set: state.remote_id_set,
+                                })
+                            }
+                            Err(HandshakeError::Failure(mut tls)) => {
+                                let code = if let Some(params_err) = tls
+                                    .ssl()
+                                    .ex_data(*TRANSPORT_PARAMS_INDEX)
+                                    .and_then(|x| x.err())
+                                {
+                                    debug!(ctx.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
+                                    TransportError::TRANSPORT_PARAMETER_ERROR
+                                } else {
+                                    debug!(ctx.log, "handshake failed"; "reason" => %tls.error());
+                                    TransportError::TLS_HANDSHAKE_FAILED
+                                };
+                                ctx.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: code.into(),
+                                    },
+                                ));
+                                State::handshake_failed(
+                                    code,
+                                    Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                )
+                            }
+                            Err(HandshakeError::SetupFailure(e)) => {
+                                error!(ctx.log, "handshake failed"; "connection" => %id, "reason" => %e);
+                                ctx.events.push_back((
+                                    conn,
+                                    Event::ConnectionLost {
+                                        reason: TransportError::INTERNAL_ERROR.into(),
+                                    },
+                                ));
+                                State::handshake_failed(TransportError::INTERNAL_ERROR, None)
+                            }
+                        }
+                    }
+                    Header::Long {
+                        ty: packet::INITIAL,
+                        ..
+                    } if self.side == Side::Server =>
+                    {
+                        trace!(ctx.log, "dropping duplicate Initial");
+                        State::Handshake(state)
+                    }
+                    Header::Long {
+                        ty: packet::ZERO_RTT,
+                        number,
+                        destination_id: ref id,
+                        ..
+                    } if self.side == Side::Server =>
+                    {
+                        let payload = if let Some(ref crypto) = self.zero_rtt_crypto {
+                            if let Some(x) =
+                                crypto.decrypt(number as u64, &packet.header_data, &packet.payload)
+                            {
+                                x
+                            } else {
+                                debug!(
+                                    ctx.log,
+                                    "{connection} failed to authenticate 0-RTT packet",
+                                    connection = id.clone()
+                                );
+                                return State::Handshake(state);
+                            }
+                        } else {
+                            debug!(
+                                ctx.log,
+                                "{connection} ignoring unsupported 0-RTT packet",
+                                connection = id.clone()
+                            );
+                            return State::Handshake(state);
+                        };
+                        self.on_packet_authenticated(ctx, now, number as u64);
+                        match self.process_payload(
+                            ctx,
+                            now,
+                            conn,
+                            number as u64,
+                            payload.into(),
+                            state.tls.get_mut(),
+                        ) {
+                            Err(e) => State::HandshakeFailed(state::HandshakeFailed {
+                                reason: e,
+                                app_closed: false,
+                                alert: None,
+                            }),
+                            Ok(true) => State::Draining(state.into()),
+                            Ok(false) => State::Handshake(state),
+                        }
+                    }
+                    Header::Long { ty, .. } => {
+                        debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: TransportError::PROTOCOL_VIOLATION.into(),
+                            },
+                        ));
+                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                    }
+                    Header::VersionNegotiate {
+                        destination_id: id, ..
+                    } => {
+                        let mut payload = io::Cursor::new(&packet.payload[..]);
+                        if packet.payload.len() % 4 != 0 {
+                            debug!(ctx.log, "malformed version negotiation"; "connection" => %id);
+                            ctx.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            return State::handshake_failed(
+                                TransportError::PROTOCOL_VIOLATION,
+                                None,
+                            );
+                        }
+                        while payload.has_remaining() {
+                            let version = payload.get::<u32>().unwrap();
+                            if version == VERSION {
+                                // Our version is supported, so this packet is spurious
+                                return State::Handshake(state);
+                            }
+                        }
+                        debug!(ctx.log, "remote doesn't support our version");
+                        ctx.events.push_back((
+                            conn,
+                            Event::ConnectionLost {
+                                reason: ConnectionError::VersionMismatch,
+                            },
+                        ));
+                        State::Draining(state.into())
+                    }
+                    // TODO: SHOULD buffer these to improve reordering tolerance.
+                    Header::Short { .. } => {
+                        trace!(ctx.log, "dropping short packet during handshake");
+                        State::Handshake(state)
+                    }
+                }
+            }
+            State::Established(mut state) => {
+                let id = self.local_id.clone();
+                if let Header::Long { .. } = packet.header {
+                    trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
+                    return State::Established(state);
+                }
+                let (payload, number) = match self.decrypt_packet(false, packet) {
+                    Ok(x) => x,
+                    Err(None) => {
+                        trace!(ctx.log, "failed to authenticate packet"; "connection" => %id);
+                        return State::Established(state);
+                    }
+                    Err(Some(e)) => {
+                        warn!(ctx.log, "got illegal packet"; "connection" => %id);
+                        ctx.events
+                            .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                        return State::closed(e);
+                    }
+                };
+                self.on_packet_authenticated(ctx, now, number);
+                if self.awaiting_handshake {
+                    assert_eq!(
+                        self.side,
+                        Side::Client,
+                        "only the client confirms handshake completion based on a protected packet"
+                    );
+                    // Forget about unacknowledged handshake packets
+                    self.handshake_cleanup(&ctx.config);
+                }
+                match self
+                    .process_payload(ctx, now, conn, number, payload.into(), state.tls.get_mut())
+                    .and_then(|x| {
+                        self.drive_tls(ctx, conn, &mut state.tls)?;
+                        Ok(x)
+                    }) {
+                    Err(e) => State::closed(e),
+                    Ok(true) => {
+                        // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable
+                        // session is not erased from the anti-replay cache as it otherwise might be.
+                        state.tls.shutdown().unwrap();
+                        State::Draining(state.into())
+                    }
+                    Ok(false) => State::Established(state),
+                }
+            }
+            State::HandshakeFailed(state) => {
+                if let Ok((payload, _)) = self.decrypt_packet(true, packet) {
+                    for frame in frame::Iter::new(payload.into()) {
+                        match frame {
+                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                                trace!(ctx.log, "draining");
+                                return State::Draining(state.into());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                State::HandshakeFailed(state)
+            }
+            State::Closed(state) => {
+                if let Ok((payload, _)) = self.decrypt_packet(false, packet) {
+                    for frame in frame::Iter::new(payload.into()) {
+                        match frame {
+                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                                trace!(ctx.log, "draining");
+                                return State::Draining(state.into());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                State::Closed(state)
+            }
+            State::Draining(x) => State::Draining(x),
+            State::Drained => State::Drained,
         }
     }
 
