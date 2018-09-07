@@ -19,7 +19,7 @@ use connection::{
     state, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
 };
 use crypto::{
-    new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo,
+    new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo, Crypto,
     CryptoContext, SessionTicketBuffer, ZeroRttCrypto, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX,
     TRANSPORT_PARAMS_INDEX,
 };
@@ -562,7 +562,7 @@ impl Endpoint {
         header: &[u8],
         payload: &[u8],
     ) {
-        let crypto = CryptoContext::handshake(&dest_id, Side::Server);
+        let crypto = Crypto::Handshake(CryptoContext::handshake(&dest_id, Side::Server));
         let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) {
             x.into()
         } else {
@@ -693,7 +693,7 @@ impl Endpoint {
                         "{connection} enabled 0rtt",
                         connection = local_id.clone()
                     );
-                    zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
+                    zero_rtt_crypto = Some(Crypto::ZeroRtt(ZeroRttCrypto::new(tls.ssl())));
                 }
                 Err(e) => {
                     debug!(self.ctx.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
@@ -1377,7 +1377,7 @@ pub fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) ->
 }
 
 fn handshake_close<R>(
-    crypto: &CryptoContext,
+    crypto: &Crypto,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u32,

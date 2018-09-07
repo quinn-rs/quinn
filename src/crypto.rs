@@ -45,11 +45,80 @@ pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] 
     result
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub enum Crypto {
-    ZeroRtt,
-    Handshake,
-    OneRtt,
+    ZeroRtt(ZeroRttCrypto),
+    Handshake(CryptoContext),
+    OneRtt(CryptoContext),
+}
+
+impl Crypto {
+    pub fn is_0rtt(&self) -> bool {
+        match *self {
+            Crypto::ZeroRtt(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_handshake(&self) -> bool {
+        match *self {
+            Crypto::Handshake(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_1rtt(&self) -> bool {
+        match *self {
+            Crypto::OneRtt(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn encrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Vec<u8> {
+        // FIXME: Output to caller-owned memory with preexisting header; retain crypter
+        let (cipher, state) = match *self {
+            Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
+            Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
+                (crypto.cipher, &crypto.local)
+            }
+        };
+        let mut tag = [0; AEAD_TAG_SIZE];
+        let mut nonce = [0; 12];
+        BigEndian::write_u64(&mut nonce[4..12], packet);
+        for i in 0..12 {
+            nonce[i] ^= state.iv[i];
+        }
+        let mut buf =
+            encrypt_aead(cipher, &state.key, Some(&nonce), header, payload, &mut tag).unwrap();
+        buf.extend_from_slice(&tag);
+        buf
+    }
+
+    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+        let (cipher, state) = match *self {
+            Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
+            Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
+                (crypto.cipher, &crypto.remote)
+            }
+        };
+        let mut nonce = [0; 12];
+        BigEndian::write_u64(&mut nonce[4..12], packet);
+        for i in 0..12 {
+            nonce[i] ^= state.iv[i];
+        }
+        if payload.len() < AEAD_TAG_SIZE {
+            return None;
+        }
+        let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
+        decrypt_aead(cipher, &state.key, Some(&nonce), header, payload, tag).ok()
+    }
+
+    pub fn update(&self, side: Side) -> Crypto {
+        match *self {
+            Crypto::OneRtt(ref crypto) => Crypto::OneRtt(crypto.update(side)),
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct CookieFactory {
@@ -281,7 +350,7 @@ pub fn new_client(
     (
         MidHandshakeSslStream<MemoryStream>,
         Option<TransportParameters>,
-        Option<ZeroRttCrypto>,
+        Option<Crypto>,
     ),
     ConnectError,
 > {
@@ -337,7 +406,7 @@ pub fn new_client(
         if session.max_early_data() == TLS_MAX_EARLY_DATA {
             trace!(ctx.log, "{connection} enabling 0rtt", connection = &info.id);
             tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
-            zero_rtt_crypto = Some(ZeroRttCrypto::new(tls.ssl()));
+            zero_rtt_crypto = Some(Crypto::ZeroRtt(ZeroRttCrypto::new(tls.ssl())));
         }
         tls.handshake()
     } else {
@@ -418,6 +487,7 @@ impl CryptoState {
     }
 }
 
+#[derive(Clone)]
 pub struct ZeroRttCrypto {
     state: CryptoState,
     cipher: Cipher,
@@ -438,45 +508,6 @@ impl ZeroRttCrypto {
             state: CryptoState::new(digest, cipher, secret.into()),
             cipher,
         }
-    }
-
-    pub fn encrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Vec<u8> {
-        let mut tag = [0; AEAD_TAG_SIZE];
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= self.state.iv[i];
-        }
-        let mut buf = encrypt_aead(
-            self.cipher,
-            &self.state.key,
-            Some(&nonce),
-            header,
-            payload,
-            &mut tag,
-        ).unwrap();
-        buf.extend_from_slice(&tag);
-        buf
-    }
-
-    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= self.state.iv[i];
-        }
-        if payload.len() < AEAD_TAG_SIZE {
-            return None;
-        }
-        let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
-        decrypt_aead(
-            self.cipher,
-            &self.state.key,
-            Some(&nonce),
-            header,
-            payload,
-            tag,
-        ).ok()
     }
 }
 
@@ -554,46 +585,6 @@ impl CryptoContext {
             cipher: self.cipher,
         }
     }
-
-    pub fn encrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Vec<u8> {
-        // FIXME: Output to caller-owned memory with preexisting header; retain crypter
-        let mut tag = [0; AEAD_TAG_SIZE];
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= self.local.iv[i];
-        }
-        let mut buf = encrypt_aead(
-            self.cipher,
-            &self.local.key,
-            Some(&nonce),
-            header,
-            payload,
-            &mut tag,
-        ).unwrap();
-        buf.extend_from_slice(&tag);
-        buf
-    }
-
-    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= self.remote.iv[i];
-        }
-        if payload.len() < AEAD_TAG_SIZE {
-            return None;
-        }
-        let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
-        decrypt_aead(
-            self.cipher,
-            &self.remote.key,
-            Some(&nonce),
-            header,
-            payload,
-            tag,
-        ).ok()
-    }
 }
 
 #[derive(Debug, Fail)]
@@ -643,8 +634,8 @@ mod test {
         let server = CryptoContext::handshake(&conn, Side::Server);
         let header = b"header";
         let payload = b"payload";
-        let encrypted = client.encrypt(0, header, payload);
-        let decrypted = server.decrypt(0, header, &encrypted).unwrap();
+        let encrypted = Crypto::Handshake(client).encrypt(0, header, payload);
+        let decrypted = Crypto::Handshake(server).decrypt(0, header, &encrypted).unwrap();
         assert_eq!(decrypted, payload);
     }
 

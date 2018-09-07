@@ -10,8 +10,8 @@ use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
-    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, CryptoContext, ZeroRttCrypto,
-    ACK_DELAY_EXPONENT, AEAD_TAG_SIZE, TRANSPORT_PARAMS_INDEX,
+    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, CryptoContext, ACK_DELAY_EXPONENT,
+    AEAD_TAG_SIZE, TRANSPORT_PARAMS_INDEX,
 };
 use endpoint::{parse_initial, set_payload_length, Config, Context, Event};
 use memory_stream::MemoryStream;
@@ -44,9 +44,9 @@ pub struct Connection {
     pub mtu: u16,
     pub rx_packet: u64,
     pub rx_packet_time: u64,
-    pub crypto: Option<CryptoContext>,
-    pub prev_crypto: Option<(u64, CryptoContext)>,
-    pub zero_rtt_crypto: Option<ZeroRttCrypto>,
+    pub crypto: Option<Crypto>,
+    pub prev_crypto: Option<(u64, Crypto)>,
+    pub zero_rtt_crypto: Option<Crypto>,
     pub key_phase: bool,
     pub params: TransportParameters,
     /// Streams with data buffered for reading by the application
@@ -126,7 +126,7 @@ pub struct Connection {
     /// machine.
     pub awaiting_handshake: bool,
     pub handshake_pending: Retransmits,
-    pub handshake_crypto: CryptoContext,
+    pub handshake_crypto: Crypto,
 
     //
     // Transmit queue
@@ -273,7 +273,7 @@ impl Connection {
         side: Side,
         config: &Config,
     ) -> Self {
-        let handshake_crypto = CryptoContext::handshake(&initial_id, side);
+        let handshake_crypto = Crypto::Handshake(CryptoContext::handshake(&initial_id, side));
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
             streams.insert(
@@ -1185,8 +1185,10 @@ impl Connection {
                                         ctx.incoming.push_back(conn);
                                     }
                                 }
-                                self.crypto =
-                                    Some(CryptoContext::established(tls.ssl(), self.side));
+                                self.crypto = Some(Crypto::OneRtt(CryptoContext::established(
+                                    tls.ssl(),
+                                    self.side,
+                                )));
                                 self.streams
                                     .get_mut(&StreamId(0))
                                     .unwrap()
@@ -1766,9 +1768,10 @@ impl Connection {
         let ack_only;
         let is_initial;
         let header_len;
-        let crypto;
+        let handshake;
 
         {
+            let crypto;
             let pending;
             if (!established || self.awaiting_handshake)
                 && (!self.handshake_pending.is_empty()
@@ -1806,7 +1809,7 @@ impl Connection {
                     destination_id: self.remote_id.clone(),
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
-                crypto = Crypto::Handshake;
+                crypto = &self.handshake_crypto;
             } else if established || (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
                 // Send 0RTT or 1RTT data
                 is_initial = false;
@@ -1821,7 +1824,7 @@ impl Connection {
                 trace!(log, "sending protected packet"; "pn" => number);
 
                 if !established {
-                    crypto = Crypto::ZeroRtt;
+                    crypto = self.zero_rtt_crypto.as_ref().unwrap();
                     Header::Long {
                         ty: types::ZERO_RTT,
                         number: number as u32,
@@ -1829,7 +1832,7 @@ impl Connection {
                         destination_id: self.initial_id.clone(),
                     }.encode(&mut buf);
                 } else {
-                    crypto = Crypto::OneRtt;
+                    crypto = self.crypto.as_ref().unwrap();
                     Header::Short {
                         id: self.remote_id.clone(),
                         number: PacketNumber::new(number, self.largest_acked_packet),
@@ -1857,7 +1860,7 @@ impl Connection {
             // We will never ack protected packets in handshake packets because handshake_cleanup ensures we never send
             // handshake packets after receiving protected packets.
             // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-            if !self.pending_acks.is_empty() && crypto != Crypto::ZeroRtt {
+            if !self.pending_acks.is_empty() && !crypto.is_0rtt() {
                 let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
                 frame::Ack::encode(delay, &self.pending_acks, &mut buf);
@@ -2012,18 +2015,19 @@ impl Connection {
                     pending.stream.push_front(stream);
                 }
             }
-        }
 
-        if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-            buf.resize(
-                MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
-                frame::Type::PADDING.into(),
-            );
+            if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+                buf.resize(
+                    MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
+                    frame::Type::PADDING.into(),
+                );
+            }
+            if !crypto.is_1rtt() {
+                set_payload_length(&mut buf, header_len as usize);
+            }
+            Self::encrypt(crypto, number, &mut buf, header_len);
+            handshake = crypto.is_handshake();
         }
-        if crypto != Crypto::OneRtt {
-            set_payload_length(&mut buf, header_len as usize);
-        }
-        self.encrypt(crypto, number, &mut buf, header_len);
 
         // If we sent any acks, don't immediately resend them.  Setting this even if ack_only is false needlessly
         // prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to avoid
@@ -2038,7 +2042,7 @@ impl Connection {
                 acks,
                 time: now,
                 bytes: if ack_only { 0 } else { buf.len() as u16 },
-                handshake: crypto == Crypto::Handshake,
+                handshake,
                 retransmits: sent,
             },
         );
@@ -2046,24 +2050,12 @@ impl Connection {
         Some(buf)
     }
 
-    pub fn encrypt(&self, crypto: Crypto, number: u64, buf: &mut Vec<u8>, header_len: u16) {
-        let payload = match crypto {
-            Crypto::ZeroRtt => self.zero_rtt_crypto.as_ref().unwrap().encrypt(
-                number,
-                &buf[0..header_len as usize],
-                &buf[header_len as usize..],
-            ),
-            Crypto::Handshake => self.handshake_crypto.encrypt(
-                number,
-                &buf[0..header_len as usize],
-                &buf[header_len as usize..],
-            ),
-            Crypto::OneRtt => self.crypto.as_ref().unwrap().encrypt(
-                number,
-                &buf[0..header_len as usize],
-                &buf[header_len as usize..],
-            ),
-        };
+    pub fn encrypt(crypto: &Crypto, number: u64, buf: &mut Vec<u8>, header_len: u16) {
+        let payload = crypto.encrypt(
+            number,
+            &buf[0..header_len as usize],
+            &buf[header_len as usize..],
+        );
         debug_assert_eq!(
             payload.len(),
             buf.len() - header_len as usize + AEAD_TAG_SIZE
@@ -2083,7 +2075,7 @@ impl Connection {
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
-        self.encrypt(Crypto::OneRtt, number, &mut buf, header_len);
+        Self::encrypt(self.crypto.as_ref().unwrap(), number, &mut buf, header_len);
         self.on_packet_sent(
             config,
             now,
@@ -2113,7 +2105,7 @@ impl Connection {
             state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
-        self.encrypt(Crypto::OneRtt, number, &mut buf, header_len);
+        Self::encrypt(self.crypto.as_ref().unwrap(), number, &mut buf, header_len);
         buf.into()
     }
 
