@@ -422,12 +422,17 @@ impl Endpoint {
             return;
         }
         let key_phase = packet.header.key_phase();
+        let Packet {
+            header_data,
+            header,
+            payload,
+        } = packet;
         if let Header::Long {
             ty,
-            destination_id,
-            source_id,
+            ref destination_id,
+            ref source_id,
             number,
-        } = packet.header
+        } = header
         {
             match ty {
                 types::INITIAL => {
@@ -435,11 +440,11 @@ impl Endpoint {
                         self.handle_initial(
                             now,
                             remote,
-                            destination_id,
-                            source_id,
+                            destination_id.clone(),
+                            source_id.clone(),
                             number,
-                            &packet.header_data,
-                            &packet.payload,
+                            &header_data,
+                            payload,
                         );
                     } else {
                         debug!(
@@ -477,7 +482,7 @@ impl Endpoint {
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
             let padding = self.ctx.rng.gen_range(
                 0,
-                cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE,
+                cmp::max(RESET_TOKEN_SIZE + 8, payload.len()) - RESET_TOKEN_SIZE,
             );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
@@ -559,12 +564,13 @@ impl Endpoint {
         source_id: ConnectionId,
         packet_number: u32,
         header: &[u8],
-        payload: &[u8],
+        mut payload: BytesMut,
     ) {
         let crypto = Crypto::new_handshake(&dest_id, Side::Server);
-        let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) {
-            x.into()
-        } else {
+        if crypto
+            .decrypt(packet_number as u64, header, &mut payload)
+            .is_err()
+        {
             debug!(self.ctx.log, "failed to authenticate initial packet");
             return;
         };
@@ -593,7 +599,7 @@ impl Endpoint {
         }
 
         let mut stream = MemoryStream::new();
-        if !parse_initial(&self.ctx.log, &mut stream, payload) {
+        if !parse_initial(&self.ctx.log, &mut stream, payload.freeze()) {
             return;
         } // TODO: Send close?
         trace!(self.ctx.log, "got initial");

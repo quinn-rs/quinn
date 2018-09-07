@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::{io, str};
 
 use blake2::Blake2b;
-use bytes::{BigEndian, Buf, ByteOrder, IntoBuf};
+use bytes::{BigEndian, Buf, ByteOrder, BytesMut, IntoBuf};
 use constant_time_eq::constant_time_eq;
 use digest::{Input, VariableOutput};
 use openssl::hash::MessageDigest;
@@ -177,23 +177,40 @@ impl Crypto {
         buf.extend_from_slice(&result);
     }
 
-    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
+        if payload.len() < AEAD_TAG_SIZE {
+            return Err(());
+        }
+
         let (cipher, state) = match *self {
             Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
             Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.remote)
             }
         };
+
         let mut nonce = [0; 12];
         BigEndian::write_u64(&mut nonce[4..12], packet);
         for i in 0..12 {
             nonce[i] ^= state.iv[i];
         }
-        if payload.len() < AEAD_TAG_SIZE {
-            return None;
+
+        let payload_len = payload.len();
+        let tag = payload.split_off(payload_len - AEAD_TAG_SIZE);
+        match decrypt_aead(
+            cipher,
+            &state.key,
+            Some(&nonce),
+            header,
+            payload.as_mut(),
+            &tag,
+        ) {
+            Ok(decrypted) => {
+                payload.as_mut().copy_from_slice(&decrypted);
+                Ok(())
+            }
+            _ => Err(()),
         }
-        let (payload, tag) = payload.split_at(payload.len() - AEAD_TAG_SIZE);
-        decrypt_aead(cipher, &state.key, Some(&nonce), header, payload, tag).ok()
     }
 
     pub fn update(&self, side: Side) -> Crypto {
@@ -634,13 +651,14 @@ mod test {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
         let client = Crypto::new_handshake(&conn, Side::Client);
         let server = Crypto::new_handshake(&conn, Side::Server);
+
         let mut buf = b"headerpayload".to_vec();
-        let header_len = 6;
-        client.encrypt(0, &mut buf, header_len);
-        let decrypted = server
-            .decrypt(0, &buf[..header_len], &buf[header_len..])
-            .unwrap();
-        assert_eq!(decrypted, b"payload");
+        client.encrypt(0, &mut buf, 6);
+
+        let mut header = BytesMut::from(buf);
+        let mut payload = header.split_off(6);
+        server.decrypt(0, &header, &mut payload).unwrap();
+        assert_eq!(&*payload, b"payload");
     }
 
     #[test]

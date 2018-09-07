@@ -2,7 +2,7 @@ use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
 use std::{cmp, io, mem};
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl::ssl::{self, HandshakeError, MidHandshakeSslStream, SslStream};
 use rand::distributions::Sample;
@@ -691,13 +691,18 @@ impl Connection {
         self.set_loss_detection_alarm(config);
     }
 
-    pub fn update_keys(&mut self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+    pub fn update_keys(
+        &mut self,
+        packet: u64,
+        header: &[u8],
+        payload: &mut BytesMut,
+    ) -> Result<(), ()> {
         let new = self.crypto.as_mut().unwrap().update(self.side);
-        let data = new.decrypt(packet, header, payload)?;
+        new.decrypt(packet, header, payload)?;
         let old = mem::replace(self.crypto.as_mut().unwrap(), new);
         self.prev_crypto = Some((packet, old));
         self.key_phase = !self.key_phase;
-        Some(data)
+        Ok(())
     }
 
     pub fn decrypt(
@@ -705,8 +710,8 @@ impl Connection {
         handshake: bool,
         packet: u64,
         header: &[u8],
-        payload: &[u8],
-    ) -> Option<Vec<u8>> {
+        payload: &mut BytesMut,
+    ) -> Result<(), ()> {
         match (handshake, &self.prev_crypto) {
             (true, _) => &self.handshake_crypto,
             (false, &Some((boundary, ref prev))) if packet < boundary => prev,
@@ -901,7 +906,7 @@ impl Connection {
         now: u64,
         conn: ConnectionHandle,
         remote: SocketAddrV6,
-        packet: Packet,
+        mut packet: Packet,
         state: State,
     ) -> State {
         match state {
@@ -938,11 +943,17 @@ impl Connection {
                                 },
                             ));
                             State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
-                        } else if let Some(payload) =
-                            self.decrypt(true, number as u64, &packet.header_data, &packet.payload)
+                        } else if self
+                            .decrypt(
+                                true,
+                                number as u64,
+                                &packet.header_data,
+                                &mut packet.payload,
+                            )
+                            .is_ok()
                         {
                             let mut new_stream = MemoryStream::new();
-                            if !parse_initial(&ctx.log, &mut new_stream, payload.into()) {
+                            if !parse_initial(&ctx.log, &mut new_stream, packet.payload.into()) {
                                 debug!(ctx.log, "invalid retry payload");
                                 ctx.events.push_back((
                                     conn,
@@ -1039,17 +1050,21 @@ impl Connection {
                             self.remote_id = remote_id;
                             state.remote_id_set = true;
                         }
-                        let payload = if let Some(x) =
-                            self.decrypt(true, number as u64, &packet.header_data, &packet.payload)
+                        if self
+                            .decrypt(
+                                true,
+                                number as u64,
+                                &packet.header_data,
+                                &mut packet.payload,
+                            )
+                            .is_err()
                         {
-                            x
-                        } else {
                             debug!(ctx.log, "failed to authenticate handshake packet");
                             return State::Handshake(state);
                         };
                         self.on_packet_authenticated(ctx, now, number as u64);
                         // Complete handshake (and ultimately send Finished)
-                        for frame in frame::Iter::new(payload.into()) {
+                        for frame in frame::Iter::new(packet.payload.into()) {
                             match frame {
                                 Frame::Ack(_) => {}
                                 _ => {
@@ -1257,12 +1272,11 @@ impl Connection {
                         ..
                     } if self.side == Side::Server =>
                     {
-                        let payload = if let Some(ref crypto) = self.zero_rtt_crypto {
-                            if let Some(x) =
-                                crypto.decrypt(number as u64, &packet.header_data, &packet.payload)
+                        if let Some(ref crypto) = self.zero_rtt_crypto {
+                            if crypto
+                                .decrypt(number as u64, &packet.header_data, &mut packet.payload)
+                                .is_err()
                             {
-                                x
-                            } else {
                                 debug!(
                                     ctx.log,
                                     "{connection} failed to authenticate 0-RTT packet",
@@ -1284,7 +1298,7 @@ impl Connection {
                             now,
                             conn,
                             number as u64,
-                            payload.into(),
+                            packet.payload.into(),
                             state.tls.get_mut(),
                         ) {
                             Err(e) => State::HandshakeFailed(state::HandshakeFailed {
@@ -2284,7 +2298,7 @@ impl Connection {
     pub fn decrypt_packet(
         &mut self,
         handshake: bool,
-        packet: Packet,
+        mut packet: Packet,
     ) -> Result<(Vec<u8>, u64), Option<TransportError>> {
         let (key_phase, number) = match packet.header {
             Header::Short {
@@ -2304,16 +2318,20 @@ impl Connection {
                 // Illegal key update
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
-            if let Some(payload) = self.update_keys(number, &packet.header_data, &packet.payload) {
-                Ok((payload, number))
+            if self
+                .update_keys(number, &packet.header_data, &mut packet.payload)
+                .is_ok()
+            {
+                Ok((packet.payload.to_vec(), number))
             } else {
                 // Invalid key update
                 Err(None)
             }
-        } else if let Some(payload) =
-            self.decrypt(handshake, number, &packet.header_data, &packet.payload)
+        } else if self
+            .decrypt(handshake, number, &packet.header_data, &mut packet.payload)
+            .is_ok()
         {
-            Ok((payload, number))
+            Ok((packet.payload.to_vec(), number))
         } else {
             // Unable to authenticate
             Err(None)
