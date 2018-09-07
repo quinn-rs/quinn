@@ -707,19 +707,11 @@ impl Connection {
         header: &[u8],
         payload: &[u8],
     ) -> Option<Vec<u8>> {
-        if handshake {
-            self.handshake_crypto.decrypt(packet, header, payload)
-        } else {
-            if let Some((boundary, ref prev)) = self.prev_crypto {
-                if packet < boundary {
-                    return prev.decrypt(packet, header, payload);
-                }
-            }
-            self.crypto
-                .as_ref()
-                .unwrap()
-                .decrypt(packet, header, payload)
-        }
+        match (handshake, &self.prev_crypto) {
+            (true, _) => &self.handshake_crypto,
+            (false, &Some((boundary, ref prev))) if packet < boundary => prev,
+            _ => self.crypto.as_ref().unwrap(),
+        }.decrypt(packet, header, payload)
     }
 
     pub fn transmit_handshake(&mut self, messages: &[u8]) {
