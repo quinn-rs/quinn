@@ -637,7 +637,9 @@ mod test {
         let mut buf = b"headerpayload".to_vec();
         let header_len = 6;
         client.encrypt(0, &mut buf, header_len);
-        let decrypted = server.decrypt(0, &buf[..header_len], &buf[header_len..]).unwrap();
+        let decrypted = server
+            .decrypt(0, &buf[..header_len], &buf[header_len..])
+            .unwrap();
         assert_eq!(decrypted, b"payload");
     }
 
