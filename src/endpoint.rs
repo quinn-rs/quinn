@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{cmp, io, mem, str};
 
-use bytes::{BigEndian, ByteOrder, Bytes};
+use bytes::{BigEndian, ByteOrder, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
 use openssl::ssl::{self, HandshakeError, Ssl, SslContext, SslStreamBuilder};
@@ -317,10 +317,10 @@ impl Endpoint {
     }
 
     /// Process an incoming UDP datagram
-    pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: Bytes) {
+    pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            let (packet, rest) = match Packet::decode(&data, LOCAL_ID_LEN) {
+            let (packet, rest) = match Packet::decode(data, LOCAL_ID_LEN) {
                 Ok(x) => x,
                 Err(HeaderError::UnsupportedVersion {
                     source,

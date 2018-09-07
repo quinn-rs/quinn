@@ -1,7 +1,7 @@
 use std::{fmt, io, str};
 
 use arrayvec::ArrayVec;
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use rand::Rng;
 use slog;
 
@@ -179,7 +179,7 @@ impl Header {
 pub struct Packet {
     pub header: Header,
     pub header_data: Bytes,
-    pub payload: Bytes,
+    pub payload: BytesMut,
 }
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -200,7 +200,10 @@ impl From<coding::UnexpectedEnd> for HeaderError {
 }
 
 impl Packet {
-    pub fn decode(packet: &Bytes, dest_id_len: usize) -> Result<(Self, Bytes), HeaderError> {
+    pub fn decode(
+        mut packet: BytesMut,
+        dest_id_len: usize,
+    ) -> Result<(Self, BytesMut), HeaderError> {
         let (header_len, payload_len, header) = {
             let mut buf = io::Cursor::new(&packet[..]);
             let ty = buf.get::<u8>()?;
@@ -290,13 +293,15 @@ impl Packet {
                 )
             }
         };
+        let header_data = packet.split_to(header_len).freeze();
+        let payload = packet.split_to(payload_len);
         Ok((
             Packet {
                 header,
-                header_data: packet.slice(0, header_len),
-                payload: packet.slice(header_len, header_len + payload_len),
+                header_data,
+                payload,
             },
-            packet.slice(header_len + payload_len, packet.len()),
+            packet,
         ))
     }
 }
