@@ -10,8 +10,8 @@ use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
-    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, CryptoContext, ACK_DELAY_EXPONENT,
-    AEAD_TAG_SIZE, TRANSPORT_PARAMS_INDEX,
+    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
+    TRANSPORT_PARAMS_INDEX,
 };
 use endpoint::{parse_initial, set_payload_length, Config, Context, Event};
 use memory_stream::MemoryStream;
@@ -273,7 +273,7 @@ impl Connection {
         side: Side,
         config: &Config,
     ) -> Self {
-        let handshake_crypto = Crypto::Handshake(CryptoContext::handshake(&initial_id, side));
+        let handshake_crypto = Crypto::new_handshake(&initial_id, side);
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
             streams.insert(
@@ -1185,10 +1185,7 @@ impl Connection {
                                         ctx.incoming.push_back(conn);
                                     }
                                 }
-                                self.crypto = Some(Crypto::OneRtt(CryptoContext::established(
-                                    tls.ssl(),
-                                    self.side,
-                                )));
+                                self.crypto = Some(Crypto::new_1rtt(tls.ssl(), self.side));
                                 self.streams
                                     .get_mut(&StreamId(0))
                                     .unwrap()

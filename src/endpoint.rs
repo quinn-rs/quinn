@@ -20,8 +20,7 @@ use connection::{
 };
 use crypto::{
     new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo, Crypto,
-    CryptoContext, SessionTicketBuffer, ZeroRttCrypto, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX,
-    TRANSPORT_PARAMS_INDEX,
+    SessionTicketBuffer, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX, TRANSPORT_PARAMS_INDEX,
 };
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
@@ -562,7 +561,7 @@ impl Endpoint {
         header: &[u8],
         payload: &[u8],
     ) {
-        let crypto = Crypto::Handshake(CryptoContext::handshake(&dest_id, Side::Server));
+        let crypto = Crypto::new_handshake(&dest_id, Side::Server);
         let payload = if let Some(x) = crypto.decrypt(packet_number as u64, header, payload) {
             x.into()
         } else {
@@ -693,7 +692,7 @@ impl Endpoint {
                         "{connection} enabled 0rtt",
                         connection = local_id.clone()
                     );
-                    zero_rtt_crypto = Some(Crypto::ZeroRtt(ZeroRttCrypto::new(tls.ssl())));
+                    zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
                 }
                 Err(e) => {
                     debug!(self.ctx.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);

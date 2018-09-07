@@ -53,6 +53,79 @@ pub enum Crypto {
 }
 
 impl Crypto {
+    pub fn new_0rtt(tls: &SslRef) -> Self {
+        let tls_cipher = tls.current_cipher().unwrap();
+        let digest = tls_cipher.handshake_digest().unwrap();
+        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
+
+        const LABEL: &str = "EXPORTER-QUIC 0rtt";
+
+        let mut secret = vec![0; digest.size()];
+        tls.export_keying_material_early(&mut secret, &LABEL, b"")
+            .unwrap();
+        Crypto::ZeroRtt(ZeroRttCrypto {
+            state: CryptoState::new(digest, cipher, secret.into()),
+            cipher,
+        })
+    }
+
+    pub fn new_handshake(id: &ConnectionId, side: Side) -> Self {
+        let digest = MessageDigest::sha256();
+        let cipher = Cipher::aes_128_gcm();
+        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
+        let (local_label, remote_label) = if side == Side::Client {
+            (b"client hs", b"server hs")
+        } else {
+            (b"server hs", b"client hs")
+        };
+        let local = CryptoState::new(
+            digest,
+            cipher,
+            hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16),
+        );
+        let remote = CryptoState::new(
+            digest,
+            cipher,
+            hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16),
+        );
+        Crypto::Handshake(CryptoContext {
+            local,
+            remote,
+            digest,
+            cipher,
+        })
+    }
+
+    pub fn new_1rtt(tls: &SslRef, side: Side) -> Self {
+        let tls_cipher = tls.current_cipher().unwrap();
+        let digest = tls_cipher.handshake_digest().unwrap();
+        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
+
+        const SERVER_LABEL: &str = "EXPORTER-QUIC server 1rtt";
+        const CLIENT_LABEL: &str = "EXPORTER-QUIC client 1rtt";
+
+        let (local_label, remote_label) = if side == Side::Client {
+            (CLIENT_LABEL, SERVER_LABEL)
+        } else {
+            (SERVER_LABEL, CLIENT_LABEL)
+        };
+        let mut local_secret = vec![0; digest.size()];
+        tls.export_keying_material(&mut local_secret, local_label, Some(b""))
+            .unwrap();
+        let local = CryptoState::new(digest, cipher, local_secret.into());
+
+        let mut remote_secret = vec![0; digest.size()];
+        tls.export_keying_material(&mut remote_secret, remote_label, Some(b""))
+            .unwrap();
+        let remote = CryptoState::new(digest, cipher, remote_secret.into());
+        Crypto::OneRtt(CryptoContext {
+            local,
+            remote,
+            digest,
+            cipher,
+        })
+    }
+
     pub fn is_0rtt(&self) -> bool {
         match *self {
             Crypto::ZeroRtt(_) => true,
@@ -115,7 +188,12 @@ impl Crypto {
 
     pub fn update(&self, side: Side) -> Crypto {
         match *self {
-            Crypto::OneRtt(ref crypto) => Crypto::OneRtt(crypto.update(side)),
+            Crypto::OneRtt(ref crypto) => Crypto::OneRtt(CryptoContext {
+                local: crypto.local.update(crypto.digest, crypto.cipher, side),
+                remote: crypto.local.update(crypto.digest, crypto.cipher, !side),
+                digest: crypto.digest,
+                cipher: crypto.cipher,
+            }),
             _ => unreachable!(),
         }
     }
@@ -406,7 +484,7 @@ pub fn new_client(
         if session.max_early_data() == TLS_MAX_EARLY_DATA {
             trace!(ctx.log, "{connection} enabling 0rtt", connection = &info.id);
             tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
-            zero_rtt_crypto = Some(Crypto::ZeroRtt(ZeroRttCrypto::new(tls.ssl())));
+            zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
         }
         tls.handshake()
     } else {
@@ -493,98 +571,12 @@ pub struct ZeroRttCrypto {
     cipher: Cipher,
 }
 
-impl ZeroRttCrypto {
-    pub fn new(tls: &SslRef) -> Self {
-        let tls_cipher = tls.current_cipher().unwrap();
-        let digest = tls_cipher.handshake_digest().unwrap();
-        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
-
-        const LABEL: &str = "EXPORTER-QUIC 0rtt";
-
-        let mut secret = vec![0; digest.size()];
-        tls.export_keying_material_early(&mut secret, &LABEL, b"")
-            .unwrap();
-        Self {
-            state: CryptoState::new(digest, cipher, secret.into()),
-            cipher,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct CryptoContext {
     local: CryptoState,
     remote: CryptoState,
     digest: MessageDigest,
     cipher: Cipher,
-}
-
-impl CryptoContext {
-    pub fn handshake(id: &ConnectionId, side: Side) -> Self {
-        let digest = MessageDigest::sha256();
-        let cipher = Cipher::aes_128_gcm();
-        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
-        let (local_label, remote_label) = if side == Side::Client {
-            (b"client hs", b"server hs")
-        } else {
-            (b"server hs", b"client hs")
-        };
-        let local = CryptoState::new(
-            digest,
-            cipher,
-            hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16),
-        );
-        let remote = CryptoState::new(
-            digest,
-            cipher,
-            hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16),
-        );
-        CryptoContext {
-            local,
-            remote,
-            digest,
-            cipher,
-        }
-    }
-
-    pub fn established(tls: &SslRef, side: Side) -> Self {
-        let tls_cipher = tls.current_cipher().unwrap();
-        let digest = tls_cipher.handshake_digest().unwrap();
-        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
-
-        const SERVER_LABEL: &str = "EXPORTER-QUIC server 1rtt";
-        const CLIENT_LABEL: &str = "EXPORTER-QUIC client 1rtt";
-
-        let (local_label, remote_label) = if side == Side::Client {
-            (CLIENT_LABEL, SERVER_LABEL)
-        } else {
-            (SERVER_LABEL, CLIENT_LABEL)
-        };
-        let mut local_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut local_secret, local_label, Some(b""))
-            .unwrap();
-        let local = CryptoState::new(digest, cipher, local_secret.into());
-
-        let mut remote_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut remote_secret, remote_label, Some(b""))
-            .unwrap();
-        let remote = CryptoState::new(digest, cipher, remote_secret.into());
-        CryptoContext {
-            local,
-            remote,
-            digest,
-            cipher,
-        }
-    }
-
-    pub fn update(&self, side: Side) -> Self {
-        CryptoContext {
-            local: self.local.update(self.digest, self.cipher, side),
-            remote: self.local.update(self.digest, self.cipher, !side),
-            digest: self.digest,
-            cipher: self.cipher,
-        }
-    }
 }
 
 #[derive(Debug, Fail)]
@@ -630,12 +622,12 @@ mod test {
     #[test]
     fn handshake_crypto_roundtrip() {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
-        let client = CryptoContext::handshake(&conn, Side::Client);
-        let server = CryptoContext::handshake(&conn, Side::Server);
+        let client = Crypto::new_handshake(&conn, Side::Client);
+        let server = Crypto::new_handshake(&conn, Side::Server);
         let header = b"header";
         let payload = b"payload";
-        let encrypted = Crypto::Handshake(client).encrypt(0, header, payload);
-        let decrypted = Crypto::Handshake(server).decrypt(0, header, &encrypted).unwrap();
+        let encrypted = client.encrypt(0, header, payload);
+        let decrypted = server.decrypt(0, header, &encrypted).unwrap();
         assert_eq!(decrypted, payload);
     }
 
