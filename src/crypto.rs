@@ -147,24 +147,34 @@ impl Crypto {
         }
     }
 
-    pub fn encrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Vec<u8> {
-        // FIXME: Output to caller-owned memory with preexisting header; retain crypter
+    pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
+        // FIXME: retain crypter
         let (cipher, state) = match *self {
             Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
             Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.local)
             }
         };
+
         let mut tag = [0; AEAD_TAG_SIZE];
         let mut nonce = [0; 12];
         BigEndian::write_u64(&mut nonce[4..12], packet);
         for i in 0..12 {
             nonce[i] ^= state.iv[i];
         }
-        let mut buf =
-            encrypt_aead(cipher, &state.key, Some(&nonce), header, payload, &mut tag).unwrap();
-        buf.extend_from_slice(&tag);
-        buf
+
+        let mut result = encrypt_aead(
+            cipher,
+            &state.key,
+            Some(&nonce),
+            &buf[..header_len],
+            &buf[header_len..],
+            &mut tag,
+        ).unwrap();
+        result.extend_from_slice(&tag);
+        debug_assert_eq!(result.len(), buf.len() - header_len + AEAD_TAG_SIZE);
+        buf.truncate(header_len);
+        buf.extend_from_slice(&result);
     }
 
     pub fn decrypt(&self, packet: u64, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
@@ -624,11 +634,11 @@ mod test {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
         let client = Crypto::new_handshake(&conn, Side::Client);
         let server = Crypto::new_handshake(&conn, Side::Server);
-        let header = b"header";
-        let payload = b"payload";
-        let encrypted = client.encrypt(0, header, payload);
-        let decrypted = server.decrypt(0, header, &encrypted).unwrap();
-        assert_eq!(decrypted, payload);
+        let mut buf = b"headerpayload".to_vec();
+        let header_len = 6;
+        client.encrypt(0, &mut buf, header_len);
+        let decrypted = server.decrypt(0, &buf[..header_len], &buf[header_len..]).unwrap();
+        assert_eq!(decrypted, b"payload");
     }
 
     #[test]

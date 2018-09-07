@@ -634,14 +634,7 @@ impl Endpoint {
                         data: data,
                     }.encode(false, &mut buf);
                     set_payload_length(&mut buf, header_len);
-                    let payload = crypto.encrypt(
-                        packet_number as u64,
-                        &buf[0..header_len],
-                        &buf[header_len..],
-                    );
-                    debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
-                    buf.truncate(header_len);
-                    buf.extend_from_slice(&payload);
+                    crypto.encrypt(packet_number as u64, &mut buf, header_len);
                     self.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: buf.into(),
@@ -1410,14 +1403,7 @@ where
         }
     }
     set_payload_length(&mut buf, header_len);
-    let payload = crypto.encrypt(
-        packet_number as u64,
-        &buf[0..header_len],
-        &buf[header_len..],
-    );
-    debug_assert_eq!(payload.len(), buf.len() - header_len + AEAD_TAG_SIZE);
-    buf.truncate(header_len);
-    buf.extend_from_slice(&payload);
+    crypto.encrypt(packet_number as u64, &mut buf, header_len);
     buf.into()
 }
 

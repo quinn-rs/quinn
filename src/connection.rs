@@ -2022,7 +2022,7 @@ impl Connection {
             if !crypto.is_1rtt() {
                 set_payload_length(&mut buf, header_len as usize);
             }
-            Self::encrypt(crypto, number, &mut buf, header_len);
+            crypto.encrypt(number, &mut buf, header_len as usize);
             handshake = crypto.is_handshake();
         }
 
@@ -2047,20 +2047,6 @@ impl Connection {
         Some(buf)
     }
 
-    pub fn encrypt(crypto: &Crypto, number: u64, buf: &mut Vec<u8>, header_len: u16) {
-        let payload = crypto.encrypt(
-            number,
-            &buf[0..header_len as usize],
-            &buf[header_len as usize..],
-        );
-        debug_assert_eq!(
-            payload.len(),
-            buf.len() - header_len as usize + AEAD_TAG_SIZE
-        );
-        buf.truncate(header_len as usize);
-        buf.extend_from_slice(&payload);
-    }
-
     // TLP/RTO transmit
     pub fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
@@ -2072,7 +2058,10 @@ impl Connection {
         }.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
-        Self::encrypt(self.crypto.as_ref().unwrap(), number, &mut buf, header_len);
+        self.crypto
+            .as_ref()
+            .unwrap()
+            .encrypt(number, &mut buf, header_len as usize);
         self.on_packet_sent(
             config,
             now,
@@ -2102,7 +2091,10 @@ impl Connection {
             state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
-        Self::encrypt(self.crypto.as_ref().unwrap(), number, &mut buf, header_len);
+        self.crypto
+            .as_ref()
+            .unwrap()
+            .encrypt(number, &mut buf, header_len as usize);
         buf.into()
     }
 
