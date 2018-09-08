@@ -277,9 +277,9 @@ impl Assembler {
             self.written
                 .resize(end / 8 + (end % 8 != 0) as usize + 1, !0);
         }
-        for i in 0..data.len() {
+        for (i, b) in data.iter().enumerate() {
             let position = start + i;
-            self.data[position] = data[i];
+            self.data[position] = *b;
             let bit = self.written_offset as usize + position;
             self.written[bit / 8] &= !(1 << (7 - bit % 8));
         }

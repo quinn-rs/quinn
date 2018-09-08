@@ -277,13 +277,13 @@ impl Connection {
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
             streams.insert(
-                StreamId::new(!side, Directionality::Uni, i as u64),
-                stream::Recv::new(config.stream_receive_window as u64).into(),
+                StreamId::new(!side, Directionality::Uni, u64::from(i)),
+                stream::Recv::new(u64::from(config.stream_receive_window)).into(),
             );
         }
         streams.insert(
             StreamId(0),
-            Stream::new_bi(config.stream_receive_window as u64),
+            Stream::new_bi(u64::from(config.stream_receive_window)),
         );
         let max_remote_bi_streams = config.max_remote_bi_streams as u64 + match side {
             Side::Server => 1,
@@ -558,7 +558,7 @@ impl Connection {
         let rtt = cmp::max(self.latest_rtt, self.smoothed_rtt);
         if config.using_time_loss_detection {
             // factor * (1 + fraction)
-            delay_until_lost = rtt + (rtt * config.time_reordering_fraction as u64) >> 16;
+            delay_until_lost = (rtt + (rtt * config.time_reordering_fraction as u64)) >> 16;
         } else if largest_acked == self.largest_sent_packet {
             // Early retransmit alarm.
             delay_until_lost = (5 * rtt) / 4;
@@ -621,7 +621,7 @@ impl Connection {
                 alarm_duration = 2 * self.smoothed_rtt;
             }
             alarm_duration = cmp::max(alarm_duration + self.max_ack_delay, config.min_tlp_timeout);
-            alarm_duration = alarm_duration * 2u64.pow(self.handshake_count);
+            alarm_duration *= 2u64.pow(self.handshake_count);
             self.set_loss_detection = Some(Some(
                 self.time_of_last_sent_handshake_packet + alarm_duration,
             ));
@@ -668,7 +668,7 @@ impl Connection {
     }
 
     pub fn reset_idle_timeout(&mut self, config: &Config, now: u64) {
-        let dt = cmp::min(config.idle_timeout, self.params.idle_timeout) as u64 * 1000000;
+        let dt = cmp::min(config.idle_timeout, self.params.idle_timeout) as u64 * 1_000_000;
         self.set_idle = Some(Some(now + dt));
     }
 
@@ -865,7 +865,7 @@ impl Connection {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                     },
                 ));
-                Err(TransportError::PROTOCOL_VIOLATION.into())
+                Err(TransportError::PROTOCOL_VIOLATION)
             }
             Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
                 debug!(ctx.log, "TLS error"; "error" => %e);
@@ -875,7 +875,7 @@ impl Connection {
                         reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
                     },
                 ));
-                Err(TransportError::TLS_FATAL_ALERT_RECEIVED.into())
+                Err(TransportError::TLS_FATAL_ALERT_RECEIVED)
             }
             Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
                 debug!(ctx.log, "TLS session terminated unexpectedly");
@@ -885,7 +885,7 @@ impl Connection {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                     },
                 ));
-                Err(TransportError::PROTOCOL_VIOLATION.into())
+                Err(TransportError::PROTOCOL_VIOLATION)
             }
             Err(e) => {
                 error!(ctx.log, "unexpected TLS error"; "error" => %e);
@@ -895,7 +895,7 @@ impl Connection {
                         reason: TransportError::INTERNAL_ERROR.into(),
                     },
                 ));
-                Err(TransportError::INTERNAL_ERROR.into())
+                Err(TransportError::INTERNAL_ERROR)
             }
         }
     }
@@ -978,7 +978,7 @@ impl Connection {
                                         local_id,
                                         remote_id,
                                         remote,
-                                        ctx.initial_packet_number.sample(&mut ctx.rng).into(),
+                                        ctx.initial_packet_number.sample(&mut ctx.rng),
                                         Side::Client,
                                         &ctx.config,
                                     );
@@ -1507,11 +1507,8 @@ impl Connection {
                                 return Err(TransportError::FLOW_CONTROL_ERROR.into());
                             }
                             if frame.fin {
-                                match rs.state {
-                                    stream::RecvState::Recv { ref mut size } => {
-                                        *size = Some(end);
-                                    }
-                                    _ => {}
+                                if let stream::RecvState::Recv { ref mut size } = rs.state {
+                                    *size = Some(end);
                                 }
                             }
                             rs.recvd.insert(frame.offset..end);
@@ -1791,13 +1788,10 @@ impl Connection {
                         .front()
                         .map_or(false, |x| x.offset == 0)
                 {
-                    match *self.state.as_mut().unwrap() {
-                        State::Handshake(ref mut state) => {
-                            if state.clienthello_packet.is_none() {
-                                state.clienthello_packet = Some(number as u32);
-                            }
+                    if let State::Handshake(ref mut state) = self.state.as_mut().unwrap() {
+                        if state.clienthello_packet.is_none() {
+                            state.clienthello_packet = Some(number as u32);
                         }
-                        _ => {}
                     }
                     is_initial = true;
                     types::INITIAL
@@ -2005,8 +1999,8 @@ impl Connection {
                 let frame = frame::Stream {
                     id: stream.id,
                     offset: stream.offset,
-                    fin: fin,
-                    data: data,
+                    fin,
+                    data,
                 };
                 frame.encode(true, &mut buf);
                 sent.stream.push_back(frame);

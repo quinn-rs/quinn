@@ -34,7 +34,7 @@ pub struct CertConfig<'a> {
 /// Value used in ACKs we transmit
 pub const ACK_DELAY_EXPONENT: u8 = 3;
 /// Magic value used to indicate 0-RTT support in NewSessionTicket
-pub const TLS_MAX_EARLY_DATA: u32 = 0xffffffff;
+pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
@@ -159,8 +159,8 @@ impl Crypto {
         let mut tag = [0; AEAD_TAG_SIZE];
         let mut nonce = [0; 12];
         BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= state.iv[i];
+        for (i, b) in nonce.iter_mut().enumerate().take(12) {
+            *b ^= state.iv[i];
         }
 
         let mut result = encrypt_aead(
@@ -191,8 +191,8 @@ impl Crypto {
 
         let mut nonce = [0; 12];
         BigEndian::write_u64(&mut nonce[4..12], packet);
-        for i in 0..12 {
-            nonce[i] ^= state.iv[i];
+        for (i, b) in nonce.iter_mut().enumerate().take(12) {
+            *b ^= state.iv[i];
         }
 
         let payload_len = payload.len();
@@ -279,8 +279,8 @@ lazy_static! {
 }
 
 pub fn new_tls_ctx(
-    config: Arc<Config>,
-    cert: Option<CertConfig>,
+    config: &Arc<Config>,
+    cert: &Option<CertConfig>,
     listen: Option<ListenKeys>,
 ) -> Result<(SslContext, SessionTicketBuffer), EndpointError> {
     let mut tls = SslContext::builder(SslMethod::tls())?;
@@ -339,14 +339,13 @@ pub fn new_tls_ctx(
                     ..TransportParameters::default()
                 };
                 let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
-                let side;
-                if am_server {
+                let side = if am_server {
                     params.stateless_reset_token =
                         Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
-                    side = Side::Server;
+                    Side::Server
                 } else {
-                    side = Side::Client;
-                }
+                    Side::Client
+                };
                 params.write(side, &mut buf);
                 Ok(Some(buf))
             }

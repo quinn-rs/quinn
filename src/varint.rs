@@ -23,7 +23,7 @@ pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
     let mut buf = [0; 8];
     buf[0] = r.get_u8();
     let tag = buf[0] >> 6;
-    buf[0] &= 0b00111111;
+    buf[0] &= 0b0011_1111;
     Some(match tag {
         0b00 => buf[0] as u64,
         0b01 => {

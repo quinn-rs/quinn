@@ -48,7 +48,7 @@ impl TransportParameters {
         if side == Side::Server {
             w.write::<u32>(VERSION); // Negotiated version
             w.write::<u8>(8); // Bytes of supported versions
-            w.write::<u32>(0x0a1a2a3a); // Reserved version
+            w.write::<u32>(0x0a1a_2a3a); // Reserved version
             w.write::<u32>(VERSION); // Real supported version
         } else {
             w.write::<u32>(VERSION); // Initially requested version

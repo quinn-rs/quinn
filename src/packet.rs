@@ -127,7 +127,7 @@ impl Header {
                 ref destination_id,
                 number,
             } => {
-                w.write(0b10000000 | ty);
+                w.write(0b1000_0000 | ty);
                 w.write(VERSION);
                 let mut dcil = destination_id.len() as u8;
                 if dcil > 0 {

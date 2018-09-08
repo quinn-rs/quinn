@@ -53,7 +53,7 @@ mod transport_error;
 pub use transport_error::Error as TransportError;
 
 /// The QUIC protocol version implemented
-pub const VERSION: u32 = 0xff00000B;
+pub const VERSION: u32 = 0xff00_000b;
 
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]

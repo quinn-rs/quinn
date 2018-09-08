@@ -252,7 +252,7 @@ impl Endpoint {
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
-        let (tls, session_ticket_buffer) = new_tls_ctx(config.clone(), cert, listen)?;
+        let (tls, session_ticket_buffer) = new_tls_ctx(&config, &cert, listen)?;
 
         Ok(Self {
             ctx: Context {
@@ -338,7 +338,7 @@ impl Endpoint {
                         source_id: destination,
                         destination_id: source,
                     }.encode(&mut buf);
-                    buf.write::<u32>(0x0a1a2a3a); // reserved version
+                    buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
                     self.io.push_back(Io::Transmit {
                         destination: remote,
@@ -379,7 +379,7 @@ impl Endpoint {
         if let Some(&conn) = self.connection_remotes.get(&remote) {
             if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
                 if packet.payload.len() >= 16
-                    && &packet.payload[packet.payload.len() - 16..] == token
+                    && packet.payload[packet.payload.len() - 16..] == token
                 {
                     if !self.connections[conn.0]
                         .state
@@ -527,7 +527,7 @@ impl Endpoint {
             remote,
             Side::Client,
         );
-        self.connections[conn.0].connect(&mut self.ctx, config)?;
+        self.connections[conn.0].connect(&self.ctx, config)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
@@ -637,7 +637,7 @@ impl Endpoint {
                         id: StreamId(0),
                         offset: 0,
                         fin: false,
-                        data: data,
+                        data,
                     }.encode(false, &mut buf);
                     set_payload_length(&mut buf, header_len);
                     crypto.encrypt(packet_number as u64, &mut buf, header_len);
@@ -951,7 +951,7 @@ impl Endpoint {
                     State::HandshakeFailed(x) => x.into(),
                     State::Established(x) => x.into(),
                     State::Closed(x) => x.into(),
-                    State::Draining(x) => x.into(),
+                    State::Draining(x) => x,
                     State::Drained => unreachable!(),
                 });
                 self.connections[conn.0].state = Some(state);
@@ -1203,10 +1203,7 @@ impl Endpoint {
                     app_closed: true,
                     ..x
                 }),
-                State::Draining(x) => State::Draining(state::Draining {
-                    app_closed: true,
-                    ..x
-                }),
+                State::Draining(_) => State::Draining(state::Draining { app_closed: true }),
                 State::Drained => unreachable!(),
             });
     }

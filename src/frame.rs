@@ -24,7 +24,7 @@ impl From<Type> for u8 {
 }
 
 impl Type {
-    fn stream(&self) -> Option<StreamInfo> {
+    fn stream(self) -> Option<StreamInfo> {
         if self.0 >= 0x10 && self.0 <= 0x17 {
             Some(StreamInfo(self.0))
         } else {
@@ -64,13 +64,13 @@ macro_rules! frame_types {
 struct StreamInfo(u8);
 
 impl StreamInfo {
-    fn fin(&self) -> bool {
+    fn fin(self) -> bool {
         self.0 & 0x01 != 0
     }
-    fn len(&self) -> bool {
+    fn len(self) -> bool {
         self.0 & 0x02 != 0
     }
-    fn off(&self) -> bool {
+    fn off(self) -> bool {
         self.0 & 0x04 != 0
     }
 }
