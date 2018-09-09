@@ -396,6 +396,29 @@ impl Connection {
         Ok(())
     }
 
+    pub fn handshake_complete(
+        &mut self,
+        ctx: &mut Context,
+        mut tls: MidHandshakeSslStream<MemoryStream>,
+        params: TransportParameters,
+        zero_rtt_crypto: Option<Crypto>,
+        now: u64,
+        packet_number: u64,
+        conn: ConnectionHandle,
+    ) {
+        self.zero_rtt_crypto = zero_rtt_crypto;
+        self.on_packet_authenticated(ctx, now, packet_number);
+        self.transmit_handshake(&tls.get_mut().take_outgoing());
+        self.state = Some(State::Handshake(state::Handshake {
+            tls,
+            clienthello_packet: None,
+            remote_id_set: true,
+        }));
+        self.set_params(params);
+        ctx.dirty_conns.insert(conn);
+        ctx.incoming_handshakes += 1;
+    }
+
     pub fn get_tx_number(&mut self) -> u64 {
         self.largest_sent_packet = self.largest_sent_packet.overflowing_add(1).0;
         // TODO: Handle packet number overflow gracefully

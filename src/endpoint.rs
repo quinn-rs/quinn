@@ -644,28 +644,22 @@ impl Endpoint {
                 });
             }
             Ok(TlsAccepted::Complete {
-                mut tls,
+                tls,
                 params,
                 zero_rtt_crypto,
             }) => {
                 let conn =
                     self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
                 self.connection_ids_initial.insert(dest_id, conn);
-                self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
-                self.connections[conn.0].on_packet_authenticated(
+                self.connections[conn.0].handshake_complete(
                     &mut self.ctx,
+                    tls,
+                    params,
+                    zero_rtt_crypto,
                     now,
                     packet_number as u64,
+                    conn,
                 );
-                self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
-                self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                    tls,
-                    clienthello_packet: None,
-                    remote_id_set: true,
-                }));
-                self.connections[conn.0].set_params(params);
-                self.ctx.dirty_conns.insert(conn);
-                self.ctx.incoming_handshakes += 1;
             }
             Err((code, data)) => {
                 self.io.push_back(Io::Transmit {
