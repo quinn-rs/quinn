@@ -952,8 +952,11 @@ impl Connection {
                             )
                             .is_ok()
                         {
-                            let mut new_stream = MemoryStream::new();
-                            if !parse_initial(&ctx.log, &mut new_stream, packet.payload.into()) {
+                            if let Ok(Some(data)) = parse_initial(&ctx.log, packet.payload.into()) {
+                                let mut new_stream = MemoryStream::new();
+                                new_stream.insert(0, &data);
+                                *state.tls.get_mut() = new_stream;
+                            } else {
                                 debug!(ctx.log, "invalid retry payload");
                                 ctx.events.push_back((
                                     conn,
@@ -966,7 +969,6 @@ impl Connection {
                                     None,
                                 );
                             }
-                            *state.tls.get_mut() = new_stream;
                             match state.tls.handshake() {
                                 Err(HandshakeError::WouldBlock(mut tls)) => {
                                     self.on_packet_authenticated(ctx, now, number as u64);

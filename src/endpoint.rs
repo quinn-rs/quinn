@@ -599,9 +599,12 @@ impl Endpoint {
         }
 
         let mut stream = MemoryStream::new();
-        if !parse_initial(&self.ctx.log, &mut stream, payload.freeze()) {
+        if let Ok(Some(data)) = parse_initial(&self.ctx.log, payload.freeze()) {
+            stream.insert(0, &data);
+        } else {
             return;
         } // TODO: Send close?
+
         trace!(self.ctx.log, "got initial");
         let mut tls = Ssl::new(&self.ctx.tls).unwrap(); // TODO: is this reliable?
         tls.set_ex_data(
@@ -1342,8 +1345,9 @@ impl slog::Value for Timer {
     }
 }
 
-/// Forward data from an Initial or Retry packet to a stream for a TLS context
-pub fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) -> bool {
+/// Extract stream 0 data from an Initial or Retry packet payload
+pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<Bytes>, ()> {
+    let mut result = None;
     for frame in frame::Iter::new(payload) {
         match frame {
             Frame::Padding => {}
@@ -1355,20 +1359,19 @@ pub fn parse_initial(log: &Logger, stream: &mut MemoryStream, payload: Bytes) ->
                 data,
                 ..
             }) => {
-                stream.insert(offset, &data);
+                if offset != 0 {
+                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => offset);
+                    return Err(());
+                }
+                result = Some(data);
             }
             x => {
                 debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
-                return false;
+                return Err(());
             } // Invalid packet
         }
     }
-    if stream.read_blocked() {
-        debug!(log, "initial/retry packet missing stream frame(s)");
-        false
-    } else {
-        true
-    }
+    Ok(result)
 }
 
 fn handshake_close<R>(
