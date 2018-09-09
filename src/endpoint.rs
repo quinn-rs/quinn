@@ -1028,48 +1028,7 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-
-        if let State::Established(ref mut state) = *self.connections[conn.0].state.as_mut().unwrap()
-        {
-            // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable session is
-            // not erased from the anti-replay cache as it otherwise might be.
-            state.tls.shutdown().unwrap();
-        }
-
-        let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
-        let reason =
-            state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
-        if !was_closed {
-            self.connections[conn.0].close_common(&mut self.ctx, now, conn);
-            self.ctx.io.push_back(Io::Transmit {
-                destination: self.connections[conn.0].remote,
-                packet: self.connections[conn.0].make_close(&reason),
-            });
-            self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-            self.ctx.dirty_conns.insert(conn);
-        }
-        self.connections[conn.0].state =
-            Some(match self.connections[conn.0].state.take().unwrap() {
-                State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
-                    reason,
-                    alert: None,
-                    app_closed: true,
-                }),
-                State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed {
-                    app_closed: true,
-                    ..x
-                }),
-                State::Established(_) => State::Closed(state::Closed {
-                    reason,
-                    app_closed: true,
-                }),
-                State::Closed(x) => State::Closed(state::Closed {
-                    app_closed: true,
-                    ..x
-                }),
-                State::Draining(_) => State::Draining(state::Draining { app_closed: true }),
-                State::Drained => unreachable!(),
-            });
+        self.connections[conn.0].close(&mut self.ctx, now, conn, error_code, reason);
     }
 
     /// Look up whether we're the client or server of `conn`.

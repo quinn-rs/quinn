@@ -2123,6 +2123,59 @@ impl Connection {
         buf.into()
     }
 
+    /// Close a connection immediately
+    ///
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
+    /// all important communications have been completed.
+    pub fn close(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        conn: ConnectionHandle,
+        error_code: u16,
+        reason: Bytes,
+    ) {
+        if let State::Established(ref mut state) = *self.state.as_mut().unwrap() {
+            // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable session is
+            // not erased from the anti-replay cache as it otherwise might be.
+            state.tls.shutdown().unwrap();
+        }
+
+        let was_closed = self.state.as_ref().unwrap().is_closed();
+        let reason =
+            state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
+        if !was_closed {
+            self.close_common(ctx, now, conn);
+            ctx.io.push_back(Io::Transmit {
+                destination: self.remote,
+                packet: self.make_close(&reason),
+            });
+            self.reset_idle_timeout(&ctx.config, now);
+            ctx.dirty_conns.insert(conn);
+        }
+        self.state = Some(match self.state.take().unwrap() {
+            State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
+                reason,
+                alert: None,
+                app_closed: true,
+            }),
+            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed {
+                app_closed: true,
+                ..x
+            }),
+            State::Established(_) => State::Closed(state::Closed {
+                reason,
+                app_closed: true,
+            }),
+            State::Closed(x) => State::Closed(state::Closed {
+                app_closed: true,
+                ..x
+            }),
+            State::Draining(_) => State::Draining(state::Draining { app_closed: true }),
+            State::Drained => unreachable!(),
+        });
+    }
+
     pub fn close_common(&mut self, ctx: &mut Context, now: u64, conn: ConnectionHandle) {
         trace!(ctx.log, "connection closed");
         self.set_loss_detection = Some(None);
