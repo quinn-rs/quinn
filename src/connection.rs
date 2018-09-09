@@ -13,7 +13,7 @@ use crypto::{
     self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
     TRANSPORT_PARAMS_INDEX,
 };
-use endpoint::{parse_initial, set_payload_length, Config, Context, Event};
+use endpoint::{set_payload_length, Config, Context, Event};
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, Packet, PacketNumber};
 use range_set::RangeSet;
@@ -2401,6 +2401,35 @@ impl Connection {
         self.transmit(stream, (&data[0..n]).into());
         Ok(n)
     }
+}
+
+/// Extract stream 0 data from an Initial or Retry packet payload
+pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<Bytes>, ()> {
+    let mut result = None;
+    for frame in frame::Iter::new(payload) {
+        match frame {
+            Frame::Padding => {}
+            Frame::Ack(_) => {}
+            Frame::Stream(frame::Stream {
+                id: StreamId(0),
+                fin: false,
+                offset,
+                data,
+                ..
+            }) => {
+                if offset != 0 {
+                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => offset);
+                    return Err(());
+                }
+                result = Some(data);
+            }
+            x => {
+                debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
+                return Err(());
+            } // Invalid packet
+        }
+    }
+    Ok(result)
 }
 
 /// Reasons why a connection might be lost.

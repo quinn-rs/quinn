@@ -16,7 +16,8 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    state, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
+    parse_initial, state, Connection, ConnectionError, ConnectionHandle, ReadError, State,
+    WriteError,
 };
 use crypto::{
     new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo, Crypto,
@@ -26,8 +27,8 @@ use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
 use range_set::RangeSet;
 use {
-    frame, Directionality, Frame, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
-    MIN_MTU, RESET_TOKEN_SIZE, VERSION,
+    frame, Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU,
+    RESET_TOKEN_SIZE, VERSION,
 };
 
 /// Parameters governing the core QUIC state machine.
@@ -1343,35 +1344,6 @@ impl slog::Value for Timer {
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
-}
-
-/// Extract stream 0 data from an Initial or Retry packet payload
-pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<Bytes>, ()> {
-    let mut result = None;
-    for frame in frame::Iter::new(payload) {
-        match frame {
-            Frame::Padding => {}
-            Frame::Ack(_) => {}
-            Frame::Stream(frame::Stream {
-                id: StreamId(0),
-                fin: false,
-                offset,
-                data,
-                ..
-            }) => {
-                if offset != 0 {
-                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => offset);
-                    return Err(());
-                }
-                result = Some(data);
-            }
-            x => {
-                debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
-                return Err(());
-            } // Invalid packet
-        }
-    }
-    Ok(result)
 }
 
 fn handshake_close<R>(
