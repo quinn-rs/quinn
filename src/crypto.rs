@@ -21,6 +21,7 @@ use coding::BufExt;
 use endpoint::{Config, Context, EndpointError, ListenKeys};
 use memory_stream::MemoryStream;
 use packet::ConnectionId;
+use transport_error::Error as TransportError;
 use transport_parameters::TransportParameters;
 use {hkdf, Side, RESET_TOKEN_SIZE};
 
@@ -525,6 +526,99 @@ pub fn new_client(
         params,
         zero_rtt_crypto,
     ))
+}
+
+pub fn new_server(
+    ctx: &Context,
+    stream: MemoryStream,
+    info: ConnectionInfo,
+) -> Result<TlsAccepted, (TransportError, Option<Vec<u8>>)> {
+    let mut tls = Ssl::new(&ctx.tls).unwrap(); // TODO: is this reliable?
+    tls.set_ex_data(*CONNECTION_INFO_INDEX, info.clone());
+    let mut tls = SslStreamBuilder::new(tls, stream);
+    tls.set_accept_state();
+
+    let mut zero_rtt_crypto = None;
+    if ctx.config.use_stateless_retry {
+        match tls.stateless() {
+            Ok(true) => {} // Valid cookie accepted, continue handshake
+            Ok(false) => {
+                // Return HelloRetryRequest containing fresh cookie
+                let data = tls.get_mut().take_outgoing().to_vec();
+                trace!(ctx.log, "sending HelloRetryRequest"; "connection" => %info.id, "len" => data.len());
+                return Ok(TlsAccepted::RetryRequest(data));
+            }
+            Err(e) => {
+                debug!(ctx.log, "stateless handshake failed"; "connection" => %info.id, "reason" => %e);
+                return Err((
+                    TransportError::TLS_HANDSHAKE_FAILED,
+                    Some(tls.get_mut().take_outgoing().to_vec()),
+                ));
+            }
+        }
+    } else {
+        match tls.read_early_data(&mut [0; 1]) {
+            Ok(0) => {}
+            Ok(_) => {
+                debug!(ctx.log, "got TLS early data"; "connection" => &info.id);
+                return Err((TransportError::PROTOCOL_VIOLATION, None));
+            }
+            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
+                trace!(ctx.log, "{connection} enabled 0rtt", connection = &info.id);
+                zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
+            }
+            Err(e) => {
+                debug!(ctx.log, "failure in SSL_read_early_data"; "connection" => info.id, "reason" => %e);
+                return Err((TransportError::TLS_HANDSHAKE_FAILED, None));
+            }
+        }
+    }
+
+    match tls.handshake() {
+        Ok(_) => unreachable!(),
+        Err(HandshakeError::WouldBlock(tls)) => {
+            trace!(ctx.log, "performing handshake"; "connection" => &info.id);
+            match tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
+                Some(params) => Ok(TlsAccepted::Complete {
+                    tls,
+                    params: params
+                        .expect("transport parameter errors should have aborted the handshake"),
+                    zero_rtt_crypto,
+                }),
+                None => {
+                    debug!(ctx.log, "ClientHello missing transport params extension");
+                    Err((TransportError::TRANSPORT_PARAMETER_ERROR, None))
+                }
+            }
+        }
+        Err(HandshakeError::Failure(mut tls)) => {
+            let code = if let Some(params_err) = tls
+                .ssl()
+                .ex_data(*TRANSPORT_PARAMS_INDEX)
+                .and_then(|x| x.err())
+            {
+                debug!(ctx.log, "received invalid transport parameters"; "connection" => %info.id, "reason" => %params_err);
+                TransportError::TRANSPORT_PARAMETER_ERROR
+            } else {
+                debug!(ctx.log, "accept failed"; "reason" => %tls.error());
+                TransportError::TLS_HANDSHAKE_FAILED
+            };
+            return Err((code, Some(tls.get_mut().take_outgoing().to_vec())));
+        }
+        Err(HandshakeError::SetupFailure(e)) => {
+            error!(ctx.log, "accept setup failed"; "reason" => %e);
+            return Err((TransportError::INTERNAL_ERROR, None));
+        }
+    }
+}
+
+pub enum TlsAccepted {
+    RetryRequest(Vec<u8>),
+    Complete {
+        tls: MidHandshakeSslStream<MemoryStream>,
+        params: TransportParameters,
+        zero_rtt_crypto: Option<Crypto>,
+    },
 }
 
 pub struct ClientConfig<'a> {

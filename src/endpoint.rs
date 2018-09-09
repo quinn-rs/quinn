@@ -7,7 +7,7 @@ use std::{cmp, io, mem, str};
 use bytes::{BigEndian, ByteOrder, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
-use openssl::ssl::{self, HandshakeError, Ssl, SslContext, SslStreamBuilder};
+use openssl::ssl::{self, SslContext};
 use openssl::x509::X509StoreContextRef;
 use rand::distributions::Sample;
 use rand::{distributions, OsRng, Rng};
@@ -20,8 +20,8 @@ use connection::{
     WriteError,
 };
 use crypto::{
-    new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo, Crypto,
-    SessionTicketBuffer, AEAD_TAG_SIZE, CONNECTION_INFO_INDEX, TRANSPORT_PARAMS_INDEX,
+    self, new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo,
+    Crypto, SessionTicketBuffer, TlsAccepted, AEAD_TAG_SIZE,
 };
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
@@ -607,201 +607,76 @@ impl Endpoint {
         } // TODO: Send close?
 
         trace!(self.ctx.log, "got initial");
-        let mut tls = Ssl::new(&self.ctx.tls).unwrap(); // TODO: is this reliable?
-        tls.set_ex_data(
-            *CONNECTION_INFO_INDEX,
+        match crypto::new_server(
+            &self.ctx,
+            stream,
             ConnectionInfo {
                 id: local_id.clone(),
                 remote,
             },
-        );
-        let mut tls = SslStreamBuilder::new(tls, stream);
-        tls.set_accept_state();
+        ) {
+            Ok(TlsAccepted::RetryRequest(req)) => {
+                let mut buf = Vec::<u8>::new();
+                Header::Long {
+                    ty: types::RETRY,
+                    number: packet_number,
+                    destination_id: source_id,
+                    source_id: local_id,
+                }.encode(&mut buf);
+                let header_len = buf.len();
 
-        let zero_rtt_crypto;
-        if self.ctx.config.use_stateless_retry {
-            zero_rtt_crypto = None;
-            match tls.stateless() {
-                Ok(true) => {} // Continue on to the below accept call
-                Ok(false) => {
-                    let data = tls.get_mut().take_outgoing();
-                    trace!(self.ctx.log, "sending HelloRetryRequest"; "connection" => %local_id, "len" => data.len());
-                    let mut buf = Vec::<u8>::new();
-                    Header::Long {
-                        ty: types::RETRY,
-                        number: packet_number,
-                        destination_id: source_id,
-                        source_id: local_id,
-                    }.encode(&mut buf);
-                    let header_len = buf.len();
-                    let mut ack = RangeSet::new();
-                    ack.insert_one(packet_number as u64);
-                    frame::Ack::encode(0, &ack, &mut buf);
-                    frame::Stream {
-                        id: StreamId(0),
-                        offset: 0,
-                        fin: false,
-                        data,
-                    }.encode(false, &mut buf);
-                    set_payload_length(&mut buf, header_len);
-                    crypto.encrypt(packet_number as u64, &mut buf, header_len);
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: buf.into(),
-                    });
-                    return;
-                }
-                Err(e) => {
-                    debug!(self.ctx.log, "stateless handshake failed"; "connection" => %local_id, "reason" => %e);
-                    let n = self.ctx.gen_initial_packet_num();
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: handshake_close(
-                            &crypto,
-                            &source_id,
-                            &local_id,
-                            n,
-                            TransportError::TLS_HANDSHAKE_FAILED,
-                            Some(&tls.get_mut().take_outgoing()),
-                        ),
-                    });
-                    return;
-                }
-            }
-        } else {
-            match tls.read_early_data(&mut [0; 1]) {
-                Ok(0) => {
-                    zero_rtt_crypto = None;
-                }
-                Ok(_) => {
-                    debug!(self.ctx.log, "got TLS early data"; "connection" => local_id.clone());
-                    let n = self.ctx.gen_initial_packet_num();
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: handshake_close(
-                            &crypto,
-                            &source_id,
-                            &local_id,
-                            n,
-                            TransportError::PROTOCOL_VIOLATION,
-                            None,
-                        ),
-                    });
-                    return;
-                }
-                Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
-                    trace!(
-                        self.ctx.log,
-                        "{connection} enabled 0rtt",
-                        connection = local_id.clone()
-                    );
-                    zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
-                }
-                Err(e) => {
-                    debug!(self.ctx.log, "failure in SSL_read_early_data"; "connection" => local_id.clone(), "reason" => %e);
-                    let n = self.ctx.gen_initial_packet_num();
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: handshake_close(
-                            &crypto,
-                            &source_id,
-                            &local_id,
-                            n,
-                            TransportError::TLS_HANDSHAKE_FAILED,
-                            None,
-                        ),
-                    });
-                    return;
-                }
-            }
-        }
+                let mut ack = RangeSet::new();
+                ack.insert_one(packet_number as u64);
+                frame::Ack::encode(0, &ack, &mut buf);
 
-        match tls.handshake() {
-            Ok(_) => unreachable!(),
-            Err(HandshakeError::WouldBlock(mut tls)) => {
-                trace!(self.ctx.log, "performing handshake"; "connection" => local_id.clone());
-                if let Some(params) = tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                    let params = params
-                        .expect("transport parameter errors should have aborted the handshake");
-                    let conn = self.add_connection(
-                        dest_id.clone(),
-                        local_id,
-                        source_id,
-                        remote,
-                        Side::Server,
-                    );
-                    self.connection_ids_initial.insert(dest_id, conn);
-                    self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
-                    self.connections[conn.0].on_packet_authenticated(
-                        &mut self.ctx,
-                        now,
-                        packet_number as u64,
-                    );
-                    self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
-                    self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
-                        tls,
-                        clienthello_packet: None,
-                        remote_id_set: true,
-                    }));
-                    self.connections[conn.0].set_params(params);
-                    self.ctx.dirty_conns.insert(conn);
-                    self.ctx.incoming_handshakes += 1;
-                } else {
-                    debug!(
-                        self.ctx.log,
-                        "ClientHello missing transport params extension"
-                    );
-                    let n = self.ctx.gen_initial_packet_num();
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        packet: handshake_close(
-                            &crypto,
-                            &source_id,
-                            &local_id,
-                            n,
-                            TransportError::TRANSPORT_PARAMETER_ERROR,
-                            None,
-                        ),
-                    });
-                }
-            }
-            Err(HandshakeError::Failure(mut tls)) => {
-                let code = if let Some(params_err) = tls
-                    .ssl()
-                    .ex_data(*TRANSPORT_PARAMS_INDEX)
-                    .and_then(|x| x.err())
-                {
-                    debug!(self.ctx.log, "received invalid transport parameters"; "connection" => %local_id, "reason" => %params_err);
-                    TransportError::TRANSPORT_PARAMETER_ERROR
-                } else {
-                    debug!(self.ctx.log, "accept failed"; "reason" => %tls.error());
-                    TransportError::TLS_HANDSHAKE_FAILED
-                };
-                let n = self.ctx.gen_initial_packet_num();
+                frame::Stream {
+                    id: StreamId(0),
+                    offset: 0,
+                    fin: false,
+                    data: &req,
+                }.encode(false, &mut buf);
+
+                set_payload_length(&mut buf, header_len);
+                crypto.encrypt(packet_number as u64, &mut buf, header_len);
                 self.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(
-                        &crypto,
-                        &source_id,
-                        &local_id,
-                        n,
-                        code,
-                        Some(&tls.get_mut().take_outgoing()),
-                    ),
+                    packet: buf.into(),
                 });
             }
-            Err(HandshakeError::SetupFailure(e)) => {
-                error!(self.ctx.log, "accept setup failed"; "reason" => %e);
-                let n = self.ctx.gen_initial_packet_num();
+            Ok(TlsAccepted::Complete {
+                mut tls,
+                params,
+                zero_rtt_crypto,
+            }) => {
+                let conn =
+                    self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
+                self.connection_ids_initial.insert(dest_id, conn);
+                self.connections[conn.0].zero_rtt_crypto = zero_rtt_crypto;
+                self.connections[conn.0].on_packet_authenticated(
+                    &mut self.ctx,
+                    now,
+                    packet_number as u64,
+                );
+                self.connections[conn.0].transmit_handshake(&tls.get_mut().take_outgoing());
+                self.connections[conn.0].state = Some(State::Handshake(state::Handshake {
+                    tls,
+                    clienthello_packet: None,
+                    remote_id_set: true,
+                }));
+                self.connections[conn.0].set_params(params);
+                self.ctx.dirty_conns.insert(conn);
+                self.ctx.incoming_handshakes += 1;
+            }
+            Err((code, data)) => {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
                         &crypto,
                         &source_id,
                         &local_id,
-                        n,
-                        TransportError::INTERNAL_ERROR,
-                        None,
+                        self.ctx.gen_initial_packet_num(),
+                        code,
+                        data.as_ref().map(|v| v.as_ref()),
                     ),
                 });
             }
