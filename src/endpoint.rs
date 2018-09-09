@@ -700,7 +700,7 @@ impl Endpoint {
         );
 
         if !was_closed && state.is_closed() {
-            self.close_common(now, conn);
+            self.connections[conn.0].close_common(&mut self.ctx, now, conn);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -819,7 +819,7 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                self.close_common(now, conn);
+                self.connections[conn.0].close_common(&mut self.ctx, now, conn);
                 let state = State::Draining(match self.connections[conn.0].state.take().unwrap() {
                     State::Handshake(x) => x.into(),
                     State::HandshakeFailed(x) => x.into(),
@@ -1019,16 +1019,6 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn);
     }
 
-    fn close_common(&mut self, now: u64, conn: ConnectionHandle) {
-        trace!(self.ctx.log, "connection closed");
-        self.connections[conn.0].set_loss_detection = Some(None);
-        self.ctx.io.push_back(Io::TimerStart {
-            connection: conn,
-            timer: Timer::Close,
-            time: now + 3 * self.connections[conn.0].rto(&self.ctx.config),
-        });
-    }
-
     /// Close a connection immediately
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
@@ -1050,7 +1040,7 @@ impl Endpoint {
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
-            self.close_common(now, conn);
+            self.connections[conn.0].close_common(&mut self.ctx, now, conn);
             self.ctx.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: self.connections[conn.0].make_close(&reason),

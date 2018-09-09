@@ -13,7 +13,7 @@ use crypto::{
     self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
     TRANSPORT_PARAMS_INDEX,
 };
-use endpoint::{set_payload_length, Config, Context, Event};
+use endpoint::{set_payload_length, Config, Context, Event, Io, Timer};
 use memory_stream::MemoryStream;
 use packet::{types, ConnectionId, Header, Packet, PacketNumber};
 use range_set::RangeSet;
@@ -2121,6 +2121,16 @@ impl Connection {
             .unwrap()
             .encrypt(number, &mut buf, header_len as usize);
         buf.into()
+    }
+
+    pub fn close_common(&mut self, ctx: &mut Context, now: u64, conn: ConnectionHandle) {
+        trace!(ctx.log, "connection closed");
+        self.set_loss_detection = Some(None);
+        ctx.io.push_back(Io::TimerStart {
+            connection: conn,
+            timer: Timer::Close,
+            time: now + 3 * self.rto(&ctx.config),
+        });
     }
 
     pub fn set_params(&mut self, params: TransportParameters) {
