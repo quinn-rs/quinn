@@ -168,7 +168,6 @@ pub struct Endpoint {
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
     listen_keys: Option<ListenKeys>,
-    io: VecDeque<Io>,
 }
 
 pub struct Context {
@@ -176,6 +175,7 @@ pub struct Context {
     pub tls: SslContext,
     pub rng: OsRng,
     pub config: Arc<Config>,
+    pub io: VecDeque<Io>,
     pub session_ticket_buffer: SessionTicketBuffer,
     pub events: VecDeque<(ConnectionHandle, Event)>,
     pub incoming: VecDeque<ConnectionHandle>,
@@ -261,6 +261,7 @@ impl Endpoint {
                 tls,
                 rng,
                 config,
+                io: VecDeque::new(),
                 session_ticket_buffer,
                 initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
                 events: VecDeque::new(),
@@ -274,7 +275,6 @@ impl Endpoint {
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
-            io: VecDeque::new(),
         })
     }
 
@@ -307,7 +307,7 @@ impl Endpoint {
     /// Get a pending IO operation
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
         loop {
-            if let Some(x) = self.io.pop_front() {
+            if let Some(x) = self.ctx.io.pop_front() {
                 return Some(x);
             }
             let &conn = self.ctx.dirty_conns.iter().next()?;
@@ -341,7 +341,7 @@ impl Endpoint {
                     }.encode(&mut buf);
                     buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
-                    self.io.push_back(Io::Transmit {
+                    self.ctx.io.push_back(Io::Transmit {
                         destination: remote,
                         packet: buf.into(),
                     });
@@ -389,15 +389,15 @@ impl Endpoint {
                         .is_drained()
                     {
                         debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
-                        self.io.push_back(Io::TimerStop {
+                        self.ctx.io.push_back(Io::TimerStop {
                             connection: conn,
                             timer: Timer::LossDetection,
                         });
-                        self.io.push_back(Io::TimerStop {
+                        self.ctx.io.push_back(Io::TimerStop {
                             connection: conn,
                             timer: Timer::Close,
                         });
-                        self.io.push_back(Io::TimerStop {
+                        self.ctx.io.push_back(Io::TimerStop {
                             connection: conn,
                             timer: Timer::Idle,
                         });
@@ -500,7 +500,7 @@ impl Endpoint {
                 &self.listen_keys.as_ref().unwrap().reset,
                 &dest_id,
             ));
-            self.io.push_back(Io::Transmit {
+            self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: buf.into(),
             });
@@ -585,7 +585,7 @@ impl Endpoint {
                 "rejecting connection due to full accept buffer"
             );
             let n = self.ctx.gen_initial_packet_num();
-            self.io.push_back(Io::Transmit {
+            self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: handshake_close(
                     &crypto,
@@ -638,7 +638,7 @@ impl Endpoint {
 
                 set_payload_length(&mut buf, header_len);
                 crypto.encrypt(packet_number as u64, &mut buf, header_len);
-                self.io.push_back(Io::Transmit {
+                self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: buf.into(),
                 });
@@ -662,13 +662,14 @@ impl Endpoint {
                 );
             }
             Err((code, data)) => {
-                self.io.push_back(Io::Transmit {
+                let n = self.ctx.gen_initial_packet_num();
+                self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
                         &crypto,
                         &source_id,
                         &local_id,
-                        self.ctx.gen_initial_packet_num(),
+                        n,
                         code,
                         data.as_ref().map(|v| v.as_ref()),
                     ),
@@ -709,7 +710,7 @@ impl Endpoint {
                     self.ctx.incoming_handshakes -= 1;
                 }
                 let n = self.connections[conn.0].get_tx_number();
-                self.io.push_back(Io::Transmit {
+                self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
                         &self.connections[conn.0].handshake_crypto,
@@ -723,7 +724,7 @@ impl Endpoint {
                 self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
             }
             State::Closed(ref state) => {
-                self.io.push_back(Io::Transmit {
+                self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: self.connections[conn.0].make_close(&state.reason),
                 });
@@ -741,7 +742,7 @@ impl Endpoint {
         while let Some(packet) =
             self.connections[conn.0].next_packet(&self.ctx.log, &self.ctx.config, now)
         {
-            self.io.push_back(Io::Transmit {
+            self.ctx.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: packet.into(),
             });
@@ -754,13 +755,13 @@ impl Endpoint {
             let c = &mut self.connections[conn.0];
             if let Some(setting) = c.set_idle.take() {
                 if let Some(time) = setting {
-                    self.io.push_back(Io::TimerStart {
+                    self.ctx.io.push_back(Io::TimerStart {
                         connection: conn,
                         timer: Timer::Idle,
                         time,
                     });
                 } else {
-                    self.io.push_back(Io::TimerStop {
+                    self.ctx.io.push_back(Io::TimerStop {
                         connection: conn,
                         timer: Timer::Idle,
                     });
@@ -768,13 +769,13 @@ impl Endpoint {
             }
             if let Some(setting) = c.set_loss_detection.take() {
                 if let Some(time) = setting {
-                    self.io.push_back(Io::TimerStart {
+                    self.ctx.io.push_back(Io::TimerStart {
                         connection: conn,
                         timer: Timer::LossDetection,
                         time,
                     });
                 } else {
-                    self.io.push_back(Io::TimerStop {
+                    self.ctx.io.push_back(Io::TimerStop {
                         connection: conn,
                         timer: Timer::LossDetection,
                     });
@@ -801,7 +802,7 @@ impl Endpoint {
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
-                self.io.push_back(Io::TimerStop {
+                self.ctx.io.push_back(Io::TimerStop {
                     connection: conn,
                     timer: Timer::Idle,
                 });
@@ -866,7 +867,7 @@ impl Endpoint {
                            "outstanding" => ?self.connections[conn.0].sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.connections[conn.0].bytes_in_flight);
                     // Tail Loss Probe.
-                    self.io.push_back(Io::Transmit {
+                    self.ctx.io.push_back(Io::Transmit {
                         destination: self.connections[conn.0].remote,
                         packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                     });
@@ -882,7 +883,7 @@ impl Endpoint {
                             self.connections[conn.0].largest_sent_packet;
                     }
                     for _ in 0..2 {
-                        self.io.push_back(Io::Transmit {
+                        self.ctx.io.push_back(Io::Transmit {
                             destination: self.connections[conn.0].remote,
                             packet: self.connections[conn.0].force_transmit(&self.ctx.config, now),
                         });
@@ -1021,7 +1022,7 @@ impl Endpoint {
     fn close_common(&mut self, now: u64, conn: ConnectionHandle) {
         trace!(self.ctx.log, "connection closed");
         self.connections[conn.0].set_loss_detection = Some(None);
-        self.io.push_back(Io::TimerStart {
+        self.ctx.io.push_back(Io::TimerStart {
             connection: conn,
             timer: Timer::Close,
             time: now + 3 * self.connections[conn.0].rto(&self.ctx.config),
@@ -1050,7 +1051,7 @@ impl Endpoint {
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
             self.close_common(now, conn);
-            self.io.push_back(Io::Transmit {
+            self.ctx.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
                 packet: self.connections[conn.0].make_close(&reason),
             });
