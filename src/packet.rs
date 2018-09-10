@@ -1,7 +1,7 @@
 use std::{fmt, io, str};
 
 use arrayvec::ArrayVec;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
 use slog;
 
@@ -360,6 +360,14 @@ impl slog::Value for ConnectionId {
         serializer.emit_arguments(key, &format_args!("{}", self))
     }
 }
+
+pub fn set_payload_length(packet: &mut [u8], header_len: usize) {
+    let len = packet.len() - header_len + AEAD_TAG_SIZE;
+    assert!(len < 2usize.pow(14)); // Fits in reserved space
+    BigEndian::write_u16(&mut packet[header_len - 6..], len as u16 | 0b01 << 14);
+}
+
+pub const AEAD_TAG_SIZE: usize = 16;
 
 pub mod types {
     pub const INITIAL: u8 = 0x7F;

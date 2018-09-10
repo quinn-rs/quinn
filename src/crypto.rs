@@ -20,7 +20,7 @@ use openssl::{self, ex_data};
 use coding::BufExt;
 use endpoint::{Config, Context, EndpointError, ListenKeys};
 use memory_stream::MemoryStream;
-use packet::ConnectionId;
+use packet::{ConnectionId, AEAD_TAG_SIZE};
 use transport_error::Error as TransportError;
 use transport_parameters::TransportParameters;
 use {hkdf, Side, RESET_TOKEN_SIZE};
@@ -717,8 +717,6 @@ impl From<openssl::error::ErrorStack> for ConnectError {
         ConnectError::Tls(x.into())
     }
 }
-
-pub const AEAD_TAG_SIZE: usize = 16;
 
 #[cfg(test)]
 mod test {

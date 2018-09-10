@@ -10,12 +10,12 @@ use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
 use crypto::{
-    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT, AEAD_TAG_SIZE,
+    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT,
     TRANSPORT_PARAMS_INDEX,
 };
-use endpoint::{set_payload_length, Config, Context, Event, Io, Timer};
+use endpoint::{Config, Context, Event, Io, Timer};
 use memory_stream::MemoryStream;
-use packet::{types, ConnectionId, Header, Packet, PacketNumber};
+use packet::{set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE};
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;

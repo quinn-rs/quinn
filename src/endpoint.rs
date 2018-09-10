@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{cmp, io, mem, str};
 
-use bytes::{BigEndian, ByteOrder, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use openssl;
 use openssl::ssl::{self, SslContext};
@@ -21,10 +21,10 @@ use connection::{
 };
 use crypto::{
     self, new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo,
-    Crypto, SessionTicketBuffer, TlsAccepted, AEAD_TAG_SIZE,
+    Crypto, SessionTicketBuffer, TlsAccepted,
 };
 use memory_stream::MemoryStream;
-use packet::{types, ConnectionId, Header, HeaderError, Packet, PacketNumber};
+use packet::{set_payload_length, types, ConnectionId, Header, HeaderError, Packet, PacketNumber, AEAD_TAG_SIZE};
 use range_set::RangeSet;
 use {
     frame, Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU,
@@ -1202,10 +1202,4 @@ where
     set_payload_length(&mut buf, header_len);
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
     buf.into()
-}
-
-pub fn set_payload_length(packet: &mut [u8], header_len: usize) {
-    let len = packet.len() - header_len + AEAD_TAG_SIZE;
-    assert!(len < 2usize.pow(14)); // Fits in reserved space
-    BigEndian::write_u16(&mut packet[header_len - 6..], len as u16 | 0b01 << 14);
 }
