@@ -372,6 +372,6 @@ pub const AEAD_TAG_SIZE: usize = 16;
 pub mod types {
     pub const INITIAL: u8 = 0x7F;
     pub const RETRY: u8 = 0x7E;
-    pub const ZERO_RTT: u8 = 0x7C;
+    //pub const ZERO_RTT: u8 = 0x7C;
     pub const HANDSHAKE: u8 = 0x7D;
 }

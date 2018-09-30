@@ -5,6 +5,7 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 extern crate futures;
+extern crate rustls;
 extern crate slog_term;
 #[macro_use]
 extern crate structopt;
@@ -15,10 +16,11 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
-use std::str;
+use std::{io, str};
 
-use failure::{Fail, ResultExt};
+use failure::{err_msg, Fail, ResultExt};
 use futures::{Future, Stream};
+use rustls::internal::pemfile;
 use structopt::StructOpt;
 use tokio::executor::current_thread;
 use tokio::runtime::current_thread::Runtime;
@@ -56,20 +58,22 @@ impl ErrorExt for Error {
 #[structopt(name = "server")]
 struct Opt {
     /// file to log TLS keys to for debugging
-    #[structopt(parse(from_os_str), long = "keylog")]
-    keylog: Option<PathBuf>,
+    #[structopt(long = "keylog")]
+    keylog: bool,
     /// directory to serve files from
     #[structopt(parse(from_os_str))]
     root: PathBuf,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
-    key: Option<PathBuf>,
+    #[structopt(parse(from_os_str), short = "k", long = "key")]
+    key: PathBuf,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
-    cert: Option<PathBuf>,
+    #[structopt(parse(from_os_str), short = "c", long = "cert")]
+    cert: PathBuf,
+    /*
     /// Enable stateless retries
     #[structopt(long = "stateless-retry")]
     stateless_retry: bool,
+    */
     /// Address to listen on
     #[structopt(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
@@ -105,33 +109,28 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     builder
         .logger(log.clone())
         .config(quicr::Config {
-            protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
-            keylog: options.keylog,
-            use_stateless_retry: options.stateless_retry,
-            ..quicr::Config::default()
-        })
-        .listen();
+            ..Default::default()
+        }).listen();
 
-    if let Some(key_path) = options.key {
-        let key = fs::read(&key_path).context("failed to read private key")?;
-        builder
-            .private_key_pem(&key)
-            .context("failed to load private key")?;
-
-        let cert_path = options.cert.unwrap(); // Ensured present by option parsing
-        let cert = fs::read(&cert_path).context("failed to read certificate")?;
-        builder
-            .certificate_pem(&cert)
-            .context("failed to load certificate")?;
-    } else {
-        builder
-            .generate_insecure_certificate()
-            .context("failed to generate certificate")?;
+    if options.keylog {
+        builder.enable_keylog();
     }
 
-    let (_, driver, incoming) = builder.bind(options.listen)?;
+    let keys = {
+        let mut reader =
+            io::BufReader::new(fs::File::open(&options.key).context("failed to read private key")?);
+        pemfile::rsa_private_keys(&mut reader).map_err(|_| err_msg("failed to read private key"))?
+    };
+    let cert_chain = {
+        let mut reader = io::BufReader::new(
+            fs::File::open(&options.cert).context("failed to read private key")?,
+        );
+        pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
+    };
+    builder.set_certificate(cert_chain, keys[0].clone())?;
 
+    let (_, driver, incoming) = builder.bind(options.listen)?;
     runtime.spawn(incoming.for_each(move |conn| {
         handle_connection(&root, &log, conn);
         Ok(())

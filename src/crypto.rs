@@ -1,41 +1,109 @@
 use std::net::SocketAddrV6;
-use std::sync::{Arc, Mutex};
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 use std::{io, str};
 
 use blake2::Blake2b;
-use bytes::{BigEndian, Buf, ByteOrder, BytesMut, IntoBuf};
-use constant_time_eq::constant_time_eq;
+use bytes::{Buf, BufMut, BytesMut};
 use digest::{Input, VariableOutput};
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKeyRef, Private};
-use openssl::ssl::{
-    self, HandshakeError, MidHandshakeSslStream, Ssl, SslAlert, SslContext, SslMethod, SslMode,
-    SslOptions, SslRef, SslSession, SslStreamBuilder, SslVersion,
-};
-use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
-use openssl::x509::verify::X509CheckFlags;
-use openssl::x509::X509Ref;
-use openssl::{self, ex_data};
+use ring::aead;
+use ring::digest;
+use ring::hkdf;
+use ring::hmac::SigningKey;
+use rustls::quic::{ClientQuicExt, ServerQuicExt};
+pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
+pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
+use rustls::{KeyLogFile, ProtocolVersion};
+use webpki::DNSNameRef;
+use webpki_roots;
 
-use coding::BufExt;
-use endpoint::{Config, Context, EndpointError, ListenKeys};
-use memory_stream::MemoryStream;
+use endpoint::EndpointError;
 use packet::{ConnectionId, AEAD_TAG_SIZE};
-use transport_error::Error as TransportError;
 use transport_parameters::TransportParameters;
-use {hkdf, Side, RESET_TOKEN_SIZE};
+use {Side, RESET_TOKEN_SIZE};
 
-pub struct CertConfig<'a> {
-    /// A TLS private key.
-    pub private_key: &'a PKeyRef<Private>,
-    /// A TLS certificate corresponding to `private_key`.
-    pub cert: &'a X509Ref,
+pub enum TlsSession {
+    Client(ClientSession),
+    Server(ServerSession),
+}
+
+impl TlsSession {
+    pub fn new_client(
+        config: &Arc<ClientConfig>,
+        hostname: &str,
+        params: &TransportParameters,
+    ) -> Result<TlsSession, EndpointError> {
+        let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
+            .map_err(|_| EndpointError::InvalidDnsName(hostname.into()))?;
+        Ok(TlsSession::Client(ClientSession::new_quic(
+            &config,
+            pki_server_name,
+            to_vec(Side::Client, params),
+        )))
+    }
+
+    pub fn new_server(config: &Arc<ServerConfig>, params: &TransportParameters) -> TlsSession {
+        TlsSession::Server(ServerSession::new_quic(
+            config,
+            to_vec(Side::Server, params),
+        ))
+    }
+
+    pub fn get_sni_hostname(&self) -> Option<&str> {
+        match *self {
+            TlsSession::Client(_) => None,
+            TlsSession::Server(ref session) => session.get_sni_hostname(),
+        }
+    }
+}
+
+impl Deref for TlsSession {
+    type Target = dyn Session;
+    fn deref(&self) -> &Self::Target {
+        match *self {
+            TlsSession::Client(ref session) => session,
+            TlsSession::Server(ref session) => session,
+        }
+    }
+}
+
+impl DerefMut for TlsSession {
+    fn deref_mut(&mut self) -> &mut (dyn Session + 'static) {
+        match *self {
+            TlsSession::Client(ref mut session) => session,
+            TlsSession::Server(ref mut session) => session,
+        }
+    }
+}
+
+pub fn build_client_config() -> ClientConfig {
+    let mut config = ClientConfig::new();
+    config
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    config.versions = vec![ProtocolVersion::TLSv1_3];
+    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
+    config.key_log = Arc::new(KeyLogFile::new());
+    config
+}
+
+pub fn build_server_config() -> ServerConfig {
+    let mut config = ServerConfig::new(NoClientAuth::new());
+    config.set_protocols(&[ALPN_PROTOCOL.into()]);
+    config.key_log = Arc::new(KeyLogFile::new());
+    config
+}
+
+fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    params.write(side, &mut bytes);
+    bytes
 }
 
 /// Value used in ACKs we transmit
 pub const ACK_DELAY_EXPONENT: u8 = 3;
 /// Magic value used to indicate 0-RTT support in NewSessionTicket
-pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
+//pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
@@ -48,13 +116,15 @@ pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] 
 
 #[derive(Clone)]
 pub enum Crypto {
-    ZeroRtt(ZeroRttCrypto),
+    // ZeroRtt(ZeroRttCrypto),
     Handshake(CryptoContext),
     OneRtt(CryptoContext),
 }
 
 impl Crypto {
-    pub fn new_0rtt(tls: &SslRef) -> Self {
+    /*
+    pub fn new_0rtt(tls: &TlsSide) -> Self {
+        let suite = tls.get_negotiated_ciphersuite().unwrap();
         let tls_cipher = tls.current_cipher().unwrap();
         let digest = tls_cipher.handshake_digest().unwrap();
         let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
@@ -69,56 +139,55 @@ impl Crypto {
             cipher,
         })
     }
+    */
 
     pub fn new_handshake(id: &ConnectionId, side: Side) -> Self {
-        let digest = MessageDigest::sha256();
-        let cipher = Cipher::aes_128_gcm();
-        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
+        let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
         let (local_label, remote_label) = if side == Side::Client {
             (b"client hs", b"server hs")
         } else {
             (b"server hs", b"client hs")
         };
+        let hs_secret = handshake_secret(id);
         let local = CryptoState::new(
             digest,
             cipher,
-            hkdf::qexpand(digest, &hs_secret, &local_label[..], digest.size() as u16),
+            expanded_handshake_secret(&hs_secret, local_label),
         );
         let remote = CryptoState::new(
             digest,
             cipher,
-            hkdf::qexpand(digest, &hs_secret, &remote_label[..], digest.size() as u16),
+            expanded_handshake_secret(&hs_secret, remote_label),
         );
         Crypto::Handshake(CryptoContext {
             local,
             remote,
-            digest,
-            cipher,
+            digest: digest,
+            cipher: cipher,
         })
     }
 
-    pub fn new_1rtt(tls: &SslRef, side: Side) -> Self {
-        let tls_cipher = tls.current_cipher().unwrap();
-        let digest = tls_cipher.handshake_digest().unwrap();
-        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
+    pub fn new_1rtt(tls: &TlsSession, side: Side) -> Self {
+        let suite = tls.get_negotiated_ciphersuite().unwrap();
+        let (cipher, digest) = (suite.get_aead_alg(), suite.get_hash());
 
-        const SERVER_LABEL: &str = "EXPORTER-QUIC server 1rtt";
-        const CLIENT_LABEL: &str = "EXPORTER-QUIC client 1rtt";
+        const SERVER_LABEL: &[u8] = b"EXPORTER-QUIC server 1rtt";
+        const CLIENT_LABEL: &[u8] = b"EXPORTER-QUIC client 1rtt";
 
         let (local_label, remote_label) = if side == Side::Client {
             (CLIENT_LABEL, SERVER_LABEL)
         } else {
             (SERVER_LABEL, CLIENT_LABEL)
         };
-        let mut local_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut local_secret, local_label, Some(b""))
+        let mut local_secret = vec![0; digest.output_len];
+        tls.export_keying_material(&mut local_secret, local_label, None)
             .unwrap();
-        let local = CryptoState::new(digest, cipher, local_secret.into());
+        let local = CryptoState::new(digest, cipher, local_secret);
 
-        let mut remote_secret = vec![0; digest.size()];
-        tls.export_keying_material(&mut remote_secret, remote_label, Some(b""))
+        let mut remote_secret = vec![0; digest.output_len];
+        tls.export_keying_material(&mut remote_secret, remote_label, None)
             .unwrap();
-        let remote = CryptoState::new(digest, cipher, remote_secret.into());
+        let remote = CryptoState::new(digest, cipher, remote_secret);
         Crypto::OneRtt(CryptoContext {
             local,
             remote,
@@ -127,12 +196,14 @@ impl Crypto {
         })
     }
 
+    /*
     pub fn is_0rtt(&self) -> bool {
         match *self {
             Crypto::ZeroRtt(_) => true,
             _ => false,
         }
     }
+    */
 
     pub fn is_handshake(&self) -> bool {
         match *self {
@@ -148,34 +219,38 @@ impl Crypto {
         }
     }
 
+    pub fn write_nonce(&self, state: &CryptoState, number: u64, out: &mut [u8]) {
+        let out = {
+            let mut write = io::Cursor::new(out);
+            write.put_u32_be(0);
+            write.put_u64_be(number);
+            debug_assert_eq!(write.remaining(), 0);
+            write.into_inner()
+        };
+        debug_assert_eq!(out.len(), state.iv.len());
+        for (out, inp) in out.iter_mut().zip(state.iv.iter()) {
+            *out ^= inp;
+        }
+    }
+
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
         // FIXME: retain crypter
         let (cipher, state) = match *self {
-            Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
+            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
             Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.local)
             }
         };
 
-        let mut tag = [0; AEAD_TAG_SIZE];
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for (i, b) in nonce.iter_mut().enumerate().take(12) {
-            *b ^= state.iv[i];
-        }
+        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let nonce = &mut nonce_buf[..cipher.nonce_len()];
+        self.write_nonce(&state, packet, nonce);
+        let tag = vec![0; cipher.tag_len()];
+        buf.extend(tag);
 
-        let mut result = encrypt_aead(
-            cipher,
-            &state.key,
-            Some(&nonce),
-            &buf[..header_len],
-            &buf[header_len..],
-            &mut tag,
-        ).unwrap();
-        result.extend_from_slice(&tag);
-        debug_assert_eq!(result.len(), buf.len() - header_len + AEAD_TAG_SIZE);
-        buf.truncate(header_len);
-        buf.extend_from_slice(&result);
+        let key = aead::SealingKey::new(cipher, &state.key).unwrap();
+        let (header, payload) = buf.split_at_mut(header_len);
+        aead::seal_in_place(&key, &*nonce, header, payload, cipher.tag_len()).unwrap();
     }
 
     pub fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
@@ -184,34 +259,21 @@ impl Crypto {
         }
 
         let (cipher, state) = match *self {
-            Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
+            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
             Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.remote)
             }
         };
 
-        let mut nonce = [0; 12];
-        BigEndian::write_u64(&mut nonce[4..12], packet);
-        for (i, b) in nonce.iter_mut().enumerate().take(12) {
-            *b ^= state.iv[i];
-        }
-
+        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let nonce = &mut nonce_buf[..cipher.nonce_len()];
+        self.write_nonce(&state, packet, nonce);
         let payload_len = payload.len();
-        let tag = payload.split_off(payload_len - AEAD_TAG_SIZE);
-        match decrypt_aead(
-            cipher,
-            &state.key,
-            Some(&nonce),
-            header,
-            payload.as_mut(),
-            &tag,
-        ) {
-            Ok(decrypted) => {
-                payload.as_mut().copy_from_slice(&decrypted);
-                Ok(())
-            }
-            _ => Err(()),
-        }
+
+        let key = aead::OpeningKey::new(cipher, &state.key).unwrap();
+        aead::open_in_place(&key, &*nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
+        payload.split_off(payload_len - cipher.tag_len());
+        Ok(())
     }
 
     pub fn update(&self, side: Side) -> Crypto {
@@ -227,6 +289,7 @@ impl Crypto {
     }
 }
 
+/*
 pub struct CookieFactory {
     mac_key: [u8; 64],
 }
@@ -265,390 +328,12 @@ impl CookieFactory {
         true
     }
 }
+*/
 
 #[derive(Clone)]
 pub struct ConnectionInfo {
     pub(crate) id: ConnectionId,
     pub(crate) remote: SocketAddrV6,
-}
-
-lazy_static! {
-    pub static ref CONNECTION_INFO_INDEX: ex_data::Index<Ssl, ConnectionInfo> =
-        Ssl::new_ex_index().unwrap();
-    pub static ref TRANSPORT_PARAMS_INDEX: ex_data::Index<Ssl, Result<TransportParameters, ::transport_parameters::Error>> =
-        Ssl::new_ex_index().unwrap();
-}
-
-pub fn new_tls_ctx(
-    config: &Arc<Config>,
-    cert: &Option<CertConfig>,
-    listen: Option<ListenKeys>,
-) -> Result<(SslContext, SessionTicketBuffer), EndpointError> {
-    let mut tls = SslContext::builder(SslMethod::tls())?;
-    tls.set_min_proto_version(Some(SslVersion::TLS1_3))?;
-    tls.set_max_proto_version(Some(SslVersion::TLS1_3))?;
-    tls.set_options(
-        SslOptions::NO_COMPRESSION
-            | SslOptions::NO_SSLV2
-            | SslOptions::NO_SSLV3
-            | SslOptions::NO_TLSV1
-            | SslOptions::NO_TLSV1_1
-            | SslOptions::NO_TLSV1_2
-            | SslOptions::DONT_INSERT_EMPTY_FRAGMENTS,
-    );
-    tls.clear_options(SslOptions::ENABLE_MIDDLEBOX_COMPAT);
-    tls.set_mode(
-        SslMode::ACCEPT_MOVING_WRITE_BUFFER
-            | SslMode::ENABLE_PARTIAL_WRITE
-            | SslMode::RELEASE_BUFFERS,
-    );
-    tls.set_default_verify_paths()?;
-    if !config.use_stateless_retry {
-        tls.set_max_early_data(TLS_MAX_EARLY_DATA)?;
-    }
-    if let Some(ref listen) = listen {
-        let cookie_factory = Arc::new(CookieFactory::new(listen.cookie));
-        {
-            let cookie_factory = cookie_factory.clone();
-            tls.set_stateless_cookie_generate_cb(move |tls, buf| {
-                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                Ok(cookie_factory.generate(conn, buf))
-            });
-        }
-        tls.set_stateless_cookie_verify_cb(move |tls, cookie| {
-            let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-            cookie_factory.verify(conn, cookie)
-        });
-    }
-    let reset_key = listen.as_ref().map(|x| x.reset);
-    tls.add_custom_ext(
-        26,
-        ssl::ExtensionContext::TLS1_3_ONLY
-            | ssl::ExtensionContext::CLIENT_HELLO
-            | ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS,
-        {
-            let config = config.clone();
-            move |tls, ctx, _| {
-                let conn = tls.ex_data(*CONNECTION_INFO_INDEX).unwrap();
-                let mut buf = Vec::new();
-                let mut params = TransportParameters {
-                    initial_max_streams_bidi: config.max_remote_bi_streams,
-                    initial_max_streams_uni: config.max_remote_uni_streams,
-                    initial_max_data: config.receive_window,
-                    initial_max_stream_data: config.stream_receive_window,
-                    ack_delay_exponent: ACK_DELAY_EXPONENT,
-                    ..TransportParameters::default()
-                };
-                let am_server = ctx == ssl::ExtensionContext::TLS1_3_ENCRYPTED_EXTENSIONS;
-                let side = if am_server {
-                    params.stateless_reset_token =
-                        Some(reset_token_for(reset_key.as_ref().unwrap(), &conn.id));
-                    Side::Server
-                } else {
-                    Side::Client
-                };
-                params.write(side, &mut buf);
-                Ok(Some(buf))
-            }
-        },
-        |tls, ctx, data, _| {
-            let side = if ctx == ssl::ExtensionContext::CLIENT_HELLO {
-                Side::Server
-            } else {
-                Side::Client
-            };
-            match TransportParameters::read(side, &mut data.into_buf()) {
-                Ok(params) => {
-                    tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Ok(params));
-                    Ok(())
-                }
-                Err(e) => {
-                    use transport_parameters::Error::*;
-                    tls.set_ex_data(*TRANSPORT_PARAMS_INDEX, Err(e));
-                    Err(match e {
-                        VersionNegotiation => SslAlert::ILLEGAL_PARAMETER,
-                        IllegalValue => SslAlert::ILLEGAL_PARAMETER,
-                        Malformed => SslAlert::DECODE_ERROR,
-                    })
-                }
-            }
-        },
-    )?;
-
-    if let Some(ref cert) = cert {
-        tls.set_private_key(cert.private_key)?;
-        tls.set_certificate(cert.cert)?;
-        tls.check_private_key()?;
-    }
-
-    if !config.protocols.is_empty() {
-        let mut buf = Vec::new();
-        for protocol in &config.protocols {
-            if protocol.len() > 255 {
-                return Err(EndpointError::ProtocolTooLong(protocol.clone()));
-            }
-            buf.push(protocol.len() as u8);
-            buf.extend_from_slice(protocol);
-        }
-        tls.set_alpn_protos(&buf)?;
-        tls.set_alpn_select_callback(move |_ssl, protos| {
-            if let Some(x) = ssl::select_next_proto(&buf, protos) {
-                Ok(x)
-            } else {
-                Err(ssl::AlpnError::ALERT_FATAL)
-            }
-        });
-    }
-
-    if let Some(ref path) = config.keylog {
-        let file = ::std::fs::File::create(path).map_err(EndpointError::Keylog)?;
-        let file = Mutex::new(file);
-        tls.set_keylog_callback(move |_, line| {
-            use std::io::Write;
-            let mut file = file.lock().unwrap();
-            let _ = file.write_all(line.as_bytes());
-            let _ = file.write_all(b"\n");
-        });
-    }
-
-    let session_ticket_buffer = Arc::new(Mutex::new(Vec::new()));
-    {
-        let session_ticket_buffer = session_ticket_buffer.clone();
-        tls.set_session_cache_mode(ssl::SslSessionCacheMode::BOTH);
-        tls.set_new_session_callback(move |tls, session| {
-            if tls.is_server() {
-                return;
-            }
-            let mut buffer = session_ticket_buffer.lock().unwrap();
-            match session.max_early_data() {
-                0 | TLS_MAX_EARLY_DATA => {}
-                _ => {
-                    buffer.push(Err(()));
-                }
-            }
-            buffer.push(Ok(session));
-        });
-    }
-
-    let verify_flag = if config.require_client_certs {
-        ssl::SslVerifyMode::PEER | ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT
-    } else {
-        ssl::SslVerifyMode::empty()
-    };
-    if config.client_cert_verifier.is_some() {
-        let config = config.clone();
-        tls.set_verify_callback(ssl::SslVerifyMode::PEER | verify_flag, move |x, y| {
-            (config.client_cert_verifier.as_ref().unwrap())(x, y)
-        });
-    } else {
-        tls.set_verify(verify_flag);
-    }
-
-    Ok((tls.build(), session_ticket_buffer))
-}
-
-pub fn new_client(
-    ctx: &Context,
-    config: ClientConfig,
-    info: ConnectionInfo,
-) -> Result<
-    (
-        MidHandshakeSslStream<MemoryStream>,
-        Option<TransportParameters>,
-        Option<Crypto>,
-    ),
-    ConnectError,
-> {
-    let mut tls = Ssl::new(&ctx.tls)?;
-    if !config.accept_insecure_certs {
-        tls.set_verify_callback(ssl::SslVerifyMode::PEER, |x, _| x);
-        let param = tls.param_mut();
-        if let Some(name) = config.server_name {
-            param.set_hostflags(X509CheckFlags::NO_PARTIAL_WILDCARDS);
-            match name.parse() {
-                Ok(ip) => {
-                    param.set_ip(ip).expect("failed to inform TLS of remote ip");
-                }
-                Err(_) => {
-                    param
-                        .set_host(name)
-                        .expect("failed to inform TLS of remote hostname");
-                }
-            }
-        }
-    } else {
-        tls.set_verify(ssl::SslVerifyMode::NONE);
-    }
-
-    tls.set_ex_data(*CONNECTION_INFO_INDEX, info.clone());
-    if let Some(name) = config.server_name {
-        tls.set_hostname(name)?;
-    }
-
-    let (mut params, mut zero_rtt_crypto) = (None, None);
-    let result = if let Some(session) = config.session_ticket {
-        if session.len() < 2 {
-            return Err(ConnectError::MalformedSession);
-        }
-        let mut buf = io::Cursor::new(session);
-        let len = buf
-            .get::<u16>()
-            .map_err(|_| ConnectError::MalformedSession)? as usize;
-        if buf.remaining() < len {
-            return Err(ConnectError::MalformedSession);
-        }
-
-        let session =
-            SslSession::from_der(&buf.bytes()[0..len]).map_err(|_| ConnectError::MalformedSession)?;
-        buf.advance(len);
-        params = Some(
-            TransportParameters::read(Side::Client, &mut buf)
-                .map_err(|_| ConnectError::MalformedSession)?,
-        );
-        unsafe { tls.set_session(&session) }?;
-        let mut tls = SslStreamBuilder::new(tls, MemoryStream::new());
-        tls.set_connect_state();
-        if session.max_early_data() == TLS_MAX_EARLY_DATA {
-            trace!(ctx.log, "{connection} enabling 0rtt", connection = &info.id);
-            tls.write_early_data(&[])?; // Prompt OpenSSL to generate early keying material, read below
-            zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
-        }
-        tls.handshake()
-    } else {
-        tls.connect(MemoryStream::new())
-    };
-    Ok((
-        match result {
-            Ok(_) => unreachable!(),
-            Err(HandshakeError::WouldBlock(tls)) => tls,
-            Err(e) => panic!("unexpected TLS error: {}", e),
-        },
-        params,
-        zero_rtt_crypto,
-    ))
-}
-
-pub fn new_server(
-    ctx: &Context,
-    stream: MemoryStream,
-    info: ConnectionInfo,
-) -> Result<TlsAccepted, (TransportError, Option<Vec<u8>>)> {
-    let mut tls = Ssl::new(&ctx.tls).unwrap(); // TODO: is this reliable?
-    tls.set_ex_data(*CONNECTION_INFO_INDEX, info.clone());
-    let mut tls = SslStreamBuilder::new(tls, stream);
-    tls.set_accept_state();
-
-    let mut zero_rtt_crypto = None;
-    if ctx.config.use_stateless_retry {
-        match tls.stateless() {
-            Ok(true) => {} // Valid cookie accepted, continue handshake
-            Ok(false) => {
-                // Return HelloRetryRequest containing fresh cookie
-                let data = tls.get_mut().take_outgoing().to_vec();
-                trace!(ctx.log, "sending HelloRetryRequest"; "connection" => %info.id, "len" => data.len());
-                return Ok(TlsAccepted::RetryRequest(data));
-            }
-            Err(e) => {
-                debug!(ctx.log, "stateless handshake failed"; "connection" => %info.id, "reason" => %e);
-                return Err((
-                    TransportError::TLS_HANDSHAKE_FAILED,
-                    Some(tls.get_mut().take_outgoing().to_vec()),
-                ));
-            }
-        }
-    } else {
-        match tls.read_early_data(&mut [0; 1]) {
-            Ok(0) => {}
-            Ok(_) => {
-                debug!(ctx.log, "got TLS early data"; "connection" => &info.id);
-                return Err((TransportError::PROTOCOL_VIOLATION, None));
-            }
-            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => {
-                trace!(ctx.log, "{connection} enabled 0rtt", connection = &info.id);
-                zero_rtt_crypto = Some(Crypto::new_0rtt(tls.ssl()));
-            }
-            Err(e) => {
-                debug!(ctx.log, "failure in SSL_read_early_data"; "connection" => info.id, "reason" => %e);
-                return Err((TransportError::TLS_HANDSHAKE_FAILED, None));
-            }
-        }
-    }
-
-    match tls.handshake() {
-        Ok(_) => unreachable!(),
-        Err(HandshakeError::WouldBlock(tls)) => {
-            trace!(ctx.log, "performing handshake"; "connection" => &info.id);
-            match tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned() {
-                Some(params) => Ok(TlsAccepted::Complete {
-                    tls,
-                    params: params
-                        .expect("transport parameter errors should have aborted the handshake"),
-                    zero_rtt_crypto,
-                }),
-                None => {
-                    debug!(ctx.log, "ClientHello missing transport params extension");
-                    Err((TransportError::TRANSPORT_PARAMETER_ERROR, None))
-                }
-            }
-        }
-        Err(HandshakeError::Failure(mut tls)) => {
-            let code = if let Some(params_err) = tls
-                .ssl()
-                .ex_data(*TRANSPORT_PARAMS_INDEX)
-                .and_then(|x| x.err())
-            {
-                debug!(ctx.log, "received invalid transport parameters"; "connection" => %info.id, "reason" => %params_err);
-                TransportError::TRANSPORT_PARAMETER_ERROR
-            } else {
-                debug!(ctx.log, "accept failed"; "reason" => %tls.error());
-                TransportError::TLS_HANDSHAKE_FAILED
-            };
-            return Err((code, Some(tls.get_mut().take_outgoing().to_vec())));
-        }
-        Err(HandshakeError::SetupFailure(e)) => {
-            error!(ctx.log, "accept setup failed"; "reason" => %e);
-            return Err((TransportError::INTERNAL_ERROR, None));
-        }
-    }
-}
-
-pub enum TlsAccepted {
-    RetryRequest(Vec<u8>),
-    Complete {
-        tls: MidHandshakeSslStream<MemoryStream>,
-        params: TransportParameters,
-        zero_rtt_crypto: Option<Crypto>,
-    },
-}
-
-pub struct ClientConfig<'a> {
-    /// The name of the server the client intends to connect to.
-    ///
-    /// Used for both certificate validation, and for disambiguating between multiple domains hosted by the same IP
-    /// address (using SNI).
-    pub server_name: Option<&'a str>,
-
-    /// A ticket to resume a previous session faster than performing a full handshake.
-    ///
-    /// Required for transmitting 0-RTT data.
-    // Encoding: u16 length, DER-encoded OpenSSL session ticket, transport params
-    pub session_ticket: Option<&'a [u8]>,
-
-    /// Whether to accept inauthentic or unverifiable peer certificates.
-    ///
-    /// Turning this off exposes clients to man-in-the-middle attacks in the same manner as an unencrypted TCP
-    /// connection, but allows them to connect to servers that are using self-signed certificates.
-    pub accept_insecure_certs: bool,
-}
-
-impl<'a> Default for ClientConfig<'a> {
-    fn default() -> Self {
-        Self {
-            server_name: None,
-            session_ticket: None,
-            accept_insecure_certs: false,
-        }
-    }
 }
 
 const HANDSHAKE_SALT: [u8; 20] = [
@@ -658,45 +343,58 @@ const HANDSHAKE_SALT: [u8; 20] = [
 
 #[derive(Clone)]
 pub struct CryptoState {
-    secret: Box<[u8]>,
-    key: Box<[u8]>,
-    iv: Box<[u8]>,
+    secret: Vec<u8>,
+    key: Vec<u8>,
+    iv: Vec<u8>,
 }
 
 impl CryptoState {
-    fn new(digest: MessageDigest, cipher: Cipher, secret: Box<[u8]>) -> Self {
-        let key = hkdf::qexpand(digest, &secret, b"key", cipher.key_len() as u16);
-        let iv = hkdf::qexpand(digest, &secret, b"iv", cipher.iv_len().unwrap() as u16);
+    fn new(
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        secret: Vec<u8>,
+    ) -> Self {
+        let secret_key = SigningKey::new(digest, &secret);
+        let mut key = vec![0; cipher.key_len()];
+        qhkdf_expand(&secret_key, b"key", &mut key);
+        let mut iv = vec![0; cipher.nonce_len()];
+        qhkdf_expand(&secret_key, b"iv", &mut iv);
         Self { secret, key, iv }
     }
 
-    fn update(&self, digest: MessageDigest, cipher: Cipher, side: Side) -> CryptoState {
-        let secret = hkdf::qexpand(
-            digest,
-            &self.secret,
+    fn update(
+        &self,
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        side: Side,
+    ) -> CryptoState {
+        let secret_key = SigningKey::new(digest, &self.secret);
+        let mut new_secret = vec![0; digest.output_len];
+        qhkdf_expand(
+            &secret_key,
             if side == Side::Client {
                 b"client 1rtt"
             } else {
                 b"server 1rtt"
             },
-            digest.size() as u16,
+            &mut new_secret,
         );
-        Self::new(digest, cipher, secret)
+        Self::new(digest, cipher, new_secret)
     }
 }
 
 #[derive(Clone)]
 pub struct ZeroRttCrypto {
     state: CryptoState,
-    cipher: Cipher,
+    cipher: &'static aead::Algorithm,
 }
 
 #[derive(Clone)]
 pub struct CryptoContext {
     local: CryptoState,
     remote: CryptoState,
-    digest: MessageDigest,
-    cipher: Cipher,
+    digest: &'static digest::Algorithm,
+    cipher: &'static aead::Algorithm,
 }
 
 #[derive(Debug, Fail)]
@@ -704,19 +402,38 @@ pub enum ConnectError {
     #[fail(display = "session ticket was malformed")]
     MalformedSession,
     #[fail(display = "TLS error: {}", _0)]
-    Tls(ssl::Error),
+    Tls(TLSError),
 }
 
-impl From<ssl::Error> for ConnectError {
-    fn from(x: ssl::Error) -> Self {
+impl From<TLSError> for ConnectError {
+    fn from(x: TLSError) -> Self {
         ConnectError::Tls(x)
     }
 }
-impl From<openssl::error::ErrorStack> for ConnectError {
-    fn from(x: openssl::error::ErrorStack) -> Self {
-        ConnectError::Tls(x.into())
-    }
+
+pub fn expanded_handshake_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; digest::SHA256.output_len];
+    qhkdf_expand(prk, label, &mut out);
+    out
 }
+
+pub fn qhkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
+    let mut info = Vec::with_capacity(2 + 1 + 5 + out.len());
+    info.put_u16_be(out.len() as u16);
+    info.put_u8(5 + (label.len() as u8));
+    info.extend_from_slice(b"QUIC ");
+    info.extend_from_slice(&label);
+    hkdf::expand(key, &info, out);
+}
+
+fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
+    let key = SigningKey::new(&digest::SHA256, &HANDSHAKE_SALT);
+    let mut buf = Vec::with_capacity(8);
+    buf.put_slice(conn_id);
+    hkdf::extract(&key, &buf)
+}
+
+const ALPN_PROTOCOL: &str = "hq-11";
 
 #[cfg(test)]
 mod test {
@@ -760,19 +477,10 @@ mod test {
                 .cloned()
                 .collect(),
         );
-        let digest = MessageDigest::sha256();
-        let cipher = Cipher::aes_128_gcm();
-        let hs_secret = hkdf::extract(digest, &HANDSHAKE_SALT, &id.0);
-        assert_eq!(
-            &hs_secret[..],
-            [
-                0xa5, 0x72, 0xb0, 0x24, 0x5a, 0xf1, 0xed, 0xdf, 0x5c, 0x61, 0xc6, 0xe3, 0xf7, 0xf9,
-                0x30, 0x4c, 0xa6, 0x6b, 0xfb, 0x4c, 0xaa, 0xf7, 0x65, 0x67, 0xd5, 0xcb, 0x8d, 0xd1,
-                0xdc, 0x4e, 0x82, 0x0b
-            ]
-        );
-
-        let client_secret = hkdf::qexpand(digest, &hs_secret, b"client hs", digest.size() as u16);
+        let digest = &digest::SHA256;
+        let cipher = &aead::AES_128_GCM;
+        let hs_secret = handshake_secret(&id);
+        let client_secret = expanded_handshake_secret(&hs_secret, b"client hs");
         assert_eq!(
             &client_secret[..],
             [
@@ -794,7 +502,7 @@ mod test {
             [0xd1, 0xfd, 0x26, 0x05, 0x42, 0x75, 0x3a, 0xba, 0x38, 0x58, 0x9b, 0xad]
         );
 
-        let server_secret = hkdf::qexpand(digest, &hs_secret, b"server hs", digest.size() as u16);
+        let server_secret = expanded_handshake_secret(&hs_secret, b"server hs");
         assert_eq!(
             &server_secret[..],
             [
@@ -818,4 +526,4 @@ mod test {
     }
 }
 
-pub type SessionTicketBuffer = Arc<Mutex<Vec<Result<SslSession, ()>>>>;
+//pub type SessionTicketBuffer = Arc<Mutex<Vec<Result<SslSession, ()>>>>;

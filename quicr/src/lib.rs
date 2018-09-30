@@ -56,17 +56,20 @@ extern crate tokio_udp;
 extern crate slog;
 extern crate fnv;
 extern crate futures;
-extern crate openssl;
 #[macro_use]
 extern crate failure;
 extern crate bytes;
 extern crate rand;
+extern crate rustls;
+extern crate untrusted;
+extern crate webpki;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, mem};
 
@@ -77,17 +80,13 @@ use futures::task::{self, Task};
 use futures::unsync::{mpsc, oneshot};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use openssl::asn1::Asn1Time;
-use openssl::pkey::{PKey, Private};
-use openssl::rsa::Rsa;
-use openssl::ssl;
-use openssl::x509::X509;
+use rustls::{Certificate, KeyLogFile, PrivateKey, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use tokio_udp::UdpSocket;
 
-use quicr::{CertConfig, ConnectionHandle, Directionality, Side, StreamId};
+use quicr::{ConnectionHandle, Directionality, Side, StreamId};
 
 pub use quicr::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
 
@@ -99,13 +98,19 @@ pub enum Error {
     Socket(io::Error),
     /// An error configuring TLS.
     #[fail(display = "failed to set up TLS: {}", _0)]
-    Tls(ssl::Error),
+    Tls(TLSError),
     /// An error opening a file for logging TLS keys.
     #[fail(display = "failed open keylog file: {}", _0)]
     Keylog(io::Error),
     /// A supplied protocol identifier was too long
     #[fail(display = "protocol ID longer than 255 bytes")]
     ProtocolTooLong(Box<[u8]>),
+    /// The DNS name was invalid for use in TLS
+    #[fail(display = "invalid DNS name: {}", _0)]
+    InvalidDnsName(String),
+    /// Errors relating to web PKI infrastructure
+    #[fail(display = "webpki failed: {:?}", _0)]
+    WebPki(webpki::Error),
 }
 
 impl From<quicr::EndpointError> for Error {
@@ -115,7 +120,14 @@ impl From<quicr::EndpointError> for Error {
             Tls(x) => Error::Tls(x),
             Keylog(x) => Error::Keylog(x),
             ProtocolTooLong(x) => Error::ProtocolTooLong(x),
+            InvalidDnsName(x) => Error::InvalidDnsName(x),
         }
+    }
+}
+
+impl From<webpki::Error> for Error {
+    fn from(e: webpki::Error) -> Self {
+        Error::WebPki(e)
     }
 }
 
@@ -225,8 +237,6 @@ pub struct EndpointBuilder<'a> {
     logger: Logger,
     listen: Option<ListenKeys>,
     config: Config,
-    private_key: Option<PKey<Private>>,
-    cert: Option<X509>,
 }
 
 #[allow(missing_docs)]
@@ -256,38 +266,37 @@ impl<'a> EndpointBuilder<'a> {
         self
     }
 
-    pub fn private_key_pem(&mut self, key: &[u8]) -> Result<&mut Self, ssl::Error> {
-        self.private_key = Some(PKey::<Private>::private_key_from_pem(key)?);
-        Ok(self)
+    pub fn enable_keylog(&mut self) -> &mut Self {
+        {
+            let tls_client_config = Arc::get_mut(&mut self.config.tls_client_config).unwrap();
+            tls_client_config.key_log = Arc::new(KeyLogFile::new());
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
+            tls_server_config.key_log = Arc::new(KeyLogFile::new());
+        }
+        self
     }
-    pub fn certificate_pem(&mut self, cert: &[u8]) -> Result<&mut Self, ssl::Error> {
-        self.cert = Some(X509::from_pem(&cert)?);
-        Ok(self)
-    }
-    pub fn private_key_der(&mut self, key: &[u8]) -> Result<&mut Self, ssl::Error> {
-        self.private_key = Some(PKey::<Private>::private_key_from_der(key)?);
-        Ok(self)
-    }
-    pub fn certificate_der(&mut self, cert: &[u8]) -> Result<&mut Self, ssl::Error> {
-        self.cert = Some(X509::from_der(&cert)?);
+
+    pub fn set_certificate(
+        &mut self,
+        cert_chain: Vec<Certificate>,
+        key: PrivateKey,
+    ) -> Result<&mut Self, TLSError> {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
+            tls_server_config.set_single_cert(cert_chain, key)?;
+        }
         Ok(self)
     }
 
-    /// Generate a key pair and self-signed TLS certificate.
-    ///
-    /// Peers will be unable to verify this endpoint's identity. Useful when want to host a server with a minimum of
-    /// set-up and don't need to prevent man-in-the-middle attacks.
-    pub fn generate_insecure_certificate(&mut self) -> Result<&mut Self, ssl::Error> {
-        let key = PKey::from_rsa(Rsa::generate(2048)?)?;
-        let mut cert = X509::builder()?;
-        cert.set_pubkey(&key)?;
-        let now = Asn1Time::days_from_now(0)?;
-        cert.set_not_before(&now)?;
-        let forever = Asn1Time::days_from_now(u32::max_value())?;
-        cert.set_not_after(&forever)?;
-        cert.sign(&key, openssl::hash::MessageDigest::sha256())?;
-        self.cert = Some(cert.build());
-        self.private_key = Some(key);
+    pub fn set_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
+        {
+            let tls_client_config = Arc::get_mut(&mut self.config.tls_client_config).unwrap();
+            let anchor =
+                webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(der))?;
+            tls_client_config
+                .root_store
+                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&vec![anchor]));
+        }
         Ok(self)
     }
 
@@ -295,11 +304,6 @@ impl<'a> EndpointBuilder<'a> {
         self,
         socket: std::net::UdpSocket,
     ) -> Result<(Endpoint, Driver, Incoming), Error> {
-        let cert = self.cert;
-        let cert_config = self
-            .private_key
-            .as_ref()
-            .and_then(|private_key| cert.as_ref().map(|cert| CertConfig { private_key, cert }));
         let reactor = if let Some(x) = self.reactor {
             Cow::Borrowed(x)
         } else {
@@ -310,7 +314,7 @@ impl<'a> EndpointBuilder<'a> {
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket: socket,
-            inner: quicr::Endpoint::new(self.logger, self.config, cert_config, self.listen)?,
+            inner: quicr::Endpoint::new(self.logger, self.config, self.listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -341,8 +345,6 @@ impl Endpoint {
             logger: Logger::root(slog::Discard, o!()),
             listen: None,
             config: Config::default(),
-            cert: None,
-            private_key: None,
         }
     }
 
@@ -352,10 +354,10 @@ impl Endpoint {
     pub fn connect(
         &self,
         addr: &SocketAddr,
-        config: ClientConfig,
+        server_name: &str,
     ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
     {
-        let (fut, conn) = self.connect_inner(addr, config)?;
+        let (fut, conn) = self.connect_inner(addr, server_name)?;
         Ok(fut.map_err(|_| unreachable!()).and_then(move |err| {
             if let Some(err) = err {
                 Err(err)
@@ -365,6 +367,7 @@ impl Endpoint {
         }))
     }
 
+    /*
     /// Connect to a remote endpoint, with support for transmitting data before the connection is established
     ///
     /// Returns a connection that may be used for sending immediately, and a future that will complete when the
@@ -401,11 +404,12 @@ impl Endpoint {
                 .and_then(move |err| err.map_or(Ok(()), Err)),
         ))
     }
+    */
 
     fn connect_inner(
         &self,
         addr: &SocketAddr,
-        config: ClientConfig,
+        server_name: &str,
     ) -> Result<
         (
             impl Future<Item = Option<ConnectionError>, Error = futures::Canceled>,
@@ -416,7 +420,7 @@ impl Endpoint {
         let (send, recv) = oneshot::channel();
         let handle = {
             let mut endpoint = self.0.borrow_mut();
-            let handle = endpoint.inner.connect(normalize(*addr), config)?;
+            let handle = endpoint.inner.connect(normalize(*addr), server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
             handle
         };
@@ -829,8 +833,7 @@ impl Connection {
             .0
             .borrow()
             .inner
-            .get_remote_address(self.0.conn))
-            .into()
+            .get_remote_address(self.0.conn)).into()
     }
 
     /// The `ConnectionId` used for `conn` locally.

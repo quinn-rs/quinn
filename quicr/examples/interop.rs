@@ -10,7 +10,6 @@ extern crate slog_term;
 extern crate structopt;
 
 use std::net::ToSocketAddrs;
-use std::path::PathBuf;
 
 use futures::{Future, Stream};
 use structopt::StructOpt;
@@ -29,9 +28,9 @@ struct Opt {
     port: u16,
     retry_port: Option<u16>,
 
-    /// file to log TLS keys to for debugging
-    #[structopt(parse(from_os_str), long = "keylog")]
-    keylog: Option<PathBuf>,
+    /// Enable key logging
+    #[structopt(long = "keylog")]
+    keylog: bool,
 }
 
 fn main() {
@@ -60,14 +59,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let config = quicr::Config {
-        protocols: vec![b"hq-11"[..].into()],
-        keylog: options.keylog,
-        ..quicr::Config::default()
-    };
-
     let mut builder = quicr::Endpoint::new();
-    builder.logger(log.clone()).config(config);
+    builder.logger(log.clone());
+    if options.keylog {
+        builder.enable_keylog();
+    }
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -77,14 +73,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut ticket = None;
     let result = runtime.block_on(
         endpoint
-            .connect(
-                &remote,
-                quicr::ClientConfig {
-                    server_name: Some(&options.host),
-                    accept_insecure_certs: true,
-                    ..quicr::ClientConfig::default()
-                },
-            )?
+            .connect(&remote, &options.host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
                 println!("connected");
@@ -99,11 +88,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         println!("read {} bytes, closing", data.len());
                         stream_data = true;
                         conn.close(0, b"done").map_err(|_| unreachable!())
-                    })
-                    .map(|()| {
+                    }).map(|()| {
                         close = true;
-                    })
-                    .and_then(|()| {
+                    }).and_then(|()| {
                         tickets
                             .into_future()
                             .map_err(|(e, _)| e.into())
@@ -126,39 +113,24 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .to_socket_addrs()?
             .next()
             .ok_or(format_err!("couldn't resolve to an address"))?;
-        let result = runtime.block_on(
-            endpoint
-                .connect(
-                    &remote,
-                    quicr::ClientConfig {
-                        server_name: Some(&options.host),
-                        accept_insecure_certs: true,
-                        ..quicr::ClientConfig::default()
-                    },
-                )?
-                .and_then(|conn| {
-                    retry = true;
-                    conn.connection
-                        .close(0, b"done")
-                        .map_err(|_| unreachable!())
-                }),
-        );
+        let result = runtime.block_on(endpoint.connect(&remote, &options.host)?.and_then(|conn| {
+            retry = true;
+            conn.connection
+                .close(0, b"done")
+                .map_err(|_| unreachable!())
+        }));
         if let Err(e) = result {
             println!("failure: {}", e);
         }
     }
 
-    let mut resumption = false;
+    let resumption = false;
+    /*
     if let Some(ticket) = ticket {
         println!("attempting 0-RTT");
         let (conn, established) = endpoint.connect_zero_rtt(
             &remote,
-            quicr::ClientConfig {
-                server_name: Some(&options.host),
-                accept_insecure_certs: true,
-                session_ticket: Some(&ticket),
-                ..quicr::ClientConfig::default()
-            },
+            &options.host,
         )?;
         let conn = conn.connection;
         let request = conn
@@ -179,6 +151,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             println!("failure: {}", e);
         }
     }
+    */
 
     if handshake {
         print!("VH");
@@ -206,10 +179,8 @@ fn get(stream: quicr::Stream) -> impl Future<Item = Box<[u8]>, Error = Error> {
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(stream, _)| {
             tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e))
-        })
-        .and_then(move |stream| {
+        }).and_then(move |stream| {
             quicr::read_to_end(stream, usize::max_value())
                 .map_err(|e| format_err!("failed to read response: {}", e))
-        })
-        .map(|(_, data)| data)
+        }).map(|(_, data)| data)
 }

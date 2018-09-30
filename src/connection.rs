@@ -2,20 +2,17 @@ use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
 use std::{cmp, io, mem};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use openssl::ssl::{self, HandshakeError, MidHandshakeSslStream, SslStream};
 use rand::distributions::Sample;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{
-    self, ClientConfig, ConnectError, ConnectionInfo, Crypto, ACK_DELAY_EXPONENT,
-    TRANSPORT_PARAMS_INDEX,
-};
+use crypto::{ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
-use memory_stream::MemoryStream;
-use packet::{set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE};
+use packet::{
+    set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
+};
 use range_set::RangeSet;
 use stream::{self, Stream};
 use transport_parameters::TransportParameters;
@@ -46,7 +43,7 @@ pub struct Connection {
     pub rx_packet_time: u64,
     pub crypto: Option<Crypto>,
     pub prev_crypto: Option<(u64, Crypto)>,
-    pub zero_rtt_crypto: Option<Crypto>,
+    //pub zero_rtt_crypto: Option<Crypto>,
     pub key_phase: bool,
     pub params: TransportParameters,
     /// Streams with data buffered for reading by the application
@@ -60,6 +57,8 @@ pub struct Connection {
     pub data_recvd: u64,
     /// Limit on incoming data
     pub local_max_data: u64,
+    /// Server name (for client-side)
+    pub server_name: Option<String>,
 
     //
     // Loss Detection
@@ -311,15 +310,16 @@ impl Connection {
             rx_packet_time: 0,
             crypto: None,
             prev_crypto: None,
-            zero_rtt_crypto: None,
+            //zero_rtt_crypto: None,
             key_phase: false,
-            params: TransportParameters::default(),
+            params: TransportParameters::new(config),
             readable_streams: FnvHashSet::default(),
             blocked_streams: FnvHashSet::default(),
             max_data: 0,
             data_sent: 0,
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
+            server_name: None,
 
             handshake_count: 0,
             tlp_count: 0,
@@ -373,21 +373,16 @@ impl Connection {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, ctx: &Context, config: ClientConfig) -> Result<(), ConnectError> {
-        let (mut tls, params, zero_rtt_crypto) = crypto::new_client(
-            ctx,
-            config,
-            ConnectionInfo {
-                id: self.local_id.clone(),
-                remote: self.remote,
-            },
-        )?;
-        if let Some(params) = params {
-            self.set_params(params);
-        }
-        self.zero_rtt_crypto = zero_rtt_crypto;
-
-        self.transmit_handshake(&tls.get_mut().take_outgoing());
+    pub fn connect(&mut self, ctx: &Context, server_name: &str) -> Result<(), ConnectError> {
+        let mut tls = TlsSession::new_client(
+            &ctx.config.tls_client_config,
+            server_name,
+            &TransportParameters::new(&ctx.config),
+        ).unwrap();
+        self.server_name = Some(server_name.into());
+        let mut outgoing = Vec::new();
+        tls.write_tls(&mut outgoing).unwrap();
+        self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
             tls,
             clienthello_packet: None,
@@ -399,16 +394,18 @@ impl Connection {
     pub fn handshake_complete(
         &mut self,
         ctx: &mut Context,
-        mut tls: MidHandshakeSslStream<MemoryStream>,
+        mut tls: TlsSession,
         params: TransportParameters,
-        zero_rtt_crypto: Option<Crypto>,
+        //zero_rtt_crypto: Option<Crypto>,
         now: u64,
         packet_number: u64,
         conn: ConnectionHandle,
     ) {
-        self.zero_rtt_crypto = zero_rtt_crypto;
+        //self.zero_rtt_crypto = zero_rtt_crypto;
         self.on_packet_authenticated(ctx, now, packet_number);
-        self.transmit_handshake(&tls.get_mut().take_outgoing());
+        let mut outgoing = Vec::new();
+        tls.write_tls(&mut outgoing).unwrap();
+        self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
             tls,
             clienthello_packet: None,
@@ -821,24 +818,10 @@ impl Connection {
         &mut self,
         ctx: &mut Context,
         conn: ConnectionHandle,
-        tls: &mut SslStream<MemoryStream>,
+        tls: &mut TlsSession,
     ) -> Result<(), TransportError> {
-        if tls.get_ref().read_blocked() {
-            return Ok(());
-        }
-        let prev_offset = tls.get_ref().read_offset();
-        let status = tls.ssl_read(&mut [0; 1]);
-        let progress = tls.get_ref().read_offset() - prev_offset;
-        trace!(ctx.log, "stream 0 read {bytes} bytes", bytes = progress);
-        self.streams
-            .get_mut(&StreamId(0))
-            .unwrap()
-            .recv_mut()
-            .unwrap()
-            .max_data += progress;
-        self.pending.max_stream_data.insert(StreamId(0));
-
-        // Process any new session tickets that might have been delivered
+        trace!(ctx.log, "processed stream 0 bytes");
+        /* Process any new session tickets that might have been delivered
         {
             let mut buffer = ctx.session_ticket_buffer.lock().unwrap();
             for session in buffer.drain(..) {
@@ -877,21 +860,12 @@ impl Connection {
                 }
             }
         }
+        */
 
-        match status {
-            Err(ref e) if e.code() == ssl::ErrorCode::WANT_READ => Ok(()),
-            Ok(_) => {
-                debug!(ctx.log, "got TLS application data");
-                ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                    },
-                ));
-                Err(TransportError::PROTOCOL_VIOLATION)
-            }
-            Err(ref e) if e.code() == ssl::ErrorCode::SSL => {
-                debug!(ctx.log, "TLS error"; "error" => %e);
+        match tls.process_new_packets() {
+            Ok(()) => Ok(()),
+            Err(e @ TLSError::AlertReceived(_)) => {
+                debug!(ctx.log, "TLS error {}", e);
                 ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
@@ -900,8 +874,8 @@ impl Connection {
                 ));
                 Err(TransportError::TLS_FATAL_ALERT_RECEIVED)
             }
-            Err(ref e) if e.code() == ssl::ErrorCode::ZERO_RETURN => {
-                debug!(ctx.log, "TLS session terminated unexpectedly");
+            Err(e) => {
+                debug!(ctx.log, "TLS error {}", e);
                 ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
@@ -910,17 +884,49 @@ impl Connection {
                 ));
                 Err(TransportError::PROTOCOL_VIOLATION)
             }
-            Err(e) => {
-                error!(ctx.log, "unexpected TLS error"; "error" => %e);
-                ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: TransportError::INTERNAL_ERROR.into(),
-                    },
-                ));
-                Err(TransportError::INTERNAL_ERROR)
-            }
         }
+    }
+
+    pub fn handle_initial(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        packet_number: u64,
+        payload: Bytes,
+        conn: ConnectionHandle,
+    ) -> Result<(), TLSError> {
+        let frame = if let Ok(Some(frame)) = parse_initial(&ctx.log, payload) {
+            frame
+        } else {
+            return Ok(());
+        }; // TODO: Send close?
+
+        trace!(ctx.log, "got initial");
+        let mut tls = TlsSession::new_server(
+            &ctx.config.tls_server_config,
+            &TransportParameters::new(&ctx.config),
+        );
+        self.read_tls(&mut tls, &frame);
+        tls.process_new_packets()?;
+        let params = TransportParameters::read(
+            Side::Server,
+            &mut io::Cursor::new(tls.get_quic_transport_parameters().unwrap()),
+        ).unwrap();
+        self.handshake_complete(ctx, tls, params, now, packet_number, conn);
+        Ok(())
+    }
+
+    fn read_tls(&mut self, tls: &mut TlsSession, frame: &frame::Stream) {
+        let rs = self
+            .get_recv_stream(StreamId(0))
+            .unwrap()
+            .unwrap()
+            .recv_mut()
+            .unwrap();
+        let mut buf = [0; 8192];
+        rs.assembler.insert(frame.offset, &frame.data);
+        let num = rs.assembler.read(&mut buf);
+        tls.read_tls(&mut io::Cursor::new(&buf[..num])).unwrap();
     }
 
     pub fn handle_connected_inner(
@@ -956,29 +962,17 @@ impl Connection {
                         } else if state.clienthello_packet.unwrap() > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                             State::Handshake(state)
-                        } else if state.tls.get_ref().read_offset() != 0 {
-                            // This condition works because Handshake packets are the only ones that we allow to make lasting changes to the read_offset
-                            debug!(ctx.log, "received retry after a handshake packet");
-                            ctx.events.push_back((
-                                conn,
-                                Event::ConnectionLost {
-                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                },
-                            ));
-                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
                         } else if self
                             .decrypt(
                                 true,
                                 number as u64,
                                 &packet.header_data,
                                 &mut packet.payload,
-                            )
-                            .is_ok()
+                            ).is_ok()
                         {
-                            if let Ok(Some(data)) = parse_initial(&ctx.log, packet.payload.into()) {
-                                let mut new_stream = MemoryStream::new();
-                                new_stream.insert(0, &data);
-                                *state.tls.get_mut() = new_stream;
+                            if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
+                            {
+                                self.read_tls(&mut state.tls, &frame);
                             } else {
                                 debug!(ctx.log, "invalid retry payload");
                                 ctx.events.push_back((
@@ -992,8 +986,8 @@ impl Connection {
                                     None,
                                 );
                             }
-                            match state.tls.handshake() {
-                                Err(HandshakeError::WouldBlock(mut tls)) => {
+                            match state.tls.process_new_packets() {
+                                Ok(()) => {
                                     self.on_packet_authenticated(ctx, now, number as u64);
                                     trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
                                     let local_id = self.local_id.clone();
@@ -1009,33 +1003,23 @@ impl Connection {
                                     );
                                     mem::replace(self, new);
                                     // Send updated ClientHello
-                                    self.transmit_handshake(&tls.get_mut().take_outgoing());
+                                    let mut outgoing = Vec::new();
+                                    let mut tls = TlsSession::new_client(
+                                        &ctx.config.tls_client_config,
+                                        self.server_name.as_ref().unwrap(),
+                                        &TransportParameters::new(&ctx.config),
+                                    ).unwrap();
+                                    state.tls.write_tls(&mut outgoing).unwrap();
+                                    self.transmit_handshake(&outgoing);
                                     // Prepare to receive Handshake packets that start stream 0 from offset 0
-                                    tls.get_mut().reset_read();
                                     State::Handshake(state::Handshake {
                                         tls,
                                         clienthello_packet: state.clienthello_packet,
                                         remote_id_set: state.remote_id_set,
                                     })
                                 }
-                                Ok(_) => {
-                                    debug!(
-                                        ctx.log,
-                                        "unexpectedly completed handshake in RETRY packet"
-                                    );
-                                    ctx.events.push_back((
-                                        conn,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                        },
-                                    ));
-                                    State::handshake_failed(
-                                        TransportError::PROTOCOL_VIOLATION,
-                                        None,
-                                    )
-                                }
-                                Err(HandshakeError::Failure(mut tls)) => {
-                                    debug!(ctx.log, "handshake failed"; "reason" => %tls.error());
+                                Err(e) => {
+                                    debug!(ctx.log, "handshake failed"; "reason" => %e);
                                     ctx.events.push_back((
                                         conn,
                                         Event::ConnectionLost {
@@ -1044,18 +1028,8 @@ impl Connection {
                                     ));
                                     State::handshake_failed(
                                         TransportError::TLS_HANDSHAKE_FAILED,
-                                        Some(tls.get_mut().take_outgoing().to_owned().into()),
+                                        None,
                                     )
-                                }
-                                Err(HandshakeError::SetupFailure(e)) => {
-                                    error!(ctx.log, "handshake setup failed"; "reason" => %e);
-                                    ctx.events.push_back((
-                                        conn,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::INTERNAL_ERROR.into(),
-                                        },
-                                    ));
-                                    State::handshake_failed(TransportError::INTERNAL_ERROR, None)
                                 }
                             }
                         } else {
@@ -1081,8 +1055,7 @@ impl Connection {
                                 number as u64,
                                 &packet.header_data,
                                 &mut packet.payload,
-                            )
-                            .is_err()
+                            ).is_err()
                         {
                             debug!(ctx.log, "failed to authenticate handshake packet");
                             return State::Handshake(state);
@@ -1098,14 +1071,11 @@ impl Connection {
                             }
                             match frame {
                                 Frame::Padding => {}
-                                Frame::Stream(frame::Stream {
-                                    id: StreamId(0),
-                                    offset,
-                                    data,
-                                    ..
-                                }) => {
-                                    state.tls.get_mut().insert(offset, &data);
-                                }
+                                Frame::Stream(
+                                    frame @ frame::Stream {
+                                        id: StreamId(0), ..
+                                    },
+                                ) => self.read_tls(&mut state.tls, &frame),
                                 Frame::Stream(frame::Stream { .. }) => {
                                     debug!(ctx.log, "non-stream-0 stream frame in handshake");
                                     ctx.events.push_back((
@@ -1158,33 +1128,29 @@ impl Connection {
                                 }
                             }
                         }
-                        if state.tls.get_ref().read_blocked() {
-                            return State::Handshake(state);
-                        }
-                        let prev_offset = state.tls.get_ref().read_offset();
-                        match state.tls.handshake() {
-                            Ok(mut tls) => {
-                                if self.side == Side::Client {
-                                    if let Some(params) =
-                                        tls.ssl().ex_data(*TRANSPORT_PARAMS_INDEX).cloned()
-                                    {
-                                        self.set_params(params.expect(
-                                            "transport param errors should fail the handshake",
-                                        ));
-                                    } else {
-                                        debug!(ctx.log, "server didn't send transport params");
-                                        ctx.events.push_back((
-                                            conn,
-                                            Event::ConnectionLost {
-                                                reason: TransportError::TRANSPORT_PARAMETER_ERROR
-                                                    .into(),
-                                            },
-                                        ));
-                                        return State::handshake_failed(
-                                            TransportError::TLS_HANDSHAKE_FAILED,
-                                            Some(tls.get_mut().take_outgoing().to_owned().into()),
-                                        );
-                                    }
+
+                        match state.tls.process_new_packets() {
+                            Ok(()) if !state.tls.is_handshaking() => {
+                                trace!(ctx.log, "no longer handshaking");
+                                if let Some(params) = state.tls.get_quic_transport_parameters() {
+                                    let params = TransportParameters::read(
+                                        self.side,
+                                        &mut io::Cursor::new(params),
+                                    ).unwrap();
+                                    self.set_params(params);
+                                } else {
+                                    debug!(ctx.log, "remote didn't send transport params");
+                                    ctx.events.push_back((
+                                        conn,
+                                        Event::ConnectionLost {
+                                            reason: TransportError::TRANSPORT_PARAMETER_ERROR
+                                                .into(),
+                                        },
+                                    ));
+                                    return State::handshake_failed(
+                                        TransportError::TLS_HANDSHAKE_FAILED,
+                                        None,
+                                    );
                                 }
                                 trace!(
                                     ctx.log,
@@ -1192,22 +1158,21 @@ impl Connection {
                                     connection = id.clone()
                                 );
                                 self.handshake_cleanup(&ctx.config);
+                                let mut msgs = Vec::new();
+                                state.tls.write_tls(&mut msgs).unwrap();
                                 if self.side == Side::Client {
-                                    self.transmit_handshake(&tls.get_mut().take_outgoing());
+                                    self.transmit_handshake(&msgs);
                                 } else {
-                                    self.transmit(
-                                        StreamId(0),
-                                        tls.get_mut().take_outgoing()[..].into(),
-                                    );
+                                    self.transmit(StreamId(0), msgs.into());
                                 }
                                 match self.side {
                                     Side::Client => {
                                         ctx.events.push_back((
                                             conn,
                                             Event::Connected {
-                                                protocol: tls
-                                                    .ssl()
-                                                    .selected_alpn_protocol()
+                                                protocol: state
+                                                    .tls
+                                                    .get_alpn_protocol()
                                                     .map(|x| x.into()),
                                             },
                                         ));
@@ -1217,80 +1182,44 @@ impl Connection {
                                         ctx.incoming.push_back(conn);
                                     }
                                 }
-                                self.crypto = Some(Crypto::new_1rtt(tls.ssl(), self.side));
-                                self.streams
-                                    .get_mut(&StreamId(0))
-                                    .unwrap()
-                                    .recv_mut()
-                                    .unwrap()
-                                    .max_data += tls.get_ref().read_offset() - prev_offset;
-                                self.pending.max_stream_data.insert(StreamId(0));
-                                State::Established(state::Established { tls })
+                                self.crypto = Some(Crypto::new_1rtt(&state.tls, self.side));
+                                State::Established(state::Established { tls: state.tls })
                             }
-                            Err(HandshakeError::WouldBlock(mut tls)) => {
+                            Ok(()) => {
                                 trace!(ctx.log, "handshake ongoing"; "connection" => %id);
                                 self.handshake_cleanup(&ctx.config);
-                                self.streams
-                                    .get_mut(&StreamId(0))
-                                    .unwrap()
-                                    .recv_mut()
-                                    .unwrap()
-                                    .max_data += tls.get_ref().read_offset() - prev_offset;
-                                {
-                                    let response = tls.get_mut().take_outgoing();
-                                    if !response.is_empty() {
-                                        self.transmit_handshake(&response);
-                                    }
+                                let mut response = Vec::new();
+                                state.tls.write_tls(&mut response).unwrap();
+                                if !response.is_empty() {
+                                    self.transmit_handshake(&response);
                                 }
                                 State::Handshake(state::Handshake {
-                                    tls,
+                                    tls: state.tls,
                                     clienthello_packet: state.clienthello_packet,
                                     remote_id_set: state.remote_id_set,
                                 })
                             }
-                            Err(HandshakeError::Failure(mut tls)) => {
-                                let code = if let Some(params_err) = tls
-                                    .ssl()
-                                    .ex_data(*TRANSPORT_PARAMS_INDEX)
-                                    .and_then(|x| x.err())
-                                {
-                                    debug!(ctx.log, "received invalid transport parameters"; "connection" => %id, "reason" => %params_err);
-                                    TransportError::TRANSPORT_PARAMETER_ERROR
-                                } else {
-                                    debug!(ctx.log, "handshake failed"; "reason" => %tls.error());
-                                    TransportError::TLS_HANDSHAKE_FAILED
-                                };
+                            Err(e) => {
+                                debug!(ctx.log, "handshake failed"; "reason" => %e);
                                 ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
-                                        reason: code.into(),
+                                        reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
                                     },
                                 ));
-                                State::handshake_failed(
-                                    code,
-                                    Some(tls.get_mut().take_outgoing().to_owned().into()),
-                                )
-                            }
-                            Err(HandshakeError::SetupFailure(e)) => {
-                                error!(ctx.log, "handshake failed"; "connection" => %id, "reason" => %e);
-                                ctx.events.push_back((
-                                    conn,
-                                    Event::ConnectionLost {
-                                        reason: TransportError::INTERNAL_ERROR.into(),
-                                    },
-                                ));
-                                State::handshake_failed(TransportError::INTERNAL_ERROR, None)
+                                State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, None)
                             }
                         }
                     }
                     Header::Long {
                         ty: types::INITIAL, ..
-                    } if self.side == Side::Server =>
+                    }
+                        if self.side == Side::Server =>
                     {
                         trace!(ctx.log, "dropping duplicate Initial");
                         State::Handshake(state)
                     }
-                    Header::Long {
+                    /*Header::Long {
                         ty: types::ZERO_RTT,
                         number,
                         destination_id: ref id,
@@ -1334,7 +1263,7 @@ impl Connection {
                             Ok(true) => State::Draining(state.into()),
                             Ok(false) => State::Handshake(state),
                         }
-                    }
+                    }*/
                     Header::Long { ty, .. } => {
                         debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
                         ctx.events.push_back((
@@ -1415,18 +1344,13 @@ impl Connection {
                     self.handshake_cleanup(&ctx.config);
                 }
                 match self
-                    .process_payload(ctx, now, conn, number, payload.into(), state.tls.get_mut())
+                    .process_payload(ctx, now, conn, number, payload.into(), &mut state.tls)
                     .and_then(|x| {
                         self.drive_tls(ctx, conn, &mut state.tls)?;
                         Ok(x)
                     }) {
                     Err(e) => State::closed(e),
-                    Ok(true) => {
-                        // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable
-                        // session is not erased from the anti-replay cache as it otherwise might be.
-                        state.tls.shutdown().unwrap();
-                        State::Draining(state.into())
-                    }
+                    Ok(true) => State::Draining(state.into()),
                     Ok(false) => State::Established(state),
                 }
             }
@@ -1470,7 +1394,7 @@ impl Connection {
         conn: ConnectionHandle,
         number: u64,
         payload: Bytes,
-        tls: &mut MemoryStream,
+        tls: &mut TlsSession,
     ) -> Result<bool, state::CloseReason> {
         let cid = self.local_id.clone();
         for frame in frame::Iter::new(payload) {
@@ -1491,76 +1415,89 @@ impl Connection {
                     trace!(ctx.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.data_recvd;
                     let max_data = self.local_max_data;
-                    let new_bytes = match self.get_recv_stream(frame.id) {
-                        Err(e) => {
-                            debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
-                            ctx.events
-                                .push_back((conn, Event::ConnectionLost { reason: e.into() }));
-                            return Err(e.into());
-                        }
-                        Ok(None) => {
-                            trace!(ctx.log, "dropping frame for closed stream");
-                            continue;
-                        }
-                        Ok(Some(stream)) => {
-                            let end = frame.offset + frame.data.len() as u64;
-                            let rs = stream.recv_mut().unwrap();
-                            if let Some(final_offset) = rs.final_offset() {
-                                if end > final_offset || (frame.fin && end != final_offset) {
-                                    debug!(ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                                    ctx.events.push_back((
-                                        conn,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::FINAL_OFFSET_ERROR.into(),
-                                        },
-                                    ));
-                                    return Err(TransportError::FINAL_OFFSET_ERROR.into());
-                                }
+                    let stream = {
+                        match self.get_recv_stream(frame.id) {
+                            Err(e) => {
+                                debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
+                                ctx.events
+                                    .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                                return Err(e.into());
                             }
-                            let prev_end = rs.limit();
-                            let new_bytes = end.saturating_sub(prev_end);
-                            if end > rs.max_data || data_recvd + new_bytes > max_data {
-                                debug!(ctx.log, "flow control error";
-                                       "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
-                                       "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
+                            Ok(None) => {
+                                trace!(ctx.log, "dropping frame for closed stream");
+                                continue;
+                            }
+                            _ => {}
+                        }
+                        self.streams.get_mut(&frame.id).unwrap()
+                    };
+
+                    let new_bytes = {
+                        let end = frame.offset + frame.data.len() as u64;
+                        let rs = stream.recv_mut().unwrap();
+                        if let Some(final_offset) = rs.final_offset() {
+                            if end > final_offset || (frame.fin && end != final_offset) {
+                                debug!(ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
                                 ctx.events.push_back((
                                     conn,
                                     Event::ConnectionLost {
-                                        reason: TransportError::FLOW_CONTROL_ERROR.into(),
+                                        reason: TransportError::FINAL_OFFSET_ERROR.into(),
                                     },
                                 ));
-                                return Err(TransportError::FLOW_CONTROL_ERROR.into());
+                                return Err(TransportError::FINAL_OFFSET_ERROR.into());
                             }
-                            if frame.fin {
-                                if let stream::RecvState::Recv { ref mut size } = rs.state {
-                                    *size = Some(end);
-                                }
-                            }
-                            rs.recvd.insert(frame.offset..end);
-                            if frame.id == StreamId(0) {
-                                if frame.fin {
-                                    debug!(ctx.log, "got fin on stream 0"; "connection" => cid);
-                                    ctx.events.push_back((
-                                        conn,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                        },
-                                    ));
-                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
-                                }
-                                tls.insert(frame.offset, &frame.data);
-                            } else {
-                                rs.buffer(frame.data, frame.offset);
-                            }
-                            if let stream::RecvState::Recv { size: Some(size) } = rs.state {
-                                if rs.recvd.len() == 1
-                                    && rs.recvd.iter().next().unwrap() == (0..size)
-                                {
-                                    rs.state = stream::RecvState::DataRecvd { size };
-                                }
-                            }
-                            new_bytes
                         }
+                        let prev_end = rs.limit();
+                        let new_bytes = end.saturating_sub(prev_end);
+                        if end > rs.max_data || data_recvd + new_bytes > max_data {
+                            debug!(ctx.log, "flow control error";
+                                   "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
+                                   "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
+                            ctx.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::FLOW_CONTROL_ERROR.into(),
+                                },
+                            ));
+                            return Err(TransportError::FLOW_CONTROL_ERROR.into());
+                        }
+                        if frame.fin {
+                            if let stream::RecvState::Recv { ref mut size } = rs.state {
+                                *size = Some(end);
+                            }
+                        }
+                        rs.recvd.insert(frame.offset..end);
+                        if frame.id == StreamId(0) && frame.fin {
+                            debug!(ctx.log, "got fin on stream 0"; "connection" => cid);
+                            ctx.events.push_back((
+                                conn,
+                                Event::ConnectionLost {
+                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
+                                },
+                            ));
+                            return Err(TransportError::PROTOCOL_VIOLATION.into());
+                        }
+                        rs.buffer(frame.data, frame.offset);
+                        if let stream::RecvState::Recv { size: Some(size) } = rs.state {
+                            if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
+                                rs.state = stream::RecvState::DataRecvd { size };
+                            }
+                        }
+
+                        if frame.id == StreamId(0) {
+                            let mut buf = vec![0; 8192];
+                            loop {
+                                let new_bytes = rs.assembler.read(&mut buf);
+                                tls.read_tls(&mut io::Cursor::new(&buf[..new_bytes]))
+                                    .unwrap();
+                                rs.max_data += new_bytes as u64;
+                                self.pending.max_stream_data.insert(StreamId(0));
+                                if new_bytes < 8192 {
+                                    break;
+                                }
+                            }
+                        }
+                        new_bytes
                     };
                     if frame.id != StreamId(0) {
                         self.readable_streams.insert(frame.id);
@@ -1806,12 +1743,11 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
-                let ty = if self.side == Side::Client
-                    && self
-                        .handshake_pending
-                        .stream
-                        .front()
-                        .map_or(false, |x| x.offset == 0)
+                let ty = if self.side == Side::Client && self
+                    .handshake_pending
+                    .stream
+                    .front()
+                    .map_or(false, |x| x.offset == 0)
                 {
                     if let State::Handshake(ref mut state) = self.state.as_mut().unwrap() {
                         if state.clienthello_packet.is_none() {
@@ -1832,7 +1768,8 @@ impl Connection {
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
                 crypto = &self.handshake_crypto;
-            } else if established || (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
+            } else if established {
+                //|| (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
                 // Send 0RTT or 1RTT data
                 is_initial = false;
                 if self.congestion_blocked()
@@ -1845,7 +1782,7 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 trace!(log, "sending protected packet"; "pn" => number);
 
-                if !established {
+                /*if !established {
                     crypto = self.zero_rtt_crypto.as_ref().unwrap();
                     Header::Long {
                         ty: types::ZERO_RTT,
@@ -1853,14 +1790,14 @@ impl Connection {
                         source_id: self.local_id.clone(),
                         destination_id: self.initial_id.clone(),
                     }.encode(&mut buf);
-                } else {
-                    crypto = self.crypto.as_ref().unwrap();
-                    Header::Short {
-                        id: self.remote_id.clone(),
-                        number: PacketNumber::new(number, self.largest_acked_packet),
-                        key_phase: self.key_phase,
-                    }.encode(&mut buf);
-                }
+                } else {*/
+                crypto = self.crypto.as_ref().unwrap();
+                Header::Short {
+                    id: self.remote_id.clone(),
+                    number: PacketNumber::new(number, self.largest_acked_packet),
+                    key_phase: self.key_phase,
+                }.encode(&mut buf);
+                //}
 
                 pending = &mut self.pending;
             } else {
@@ -1882,7 +1819,8 @@ impl Connection {
             // We will never ack protected packets in handshake packets because handshake_cleanup ensures we never send
             // handshake packets after receiving protected packets.
             // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-            if !self.pending_acks.is_empty() && !crypto.is_0rtt() {
+            if !self.pending_acks.is_empty() {
+                //&& !crypto.is_0rtt() {
                 let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
                 frame::Ack::encode(delay, &self.pending_acks, &mut buf);
@@ -2009,11 +1947,10 @@ impl Connection {
                 } else {
                     break;
                 };
-                if stream.id != StreamId(0)
-                    && self
-                        .streams
-                        .get(&stream.id)
-                        .map_or(true, |s| s.send().unwrap().state.was_reset())
+                if stream.id != StreamId(0) && self
+                    .streams
+                    .get(&stream.id)
+                    .map_or(true, |s| s.send().unwrap().state.was_reset())
                 {
                     continue;
                 }
@@ -2135,12 +2072,6 @@ impl Connection {
         error_code: u16,
         reason: Bytes,
     ) {
-        if let State::Established(ref mut state) = *self.state.as_mut().unwrap() {
-            // Inform OpenSSL that the connection is being closed gracefully. This ensures that a resumable session is
-            // not erased from the anti-replay cache as it otherwise might be.
-            state.tls.shutdown().unwrap();
-        }
-
         let was_closed = self.state.as_ref().unwrap().is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
@@ -2385,7 +2316,8 @@ impl Connection {
         let (key_phase, number) = match packet.header {
             Header::Short {
                 key_phase, number, ..
-            } if !handshake =>
+            }
+                if !handshake =>
             {
                 (key_phase, number)
             }
@@ -2490,24 +2422,24 @@ impl Connection {
 }
 
 /// Extract stream 0 data from an Initial or Retry packet payload
-pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<Bytes>, ()> {
+pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Stream>, ()> {
     let mut result = None;
     for frame in frame::Iter::new(payload) {
         match frame {
             Frame::Padding => {}
             Frame::Ack(_) => {}
-            Frame::Stream(frame::Stream {
-                id: StreamId(0),
-                fin: false,
-                offset,
-                data,
-                ..
-            }) => {
-                if offset != 0 {
-                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => offset);
+            Frame::Stream(
+                frame @ frame::Stream {
+                    id: StreamId(0),
+                    fin: false,
+                    ..
+                },
+            ) => {
+                if frame.offset != 0 {
+                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => frame.offset);
                     return Err(());
                 }
-                result = Some(data);
+                result = Some(frame);
             }
             x => {
                 debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
@@ -2653,7 +2585,7 @@ pub mod state {
     use super::*;
 
     pub struct Handshake {
-        pub tls: MidHandshakeSslStream<MemoryStream>,
+        pub tls: TlsSession,
         /// The number of the packet that first contained the latest version of the TLS ClientHello. Present iff we're
         /// the client.
         pub clienthello_packet: Option<u32>,
@@ -2661,7 +2593,7 @@ pub mod state {
     }
 
     pub struct Established {
-        pub tls: SslStream<MemoryStream>,
+        pub tls: TlsSession,
     }
 
     pub struct HandshakeFailed {

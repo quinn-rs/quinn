@@ -1,6 +1,5 @@
 extern crate byteorder;
 extern crate bytes;
-extern crate openssl;
 extern crate rand;
 extern crate slab;
 #[macro_use]
@@ -8,8 +7,6 @@ extern crate failure;
 extern crate blake2;
 extern crate constant_time_eq;
 extern crate digest;
-#[macro_use]
-extern crate lazy_static;
 #[macro_use]
 extern crate slog;
 #[cfg(test)]
@@ -20,12 +17,19 @@ extern crate assert_matches;
 extern crate hex_literal;
 extern crate arrayvec;
 extern crate fnv;
+extern crate ring;
+extern crate rustls;
+#[cfg(test)]
+extern crate untrusted;
+extern crate webpki;
+extern crate webpki_roots;
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
 
 use std::fmt;
 
 mod coding;
-mod hkdf;
-mod memory_stream;
 mod range_set;
 mod stream;
 #[cfg(test)]
@@ -37,7 +41,7 @@ mod connection;
 pub use connection::{ConnectionError, ConnectionHandle, ReadError, WriteError};
 
 mod crypto;
-pub use crypto::{CertConfig, ClientConfig, ConnectError};
+pub use crypto::{ClientConfig, ConnectError};
 
 mod frame;
 use frame::Frame;

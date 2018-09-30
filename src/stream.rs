@@ -208,10 +208,6 @@ impl Assembler {
         self.written.front().map_or(true, |x| x & mask == mask)
     }
 
-    pub fn offset(&self) -> u64 {
-        self.offset
-    }
-
     /// Leading written bytes
     fn prefix_len(&self) -> usize {
         for i in 0..self.written.len() {

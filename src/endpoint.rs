@@ -1,14 +1,10 @@
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::{cmp, io, mem, str};
+use std::{cmp, io, mem};
 
 use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use openssl;
-use openssl::ssl::{self, SslContext};
-use openssl::x509::X509StoreContextRef;
 use rand::distributions::Sample;
 use rand::{distributions, OsRng, Rng};
 use slab::Slab;
@@ -16,16 +12,13 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    parse_initial, state, Connection, ConnectionError, ConnectionHandle, ReadError, State,
-    WriteError,
+    state, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
 };
-use crypto::{
-    self, new_tls_ctx, reset_token_for, CertConfig, ClientConfig, ConnectError, ConnectionInfo,
-    Crypto, SessionTicketBuffer, TlsAccepted,
+use crypto::{self, reset_token_for, ClientConfig, ConnectError, Crypto, ServerConfig};
+use packet::{
+    set_payload_length, types, ConnectionId, Header, HeaderError, Packet, PacketNumber,
+    AEAD_TAG_SIZE,
 };
-use memory_stream::MemoryStream;
-use packet::{set_payload_length, types, ConnectionId, Header, HeaderError, Packet, PacketNumber, AEAD_TAG_SIZE};
-use range_set::RangeSet;
 use {
     frame, Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU,
     RESET_TOKEN_SIZE, VERSION,
@@ -84,39 +77,8 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    /// List of supported application protocols.
-    ///
-    /// If empty, application-layer protocol negotiation will not be preformed.
-    pub protocols: Vec<Box<[u8]>>,
-
-    /// Path to write NSS SSLKEYLOGFILE-compatible key log.
-    ///
-    /// Enabling this compromises security by committing secret information to disk. Useful for debugging communications
-    /// when using tools like Wireshark.
-    pub keylog: Option<PathBuf>,
-
-    /// Whether to force clients to prove they can receive responses before allocating resources for them.
-    ///
-    /// This adds a round trip to the handshake, increasing connection establishment latency, in exchange for improved
-    /// resistance to denial of service attacks.
-    ///
-    /// Only meaningful for endpoints that accept incoming connections.
-    pub use_stateless_retry: bool,
-
-    /// Whether incoming connections are required to provide certificates.
-    ///
-    /// If this is not set but a `client_cert_verifier` is supplied, a certificate will still be requested, but the
-    /// handshake will proceed even if one is not supplied.
-    pub require_client_certs: bool,
-
-    /// Function to preform application-level verification of client certificates from incoming connections.
-    ///
-    /// Called with a boolean indicating whether the certificate chain is valid at the TLS level, and a
-    /// `X509StoreContextRef` containing said chain. Returns whether the certificate should be considered valid.
-    ///
-    /// If `None`, all valid certificates will be accepted.
-    pub client_cert_verifier:
-        Option<Box<Fn(bool, &mut X509StoreContextRef) -> bool + Send + Sync + 'static>>,
+    pub tls_client_config: Arc<ClientConfig>,
+    pub tls_server_config: Arc<ServerConfig>,
 }
 
 impl Default for Config {
@@ -146,13 +108,9 @@ impl Default for Config {
             initial_window: 10 * 1460,
             minimum_window: 2 * 1460,
             loss_reduction_factor: 0x8000, // 1/2
-            protocols: Vec::new(),
 
-            keylog: None,
-            use_stateless_retry: false,
-
-            require_client_certs: false,
-            client_cert_verifier: None,
+            tls_client_config: Arc::new(crypto::build_client_config()),
+            tls_server_config: Arc::new(crypto::build_server_config()),
         }
     }
 }
@@ -172,11 +130,10 @@ pub struct Endpoint {
 
 pub struct Context {
     pub log: Logger,
-    pub tls: SslContext,
     pub rng: OsRng,
     pub config: Arc<Config>,
     pub io: VecDeque<Io>,
-    pub session_ticket_buffer: SessionTicketBuffer,
+    // pub session_ticket_buffer: SessionTicketBuffer,
     pub events: VecDeque<(ConnectionHandle, Event)>,
     pub incoming: VecDeque<ConnectionHandle>,
     pub incoming_handshakes: usize,
@@ -226,21 +183,18 @@ impl ListenKeys {
 #[derive(Debug, Fail)]
 pub enum EndpointError {
     #[fail(display = "failed to configure TLS: {}", _0)]
-    Tls(ssl::Error),
+    Tls(crypto::TLSError),
     #[fail(display = "failed open keylog file: {}", _0)]
     Keylog(io::Error),
     #[fail(display = "protocol ID longer than 255 bytes")]
     ProtocolTooLong(Box<[u8]>),
+    #[fail(display = "invalid DNS name: {}", _0)]
+    InvalidDnsName(String),
 }
 
-impl From<ssl::Error> for EndpointError {
-    fn from(x: ssl::Error) -> Self {
+impl From<crypto::TLSError> for EndpointError {
+    fn from(x: crypto::TLSError) -> Self {
         EndpointError::Tls(x)
-    }
-}
-impl From<openssl::error::ErrorStack> for EndpointError {
-    fn from(x: openssl::error::ErrorStack) -> Self {
-        EndpointError::Tls(x.into())
     }
 }
 
@@ -248,21 +202,17 @@ impl Endpoint {
     pub fn new(
         log: Logger,
         config: Config,
-        cert: Option<CertConfig>,
         listen: Option<ListenKeys>,
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
-        let (tls, session_ticket_buffer) = new_tls_ctx(&config, &cert, listen)?;
-
         Ok(Self {
             ctx: Context {
                 log,
-                tls,
                 rng,
                 config,
                 io: VecDeque::new(),
-                session_ticket_buffer,
+                // session_ticket_buffer,
                 initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
                 events: VecDeque::new(),
                 dirty_conns: FnvHashSet::default(),
@@ -456,7 +406,7 @@ impl Endpoint {
                     }
                     return;
                 }
-                types::ZERO_RTT => {
+                /*types::ZERO_RTT => {
                     // MAY buffer a limited amount
                     trace!(
                         self.ctx.log,
@@ -464,7 +414,7 @@ impl Endpoint {
                         connection = destination_id.clone()
                     );
                     return;
-                }
+                }*/
                 _ => {
                     debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
                            connection=destination_id.clone(), type=ty);
@@ -516,7 +466,7 @@ impl Endpoint {
     pub fn connect(
         &mut self,
         remote: SocketAddrV6,
-        config: ClientConfig,
+        server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
@@ -528,7 +478,7 @@ impl Endpoint {
             remote,
             Side::Client,
         );
-        self.connections[conn.0].connect(&self.ctx, config)?;
+        self.connections[conn.0].connect(&self.ctx, server_name)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
@@ -599,69 +549,23 @@ impl Endpoint {
             return;
         }
 
-        let mut stream = MemoryStream::new();
-        if let Ok(Some(data)) = parse_initial(&self.ctx.log, payload.freeze()) {
-            stream.insert(0, &data);
-        } else {
-            return;
-        } // TODO: Send close?
-
-        trace!(self.ctx.log, "got initial");
-        match crypto::new_server(
-            &self.ctx,
-            stream,
-            ConnectionInfo {
-                id: local_id.clone(),
-                remote,
-            },
+        let conn = self.add_connection(
+            dest_id.clone(),
+            local_id.clone(),
+            source_id.clone(),
+            remote,
+            Side::Server,
+        );
+        self.connection_ids_initial.insert(dest_id, conn);
+        match self.connections[conn.0].handle_initial(
+            &mut self.ctx,
+            now,
+            packet_number as u64,
+            payload.freeze(),
+            conn,
         ) {
-            Ok(TlsAccepted::RetryRequest(req)) => {
-                let mut buf = Vec::<u8>::new();
-                Header::Long {
-                    ty: types::RETRY,
-                    number: packet_number,
-                    destination_id: source_id,
-                    source_id: local_id,
-                }.encode(&mut buf);
-                let header_len = buf.len();
-
-                let mut ack = RangeSet::new();
-                ack.insert_one(packet_number as u64);
-                frame::Ack::encode(0, &ack, &mut buf);
-
-                frame::Stream {
-                    id: StreamId(0),
-                    offset: 0,
-                    fin: false,
-                    data: &req,
-                }.encode(false, &mut buf);
-
-                set_payload_length(&mut buf, header_len);
-                crypto.encrypt(packet_number as u64, &mut buf, header_len);
-                self.ctx.io.push_back(Io::Transmit {
-                    destination: remote,
-                    packet: buf.into(),
-                });
-            }
-            Ok(TlsAccepted::Complete {
-                tls,
-                params,
-                zero_rtt_crypto,
-            }) => {
-                let conn =
-                    self.add_connection(dest_id.clone(), local_id, source_id, remote, Side::Server);
-                self.connection_ids_initial.insert(dest_id, conn);
-                self.connections[conn.0].handshake_complete(
-                    &mut self.ctx,
-                    tls,
-                    params,
-                    zero_rtt_crypto,
-                    now,
-                    packet_number as u64,
-                    conn,
-                );
-            }
-            Err((code, data)) => {
+            Ok(()) => {}
+            Err(_) => {
                 let n = self.ctx.gen_initial_packet_num();
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
@@ -670,8 +574,8 @@ impl Endpoint {
                         &source_id,
                         &local_id,
                         n,
-                        code,
-                        data.as_ref().map(|v| v.as_ref()),
+                        TransportError::TLS_HANDSHAKE_FAILED,
+                        None,
                     ),
                 });
             }
@@ -845,8 +749,7 @@ impl Endpoint {
                         .iter()
                         .filter_map(
                             |(&packet, info)| if info.handshake { Some(packet) } else { None },
-                        )
-                        .collect::<Vec<_>>();
+                        ).collect::<Vec<_>>();
                     for number in packets {
                         let mut info = self.connections[conn.0]
                             .sent_packets
@@ -1049,7 +952,7 @@ impl Endpoint {
     }
     pub fn get_protocol(&self, conn: ConnectionHandle) -> Option<&[u8]> {
         if let State::Established(ref state) = *self.connections[conn.0].state.as_ref().unwrap() {
-            state.tls.ssl().selected_alpn_protocol()
+            state.tls.get_alpn_protocol().map(|p| p.as_bytes())
         } else {
             None
         }
@@ -1070,19 +973,15 @@ impl Endpoint {
     /// None if no name was supplied or if this connection was locally-initiated.
     pub fn get_servername(&self, conn: ConnectionHandle) -> Option<&str> {
         match *self.connections[conn.0].state.as_ref().unwrap() {
-            State::Handshake(ref state) => state.tls.ssl().servername(ssl::NameType::HOST_NAME),
-            State::Established(ref state) => state.tls.ssl().servername(ssl::NameType::HOST_NAME),
+            State::Handshake(ref state) => state.tls.get_sni_hostname(),
+            State::Established(ref state) => state.tls.get_sni_hostname(),
             _ => None,
         }
     }
 
     /// Whether a previous session was successfully resumed by `conn`.
-    pub fn get_session_resumed(&self, conn: ConnectionHandle) -> bool {
-        if let State::Established(ref state) = self.connections[conn.0].state.as_ref().unwrap() {
-            state.tls.ssl().session_reused()
-        } else {
-            false
-        }
+    pub fn get_session_resumed(&self, _: ConnectionHandle) -> bool {
+        false // TODO: fixme?
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
@@ -1095,7 +994,7 @@ impl Endpoint {
 pub enum Event {
     /// A connection was successfully established.
     Connected {
-        protocol: Option<Box<[u8]>>,
+        protocol: Option<String>,
     },
     /// A connection was lost.
     ConnectionLost {

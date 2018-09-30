@@ -8,11 +8,10 @@ extern crate slog_term;
 
 use std::io::{self, Write};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
-use std::str;
 use std::time::{Duration, Instant};
 
 use failure::Error;
-use quicr::{ClientConfig, Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
+use quicr::{Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
 use slog::{Drain, Logger};
 
 fn main() {
@@ -73,15 +72,11 @@ impl Context {
         if let Some(x) = remote_host.rfind(':') {
             remote_host.truncate(x);
         }
-        let config = Config {
-            protocols: vec![b"hq-11"[..].into()],
-            //receive_window: 256,
-            //stream_receive_window: 256,
-            ..Config::default()
-        };
+
+        let config = Config::default();
         Ok(Self {
             socket,
-            client: Endpoint::new(log.clone(), config, None, None)?,
+            client: Endpoint::new(log.clone(), config, None)?,
             log,
             remote_host,
             remote,
@@ -93,13 +88,7 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(
-            self.remote,
-            ClientConfig {
-                server_name: Some(&self.remote_host),
-                ..ClientConfig::default()
-            },
-        )?;
+        let c = self.client.connect(self.remote, &self.remote_host)?;
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;
@@ -108,7 +97,7 @@ impl Context {
             while let Some((connection, e)) = self.client.poll() {
                 match e {
                     Event::Connected { protocol, .. } => {
-                        info!(self.log, "connected, submitting request"; "protocol" => %protocol.as_ref().map_or("none", |x| str::from_utf8(x).unwrap()));
+                        info!(self.log, "connected, submitting request"; "protocol" => protocol);
                         let s = self
                             .client
                             .open(c, Directionality::Bi)
@@ -204,7 +193,8 @@ impl Context {
             let (timeout, timer) = (
                 self.loss_timer.unwrap_or(u64::max_value()),
                 Timer::LossDetection,
-            ).min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
+            )
+                .min((self.close_timer.unwrap_or(u64::max_value()), Timer::Close))
                 .min((self.idle_timer.unwrap_or(u64::max_value()), Timer::Idle));
             if timeout != u64::max_value() {
                 trace!(self.log, "setting timeout"; "type" => ?timer, "time" => time);

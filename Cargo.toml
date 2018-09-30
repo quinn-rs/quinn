@@ -24,12 +24,16 @@ lazy_static = "1"
 slog = "2.2"
 arrayvec = "0.4.7"
 fnv = "1.0.6"
-openssl = "0.10.10"
+ring = "0.13"
+rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
+webpki = "0.18"
+webpki-roots = "0.15"
 
 [dev-dependencies]
 slog-term = "2"
 assert_matches = "1.1"
 hex-literal = "0.1.1"
+untrusted = "0.6.2"
 
 [workspace]
 members = ["quicr"]

@@ -5,6 +5,7 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 extern crate futures;
+extern crate rustls;
 extern crate slog_term;
 extern crate url;
 #[macro_use]
@@ -16,9 +17,8 @@ use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use futures::{Future, Stream};
+use futures::Future;
 use structopt::StructOpt;
-use tokio::executor::current_thread;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
 
@@ -31,11 +31,14 @@ type Result<T> = std::result::Result<T, Error>;
 #[structopt(name = "client")]
 struct Opt {
     /// file to log TLS keys to for debugging
-    #[structopt(parse(from_os_str), long = "keylog")]
-    keylog: Option<PathBuf>,
+    #[structopt(long = "keylog")]
+    keylog: bool,
 
     url: Url,
 
+    #[structopt(parse(from_os_str), long = "ca")]
+    ca: Option<PathBuf>,
+    /*
     /// whether to accept invalid (e.g. self-signed) TLS certificates
     #[structopt(long = "accept-insecure-certs")]
     accept_insecure_certs: bool,
@@ -43,6 +46,7 @@ struct Opt {
     /// file to read/write session tickets to
     #[structopt(long = "session-cache", parse(from_os_str))]
     session_cache: Option<PathBuf>,
+    */
 }
 
 fn main() {
@@ -63,7 +67,7 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger, mut options: Opt) -> Result<()> {
+fn run(log: Logger, options: Opt) -> Result<()> {
     let url = options.url;
     let remote = url
         .with_default_port(|_| Ok(4433))?
@@ -71,14 +75,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
         .next()
         .ok_or(format_err!("couldn't resolve to an address"))?;
 
-    let mut runtime = Runtime::new()?;
-
-    let config = quicr::Config {
-        protocols: vec![b"hq-11"[..].into()],
-        keylog: options.keylog,
-        ..quicr::Config::default()
-    };
-
+    /*
     let ticket;
     if let Some(path) = options.session_cache.take() {
         ticket = match fs::read(&path) {
@@ -91,45 +88,31 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
     } else {
         ticket = None;
     }
+    */
 
     let mut builder = quicr::Endpoint::new();
-    builder.logger(log.clone()).config(config);
+    builder.logger(log.clone());
+    if options.keylog {
+        builder.enable_keylog();
+    }
+    if let Some(ca_path) = options.ca {
+        builder.set_certificate_authority(&fs::read(&ca_path)?)?;
+    }
+
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
+    let mut runtime = Runtime::new()?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
-    let mut session_path = options.session_cache.take();
     runtime.block_on(
         endpoint
             .connect(
                 &remote,
-                quicr::ClientConfig {
-                    server_name: Some(url.host_str().ok_or(format_err!("URL missing host"))?),
-                    accept_insecure_certs: options.accept_insecure_certs,
-                    session_ticket: ticket.as_ref().map(|x| &x[..]),
-                    ..quicr::ClientConfig::default()
-                },
-            )?
-            .map_err(|e| format_err!("failed to connect: {}", e))
+                url.host_str().ok_or(format_err!("URL missing host"))?,
+            )?.map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));
-                if let Some(path) = session_path.take() {
-                    current_thread::spawn(conn.session_tickets.map_err(|_| ()).for_each(
-                        move |data| {
-                            if let Err(e) = fs::write(&path, &data) {
-                                error!(
-                                    log,
-                                    "failed to write session: {error}",
-                                    error = e.to_string()
-                                );
-                            } else {
-                                info!(log, "wrote {bytes}B session", bytes = data.len());
-                            }
-                            Ok(())
-                        },
-                    ));
-                }
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream
@@ -138,12 +121,10 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
                         eprintln!("stream opened at {}", duration_secs(&start.elapsed()));
                         tokio::io::write_all(stream, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
-                    })
-                    .and_then(|(stream, _)| {
+                    }).and_then(|(stream, _)| {
                         tokio::io::shutdown(stream)
                             .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                    })
-                    .and_then(move |stream| {
+                    }).and_then(move |stream| {
                         let response_start = Instant::now();
                         eprintln!(
                             "request sent at {}",
@@ -152,8 +133,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
                         quicr::read_to_end(stream, usize::max_value())
                             .map_err(|e| format_err!("failed to read response: {}", e))
                             .map(move |x| (x, response_start))
-                    })
-                    .and_then(move |((_, data), response_start)| {
+                    }).and_then(move |((_, data), response_start)| {
                         let seconds = duration_secs(&response_start.elapsed());
                         eprintln!(
                             "response received in {} - {} KiB/s",
@@ -163,8 +143,7 @@ fn run(log: Logger, mut options: Opt) -> Result<()> {
                         io::stdout().write_all(&data).unwrap();
                         io::stdout().flush().unwrap();
                         conn.close(0, b"done").map_err(|_| unreachable!())
-                    })
-                    .map(|()| eprintln!("drained"))
+                    }).map(|()| eprintln!("drained"))
             }),
     )?;
 

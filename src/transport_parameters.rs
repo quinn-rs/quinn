@@ -1,6 +1,7 @@
 use bytes::{Buf, BufMut};
 
 use coding::{BufExt, BufMutExt};
+use endpoint::Config;
 use {Side, VERSION};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -13,6 +14,18 @@ pub struct TransportParameters {
     pub initial_max_streams_uni: u16,
     pub max_packet_size: Option<u16>,
     pub ack_delay_exponent: u8,
+}
+
+impl TransportParameters {
+    pub fn new(config: &Config) -> Self {
+        TransportParameters {
+            initial_max_streams_bidi: config.max_remote_bi_streams,
+            initial_max_streams_uni: config.max_remote_uni_streams,
+            initial_max_data: config.receive_window,
+            initial_max_stream_data: config.stream_receive_window,
+            ..Default::default()
+        }
+    }
 }
 
 const DEFAULT_ACK_DELAY_EXPONENT: u8 = 3;

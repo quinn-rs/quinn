@@ -22,10 +22,12 @@ tokio-timer = "0.2.1"
 slog = "2.1"
 futures = "0.1.21"
 fnv = "1.0.6"
-openssl = "0.10.10"
 failure = "0.1"
 bytes = "0.4.7"
 rand = "0.4"
+rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
+untrusted = "0.6.2"
+webpki = "0.18"
 
 [dev-dependencies]
 tokio = "0.1.6"
