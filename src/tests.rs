@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::SocketAddrV6;
-use std::sync::Arc;
+use std::net::{Ipv6Addr, SocketAddrV6, UdpSocket};
+use std::ops::RangeFrom;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
@@ -49,6 +51,8 @@ fn logger() -> Logger {
 
 lazy_static! {
     static ref LISTEN_KEYS: ListenKeys = ListenKeys::new(&mut rand::thread_rng());
+    static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
+    static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
 }
 
 struct Pair {
@@ -113,15 +117,16 @@ fn client_config() -> Config {
 impl Pair {
     fn new(server_config: Config, client_config: Config) -> Self {
         let log = logger();
-        let server_addr = "[::1]:42".parse().unwrap();
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
             server_config,
             Some(*LISTEN_KEYS),
         ).unwrap();
-        let client_addr = "[::2]:7890".parse().unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
+        let localhost = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        let server_addr = SocketAddrV6::new(localhost, SERVER_PORTS.lock().unwrap().next().unwrap(), 0, 0);
+        let client_addr = SocketAddrV6::new(localhost, CLIENT_PORTS.lock().unwrap().next().unwrap(), 0, 0);
         Self {
             log,
             server: TestEndpoint::new(Side::Server, server, server_addr),
@@ -163,6 +168,10 @@ impl Pair {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
         for packet in self.client.outbound.drain(..) {
+            self.client
+                .socket
+                .send_to(&packet, self.server.addr)
+                .unwrap();
             self.server
                 .inbound
                 .push_back((self.time + self.latency, packet));
@@ -173,6 +182,10 @@ impl Pair {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
         for packet in self.server.outbound.drain(..) {
+            self.server
+                .socket
+                .send_to(&packet, self.client.addr)
+                .unwrap();
             self.client
                 .inbound
                 .push_back((self.time + self.latency, packet));
@@ -197,6 +210,7 @@ struct TestEndpoint {
     side: Side,
     endpoint: Endpoint,
     addr: SocketAddrV6,
+    socket: UdpSocket,
     idle: u64,
     loss: u64,
     close: u64,
@@ -207,10 +221,15 @@ struct TestEndpoint {
 
 impl TestEndpoint {
     fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self {
+        let socket = UdpSocket::bind(addr).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::new(0, 10_000_000)))
+            .unwrap();
         Self {
             side,
             endpoint,
             addr,
+            socket,
             idle: u64::max_value(),
             loss: u64::max_value(),
             close: u64::max_value(),
@@ -221,6 +240,12 @@ impl TestEndpoint {
     }
 
     fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
+        loop {
+            let mut buf = [0; 8192];
+            if self.socket.recv_from(&mut buf).is_err() {
+                break;
+            }
+        }
         if let Some(conn) = self.conn {
             if self.loss <= now {
                 trace!(
