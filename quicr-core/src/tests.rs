@@ -75,13 +75,13 @@ impl Default for Pair {
 
 fn server_config() -> Config {
     let certs = {
-        let f = fs::File::open("certs/server.chain").expect("cannot open 'certs/server.chain'");
+        let f = fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
         let mut reader = io::BufReader::new(f);
         pemfile::certs(&mut reader).expect("cannot read certificates")
     };
 
     let keys = {
-        let f = fs::File::open("certs/server.rsa").expect("cannot open 'certs/server.rsa'");
+        let f = fs::File::open("../certs/server.rsa").expect("cannot open '../certs/server.rsa'");
         let mut reader = io::BufReader::new(f);
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
@@ -97,7 +97,7 @@ fn server_config() -> Config {
 }
 
 fn client_config() -> Config {
-    let mut f = fs::File::open("certs/ca.der").expect("cannot open 'certs/ca.der'");
+    let mut f = fs::File::open("../certs/ca.der").expect("cannot open '../certs/ca.der'");
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).expect("error while reading");
 
