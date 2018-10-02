@@ -21,7 +21,7 @@ fnv = "1.0.6"
 futures = "0.1.21"
 quicr-core = { path = "../quicr-core", version = "0.4.0" }
 rand = "0.4"
-rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
+rustls = { version = "0.14", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"

@@ -24,7 +24,7 @@ fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.4"
 ring = "0.13"
-rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
+rustls = { version = "0.14", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
 webpki = "0.18"
