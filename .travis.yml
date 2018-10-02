@@ -1,0 +1,37 @@
+language: rust
+sudo: required
+dist: trusty
+addons:
+    apt:
+        update: true
+        packages:
+            - libssl-dev
+cache: cargo
+rust:
+  - stable
+  - beta
+  - nightly
+matrix:
+  allow_failures:
+    - rust: nightly
+
+before_cache:
+  if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
+    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin;
+  fi
+
+before_script:
+  - if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
+      sudo sh -c 'echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6';
+    fi
+
+script:
+- cargo clean
+- cargo build
+- cargo test
+
+after_success: |
+  if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
+    cargo tarpaulin --out Xml
+    bash <(curl -s https://codecov.io/bash)
+  fi
