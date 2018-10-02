@@ -47,20 +47,20 @@
 //! can be used to provide encryption alone.
 #![warn(missing_docs)]
 
+extern crate bytes;
+#[macro_use]
+extern crate failure;
+extern crate fnv;
+extern crate futures;
 extern crate quinn_proto as quinn;
+extern crate rand;
+extern crate rustls;
+#[macro_use]
+extern crate slog;
 extern crate tokio_io;
 extern crate tokio_reactor;
 extern crate tokio_timer;
 extern crate tokio_udp;
-#[macro_use]
-extern crate slog;
-extern crate fnv;
-extern crate futures;
-#[macro_use]
-extern crate failure;
-extern crate bytes;
-extern crate rand;
-extern crate rustls;
 extern crate untrusted;
 extern crate webpki;
 

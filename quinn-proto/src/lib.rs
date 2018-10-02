@@ -1,31 +1,31 @@
-extern crate byteorder;
-extern crate bytes;
-extern crate rand;
-extern crate slab;
-#[macro_use]
-extern crate failure;
-extern crate blake2;
-extern crate constant_time_eq;
-extern crate digest;
-#[macro_use]
-extern crate slog;
+extern crate arrayvec;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
+extern crate blake2;
+extern crate byteorder;
+extern crate bytes;
+extern crate constant_time_eq;
+extern crate digest;
+#[macro_use]
+extern crate failure;
+extern crate fnv;
 #[cfg(test)]
 #[macro_use]
 extern crate hex_literal;
-extern crate arrayvec;
-extern crate fnv;
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+extern crate rand;
 extern crate ring;
 extern crate rustls;
+extern crate slab;
+#[macro_use]
+extern crate slog;
 #[cfg(test)]
 extern crate untrusted;
 extern crate webpki;
 extern crate webpki_roots;
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
 
 use std::fmt;
 
