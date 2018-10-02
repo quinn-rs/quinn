@@ -6,8 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
-
-[API Docs](https://ralith.github.io/quicr/quicr/)
+[![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 
 Quinn is an implementation of the [QUIC][quic] network protocol currently
 undergoing standardization by the IETF. It is currently suitable for
