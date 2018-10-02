@@ -971,7 +971,7 @@ impl Endpoint {
     /// The name a client supplied via SNI.
     ///
     /// None if no name was supplied or if this connection was locally-initiated.
-    pub fn get_servername(&self, conn: ConnectionHandle) -> Option<&str> {
+    pub fn get_server_name(&self, conn: ConnectionHandle) -> Option<&str> {
         match *self.connections[conn.0].state.as_ref().unwrap() {
             State::Handshake(ref state) => state.tls.get_sni_hostname(),
             State::Established(ref state) => state.tls.get_sni_hostname(),
