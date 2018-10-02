@@ -1,2 +1,2 @@
 [workspace]
-members = ["quicr", "quicr-core"]
+members = ["quinn", "quinn-proto"]

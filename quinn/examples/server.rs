@@ -1,4 +1,4 @@
-extern crate quicr;
+extern crate quinn;
 extern crate tokio;
 #[macro_use]
 extern crate failure;
@@ -105,10 +105,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quicr::Endpoint::new();
+    let mut builder = quinn::Endpoint::new();
     builder
         .logger(log.clone())
-        .config(quicr::Config {
+        .config(quinn::Config {
             max_remote_bi_streams: 64,
             ..Default::default()
         }).listen();
@@ -140,8 +140,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
-    let quicr::NewConnection {
+fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
+    let quinn::NewConnection {
         incoming,
         connection,
     } = conn;
@@ -164,10 +164,10 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
     );
 }
 
-fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
+fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
     let stream = match stream {
-        quicr::NewStream::Bi(stream) => stream,
-        quicr::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
+        quinn::NewStream::Bi(stream) => stream,
+        quinn::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
     };
     let root = root.clone();
     let log = log.clone();
@@ -175,7 +175,7 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
     let log3 = log.clone();
 
     tokio_current_thread::spawn(
-        quicr::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
+        quinn::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
             .map_err(|e| format_err!("failed reading request: {}", e))
             .and_then(move |(stream, req)| {
                 let mut escaped = String::new();

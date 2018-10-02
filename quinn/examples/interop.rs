@@ -1,4 +1,4 @@
-extern crate quicr;
+extern crate quinn;
 extern crate tokio;
 #[macro_use]
 extern crate failure;
@@ -59,7 +59,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quicr::Endpoint::new();
+    let mut builder = quinn::Endpoint::new();
     builder.logger(log.clone());
     if options.keylog {
         builder.enable_keylog();
@@ -174,13 +174,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn get(stream: quicr::Stream) -> impl Future<Item = Box<[u8]>, Error = Error> {
+fn get(stream: quinn::Stream) -> impl Future<Item = Box<[u8]>, Error = Error> {
     tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned())
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(stream, _)| {
             tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e))
         }).and_then(move |stream| {
-            quicr::read_to_end(stream, usize::max_value())
+            quinn::read_to_end(stream, usize::max_value())
                 .map_err(|e| format_err!("failed to read response: {}", e))
         }).map(|(_, data)| data)
 }

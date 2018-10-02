@@ -1,4 +1,4 @@
-extern crate quicr;
+extern crate quinn;
 extern crate tokio;
 #[macro_use]
 extern crate failure;
@@ -90,7 +90,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     */
 
-    let mut builder = quicr::Endpoint::new();
+    let mut builder = quinn::Endpoint::new();
     builder.logger(log.clone());
     if options.keylog {
         builder.enable_keylog();
@@ -130,7 +130,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                             "request sent at {}",
                             duration_secs(&(response_start - start))
                         );
-                        quicr::read_to_end(stream, usize::max_value())
+                        quinn::read_to_end(stream, usize::max_value())
                             .map_err(|e| format_err!("failed to read response: {}", e))
                             .map(move |x| (x, response_start))
                     }).and_then(move |((_, data), response_start)| {

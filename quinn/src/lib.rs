@@ -11,12 +11,12 @@
 //!
 //! ```
 //! # extern crate tokio;
-//! # extern crate quicr;
+//! # extern crate quinn;
 //! # extern crate futures;
 //! # use futures::Future;
 //! # fn main() {
 //! let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-//! let mut builder = quicr::Endpoint::new();
+//! let mut builder = quinn::Endpoint::new();
 //! // <configure builder>
 //! let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
 //! runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
@@ -47,7 +47,7 @@
 //! can be used to provide encryption alone.
 #![warn(missing_docs)]
 
-extern crate quicr_core as quicr;
+extern crate quinn_proto as quinn;
 extern crate tokio_io;
 extern crate tokio_reactor;
 extern crate tokio_timer;
@@ -86,9 +86,9 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use tokio_udp::UdpSocket;
 
-use quicr::{ConnectionHandle, Directionality, Side, StreamId};
+use quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quicr::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
+pub use quinn::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -113,9 +113,9 @@ pub enum Error {
     WebPki(webpki::Error),
 }
 
-impl From<quicr::EndpointError> for Error {
-    fn from(x: quicr::EndpointError) -> Self {
-        use quicr::EndpointError::*;
+impl From<quinn::EndpointError> for Error {
+    fn from(x: quinn::EndpointError) -> Self {
+        use quinn::EndpointError::*;
         match x {
             Tls(x) => Error::Tls(x),
             Keylog(x) => Error::Keylog(x),
@@ -134,7 +134,7 @@ impl From<webpki::Error> for Error {
 struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
-    inner: quicr::Endpoint,
+    inner: quinn::Endpoint,
     outgoing: VecDeque<(SocketAddrV6, Box<[u8]>)>,
     epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
@@ -314,7 +314,7 @@ impl<'a> EndpointBuilder<'a> {
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket: socket,
-            inner: quicr::Endpoint::new(self.logger, self.config, self.listen)?,
+            inner: quinn::Endpoint::new(self.logger, self.config, self.listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -442,7 +442,7 @@ pub struct NewConnection {
 }
 
 impl NewConnection {
-    fn new(endpoint: Endpoint, handle: quicr::ConnectionHandle) -> Self {
+    fn new(endpoint: Endpoint, handle: quinn::ConnectionHandle) -> Self {
         let conn = Rc::new(ConnectionInner {
             endpoint: Endpoint(endpoint.0.clone()),
             conn: handle,
@@ -506,7 +506,7 @@ impl Future for Driver {
                 }
             }
             while let Some((connection, event)) = endpoint.inner.poll() {
-                use quicr::Event::*;
+                use quinn::Event::*;
                 match event {
                     Connected { .. } => {
                         let _ = endpoint
@@ -616,7 +616,7 @@ impl Future for Driver {
                 endpoint.outgoing.pop_front();
             }
             while let Some(io) = endpoint.inner.poll_io(now) {
-                use quicr::Io::*;
+                use quinn::Io::*;
                 match io {
                     Transmit {
                         destination,
@@ -642,7 +642,7 @@ impl Future for Driver {
                     }
                     TimerStart {
                         connection,
-                        timer: timer @ quicr::Timer::Close,
+                        timer: timer @ quinn::Timer::Close,
                         time,
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
@@ -663,7 +663,7 @@ impl Future for Driver {
                             .pending
                             .entry(connection)
                             .or_insert_with(|| Pending::new(None));
-                        use quicr::Timer::*;
+                        use quinn::Timer::*;
                         let mut cancel = match timer {
                             LossDetection => &mut pending.cancel_loss_detect,
                             Idle => &mut pending.cancel_idle,
@@ -687,7 +687,7 @@ impl Future for Driver {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
-                            use quicr::Timer::*;
+                            use quinn::Timer::*;
                             match timer {
                                 LossDetection => {
                                     pending.cancel_loss_detect.take().map(|x| {
@@ -972,7 +972,7 @@ impl Stream {
 impl Write for Stream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.conn.endpoint.0.borrow_mut();
-        use quicr::WriteError::*;
+        use quinn::WriteError::*;
         let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
@@ -1028,7 +1028,7 @@ impl Write for Stream {
 impl Read for Stream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
-        use quicr::ReadError::*;
+        use quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
@@ -1052,7 +1052,7 @@ impl Read for Stream {
 
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
-        use quicr::ReadError::*;
+        use quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
@@ -1249,13 +1249,13 @@ pub enum ReadError {
 
 struct Timer {
     conn: ConnectionHandle,
-    ty: quicr::Timer,
+    ty: quinn::Timer,
     delay: Delay,
     cancel: Option<oneshot::Receiver<()>>,
 }
 
 impl Future for Timer {
-    type Item = Option<(ConnectionHandle, quicr::Timer)>;
+    type Item = Option<(ConnectionHandle, quinn::Timer)>;
     type Error = (); // FIXME
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Some(ref mut cancel) = self.cancel {

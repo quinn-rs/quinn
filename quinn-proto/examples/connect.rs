@@ -1,4 +1,4 @@
-extern crate quicr_core as quicr;
+extern crate quinn_proto as quinn;
 extern crate rand;
 #[macro_use]
 extern crate failure;
@@ -11,7 +11,7 @@ use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use failure::Error;
-use quicr::{Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
+use quinn::{Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
 use slog::{Drain, Logger};
 
 fn main() {

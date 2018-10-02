@@ -1,12 +1,10 @@
 [package]
-name = "quicr"
+name = "quinn-proto"
 version = "0.4.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/Ralith/quicr"
-description = "QUIC transport protocol implementation for Tokio"
-readme = "../README.md"
-documentation = "https://ralith.github.io/quicr/quicr/"
+description = "State machine for the QUIC transport protocol"
 keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
@@ -15,24 +13,25 @@ workspace = ".."
 maintenance = { status = "experimental" }
 
 [dependencies]
+arrayvec = "0.4.7"
+blake2 = "0.7"
+byteorder = "1.1"
 bytes = "0.4.7"
+constant_time_eq = "0.1"
+digest = "0.7"
 failure = "0.1"
 fnv = "1.0.6"
-futures = "0.1.21"
-quicr-core = { path = "../quicr-core", version = "0.4.0" }
+lazy_static = "1"
 rand = "0.4"
+ring = "0.13"
 rustls = { version = "0.14", features = ["quic"] }
-slog = "2.1"
-tokio-reactor = "0.1.1"
-tokio-udp = "0.1"
-tokio-io = "0.1"
-tokio-timer = "0.2.1"
-untrusted = "0.6.2"
+slab = "0.4"
+slog = "2.2"
 webpki = "0.18"
+webpki-roots = "0.15"
 
 [dev-dependencies]
+assert_matches = "1.1"
+hex-literal = "0.1.1"
 slog-term = "2"
-structopt = "0.2.7"
-tokio = "0.1.6"
-tokio-current-thread = "0.1"
-url = "1.7"
+untrusted = "0.6.2"
