@@ -32,6 +32,7 @@ webpki = "0.18"
 
 [dev-dependencies]
 tokio = "0.1.6"
+tokio-current-thread = "0.1"
 slog-term = "2"
 url = "1.7"
 structopt = "0.2.7"

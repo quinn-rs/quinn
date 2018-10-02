@@ -75,7 +75,8 @@ impl Default for Pair {
 
 fn server_config() -> Config {
     let certs = {
-        let f = fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
+        let f =
+            fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
         let mut reader = io::BufReader::new(f);
         pemfile::certs(&mut reader).expect("cannot read certificates")
     };
@@ -125,8 +126,18 @@ impl Pair {
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
         let localhost = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
-        let server_addr = SocketAddrV6::new(localhost, SERVER_PORTS.lock().unwrap().next().unwrap(), 0, 0);
-        let client_addr = SocketAddrV6::new(localhost, CLIENT_PORTS.lock().unwrap().next().unwrap(), 0, 0);
+        let server_addr = SocketAddrV6::new(
+            localhost,
+            SERVER_PORTS.lock().unwrap().next().unwrap(),
+            0,
+            0,
+        );
+        let client_addr = SocketAddrV6::new(
+            localhost,
+            CLIENT_PORTS.lock().unwrap().next().unwrap(),
+            0,
+            0,
+        );
         Self {
             log,
             server: TestEndpoint::new(Side::Server, server, server_addr),

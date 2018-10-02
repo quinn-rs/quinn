@@ -9,6 +9,7 @@ extern crate rustls;
 extern crate slog_term;
 #[macro_use]
 extern crate structopt;
+extern crate tokio_current_thread;
 
 use std::ascii;
 use std::fmt;
@@ -22,7 +23,6 @@ use failure::{err_msg, Fail, ResultExt};
 use futures::{Future, Stream};
 use rustls::internal::pemfile;
 use structopt::StructOpt;
-use tokio::executor::current_thread;
 use tokio::runtime::current_thread::Runtime;
 
 use failure::Error;
@@ -50,7 +50,7 @@ pub trait ErrorExt {
 
 impl ErrorExt for Error {
     fn pretty(&self) -> PrettyErr {
-        PrettyErr(self.cause())
+        PrettyErr(self.as_fail())
     }
 }
 
@@ -154,7 +154,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quicr::NewConnection) {
     let root = root.clone();
 
     // Each stream initiated by the client constitutes a new request.
-    current_thread::spawn(
+    tokio_current_thread::spawn(
         incoming
             .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
             .for_each(move |stream| {
@@ -174,7 +174,7 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quicr::NewStream) {
     let log2 = log.clone();
     let log3 = log.clone();
 
-    current_thread::spawn(
+    tokio_current_thread::spawn(
         quicr::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
             .map_err(|e| format_err!("failed reading request: {}", e))
             .and_then(move |(stream, req)| {
