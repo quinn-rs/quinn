@@ -15,24 +15,24 @@ workspace = ".."
 maintenance = { status = "experimental" }
 
 [dependencies]
+bytes = "0.4.7"
+failure = "0.1"
+fnv = "1.0.6"
+futures = "0.1.21"
 quicr-core = { path = "../quicr-core", version = "0.4.0" }
+rand = "0.4"
+rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
+slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
-slog = "2.1"
-futures = "0.1.21"
-fnv = "1.0.6"
-failure = "0.1"
-bytes = "0.4.7"
-rand = "0.4"
-rustls = { git = "https://github.com/ctz/rustls", features = ["quic"] }
 untrusted = "0.6.2"
 webpki = "0.18"
 
 [dev-dependencies]
+slog-term = "2"
+structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
-slog-term = "2"
 url = "1.7"
-structopt = "0.2.7"
