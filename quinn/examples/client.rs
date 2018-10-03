@@ -96,7 +96,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         builder.enable_keylog();
     }
     if let Some(ca_path) = options.ca {
-        builder.set_certificate_authority(&fs::read(&ca_path)?)?;
+        builder.add_certificate_authority(&fs::read(&ca_path)?)?;
     }
 
     let (endpoint, driver, _) = builder.bind("[::]:0")?;

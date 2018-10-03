@@ -288,7 +288,7 @@ impl<'a> EndpointBuilder<'a> {
         Ok(self)
     }
 
-    pub fn set_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
+    pub fn add_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
         {
             let tls_client_config = Arc::get_mut(&mut self.config.tls_client_config).unwrap();
             let anchor =
