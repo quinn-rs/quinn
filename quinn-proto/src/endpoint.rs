@@ -5,8 +5,8 @@ use std::{cmp, io, mem};
 
 use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use rand::distributions::Sample;
-use rand::{distributions, OsRng, Rng};
+use rand::distributions::Distribution;
+use rand::{distributions, OsRng, Rng, RngCore};
 use slab::Slab;
 use slog::{self, Logger};
 
@@ -139,7 +139,7 @@ pub struct Context {
     pub incoming_handshakes: usize,
     pub dirty_conns: FnvHashSet<ConnectionHandle>,
     pub readable_conns: FnvHashSet<ConnectionHandle>,
-    pub initial_packet_number: distributions::Range<u64>,
+    pub initial_packet_number: distributions::Uniform<u64>,
 }
 
 impl Context {
@@ -213,7 +213,7 @@ impl Endpoint {
                 config,
                 io: VecDeque::new(),
                 // session_ticket_buffer,
-                initial_packet_number: distributions::Range::new(0, 2u64.pow(32) - 1024),
+                initial_packet_number: distributions::Uniform::from(0..2u64.pow(32) - 1024),
                 events: VecDeque::new(),
                 dirty_conns: FnvHashSet::default(),
                 readable_conns: FnvHashSet::default(),

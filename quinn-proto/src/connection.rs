@@ -4,7 +4,7 @@ use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use rand::distributions::Sample;
+use rand::distributions::Distribution;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
