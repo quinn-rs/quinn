@@ -6,7 +6,6 @@ extern crate blake2;
 extern crate byteorder;
 extern crate bytes;
 extern crate constant_time_eq;
-extern crate digest;
 #[macro_use]
 extern crate failure;
 extern crate fnv;
