@@ -3,9 +3,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{io, str};
 
-use blake2::Blake2b;
+use blake2::{digest::{Input, VariableOutput}, Blake2b};
 use bytes::{Buf, BufMut, BytesMut};
-use digest::{Input, VariableOutput};
 use ring::aead;
 use ring::digest;
 use ring::hkdf;
