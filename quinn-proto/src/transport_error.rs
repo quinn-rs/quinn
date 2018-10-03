@@ -14,7 +14,7 @@ impl Error {
     }
 }
 
-impl coding::Value for Error {
+impl coding::Codec for Error {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
         Ok(Error(buf.get::<u16>()?))
     }

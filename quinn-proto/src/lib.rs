@@ -158,7 +158,7 @@ impl StreamId {
     }
 }
 
-impl coding::Value for StreamId {
+impl coding::Codec for StreamId {
     fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<StreamId> {
         varint::read(buf).map(StreamId).ok_or(coding::UnexpectedEnd)
     }

@@ -8,12 +8,12 @@ pub struct UnexpectedEnd;
 
 pub type Result<T> = ::std::result::Result<T, UnexpectedEnd>;
 
-pub trait Value: Sized {
+pub trait Codec: Sized {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self>;
     fn encode<B: BufMut>(&self, buf: &mut B);
 }
 
-impl Value for u8 {
+impl Codec for u8 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u8> {
         if buf.remaining() < 1 {
             return Err(UnexpectedEnd);
@@ -25,7 +25,7 @@ impl Value for u8 {
     }
 }
 
-impl Value for u16 {
+impl Codec for u16 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u16> {
         if buf.remaining() < 2 {
             return Err(UnexpectedEnd);
@@ -37,7 +37,7 @@ impl Value for u16 {
     }
 }
 
-impl Value for u32 {
+impl Codec for u32 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u32> {
         if buf.remaining() < 4 {
             return Err(UnexpectedEnd);
@@ -49,7 +49,7 @@ impl Value for u32 {
     }
 }
 
-impl Value for u64 {
+impl Codec for u64 {
     fn decode<B: Buf>(buf: &mut B) -> Result<u64> {
         if buf.remaining() < 8 {
             return Err(UnexpectedEnd);
@@ -62,12 +62,12 @@ impl Value for u64 {
 }
 
 pub trait BufExt {
-    fn get<T: Value>(&mut self) -> Result<T>;
+    fn get<T: Codec>(&mut self) -> Result<T>;
     fn get_var(&mut self) -> Result<u64>;
 }
 
 impl<T: Buf> BufExt for T {
-    fn get<U: Value>(&mut self) -> Result<U> {
+    fn get<U: Codec>(&mut self) -> Result<U> {
         U::decode(self)
     }
 
@@ -77,12 +77,12 @@ impl<T: Buf> BufExt for T {
 }
 
 pub trait BufMutExt {
-    fn write<T: Value>(&mut self, x: T);
+    fn write<T: Codec>(&mut self, x: T);
     fn write_var(&mut self, x: u64);
 }
 
 impl<T: BufMut> BufMutExt for T {
-    fn write<U: Value>(&mut self, x: U) {
+    fn write<U: Codec>(&mut self, x: U) {
         x.encode(self);
     }
 
