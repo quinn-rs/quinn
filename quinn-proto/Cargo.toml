@@ -22,7 +22,7 @@ digest = "0.7"
 failure = "0.1"
 fnv = "1.0.6"
 lazy_static = "1"
-rand = "0.4"
+rand = "0.5"
 ring = "0.13"
 rustls = { version = "0.14", features = ["quic"] }
 slab = "0.4"
