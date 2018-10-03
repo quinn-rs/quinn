@@ -42,6 +42,7 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 - [ ] Migration
 - [ ] 0-RTT data
 - [ ] Session resumption
+- [ ] HTTP over QUIC
 
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
