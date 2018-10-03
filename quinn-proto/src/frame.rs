@@ -33,7 +33,7 @@ impl Type {
     }
 }
 
-impl coding::Value for Type {
+impl coding::Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
         Ok(Type(buf.get()?))
     }
