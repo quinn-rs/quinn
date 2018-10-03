@@ -12,7 +12,9 @@ categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
 
 [badges]
+codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
+travis-ci = { repository = "djc/quinn" }
 
 [dependencies]
 bytes = "0.4.7"
