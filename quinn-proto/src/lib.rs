@@ -137,7 +137,7 @@ impl StreamId {
         StreamId(index << 2 | (directionality as u64) << 1 | initiator as u64)
     }
     /// Which side of a connection initiated the stream
-    pub fn initiator(&self) -> Side {
+    pub fn initiator(self) -> Side {
         if self.0 & 0x1 == 0 {
             Side::Client
         } else {
@@ -145,7 +145,7 @@ impl StreamId {
         }
     }
     /// Which directions data flows in
-    pub fn directionality(&self) -> Directionality {
+    pub fn directionality(self) -> Directionality {
         if self.0 & 0x2 == 0 {
             Directionality::Bi
         } else {
@@ -153,7 +153,7 @@ impl StreamId {
         }
     }
     /// Distinguishes streams of the same initiator and directionality
-    pub fn index(&self) -> u64 {
+    pub fn index(self) -> u64 {
         self.0 >> 2
     }
 }

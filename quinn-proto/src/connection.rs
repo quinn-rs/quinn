@@ -419,7 +419,7 @@ impl Connection {
     pub fn get_tx_number(&mut self) -> u64 {
         self.largest_sent_packet = self.largest_sent_packet.overflowing_add(1).0;
         // TODO: Handle packet number overflow gracefully
-        assert!(self.largest_sent_packet <= 2u64.pow(62) - 1);
+        assert!(self.largest_sent_packet < 2u64.pow(62));
         self.largest_sent_packet
     }
 
