@@ -164,8 +164,8 @@ impl Crypto {
         Crypto::Handshake(CryptoContext {
             local,
             remote,
-            digest: digest,
-            cipher: cipher,
+            digest,
+            cipher,
         })
     }
 

@@ -147,7 +147,9 @@ struct EndpointInner {
 impl EndpointInner {
     /// Wake up a blocked `Driver` task to process I/O
     fn notify(&self) {
-        self.driver.as_ref().map(|x| x.notify());
+        if let Some(x) = self.driver.as_ref() {
+            x.notify();
+        }
     }
 }
 
@@ -295,7 +297,7 @@ impl<'a> EndpointBuilder<'a> {
                 webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(der))?;
             tls_client_config
                 .root_store
-                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&vec![anchor]));
+                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
         }
         Ok(self)
     }
@@ -313,7 +315,7 @@ impl<'a> EndpointBuilder<'a> {
         let (send, recv) = mpsc::unbounded();
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
-            socket: socket,
+            socket,
             inner: quinn::Endpoint::new(self.logger, self.config, self.listen)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
@@ -442,7 +444,7 @@ pub struct NewConnection {
 }
 
 impl NewConnection {
-    fn new(endpoint: Endpoint, handle: quinn::ConnectionHandle) -> Self {
+    fn new(endpoint: &Endpoint, handle: quinn::ConnectionHandle) -> Self {
         let conn = Rc::new(ConnectionInner {
             endpoint: Endpoint(endpoint.0.clone()),
             conn: handle,
@@ -690,9 +692,9 @@ impl Future for Driver {
                             use quinn::Timer::*;
                             match timer {
                                 LossDetection => {
-                                    pending.cancel_loss_detect.take().map(|x| {
+                                    if let Some(x) = pending.cancel_loss_detect.take() {
                                         let _ = x.send(());
-                                    });
+                                    }
                                 }
                                 Idle => {
                                     pending.cancel_idle.take().map(|x| x.send(()));
@@ -706,7 +708,7 @@ impl Future for Driver {
             while let Some(x) = endpoint.inner.accept() {
                 let _ = endpoint
                     .incoming
-                    .unbounded_send(NewConnection::new(Endpoint(self.0.clone()), x));
+                    .unbounded_send(NewConnection::new(&Endpoint(self.0.clone()), x));
             }
             let mut fired = false;
             loop {
@@ -735,7 +737,7 @@ fn duration_micros(x: u64) -> Duration {
     Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
 }
 fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + (x.subsec_nanos() / 1000) as u64
+    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }
 
 fn normalize(x: SocketAddr) -> SocketAddrV6 {
@@ -890,7 +892,9 @@ impl Drop for ConnectionInner {
                     0,
                     (&[][..]).into(),
                 );
-                endpoint.driver.as_ref().map(|x| x.notify());
+                if let Some(x) = endpoint.driver.as_ref() {
+                    x.notify();
+                }
             }
             pending.remove_entry();
         } else {

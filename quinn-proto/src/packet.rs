@@ -75,34 +75,34 @@ impl PacketNumber {
         }
     }
 
-    fn ty(&self) -> u8 {
+    fn ty(self) -> u8 {
         use self::PacketNumber::*;
-        match *self {
+        match self {
             U8(_) => 0x00,
             U16(_) => 0x01,
             U32(_) => 0x02,
         }
     }
 
-    pub fn encode<W: BufMut>(&self, w: &mut W) {
+    pub fn encode<W: BufMut>(self, w: &mut W) {
         use self::PacketNumber::*;
-        match *self {
+        match self {
             U8(x) => w.write(x),
             U16(x) => w.write(x),
             U32(x) => w.write(x),
         }
     }
 
-    pub fn expand(&self, prev: u64) -> u64 {
+    pub fn expand(self, prev: u64) -> u64 {
         use self::PacketNumber::*;
         let t = prev + 1;
         // Compute missing bits that minimize the difference from expected
-        let d = match *self {
+        let d = match self {
             U8(_) => 1 << 8,
             U16(_) => 1 << 16,
             U32(_) => 1 << 32,
         };
-        let x = match *self {
+        let x = match self {
             U8(x) => x as u64,
             U16(x) => x as u64,
             U32(x) => x as u64,

@@ -164,9 +164,9 @@ pub enum SendState {
 }
 
 impl SendState {
-    pub fn was_reset(&self) -> bool {
+    pub fn was_reset(self) -> bool {
         use self::SendState::*;
-        match *self {
+        match self {
             ResetSent { .. } | ResetRecvd { .. } => true,
             _ => false,
         }
