@@ -493,18 +493,24 @@ impl Endpoint {
     ) -> ConnectionHandle {
         debug_assert!(!local_id.is_empty());
         let packet_num = self.ctx.gen_initial_packet_num();
-        let i = self.connections.insert(Connection::new(
-            initial_id,
-            local_id.clone(),
-            remote_id,
-            remote,
-            packet_num.into(),
-            side,
-            &self.ctx.config,
-        ));
-        self.connection_ids.insert(local_id, ConnectionHandle(i));
-        self.connection_remotes.insert(remote, ConnectionHandle(i));
-        ConnectionHandle(i)
+        let conn = {
+            let entry = self.connections.vacant_entry();
+            let conn = ConnectionHandle(entry.key());
+            entry.insert(Connection::new(
+                initial_id,
+                local_id.clone(),
+                remote_id,
+                remote,
+                packet_num.into(),
+                side,
+                &self.ctx.config,
+                conn,
+            ));
+            conn
+        };
+        self.connection_ids.insert(local_id, conn);
+        self.connection_remotes.insert(remote, conn);
+        conn
     }
 
     fn handle_initial(

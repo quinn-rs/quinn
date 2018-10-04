@@ -38,6 +38,7 @@ pub struct Connection {
     pub remote: SocketAddrV6,
     pub state: Option<State>,
     pub side: Side,
+    pub handle: ConnectionHandle,
     pub mtu: u16,
     pub rx_packet: u64,
     pub rx_packet_time: u64,
@@ -271,6 +272,7 @@ impl Connection {
         initial_packet_number: u64,
         side: Side,
         config: &Config,
+        handle: ConnectionHandle,
     ) -> Self {
         let handshake_crypto = Crypto::new_handshake(&initial_id, side);
         let mut streams = FnvHashMap::default();
@@ -304,6 +306,7 @@ impl Connection {
             remote_id,
             remote,
             side,
+            handle,
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
@@ -1004,6 +1007,7 @@ impl Connection {
                                         ctx.initial_packet_number.sample(&mut ctx.rng),
                                         Side::Client,
                                         &ctx.config,
+                                        self.handle,
                                     );
                                     mem::replace(self, new);
                                     // Send updated ClientHello
