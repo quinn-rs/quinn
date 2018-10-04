@@ -11,8 +11,8 @@
 Quinn is an implementation of the [QUIC][quic] network protocol currently
 undergoing standardization by the IETF. It is currently suitable for
 experimental use. The implementation is split up into the state machine crate
-`quicr-core` which performs no I/O internally and can be tested deterministically,
-and a high-level tokio-compatible API in `quicr`. See `quicr/examples/` for usage.
+`quinn-proto` which performs no I/O internally and can be tested deterministically,
+and a high-level tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
 
 Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can
 also get the [slides][slides] (and the [animation][animation] about head-of-line
@@ -34,7 +34,7 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 
 ## Status
 
-- [x] QUIC draft 11 with TLS 1.3 draft 28
+- [x] QUIC draft 11 with TLS 1.3
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
@@ -52,4 +52,3 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 [slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
-[patreon]: https://www.patreon.com/dochtman
