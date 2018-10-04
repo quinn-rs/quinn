@@ -434,26 +434,20 @@ fn stateless_retry() {
 }
 */
 
-/*
 #[test]
 fn stateless_reset() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
-    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
-    let mut config = Config::default();
-    set_server_certificate(&mut config);
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
-        config,
+        Config::default(),
         Some(*LISTEN_KEYS),
     ).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::NewSessionTicket { .. })) if conn == client_conn);
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_conn);
 }
-*/
 
 #[test]
 fn finish_stream() {

@@ -125,7 +125,6 @@ pub struct Endpoint {
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
-    listen_keys: Option<ListenKeys>,
 }
 
 pub struct Context {
@@ -140,6 +139,7 @@ pub struct Context {
     pub dirty_conns: FnvHashSet<ConnectionHandle>,
     pub readable_conns: FnvHashSet<ConnectionHandle>,
     pub initial_packet_number: distributions::Uniform<u64>,
+    pub listen_keys: Option<ListenKeys>,
 }
 
 impl Context {
@@ -219,8 +219,8 @@ impl Endpoint {
                 readable_conns: FnvHashSet::default(),
                 incoming: VecDeque::new(),
                 incoming_handshakes: 0,
+                listen_keys: listen,
             },
-            listen_keys: listen,
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
@@ -229,7 +229,7 @@ impl Endpoint {
     }
 
     fn listen(&self) -> bool {
-        self.listen_keys.is_some()
+        self.ctx.listen_keys.is_some()
     }
 
     /// Get an application-facing event
@@ -447,7 +447,7 @@ impl Endpoint {
                 self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
-                &self.listen_keys.as_ref().unwrap().reset,
+                &self.ctx.listen_keys.as_ref().unwrap().reset,
                 &dest_id,
             ));
             self.ctx.io.push_back(Io::Transmit {
