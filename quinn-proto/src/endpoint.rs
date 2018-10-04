@@ -568,7 +568,6 @@ impl Endpoint {
             now,
             packet_number as u64,
             payload.freeze(),
-            conn,
         ) {
             Ok(()) => {}
             Err(_) => {
@@ -603,14 +602,13 @@ impl Endpoint {
         let state = self.connections[conn.0].handle_connected_inner(
             &mut self.ctx,
             now,
-            conn,
             remote,
             packet,
             state,
         );
 
         if !was_closed && state.is_closed() {
-            self.connections[conn.0].close_common(&mut self.ctx, now, conn);
+            self.connections[conn.0].close_common(&mut self.ctx, now);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -729,7 +727,7 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                self.connections[conn.0].close_common(&mut self.ctx, now, conn);
+                self.connections[conn.0].close_common(&mut self.ctx, now);
                 let state = State::Draining(match self.connections[conn.0].state.take().unwrap() {
                     State::Handshake(x) => x.into(),
                     State::HandshakeFailed(x) => x.into(),
@@ -901,7 +899,7 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[conn.0].reset(&mut self.ctx, stream, error_code, conn)
+        self.connections[conn.0].reset(&mut self.ctx, stream, error_code)
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
@@ -937,7 +935,7 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-        self.connections[conn.0].close(&mut self.ctx, now, conn, error_code, reason);
+        self.connections[conn.0].close(&mut self.ctx, now, error_code, reason);
     }
 
     /// Look up whether we're the client or server of `conn`.

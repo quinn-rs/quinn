@@ -402,7 +402,6 @@ impl Connection {
         //zero_rtt_crypto: Option<Crypto>,
         now: u64,
         packet_number: u64,
-        conn: ConnectionHandle,
     ) {
         //self.zero_rtt_crypto = zero_rtt_crypto;
         self.on_packet_authenticated(ctx, now, packet_number);
@@ -415,7 +414,7 @@ impl Connection {
             remote_id_set: true,
         }));
         self.set_params(params);
-        ctx.dirty_conns.insert(conn);
+        ctx.dirty_conns.insert(self.handle);
         ctx.incoming_handshakes += 1;
     }
 
@@ -450,13 +449,7 @@ impl Connection {
         }
     }
 
-    pub fn on_ack_received(
-        &mut self,
-        ctx: &mut Context,
-        now: u64,
-        conn: ConnectionHandle,
-        ack: frame::Ack,
-    ) {
+    pub fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
         trace!(ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
@@ -481,7 +474,7 @@ impl Connection {
         if was_blocked && !self.blocked() {
             for stream in self.blocked_streams.drain() {
                 ctx.events
-                    .push_back((conn, Event::StreamWritable { stream }));
+                    .push_back((self.handle, Event::StreamWritable { stream }));
             }
         }
     }
@@ -785,13 +778,7 @@ impl Connection {
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(
-        &mut self,
-        ctx: &mut Context,
-        stream: StreamId,
-        error_code: u16,
-        conn_h: ConnectionHandle,
-    ) {
+    pub fn reset(&mut self, ctx: &mut Context, stream: StreamId, error_code: u16) {
         assert!(
             stream.directionality() == Directionality::Bi || stream.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
@@ -814,13 +801,12 @@ impl Connection {
             stream.state = stream::SendState::ResetSent { stop_reason: None };
         }
         self.pending.rst_stream.push((stream, error_code));
-        ctx.dirty_conns.insert(conn_h);
+        ctx.dirty_conns.insert(self.handle);
     }
 
     pub fn drive_tls(
         &mut self,
         ctx: &mut Context,
-        conn: ConnectionHandle,
         tls: &mut TlsSession,
     ) -> Result<(), TransportError> {
         trace!(ctx.log, "processed stream 0 bytes");
@@ -870,7 +856,7 @@ impl Connection {
             Err(e @ TLSError::AlertReceived(_)) => {
                 debug!(ctx.log, "TLS error {}", e);
                 ctx.events.push_back((
-                    conn,
+                    self.handle,
                     Event::ConnectionLost {
                         reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
                     },
@@ -880,7 +866,7 @@ impl Connection {
             Err(e) => {
                 debug!(ctx.log, "TLS error {}", e);
                 ctx.events.push_back((
-                    conn,
+                    self.handle,
                     Event::ConnectionLost {
                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                     },
@@ -896,7 +882,6 @@ impl Connection {
         now: u64,
         packet_number: u64,
         payload: Bytes,
-        conn: ConnectionHandle,
     ) -> Result<(), TLSError> {
         let frame = if let Ok(Some(frame)) = parse_initial(&ctx.log, payload) {
             frame
@@ -919,7 +904,7 @@ impl Connection {
             Side::Server,
             &mut io::Cursor::new(tls.get_quic_transport_parameters().unwrap()),
         ).unwrap();
-        self.handshake_complete(ctx, tls, params, now, packet_number, conn);
+        self.handshake_complete(ctx, tls, params, now, packet_number);
         Ok(())
     }
 
@@ -940,7 +925,6 @@ impl Connection {
         &mut self,
         ctx: &mut Context,
         now: u64,
-        conn: ConnectionHandle,
         remote: SocketAddrV6,
         mut packet: Packet,
         state: State,
@@ -960,7 +944,7 @@ impl Connection {
                             // Received Retry as a server
                             debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
                             ctx.events.push_back((
-                                conn,
+                                self.handle,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
                                 },
@@ -983,7 +967,7 @@ impl Connection {
                             } else {
                                 debug!(ctx.log, "invalid retry payload");
                                 ctx.events.push_back((
-                                    conn,
+                                    self.handle,
                                     Event::ConnectionLost {
                                         reason: TransportError::PROTOCOL_VIOLATION.into(),
                                     },
@@ -1029,7 +1013,7 @@ impl Connection {
                                 Err(e) => {
                                     debug!(ctx.log, "handshake failed"; "reason" => %e);
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
                                         },
@@ -1087,7 +1071,7 @@ impl Connection {
                                 Frame::Stream(frame::Stream { .. }) => {
                                     debug!(ctx.log, "non-stream-0 stream frame in handshake");
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
                                         },
@@ -1098,11 +1082,11 @@ impl Connection {
                                     );
                                 }
                                 Frame::Ack(ack) => {
-                                    self.on_ack_received(ctx, now, conn, ack);
+                                    self.on_ack_received(ctx, now, ack);
                                 }
                                 Frame::ConnectionClose(reason) => {
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: ConnectionError::ConnectionClosed { reason },
                                         },
@@ -1111,7 +1095,7 @@ impl Connection {
                                 }
                                 Frame::ApplicationClose(reason) => {
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: ConnectionError::ApplicationClosed { reason },
                                         },
@@ -1124,7 +1108,7 @@ impl Connection {
                                 _ => {
                                     debug!(ctx.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: TransportError::PROTOCOL_VIOLATION.into(),
                                         },
@@ -1149,7 +1133,7 @@ impl Connection {
                                 } else {
                                     debug!(ctx.log, "remote didn't send transport params");
                                     ctx.events.push_back((
-                                        conn,
+                                        self.handle,
                                         Event::ConnectionLost {
                                             reason: TransportError::TRANSPORT_PARAMETER_ERROR
                                                 .into(),
@@ -1176,7 +1160,7 @@ impl Connection {
                                 match self.side {
                                     Side::Client => {
                                         ctx.events.push_back((
-                                            conn,
+                                            self.handle,
                                             Event::Connected {
                                                 protocol: state
                                                     .tls
@@ -1187,7 +1171,7 @@ impl Connection {
                                     }
                                     Side::Server => {
                                         ctx.incoming_handshakes -= 1;
-                                        ctx.incoming.push_back(conn);
+                                        ctx.incoming.push_back(self.handle);
                                     }
                                 }
                                 self.crypto = Some(Crypto::new_1rtt(&state.tls, self.side));
@@ -1210,7 +1194,7 @@ impl Connection {
                             Err(e) => {
                                 debug!(ctx.log, "handshake failed"; "reason" => %e);
                                 ctx.events.push_back((
-                                    conn,
+                                    self.handle,
                                     Event::ConnectionLost {
                                         reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
                                     },
@@ -1275,7 +1259,7 @@ impl Connection {
                     Header::Long { ty, .. } => {
                         debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
@@ -1289,7 +1273,7 @@ impl Connection {
                         if packet.payload.len() % 4 != 0 {
                             debug!(ctx.log, "malformed version negotiation"; "connection" => %id);
                             ctx.events.push_back((
-                                conn,
+                                self.handle,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
                                 },
@@ -1308,7 +1292,7 @@ impl Connection {
                         }
                         debug!(ctx.log, "remote doesn't support our version");
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: ConnectionError::VersionMismatch,
                             },
@@ -1337,7 +1321,7 @@ impl Connection {
                     Err(Some(e)) => {
                         warn!(ctx.log, "got illegal packet"; "connection" => %id);
                         ctx.events
-                            .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                            .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
                         return State::closed(e);
                     }
                 };
@@ -1352,9 +1336,9 @@ impl Connection {
                     self.handshake_cleanup(&ctx.config);
                 }
                 match self
-                    .process_payload(ctx, now, conn, number, payload.into(), &mut state.tls)
+                    .process_payload(ctx, now, number, payload.into(), &mut state.tls)
                     .and_then(|x| {
-                        self.drive_tls(ctx, conn, &mut state.tls)?;
+                        self.drive_tls(ctx, &mut state.tls)?;
                         Ok(x)
                     }) {
                     Err(e) => State::closed(e),
@@ -1399,7 +1383,6 @@ impl Connection {
         &mut self,
         ctx: &mut Context,
         now: u64,
-        conn: ConnectionHandle,
         number: u64,
         payload: Bytes,
         tls: &mut TlsSession,
@@ -1427,8 +1410,10 @@ impl Connection {
                         match self.get_recv_stream(frame.id) {
                             Err(e) => {
                                 debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
-                                ctx.events
-                                    .push_back((conn, Event::ConnectionLost { reason: e.into() }));
+                                ctx.events.push_back((
+                                    self.handle,
+                                    Event::ConnectionLost { reason: e.into() },
+                                ));
                                 return Err(e.into());
                             }
                             Ok(None) => {
@@ -1447,7 +1432,7 @@ impl Connection {
                             if end > final_offset || (frame.fin && end != final_offset) {
                                 debug!(ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
                                 ctx.events.push_back((
-                                    conn,
+                                    self.handle,
                                     Event::ConnectionLost {
                                         reason: TransportError::FINAL_OFFSET_ERROR.into(),
                                     },
@@ -1462,7 +1447,7 @@ impl Connection {
                                    "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
                                    "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
                             ctx.events.push_back((
-                                conn,
+                                self.handle,
                                 Event::ConnectionLost {
                                     reason: TransportError::FLOW_CONTROL_ERROR.into(),
                                 },
@@ -1478,7 +1463,7 @@ impl Connection {
                         if frame.id == StreamId(0) && frame.fin {
                             debug!(ctx.log, "got fin on stream 0"; "connection" => cid);
                             ctx.events.push_back((
-                                conn,
+                                self.handle,
                                 Event::ConnectionLost {
                                     reason: TransportError::PROTOCOL_VIOLATION.into(),
                                 },
@@ -1509,21 +1494,21 @@ impl Connection {
                     };
                     if frame.id != StreamId(0) {
                         self.readable_streams.insert(frame.id);
-                        ctx.readable_conns.insert(conn);
+                        ctx.readable_conns.insert(self.handle);
                     }
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(ctx, now, conn, ack);
+                    self.on_ack_received(ctx, now, ack);
                     for stream in self.finished_streams.drain(..) {
                         ctx.events
-                            .push_back((conn, Event::StreamFinished { stream }));
+                            .push_back((self.handle, Event::StreamFinished { stream }));
                     }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
                     ctx.events.push_back((
-                        conn,
+                        self.handle,
                         Event::ConnectionLost {
                             reason: ConnectionError::ConnectionClosed { reason },
                         },
@@ -1532,7 +1517,7 @@ impl Connection {
                 }
                 Frame::ApplicationClose(reason) => {
                     ctx.events.push_back((
-                        conn,
+                        self.handle,
                         Event::ConnectionLost {
                             reason: ConnectionError::ApplicationClosed { reason },
                         },
@@ -1542,7 +1527,7 @@ impl Connection {
                 Frame::Invalid(ty) => {
                     debug!(ctx.log, "received malformed frame"; "type" => %ty);
                     ctx.events.push_back((
-                        conn,
+                        self.handle,
                         Event::ConnectionLost {
                             reason: TransportError::frame(ty).into(),
                         },
@@ -1555,7 +1540,7 @@ impl Connection {
                 Frame::PathResponse(_) => {
                     debug!(ctx.log, "unsolicited PATH_RESPONSE");
                     ctx.events.push_back((
-                        conn,
+                        self.handle,
                         Event::ConnectionLost {
                             reason: TransportError::UNSOLICITED_PATH_RESPONSE.into(),
                         },
@@ -1568,7 +1553,7 @@ impl Connection {
                     if was_blocked && !self.blocked() {
                         for stream in self.blocked_streams.drain() {
                             ctx.events
-                                .push_back((conn, Event::StreamWritable { stream }));
+                                .push_back((self.handle, Event::StreamWritable { stream }));
                         }
                     }
                 }
@@ -1576,7 +1561,7 @@ impl Connection {
                     if id.initiator() != self.side && id.directionality() == Directionality::Uni {
                         debug!(ctx.log, "got MAX_STREAM_DATA on recv-only stream");
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
@@ -1590,14 +1575,14 @@ impl Connection {
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
                                 ctx.events
-                                    .push_back((conn, Event::StreamWritable { stream: id }));
+                                    .push_back((self.handle, Event::StreamWritable { stream: id }));
                             }
                             ss.max_data = offset;
                         }
                     } else {
                         debug!(ctx.log, "got MAX_STREAM_DATA on unopened stream");
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
@@ -1613,7 +1598,7 @@ impl Connection {
                     if id.index() > *limit {
                         *limit = id.index();
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::StreamAvailable {
                                 directionality: id.directionality(),
                             },
@@ -1628,13 +1613,14 @@ impl Connection {
                     if id == StreamId(0) {
                         debug!(ctx.log, "got RST_STREAM on stream 0");
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
+                    let conn = self.handle;
                     let offset = match self.get_recv_stream(id) {
                         Err(e) => {
                             debug!(ctx.log, "received illegal RST_STREAM");
@@ -1670,7 +1656,7 @@ impl Connection {
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
                     self.readable_streams.insert(id);
-                    ctx.readable_conns.insert(conn);
+                    ctx.readable_conns.insert(self.handle);
                 }
                 Frame::Blocked { offset } => {
                     debug!(ctx.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -1689,14 +1675,14 @@ impl Connection {
                     {
                         debug!(ctx.log, "got STOP_SENDING on invalid stream");
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    self.reset(ctx, id, 0, conn);
+                    self.reset(ctx, id, 0);
                     self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
                         stream::SendState::ResetSent {
                             stop_reason: Some(error_code),
@@ -1707,7 +1693,7 @@ impl Connection {
                         debug!(ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
                                connection=self.local_id.clone());
                         ctx.events.push_back((
-                            conn,
+                            self.handle,
                             Event::ConnectionLost {
                                 reason: TransportError::PROTOCOL_VIOLATION.into(),
                             },
@@ -2072,25 +2058,18 @@ impl Connection {
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
     /// all important communications have been completed.
-    pub fn close(
-        &mut self,
-        ctx: &mut Context,
-        now: u64,
-        conn: ConnectionHandle,
-        error_code: u16,
-        reason: Bytes,
-    ) {
+    pub fn close(&mut self, ctx: &mut Context, now: u64, error_code: u16, reason: Bytes) {
         let was_closed = self.state.as_ref().unwrap().is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
-            self.close_common(ctx, now, conn);
+            self.close_common(ctx, now);
             ctx.io.push_back(Io::Transmit {
                 destination: self.remote,
                 packet: self.make_close(&reason),
             });
             self.reset_idle_timeout(&ctx.config, now);
-            ctx.dirty_conns.insert(conn);
+            ctx.dirty_conns.insert(self.handle);
         }
         self.state = Some(match self.state.take().unwrap() {
             State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
@@ -2115,11 +2094,11 @@ impl Connection {
         });
     }
 
-    pub fn close_common(&mut self, ctx: &mut Context, now: u64, conn: ConnectionHandle) {
+    pub fn close_common(&mut self, ctx: &mut Context, now: u64) {
         trace!(ctx.log, "connection closed");
         self.set_loss_detection = Some(None);
         ctx.io.push_back(Io::TimerStart {
-            connection: conn,
+            connection: self.handle,
             timer: Timer::Close,
             time: now + 3 * self.rto(&ctx.config),
         });
