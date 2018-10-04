@@ -8,7 +8,7 @@ use rand::distributions::Distribution;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT, reset_token_for};
+use crypto::{reset_token_for, ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
     set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
@@ -903,13 +903,13 @@ impl Connection {
 
         trace!(ctx.log, "got initial");
         let server_params = TransportParameters {
-            stateless_reset_token: Some(reset_token_for(&ctx.listen_keys.as_ref().unwrap().reset, &self.local_id)),
+            stateless_reset_token: Some(reset_token_for(
+                &ctx.listen_keys.as_ref().unwrap().reset,
+                &self.local_id,
+            )),
             ..TransportParameters::new(&ctx.config)
         };
-        let mut tls = TlsSession::new_server(
-            &ctx.config.tls_server_config,
-            &server_params,
-        );
+        let mut tls = TlsSession::new_server(&ctx.config.tls_server_config, &server_params);
         self.read_tls(&mut tls, &frame);
         tls.process_new_packets()?;
         let params = TransportParameters::read(
