@@ -107,6 +107,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut builder = quinn::Endpoint::new();
     builder
+        .set_protocols(&["hq-11".into()])
         .logger(log.clone())
         .config(quinn::Config {
             max_remote_bi_streams: 64,
