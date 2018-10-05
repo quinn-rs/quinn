@@ -91,6 +91,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     */
 
     let mut builder = quinn::Endpoint::new();
+    builder.set_protocols(&["hq-11".into()]);
     builder.logger(log.clone());
     if options.keylog {
         builder.enable_keylog();

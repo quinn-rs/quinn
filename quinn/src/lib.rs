@@ -302,6 +302,14 @@ impl<'a> EndpointBuilder<'a> {
         Ok(self)
     }
 
+    pub fn set_protocols(&mut self, protocols: &[String]) -> &mut Self {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
+            tls_server_config.set_protocols(protocols);
+        }
+        self
+    }
+
     pub fn from_socket(
         self,
         socket: std::net::UdpSocket,
