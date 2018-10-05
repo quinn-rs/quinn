@@ -84,14 +84,12 @@ pub fn build_client_config() -> ClientConfig {
         .root_store
         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
     config.versions = vec![ProtocolVersion::TLSv1_3];
-    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
     config.key_log = Arc::new(KeyLogFile::new());
     config
 }
 
 pub fn build_server_config() -> ServerConfig {
     let mut config = ServerConfig::new(NoClientAuth::new());
-    config.set_protocols(&[ALPN_PROTOCOL.into()]);
     config.key_log = Arc::new(KeyLogFile::new());
     config
 }
@@ -434,8 +432,6 @@ fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
     buf.put_slice(conn_id);
     hkdf::extract(&key, &buf)
 }
-
-const ALPN_PROTOCOL: &str = "hq-11";
 
 #[cfg(test)]
 mod test {
