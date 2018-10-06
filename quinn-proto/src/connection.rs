@@ -2059,7 +2059,7 @@ impl Connection {
         }
         self.crypto
             .as_ref()
-            .unwrap()
+            .unwrap_or_else(|| &self.handshake_crypto)
             .encrypt(number, &mut buf, header_len as usize);
         buf.into()
     }
