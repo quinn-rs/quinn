@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::{fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
+use bytes::Bytes;
 use rustls::internal::pemfile;
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
@@ -616,3 +617,11 @@ fn zero_rtt() {
     assert_matches!(pair.server.read_unordered(sc, s), Ok((ref data, 0)) if data == MSG);
 }
 */
+
+#[test]
+fn close_during_handshake() {
+    let mut pair = Pair::default();
+    let c = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    pair.client.close(pair.time, c, 0, Bytes::new());
+    // This never actually sends the client's Initial; we may want to behave better here.
+}
