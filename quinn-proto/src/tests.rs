@@ -89,7 +89,7 @@ fn server_config() -> Config {
     };
 
     let mut tls_server_config = crypto::build_server_config();
-    tls_server_config.set_protocols(&["hq-11".into()]);
+    tls_server_config.set_protocols(&[ALPN_QUIC_HTTP.into()]);
     tls_server_config
         .set_single_cert(certs, keys[0].clone())
         .unwrap();

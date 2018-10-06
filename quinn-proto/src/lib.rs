@@ -57,6 +57,9 @@ pub use transport_error::Error as TransportError;
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_000b;
 
+/// TLS ALPN value for HTTP over QUIC
+pub const ALPN_QUIC_HTTP: &str = "hq-11";
+
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Side {
