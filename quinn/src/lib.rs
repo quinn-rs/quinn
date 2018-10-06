@@ -88,7 +88,9 @@ use tokio_udp::UdpSocket;
 
 use quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quinn::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
+pub use quinn::{
+    ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys, ALPN_QUIC_HTTP,
+};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
