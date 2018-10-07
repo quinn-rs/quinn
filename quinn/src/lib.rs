@@ -69,6 +69,7 @@ use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
+use std::str;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, mem};
@@ -304,10 +305,14 @@ impl<'a> EndpointBuilder<'a> {
         Ok(self)
     }
 
-    pub fn set_protocols(&mut self, protocols: &[String]) -> &mut Self {
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         {
             let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            tls_server_config.set_protocols(protocols);
+            let protocols_strings = protocols
+                .iter()
+                .map(|p| str::from_utf8(p).unwrap().into())
+                .collect::<Vec<_>>();
+            tls_server_config.set_protocols(&protocols_strings);
         }
         self
     }
