@@ -428,7 +428,7 @@ impl Iter {
                 }
                 let mut stage = [0; MAX_CID_SIZE];
                 self.bytes.copy_to_slice(&mut stage[0..length]);
-                let id = ConnectionId::new(stage, length);
+                let id = ConnectionId::new(&stage[..length]);
                 if self.bytes.remaining() < 16 {
                     return Err(IterErr::UnexpectedEnd);
                 }

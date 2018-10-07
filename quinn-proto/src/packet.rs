@@ -1,6 +1,5 @@
 use std::{fmt, io, str};
 
-use arrayvec::ArrayVec;
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
 use slog;
@@ -227,9 +226,9 @@ impl Packet {
                     ));
                 }
                 buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-                let destination_id = ConnectionId::new(cid_stage, dcil as usize);
+                let destination_id = ConnectionId::new(&cid_stage[..dcil as usize]);
                 buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-                let source_id = ConnectionId::new(cid_stage, scil as usize);
+                let source_id = ConnectionId::new(&cid_stage[..scil as usize]);
                 match version {
                     0 => (
                         buf.position() as usize,
@@ -271,8 +270,8 @@ impl Packet {
                         "destination connection ID longer than packet",
                     ));
                 }
-                buf.copy_to_slice(&mut cid_stage[0..dest_id_len]);
-                let id = ConnectionId::new(cid_stage, dest_id_len);
+                buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
+                let id = ConnectionId::new(&cid_stage[..dest_id_len]);
                 let key_phase = ty & KEY_PHASE_BIT != 0;
                 let number = match ty & 0b11 {
                     0x0 => PacketNumber::U8(buf.get()?),
@@ -309,41 +308,52 @@ impl Packet {
 /// Protocol-level identifier for a connection.
 ///
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ConnectionId(pub(crate) ArrayVec<[u8; MAX_CID_SIZE]>);
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ConnectionId {
+    pub len: u8,
+    pub bytes: [u8; MAX_CID_SIZE],
+}
 
 impl ::std::ops::Deref for ConnectionId {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        &self.0
+        &self.bytes[0..self.len as usize]
     }
 }
 
 impl ::std::ops::DerefMut for ConnectionId {
     fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.0
+        &mut self.bytes[0..self.len as usize]
     }
 }
 
 impl ConnectionId {
-    pub fn new(data: [u8; MAX_CID_SIZE], len: usize) -> Self {
-        let mut x = ConnectionId(data.into());
-        x.0.truncate(len);
-        x
+    pub fn new(bytes: &[u8]) -> Self {
+        debug_assert!(bytes.is_empty() || (bytes.len() > 3 && bytes.len() <= MAX_CID_SIZE));
+        let mut res = Self {
+            len: bytes.len() as u8,
+            bytes: [0; MAX_CID_SIZE],
+        };
+        res.bytes[..bytes.len()].clone_from_slice(&bytes);
+        res
     }
 
     pub fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
         debug_assert!(len as usize <= MAX_CID_SIZE);
-        let mut v = ArrayVec::from([0; MAX_CID_SIZE]);
-        rng.fill_bytes(&mut v[0..len as usize]);
-        v.truncate(len as usize);
-        ConnectionId(v)
+        let mut res = Self {
+            len: len as u8,
+            bytes: [0; MAX_CID_SIZE],
+        };
+        let mut rng_bytes = [0; MAX_CID_SIZE];
+        rng.fill_bytes(&mut rng_bytes);
+        res.bytes[..len as usize].clone_from_slice(&rng_bytes[..len as usize]);
+        res
     }
 }
 
 impl fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for byte in &self.0 {
+        for byte in self.iter() {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())
