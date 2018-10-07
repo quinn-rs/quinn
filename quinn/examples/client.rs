@@ -91,7 +91,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     */
 
     let mut builder = quinn::Endpoint::new();
-    builder.set_protocols(&[quinn::ALPN_QUIC_HTTP.into()]);
+    builder.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
     builder.logger(log.clone());
     if options.keylog {
         builder.enable_keylog();

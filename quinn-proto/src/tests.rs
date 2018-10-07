@@ -88,7 +88,7 @@ fn server_config() -> Config {
     };
 
     let mut tls_server_config = crypto::build_server_config();
-    tls_server_config.set_protocols(&[ALPN_QUIC_HTTP.into()]);
+    tls_server_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_server_config
         .set_single_cert(certs, keys[0].clone())
         .unwrap();
@@ -107,7 +107,7 @@ fn client_config() -> Config {
     let anchor_vec = vec![anchor];
 
     let mut tls_client_config = crypto::build_client_config();
-    tls_client_config.set_protocols(&["hq-11".into()]);
+    tls_client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_client_config
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
