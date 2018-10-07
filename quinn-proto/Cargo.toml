@@ -13,7 +13,6 @@ workspace = ".."
 maintenance = { status = "experimental" }
 
 [dependencies]
-arrayvec = "0.4.7"
 blake2 = "0.7"
 byteorder = "1.1"
 bytes = "0.4.7"

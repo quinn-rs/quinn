@@ -473,12 +473,7 @@ mod test {
 
     #[test]
     fn key_derivation() {
-        let id = ConnectionId(
-            [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]
-                .iter()
-                .cloned()
-                .collect(),
-        );
+        let id = ConnectionId::new(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
         let digest = &digest::SHA256;
         let cipher = &aead::AES_128_GCM;
         let hs_secret = handshake_secret(&id);
