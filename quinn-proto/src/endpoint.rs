@@ -595,17 +595,35 @@ impl Endpoint {
         packet: Packet,
     ) {
         trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
+        // TODO: Ask quinn owners why we use conn.0 instead of conn.initial_id.  For succinctness?
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
         // State transitions
         let state = self.connections[conn.0].state.take().unwrap();
-        let state = self.connections[conn.0].handle_connected_inner(
+        let state = match self.connections[conn.0].handle_connected_inner(
             &mut self.ctx,
             now,
             remote,
             packet,
             state,
-        );
+        ) {
+            Ok(state) => state,
+            Err(conn_err) => match conn_err {
+                ConnectionError::TransportError { error_code } => {
+                    &mut self.ctx.events.push_back((
+                        conn,
+                        Event::ConnectionLost {
+                            reason: error_code.into(),
+                        },
+                    ));
+                    State::handshake_failed(error_code, None)
+                }
+                _ => {
+                    debug!(self.ctx.log, "unexpected connection error received"; "error" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                    return;
+                }
+            },
+        };
 
         if !was_closed && state.is_closed() {
             self.connections[conn.0].close_common(&mut self.ctx, now);
