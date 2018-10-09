@@ -586,14 +586,61 @@ impl Endpoint {
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
         // State transitions
-        let state = self.connections[conn.0].state.take().unwrap();
-        let state = self.connections[conn.0].handle_connected_inner(
+        let prev_state = self.connections[conn.0].state.take().unwrap();
+        let was_handshake = match prev_state {
+            State::Handshake(_) => true,
+            _ => false,
+        };
+        let state = match self.connections[conn.0].handle_connected_inner(
             &mut self.ctx,
             now,
             remote,
             packet,
-            state,
-        );
+            prev_state,
+        ) {
+            Ok(state) => state,
+            Err(conn_err) => {
+                self.ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: conn_err.clone(),
+                    },
+                ));
+
+                match conn_err {
+                    ConnectionError::ApplicationClosed { reason } => {
+                        if was_handshake {
+                            State::handshake_failed(reason, None)
+                        } else {
+                            State::closed(reason)
+                        }
+                    }
+                    ConnectionError::ConnectionClosed { reason } => {
+                        if was_handshake {
+                            State::handshake_failed(reason, None)
+                        } else {
+                            State::closed(reason)
+                        }
+                    }
+                    ConnectionError::Reset => {
+                        debug!(self.ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                        panic!("unexpected connection reset error received");
+                    }
+                    ConnectionError::TimedOut => {
+                        debug!(self.ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                        panic!("unexpected connection timed out error received");
+                    }
+                    ConnectionError::TransportError { error_code } => {
+                        if was_handshake {
+                            State::handshake_failed(error_code, None)
+                        } else {
+                            State::closed(error_code)
+                        }
+                    }
+                    ConnectionError::VersionMismatch => State::Draining,
+                }
+            }
+        };
 
         if !was_closed && state.is_closed() {
             self.connections[conn.0].close_common(&mut self.ctx, now);
@@ -703,12 +750,7 @@ impl Endpoint {
                     timer: Timer::Idle,
                 });
                 self.ctx.events.push_back((conn, Event::ConnectionDrained));
-                if self.connections[conn.0]
-                    .state
-                    .as_ref()
-                    .unwrap()
-                    .is_app_closed()
-                {
+                if self.connections[conn.0].app_closed {
                     self.forget(conn);
                 } else {
                     self.connections[conn.0].state = Some(State::Drained);
@@ -716,15 +758,7 @@ impl Endpoint {
             }
             Timer::Idle => {
                 self.connections[conn.0].close_common(&mut self.ctx, now);
-                let state = State::Draining(match self.connections[conn.0].state.take().unwrap() {
-                    State::Handshake(x) => x.into(),
-                    State::HandshakeFailed(x) => x.into(),
-                    State::Established(x) => x.into(),
-                    State::Closed(x) => x.into(),
-                    State::Draining(x) => x,
-                    State::Drained => unreachable!(),
-                });
-                self.connections[conn.0].state = Some(state);
+                self.connections[conn.0].state = Some(State::Draining);
                 self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
