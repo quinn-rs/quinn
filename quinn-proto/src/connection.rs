@@ -31,6 +31,10 @@ impl From<ConnectionHandle> for usize {
 }
 
 pub struct Connection {
+    // TODO: Is there a better name for this?  I feel like there is, but I don't know enough about
+    // the way this struct is used to know if the knowledge of "app" makes sense here.
+    // Just `closed`?
+    pub app_closed: bool,
     /// DCID of Initial packet
     pub initial_id: ConnectionId,
     pub local_id: ConnectionId,
@@ -301,6 +305,7 @@ impl Connection {
             );
         }
         Self {
+            app_closed: false,
             initial_id,
             local_id,
             remote_id,
@@ -1058,7 +1063,7 @@ impl Connection {
                                             reason: ConnectionError::ConnectionClosed { reason },
                                         },
                                     ));
-                                    return Ok(State::Draining(state.into()));
+                                    return Ok(State::Draining);
                                 }
                                 Frame::ApplicationClose(reason) => {
                                     ctx.events.push_back((
@@ -1067,7 +1072,7 @@ impl Connection {
                                             reason: ConnectionError::ApplicationClosed { reason },
                                         },
                                     ));
-                                    return Ok(State::Draining(state.into()));
+                                    return Ok(State::Draining);
                                 }
                                 Frame::PathChallenge(value) => {
                                     self.handshake_pending.path_challenge(number as u64, value);
@@ -1090,17 +1095,7 @@ impl Connection {
                                     self.set_params(params);
                                 } else {
                                     debug!(ctx.log, "remote didn't send transport params");
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::TRANSPORT_PARAMETER_ERROR
-                                                .into(),
-                                        },
-                                    ));
-                                    return Ok(State::handshake_failed(
-                                        TransportError::TLS_HANDSHAKE_FAILED,
-                                        None,
-                                    ));
+                                    return Err(TransportError::TLS_HANDSHAKE_FAILED.into());
                                 }
                                 trace!(
                                     ctx.log,
@@ -1228,16 +1223,7 @@ impl Connection {
                             }
                         }
                         debug!(ctx.log, "remote doesn't support our version");
-                        // TODO: What do we do here?  If we return Err(ConnectionError::VersionMismatch),
-                        // the caller won't be able to get the same `State::Draining` without the
-                        // `state.into()` we have here.  Maybe we leave it for now?
-                        ctx.events.push_back((
-                            self.handle,
-                            Event::ConnectionLost {
-                                reason: ConnectionError::VersionMismatch,
-                            },
-                        ));
-                        Ok(State::Draining(state.into()))
+                        Err(ConnectionError::VersionMismatch)
                     }
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     Header::Short { .. } => {
@@ -1260,8 +1246,6 @@ impl Connection {
                     }
                     Err(Some(e)) => {
                         warn!(ctx.log, "got illegal packet"; "connection" => %id);
-                        ctx.events
-                            .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
                         return Ok(State::closed(e));
                     }
                 };
@@ -1282,7 +1266,7 @@ impl Connection {
                         Ok(x)
                     }) {
                     Err(e) => Ok(State::closed(e)),
-                    Ok(true) => Ok(State::Draining(state.into())),
+                    Ok(true) => Ok(State::Draining),
                     Ok(false) => Ok(State::Established(state)),
                 }
             }
@@ -1292,7 +1276,7 @@ impl Connection {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
-                                return Ok(State::Draining(state.into()));
+                                return Ok(State::Draining);
                             }
                             _ => {}
                         }
@@ -1306,7 +1290,7 @@ impl Connection {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
-                                return Ok(State::Draining(state.into()));
+                                return Ok(State::Draining);
                             }
                             _ => {}
                         }
@@ -1314,7 +1298,7 @@ impl Connection {
                 }
                 Ok(State::Closed(state))
             }
-            State::Draining(x) => Ok(State::Draining(x)),
+            State::Draining => Ok(State::Draining),
             State::Drained => Ok(State::Drained),
         }
     }
@@ -2011,25 +1995,17 @@ impl Connection {
             self.reset_idle_timeout(&ctx.config, now);
             ctx.dirty_conns.insert(self.handle);
         }
+
+        self.app_closed = true;
         self.state = Some(match self.state.take().unwrap() {
             State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
                 reason,
                 alert: None,
-                app_closed: true,
             }),
-            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed {
-                app_closed: true,
-                ..x
-            }),
-            State::Established(_) => State::Closed(state::Closed {
-                reason,
-                app_closed: true,
-            }),
-            State::Closed(x) => State::Closed(state::Closed {
-                app_closed: true,
-                ..x
-            }),
-            State::Draining(_) => State::Draining(state::Draining { app_closed: true }),
+            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed { ..x }),
+            State::Established(_) => State::Closed(state::Closed { reason }),
+            State::Closed(x) => State::Closed(state::Closed { ..x }),
+            State::Draining => State::Draining,
             State::Drained => unreachable!(),
         });
     }
@@ -2428,6 +2404,17 @@ impl From<ConnectionError> for io::Error {
     }
 }
 
+impl From<state::CloseReason> for ConnectionError {
+    fn from(cr: state::CloseReason) -> ConnectionError {
+        match cr {
+            state::CloseReason::Connection(conn_close) => conn_close.error_code.into(),
+            state::CloseReason::Application(app_close) => {
+                ConnectionError::ApplicationClosed { reason: app_close }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
@@ -2456,7 +2443,7 @@ pub enum State {
     Established(state::Established),
     HandshakeFailed(state::HandshakeFailed),
     Closed(state::Closed),
-    Draining(state::Draining),
+    Draining,
     /// Waiting for application to call close so we can dispose of the resources
     Drained,
 }
@@ -2465,7 +2452,6 @@ impl State {
     pub fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
         State::Closed(state::Closed {
             reason: reason.into(),
-            app_closed: false,
         })
     }
 
@@ -2476,7 +2462,6 @@ impl State {
         State::HandshakeFailed(state::HandshakeFailed {
             reason: reason.into(),
             alert,
-            app_closed: false,
         })
     }
 
@@ -2484,17 +2469,8 @@ impl State {
         match *self {
             State::HandshakeFailed(_) => true,
             State::Closed(_) => true,
-            State::Draining(_) => true,
+            State::Draining => true,
             State::Drained => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_app_closed(&self) -> bool {
-        match *self {
-            State::HandshakeFailed(ref x) => x.app_closed,
-            State::Closed(ref x) => x.app_closed,
-            State::Draining(ref x) => x.app_closed,
             _ => false,
         }
     }
@@ -2527,7 +2503,6 @@ pub mod state {
         // Closed
         pub reason: CloseReason,
         pub alert: Option<Box<[u8]>>,
-        pub app_closed: bool,
     }
 
     #[derive(Clone)]
@@ -2552,41 +2527,9 @@ pub mod state {
         }
     }
 
+    #[derive(Clone)]
     pub struct Closed {
         pub reason: CloseReason,
-        pub app_closed: bool,
-    }
-
-    pub struct Draining {
-        pub app_closed: bool,
-    }
-
-    impl From<Handshake> for Draining {
-        fn from(_: Handshake) -> Self {
-            Draining { app_closed: false }
-        }
-    }
-
-    impl From<HandshakeFailed> for Draining {
-        fn from(x: HandshakeFailed) -> Self {
-            Draining {
-                app_closed: x.app_closed,
-            }
-        }
-    }
-
-    impl From<Established> for Draining {
-        fn from(_: Established) -> Self {
-            Draining { app_closed: false }
-        }
-    }
-
-    impl From<Closed> for Draining {
-        fn from(x: Closed) -> Self {
-            Draining {
-                app_closed: x.app_closed,
-            }
-        }
     }
 }
 

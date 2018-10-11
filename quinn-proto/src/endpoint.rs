@@ -595,9 +595,9 @@ impl Endpoint {
         packet: Packet,
     ) {
         trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
-        // TODO: Ask quinn owners why we use conn.0 instead of conn.initial_id.  For succinctness?
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
+        let mut err_to_log: Option<ConnectionError> = None;
         // State transitions
         let state = self.connections[conn.0].state.take().unwrap();
         let state = match self.connections[conn.0].handle_connected_inner(
@@ -607,16 +607,25 @@ impl Endpoint {
             packet,
             state,
         ) {
-            Ok(state) => state,
+            Ok(state) => match state {
+                State::Closed(closed) => {
+                    let copy = closed.clone();
+                    err_to_log = Some(closed.reason.into());
+                    State::Closed(copy)
+                }
+                _ => state,
+            },
             Err(conn_err) => match conn_err {
                 ConnectionError::TransportError { error_code } => {
-                    &mut self.ctx.events.push_back((
-                        conn,
-                        Event::ConnectionLost {
-                            reason: error_code.into(),
-                        },
-                    ));
+                    err_to_log = Some(error_code.into());
                     State::handshake_failed(error_code, None)
+                }
+                ConnectionError::VersionMismatch => {
+                    err_to_log = Some(ConnectionError::VersionMismatch);
+                    // TODO: Just curious - why do we start draining after encountering a version
+                    // mismatch?  What are we draining - a QUIC stream?  What does it mean to drain
+                    // a stream?
+                    State::Draining
                 }
                 _ => {
                     debug!(self.ctx.log, "unexpected connection error received"; "error" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
@@ -624,6 +633,15 @@ impl Endpoint {
                 }
             },
         };
+
+        if err_to_log.is_some() {
+            &mut self.ctx.events.push_back((
+                conn,
+                Event::ConnectionLost {
+                    reason: err_to_log.unwrap(),
+                },
+            ));
+        }
 
         if !was_closed && state.is_closed() {
             self.connections[conn.0].close_common(&mut self.ctx, now);
@@ -733,12 +751,7 @@ impl Endpoint {
                     timer: Timer::Idle,
                 });
                 self.ctx.events.push_back((conn, Event::ConnectionDrained));
-                if self.connections[conn.0]
-                    .state
-                    .as_ref()
-                    .unwrap()
-                    .is_app_closed()
-                {
+                if self.connections[conn.0].app_closed {
                     self.forget(conn);
                 } else {
                     self.connections[conn.0].state = Some(State::Drained);
@@ -746,15 +759,7 @@ impl Endpoint {
             }
             Timer::Idle => {
                 self.connections[conn.0].close_common(&mut self.ctx, now);
-                let state = State::Draining(match self.connections[conn.0].state.take().unwrap() {
-                    State::Handshake(x) => x.into(),
-                    State::HandshakeFailed(x) => x.into(),
-                    State::Established(x) => x.into(),
-                    State::Closed(x) => x.into(),
-                    State::Draining(x) => x,
-                    State::Drained => unreachable!(),
-                });
-                self.connections[conn.0].state = Some(state);
+                self.connections[conn.0].state = Some(State::Draining);
                 self.ctx.events.push_back((
                     conn,
                     Event::ConnectionLost {
