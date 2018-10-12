@@ -5,7 +5,7 @@ use std::{io, str};
 
 use blake2::{
     digest::{Input, VariableOutput},
-    Blake2b,
+    VarBlake2b,
 };
 use bytes::{Buf, BufMut, BytesMut};
 use ring::aead;
@@ -106,11 +106,11 @@ pub const ACK_DELAY_EXPONENT: u8 = 3;
 //pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
-    let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
-    mac.process(id);
+    let mut mac = VarBlake2b::new_keyed(key, RESET_TOKEN_SIZE);
+    mac.input(id.as_ref());
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
-    mac.variable_result(&mut result).unwrap();
+    mac.variable_result(|res| result.copy_from_slice(res));
     result
 }
 
