@@ -318,7 +318,7 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let dest_id = packet.header.destination_id().clone();
+        let dest_id = packet.header.destination_id();
         if let Some(&conn) = self.connection_ids.get(&dest_id) {
             self.handle_connected(now, conn, remote, packet);
             return;
@@ -401,7 +401,7 @@ impl Endpoint {
                         debug!(
                             self.ctx.log,
                             "ignoring short initial on {connection}",
-                            connection = destination_id.clone()
+                            connection = destination_id
                         );
                     }
                     return;
@@ -417,7 +417,7 @@ impl Endpoint {
                 }*/
                 _ => {
                     debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
-                           connection=destination_id.clone(), type=ty);
+                           connection=destination_id, type=ty);
                     return;
                 }
             }
@@ -471,13 +471,7 @@ impl Endpoint {
         let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
         trace!(self.ctx.log, "initial dcid"; "value" => %remote_id);
-        let conn = self.add_connection(
-            remote_id.clone(),
-            local_id.clone(),
-            remote_id,
-            remote,
-            Side::Client,
-        );
+        let conn = self.add_connection(remote_id, local_id, remote_id, remote, Side::Client);
         self.connections[conn.0].connect(&self.ctx, server_name)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
@@ -498,7 +492,7 @@ impl Endpoint {
             let conn = ConnectionHandle(entry.key());
             entry.insert(Connection::new(
                 initial_id,
-                local_id.clone(),
+                local_id,
                 remote_id,
                 remote,
                 packet_num.into(),
@@ -555,13 +549,7 @@ impl Endpoint {
             return;
         }
 
-        let conn = self.add_connection(
-            dest_id.clone(),
-            local_id.clone(),
-            source_id.clone(),
-            remote,
-            Side::Server,
-        );
+        let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
         self.connection_ids_initial.insert(dest_id, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,
@@ -960,12 +948,12 @@ impl Endpoint {
     }
 
     /// The `ConnectionId` used for `conn` locally.
-    pub fn get_local_id(&self, conn: ConnectionHandle) -> &ConnectionId {
-        &self.connections[conn.0].local_id
+    pub fn get_local_id(&self, conn: ConnectionHandle) -> ConnectionId {
+        self.connections[conn.0].local_id
     }
     /// The `ConnectionId` used for `conn` by the peer.
-    pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId {
-        &self.connections[conn.0].remote_id
+    pub fn get_remote_id(&self, conn: ConnectionHandle) -> ConnectionId {
+        self.connections[conn.0].remote_id
     }
     pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 {
         &self.connections[conn.0].remote
@@ -1098,8 +1086,8 @@ where
     let mut buf = Vec::<u8>::new();
     Header::Long {
         ty: types::HANDSHAKE,
-        destination_id: remote_id.clone(),
-        source_id: local_id.clone(),
+        destination_id: *remote_id,
+        source_id: *local_id,
         number: packet_number,
     }.encode(&mut buf);
     let header_len = buf.len();

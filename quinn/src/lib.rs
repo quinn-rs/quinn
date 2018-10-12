@@ -855,23 +855,11 @@ impl Connection {
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn local_id(&self) -> ConnectionId {
-        self.0
-            .endpoint
-            .0
-            .borrow()
-            .inner
-            .get_local_id(self.0.conn)
-            .clone()
+        self.0.endpoint.0.borrow().inner.get_local_id(self.0.conn)
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0
-            .endpoint
-            .0
-            .borrow()
-            .inner
-            .get_remote_id(self.0.conn)
-            .clone()
+        self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn)
     }
 
     /// The negotiated application protocol
