@@ -981,11 +981,10 @@ impl Connection {
                                 Ok(()) => {
                                     self.on_packet_authenticated(ctx, now, number as u64);
                                     trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
-                                    let local_id = self.local_id.clone();
                                     // Discard transport state
                                     let mut new = Connection::new(
-                                        remote_id.clone(),
-                                        local_id,
+                                        remote_id,
+                                        self.local_id,
                                         remote_id,
                                         remote,
                                         ctx.initial_packet_number.sample(&mut ctx.rng),
@@ -1144,11 +1143,7 @@ impl Connection {
                                         None,
                                     );
                                 }
-                                trace!(
-                                    ctx.log,
-                                    "{connection} established",
-                                    connection = id.clone()
-                                );
+                                trace!(ctx.log, "{connection} established", connection = id);
                                 self.handshake_cleanup(&ctx.config);
                                 let mut msgs = Vec::new();
                                 state.tls.write_tls(&mut msgs).unwrap();
@@ -1307,7 +1302,7 @@ impl Connection {
                 }
             }
             State::Established(mut state) => {
-                let id = self.local_id.clone();
+                let id = self.local_id;
                 if let Header::Long { .. } = packet.header {
                     trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
                     return State::Established(state);
@@ -1387,12 +1382,12 @@ impl Connection {
         payload: Bytes,
         tls: &mut TlsSession,
     ) -> Result<bool, state::CloseReason> {
-        let cid = self.local_id.clone();
+        let cid = self.local_id;
         for frame in frame::Iter::new(payload) {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(ctx.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
+                    trace!(ctx.log, "got frame"; "connection" => cid, "type" => %frame.ty());
                 }
             }
             match frame {
@@ -1691,7 +1686,7 @@ impl Connection {
                 Frame::NewConnectionId { .. } => {
                     if self.remote_id.is_empty() {
                         debug!(ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
-                               connection=self.local_id.clone());
+                               connection=self.local_id);
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1757,8 +1752,8 @@ impl Connection {
                 Header::Long {
                     ty,
                     number: number as u32,
-                    source_id: self.local_id.clone(),
-                    destination_id: self.remote_id.clone(),
+                    source_id: self.local_id,
+                    destination_id: self.remote_id,
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
                 crypto = &self.handshake_crypto;
@@ -1787,7 +1782,7 @@ impl Connection {
                 } else {*/
                 crypto = self.crypto.as_ref().unwrap();
                 Header::Short {
-                    id: self.remote_id.clone(),
+                    id: self.remote_id,
                     number: PacketNumber::new(number, self.largest_acked_packet),
                     key_phase: self.key_phase,
                 }.encode(&mut buf);
@@ -2008,7 +2003,7 @@ impl Connection {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: self.remote_id.clone(),
+            id: self.remote_id,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
         }.encode(&mut buf);
@@ -2037,7 +2032,7 @@ impl Connection {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: self.remote_id.clone(),
+            id: self.remote_id,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
         }.encode(&mut buf);
