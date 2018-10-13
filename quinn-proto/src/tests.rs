@@ -8,7 +8,7 @@ use std::{fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
-use rustls::internal::pemfile;
+use rustls::{internal::pemfile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
@@ -70,7 +70,7 @@ impl Default for Pair {
         let mut server_config = server_config();
         server_config.max_remote_uni_streams = 32;
         server_config.max_remote_bi_streams = 32;
-        Pair::new(server_config, client_config())
+        Pair::new(server_config, Default::default())
     }
 }
 
@@ -99,7 +99,7 @@ fn server_config() -> Config {
     }
 }
 
-fn client_config() -> Config {
+fn client_config() -> Arc<ClientConfig> {
     let mut f = fs::File::open("../certs/ca.der").expect("cannot open '../certs/ca.der'");
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).expect("error while reading");
@@ -107,15 +107,13 @@ fn client_config() -> Config {
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = crypto::build_client_config();
+    let mut tls_client_config = ClientConfig::new();
+    tls_client_config.versions = vec![ProtocolVersion::TLSv1_3];
     tls_client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_client_config
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
-    Config {
-        tls_client_config: Arc::new(tls_client_config),
-        ..Default::default()
-    }
+    Arc::new(tls_client_config)
 }
 
 impl Pair {
@@ -208,7 +206,10 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, "localhost").unwrap();
+        let client_conn = self
+            .client
+            .connect(self.server.addr, &client_config(), "localhost")
+            .unwrap();
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() {
             c
@@ -530,19 +531,24 @@ fn stop_stream() {
     );
 }
 
-/*
 #[test]
 fn reject_self_signed_cert() {
-    let mut pair = Pair::new(Config::default(), Config::default());
+    let mut client_config = ClientConfig::new();
+    client_config.versions = vec![ProtocolVersion::TLSv1_3];
+    client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+
+    let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &Arc::new(client_config), "localhost")
+        .unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
                         error_code: TransportError::TLS_HANDSHAKE_FAILED
                     }})) if conn == client_conn);
 }
-*/
 
 #[test]
 fn congestion() {
@@ -574,7 +580,10 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
     pair.drive();
     let server_conn = if let Some(c) = pair.server.accept() {
         c
@@ -623,7 +632,10 @@ fn zero_rtt() {
 #[test]
 fn close_during_handshake() {
     let mut pair = Pair::default();
-    let c = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let c = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
     pair.client.close(pair.time, c, 0, Bytes::new());
     // This never actually sends the client's Initial; we may want to behave better here.
 }
@@ -634,7 +646,7 @@ fn stream_id_backpressure() {
         max_remote_uni_streams: 1,
         ..server_config()
     };
-    let mut pair = Pair::new(server_config, client_config());
+    let mut pair = Pair::new(server_config, Default::default());
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair

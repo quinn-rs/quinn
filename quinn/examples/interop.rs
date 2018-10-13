@@ -60,10 +60,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut runtime = Runtime::new()?;
 
     let mut builder = quinn::Endpoint::new();
+    let mut client_config = quinn::ClientConfigBuilder::new();
+    client_config.accept_insecure_certs(); // Various interop test servers use self-signed certs
     builder.logger(log.clone());
     if options.keylog {
-        builder.enable_keylog();
+        client_config.enable_keylog();
     }
+    let client_config = client_config.build();
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -73,7 +76,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut ticket = None;
     let result = runtime.block_on(
         endpoint
-            .connect(&remote, &options.host)?
+            .connect_with(&client_config, &remote, &options.host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
                 println!("connected");
@@ -113,12 +116,16 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .to_socket_addrs()?
             .next()
             .ok_or(format_err!("couldn't resolve to an address"))?;
-        let result = runtime.block_on(endpoint.connect(&remote, &options.host)?.and_then(|conn| {
-            retry = true;
-            conn.connection
-                .close(0, b"done")
-                .map_err(|_| unreachable!())
-        }));
+        let result = runtime.block_on(
+            endpoint
+                .connect_with(&client_config, &remote, &options.host)?
+                .and_then(|conn| {
+                    retry = true;
+                    conn.connection
+                        .close(0, b"done")
+                        .map_err(|_| unreachable!())
+                }),
+        );
         if let Err(e) = result {
             println!("failure: {}", e);
         }

@@ -77,7 +77,6 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    pub tls_client_config: Arc<ClientConfig>,
     pub tls_server_config: Arc<ServerConfig>,
 }
 
@@ -109,7 +108,6 @@ impl Default for Config {
             minimum_window: 2 * 1460,
             loss_reduction_factor: 0x8000, // 1/2
 
-            tls_client_config: Arc::new(crypto::build_client_config()),
             tls_server_config: Arc::new(crypto::build_server_config()),
         }
     }
@@ -466,13 +464,14 @@ impl Endpoint {
     pub fn connect(
         &mut self,
         remote: SocketAddrV6,
+        config: &Arc<ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
         trace!(self.ctx.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(remote_id, local_id, remote_id, remote, Side::Client);
-        self.connections[conn.0].connect(&self.ctx, server_name)?;
+        self.connections[conn.0].connect(&self.ctx, config, server_name)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
@@ -558,7 +557,8 @@ impl Endpoint {
             payload.freeze(),
         ) {
             Ok(()) => {}
-            Err(_) => {
+            Err(e) => {
+                debug!(self.ctx.log, "handshake failed"; "reason" => %e);
                 let n = self.ctx.gen_initial_packet_num();
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,

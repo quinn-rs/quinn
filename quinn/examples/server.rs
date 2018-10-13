@@ -105,14 +105,14 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quinn::Endpoint::new();
+    let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+        max_remote_bi_streams: 64,
+        ..Default::default()
+    });
     builder
         .set_protocols(&[quinn::ALPN_QUIC_HTTP])
         .logger(log.clone())
-        .config(quinn::Config {
-            max_remote_bi_streams: 64,
-            ..Default::default()
-        }).listen();
+        .listen();
 
     if options.keylog {
         builder.enable_keylog();
