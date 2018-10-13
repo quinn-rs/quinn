@@ -9,8 +9,14 @@ keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [badges]
 maintenance = { status = "experimental" }
+
+[features]
+dangerous_configuration = ["rustls/dangerous_configuration"]
 
 [dependencies]
 blake2 = "0.8"
@@ -26,10 +32,10 @@ rustls = { version = "0.14", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
 webpki = "0.18"
-webpki-roots = "0.15"
 
 [dev-dependencies]
 assert_matches = "1.1"
 hex-literal = "0.1.1"
 slog-term = "2"
 untrusted = "0.6.2"
+webpki-roots = "0.15"

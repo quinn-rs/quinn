@@ -4,14 +4,18 @@ extern crate rand;
 extern crate failure;
 #[macro_use]
 extern crate slog;
+extern crate rustls;
 extern crate slog_term;
+extern crate webpki_roots;
 
 use std::io::{self, Write};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use failure::Error;
 use quinn::{Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
+use rustls::ProtocolVersion;
 use slog::{Drain, Logger};
 
 fn main() {
@@ -88,7 +92,15 @@ impl Context {
 
     fn run(&mut self) -> Result<()> {
         let epoch = Instant::now();
-        let c = self.client.connect(self.remote, &self.remote_host)?;
+        let mut config = quinn::ClientConfig::new();
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config.versions = vec![ProtocolVersion::TLSv1_3];
+        let config = Arc::new(config);
+        let c = self
+            .client
+            .connect(self.remote, &config, &self.remote_host)?;
         let mut time = 0;
         let mut buf = Vec::new();
         let mut sent = 0;
