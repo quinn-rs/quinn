@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut};
 use coding::{self, BufExt, BufMutExt};
 use frame;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Error(u16);
 
 impl Error {
@@ -34,6 +34,17 @@ macro_rules! errors {
         impl Error {
             $(#[doc = $desc] pub const $name: Self = Error($val);)*
         }
+
+        impl fmt::Debug for Error {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                match self.0 {
+                    $($val => f.write_str(stringify!($name)),)*
+                    x if x >= 0x100 && x < 0x1ff => write!(f, "Error::frame({:?})", frame::Type::from(x as u8)),
+                    _ => write!(f, "Error({:04x})", self.0),
+                }
+            }
+        }
+
         impl fmt::Display for Error {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 if self.0 >= 0x100 && self.0 <= 0x1ff {
