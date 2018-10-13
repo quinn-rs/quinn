@@ -9,7 +9,7 @@ use {
     varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Type(u8);
 
 impl From<u8> for Type {
@@ -46,6 +46,15 @@ macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
         impl Type {
             $(pub const $name: Type = Type($val);)*
+        }
+
+        impl fmt::Debug for Type {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                match self.0 {
+                    $($val => f.write_str(stringify!($name)),)*
+                    _ => write!(f, "Type({:02x})", self.0)
+                }
+            }
         }
 
         impl fmt::Display for Type {
