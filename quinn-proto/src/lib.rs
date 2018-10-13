@@ -23,7 +23,6 @@ extern crate slog;
 #[cfg(test)]
 extern crate untrusted;
 extern crate webpki;
-extern crate webpki_roots;
 
 use std::fmt;
 

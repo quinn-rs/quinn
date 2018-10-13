@@ -15,9 +15,7 @@ use ring::hmac::SigningKey;
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
-use rustls::{KeyLogFile, ProtocolVersion};
 use webpki::DNSNameRef;
-use webpki_roots;
 
 use endpoint::EndpointError;
 use packet::{ConnectionId, AEAD_TAG_SIZE};
@@ -78,20 +76,8 @@ impl DerefMut for TlsSession {
     }
 }
 
-pub fn build_client_config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    config.versions = vec![ProtocolVersion::TLSv1_3];
-    config.key_log = Arc::new(KeyLogFile::new());
-    config
-}
-
 pub fn build_server_config() -> ServerConfig {
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config.key_log = Arc::new(KeyLogFile::new());
-    config
+    ServerConfig::new(NoClientAuth::new())
 }
 
 fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {

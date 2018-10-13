@@ -1,5 +1,6 @@
 use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
+use std::sync::Arc;
 use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -8,7 +9,9 @@ use rand::distributions::Distribution;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{reset_token_for, ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
+use crypto::{
+    reset_token_for, ClientConfig, ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT,
+};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
     set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
@@ -378,12 +381,15 @@ impl Connection {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, ctx: &Context, server_name: &str) -> Result<(), ConnectError> {
-        let mut tls = TlsSession::new_client(
-            &ctx.config.tls_client_config,
-            server_name,
-            &TransportParameters::new(&ctx.config),
-        ).unwrap();
+    pub fn connect(
+        &mut self,
+        ctx: &Context,
+        config: &Arc<ClientConfig>,
+        server_name: &str,
+    ) -> Result<(), ConnectError> {
+        let mut tls =
+            TlsSession::new_client(config, server_name, &TransportParameters::new(&ctx.config))
+                .unwrap();
         self.server_name = Some(server_name.into());
         let mut outgoing = Vec::new();
         tls.write_tls(&mut outgoing).unwrap();
@@ -982,16 +988,11 @@ impl Connection {
                                     mem::replace(self, new);
                                     // Send updated ClientHello
                                     let mut outgoing = Vec::new();
-                                    let mut tls = TlsSession::new_client(
-                                        &ctx.config.tls_client_config,
-                                        self.server_name.as_ref().unwrap(),
-                                        &TransportParameters::new(&ctx.config),
-                                    ).unwrap();
                                     state.tls.write_tls(&mut outgoing).unwrap();
                                     self.transmit_handshake(&outgoing);
                                     // Prepare to receive Handshake packets that start stream 0 from offset 0
                                     Ok(State::Handshake(state::Handshake {
-                                        tls,
+                                        tls: state.tls,
                                         clienthello_packet: state.clienthello_packet,
                                         remote_id_set: state.remote_id_set,
                                     }))
