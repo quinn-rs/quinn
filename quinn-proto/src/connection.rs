@@ -542,7 +542,7 @@ impl Connection {
                 self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
                     stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
-                    self.maybe_cleanup(id);
+                    self.maybe_cleanup(config, id);
                 }
             }
         }
@@ -562,7 +562,7 @@ impl Connection {
                 }
             };
             if recvd {
-                self.maybe_cleanup(frame.id);
+                self.maybe_cleanup(config, frame.id);
                 self.finished_streams.push(frame.id);
             }
         }
@@ -1509,8 +1509,9 @@ impl Connection {
                         Directionality::Uni => &mut self.max_uni_streams,
                         Directionality::Bi => &mut self.max_bi_streams,
                     };
-                    if id.index() > *limit {
-                        *limit = id.index();
+                    let update = id.index() + 1;
+                    if update > *limit {
+                        *limit = update;
                         ctx.events.push_back((
                             self.handle,
                             Event::StreamAvailable {
@@ -1826,7 +1827,7 @@ impl Connection {
             if pending.max_uni_stream_id && buf.len() + 9 < max_size {
                 pending.max_uni_stream_id = false;
                 sent.max_uni_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (unidirectional)");
+                trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.max_remote_uni_streams - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
@@ -1839,7 +1840,7 @@ impl Connection {
             if pending.max_bi_stream_id && buf.len() + 9 < max_size {
                 pending.max_bi_stream_id = false;
                 sent.max_bi_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (bidirectional)");
+                trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.max_remote_bi_streams - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
@@ -2058,26 +2059,51 @@ impl Connection {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.streams.entry(id) {
+    pub fn maybe_cleanup(&mut self, config: &Config, id: StreamId) {
+        let new = match self.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
                     e.remove_entry();
                     if id.initiator() != self.side {
-                        match id.directionality() {
+                        Some(match id.directionality() {
                             Directionality::Uni => {
                                 self.max_remote_uni_streams += 1;
                                 self.pending.max_uni_stream_id = true;
+                                (
+                                    StreamId::new(
+                                        !self.side,
+                                        Directionality::Uni,
+                                        self.max_remote_uni_streams - 1,
+                                    ),
+                                    stream::Recv::new(u64::from(
+                                        config.stream_receive_window as u64,
+                                    )).into(),
+                                )
                             }
                             Directionality::Bi => {
                                 self.max_remote_bi_streams += 1;
                                 self.pending.max_bi_stream_id = true;
+                                (
+                                    StreamId::new(
+                                        !self.side,
+                                        Directionality::Bi,
+                                        self.max_remote_bi_streams - 1,
+                                    ),
+                                    Stream::new_bi(config.stream_receive_window as u64),
+                                )
                             }
-                        }
+                        })
+                    } else {
+                        None
                     }
+                } else {
+                    None
                 }
             }
+        };
+        if let Some((id, stream)) = new {
+            self.streams.insert(id, stream);
         }
     }
 
@@ -2268,7 +2294,12 @@ impl Connection {
         Ok(self.streams.get_mut(&id))
     }
 
-    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+    pub fn write(
+        &mut self,
+        config: &Config,
+        stream: StreamId,
+        data: &[u8],
+    ) -> Result<usize, WriteError> {
         if self.state.as_ref().unwrap().is_closed() {
             return Err(WriteError::Blocked);
         }
@@ -2299,7 +2330,7 @@ impl Connection {
         };
 
         if let Some(error_code) = stop_reason {
-            self.maybe_cleanup(stream);
+            self.maybe_cleanup(config, stream);
             return Err(WriteError::Stopped { error_code });
         }
 
