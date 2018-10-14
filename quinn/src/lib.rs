@@ -78,9 +78,9 @@ use bytes::Bytes;
 use fnv::FnvHashMap;
 use futures::stream::FuturesUnordered;
 use futures::task::{self, Task};
-use futures::unsync::{mpsc, oneshot};
+use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, Sink};
 use rustls::{Certificate, KeyLogFile, PrivateKey, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -143,7 +143,7 @@ struct EndpointInner {
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
     timers: FuturesUnordered<Timer>,
-    incoming: mpsc::UnboundedSender<NewConnection>,
+    incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
 }
 
@@ -234,7 +234,7 @@ pub struct Endpoint(Rc<RefCell<EndpointInner>>);
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
 /// Stream of incoming connections.
-pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
+pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
 
 /// A helper for constructing an `Endpoint`.
 pub struct EndpointBuilder<'a> {
@@ -327,7 +327,7 @@ impl<'a> EndpointBuilder<'a> {
             Cow::Owned(tokio_reactor::Handle::current())
         };
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
-        let (send, recv) = mpsc::unbounded();
+        let (send, recv) = futures::sync::mpsc::channel(4);
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
@@ -720,11 +720,20 @@ impl Future for Driver {
                     }
                 }
             }
-            while let Some(x) = endpoint.inner.accept() {
-                let _ = endpoint
-                    .incoming
-                    .unbounded_send(NewConnection::new(&Endpoint(self.0.clone()), x));
+            while let Ok(Async::Ready(_)) = endpoint.incoming.poll_ready() {
+                if let Some(x) = endpoint.inner.accept() {
+                    if endpoint
+                        .incoming
+                        .start_send(NewConnection::new(&Endpoint(self.0.clone()), x))
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
+            let _ = endpoint.incoming.poll_complete();
             let mut fired = false;
             loop {
                 match endpoint.timers.poll() {
