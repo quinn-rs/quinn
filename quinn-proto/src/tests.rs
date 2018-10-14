@@ -627,3 +627,52 @@ fn close_during_handshake() {
     pair.client.close(pair.time, c, 0, Bytes::new());
     // This never actually sends the client's Initial; we may want to behave better here.
 }
+
+#[test]
+fn stream_id_backpressure() {
+    let server_config = Config {
+        max_remote_uni_streams: 1,
+        ..server_config()
+    };
+    let mut pair = Pair::new(server_config, client_config());
+    let (client_conn, server_conn) = pair.connect();
+
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Uni)
+        .expect("couldn't open first stream");
+    assert_eq!(
+        pair.client.open(client_conn, Directionality::Uni),
+        None,
+        "only one stream is permitted at a time"
+    );
+    // Close the first stream to make room for the second
+    pair.client.finish(client_conn, s);
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
+    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Finished)
+    );
+    // Server will only send MAX_STREAM_ID now that the application's been notified
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamAvailable { directionality: Directionality::Uni })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), None);
+
+    // Try opening the second stream again, now that we've made room
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Uni)
+        .expect("didn't get stream id budget");
+    pair.client.finish(client_conn, s);
+    pair.drive();
+    // Make sure the server actually processes data on the newly-available stream
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Finished)
+    );
+}
