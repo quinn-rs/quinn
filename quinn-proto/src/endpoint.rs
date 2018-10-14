@@ -804,7 +804,7 @@ impl Endpoint {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        let r = self.connections[conn.0].write(stream, data);
+        let r = self.connections[conn.0].write(&self.ctx.config, stream, data);
         match r {
             Ok(n) => {
                 self.ctx.dirty_conns.insert(conn);
@@ -849,7 +849,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
                 x
             }
             x => x,
@@ -875,7 +875,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
                 x
             }
             x => x,
