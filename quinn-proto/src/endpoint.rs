@@ -600,12 +600,8 @@ impl Endpoint {
                 ConnectionError::TransportError { error_code } => {
                     err_to_log = Some(error_code.into());
                     match prev_state {
-                        State::Handshake(_) => {
-                            State::handshake_failed(error_code, None)
-                        },
-                        _ => {
-                            State::closed(error_code)
-                        }
+                        State::Handshake(_) => State::handshake_failed(error_code, None),
+                        _ => State::closed(error_code),
                     }
                 }
                 ConnectionError::VersionMismatch => {

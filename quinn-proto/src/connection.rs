@@ -1252,9 +1252,14 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                let closed = self.process_payload(ctx, now, number, payload.into(), &mut state.tls)?;
+                let closed =
+                    self.process_payload(ctx, now, number, payload.into(), &mut state.tls)?;
                 self.drive_tls(ctx, &mut state.tls)?;
-                Ok(if closed { State::Draining } else { State::Established(state) })
+                Ok(if closed {
+                    State::Draining
+                } else {
+                    State::Established(state)
+                })
             }
             State::HandshakeFailed(state) => {
                 if let Ok((payload, _)) = self.decrypt_packet(true, packet) {
