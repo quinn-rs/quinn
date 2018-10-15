@@ -599,32 +599,29 @@ impl Endpoint {
 
         let mut err_to_log: Option<ConnectionError> = None;
         // State transitions
-        let state = self.connections[conn.0].state.take().unwrap();
+        let prev_state = self.connections[conn.0].state.take().unwrap();
         let state = match self.connections[conn.0].handle_connected_inner(
             &mut self.ctx,
             now,
             remote,
             packet,
-            state,
+            prev_state,
         ) {
-            Ok(state) => match state {
-                State::Closed(closed) => {
-                    let copy = closed.clone();
-                    err_to_log = Some(closed.reason.into());
-                    State::Closed(copy)
-                }
-                _ => state,
-            },
+            Ok(state) => state,
             Err(conn_err) => match conn_err {
                 ConnectionError::TransportError { error_code } => {
                     err_to_log = Some(error_code.into());
-                    State::handshake_failed(error_code, None)
+                    match prev_state {
+                        State::Handshake(_) => {
+                            State::handshake_failed(error_code, None)
+                        },
+                        _ => {
+                            State::closed(error_code)
+                        }
+                    }
                 }
                 ConnectionError::VersionMismatch => {
                     err_to_log = Some(ConnectionError::VersionMismatch);
-                    // TODO: Just curious - why do we start draining after encountering a version
-                    // mismatch?  What are we draining - a QUIC stream?  What does it mean to drain
-                    // a stream?
                     State::Draining
                 }
                 _ => {

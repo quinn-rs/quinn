@@ -31,9 +31,6 @@ impl From<ConnectionHandle> for usize {
 }
 
 pub struct Connection {
-    // TODO: Is there a better name for this?  I feel like there is, but I don't know enough about
-    // the way this struct is used to know if the knowledge of "app" makes sense here.
-    // Just `closed`?
     pub app_closed: bool,
     /// DCID of Initial packet
     pub initial_id: ConnectionId,
@@ -1146,7 +1143,7 @@ impl Connection {
                             }
                             Err(e) => {
                                 debug!(ctx.log, "handshake failed"; "reason" => %e);
-                                return Err(TransportError::TLS_HANDSHAKE_FAILED.into());
+                                Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                             }
                         }
                     }
@@ -1246,7 +1243,7 @@ impl Connection {
                     }
                     Err(Some(e)) => {
                         warn!(ctx.log, "got illegal packet"; "connection" => %id);
-                        return Ok(State::closed(e));
+                        return Err(e.into());
                     }
                 };
                 self.on_packet_authenticated(ctx, now, number);
@@ -1259,16 +1256,9 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                match self
-                    .process_payload(ctx, now, number, payload.into(), &mut state.tls)
-                    .and_then(|x| {
-                        self.drive_tls(ctx, &mut state.tls)?;
-                        Ok(x)
-                    }) {
-                    Err(e) => Ok(State::closed(e)),
-                    Ok(true) => Ok(State::Draining),
-                    Ok(false) => Ok(State::Established(state)),
-                }
+                let closed = self.process_payload(ctx, now, number, payload.into(), &mut state.tls)?;
+                self.drive_tls(ctx, &mut state.tls)?;
+                Ok(if closed { State::Draining } else { State::Established(state) })
             }
             State::HandshakeFailed(state) => {
                 if let Ok((payload, _)) = self.decrypt_packet(true, packet) {
@@ -2002,9 +1992,9 @@ impl Connection {
                 reason,
                 alert: None,
             }),
-            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed { ..x }),
+            State::HandshakeFailed(x) => State::HandshakeFailed(x),
             State::Established(_) => State::Closed(state::Closed { reason }),
-            State::Closed(x) => State::Closed(state::Closed { ..x }),
+            State::Closed(x) => State::Closed(x),
             State::Draining => State::Draining,
             State::Drained => unreachable!(),
         });
@@ -2527,7 +2517,6 @@ pub mod state {
         }
     }
 
-    #[derive(Clone)]
     pub struct Closed {
         pub reason: CloseReason,
     }
