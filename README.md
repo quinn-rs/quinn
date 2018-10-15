@@ -28,6 +28,7 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 
 * Simultaneous client/server operation
 * Ordered and unordered reads for improved performance
+* Works on stable Rust
 * Uses [rustls][rustls] for all TLS operations and [*ring*][ring] for cryptography
 
 ## Status
