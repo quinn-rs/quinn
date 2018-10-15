@@ -43,6 +43,17 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 - [ ] Session resumption
 - [ ] HTTP over QUIC
 
+## How to start
+
+The example client [currently always verifies][insecure] the server's certificate chain.
+Example certificates are included in the repository for test purposes.
+
+```sh
+$ cd quinn
+$ cargo run --example server -- --cert ../certs/server.chain --key ../certs/server.rsa .
+$ cargo run --example client -- --ca ../certs/ca.der https://localhost:4433/Cargo.toml
+```
+
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
 [rustls]: https://github.com/ctz/rustls
@@ -51,3 +62,4 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 [slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
+[insecure]: https://github.com/djc/quinn/issues/58
