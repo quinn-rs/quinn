@@ -84,7 +84,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| get(stream))
-                    .and_then(|data| {
+                    .and_then(move |data| {
                         println!("read {} bytes, closing", data.len());
                         stream_data = true;
                         conn.close(0, b"done").map_err(|_| unreachable!())
