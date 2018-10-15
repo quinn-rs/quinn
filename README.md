@@ -26,7 +26,6 @@ Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
 
 ## Features
 
-* Currently targets QUIC draft 11, but with final TLS 1.3 per RFC 8446
 * Simultaneous client/server operation
 * Ordered and unordered reads for improved performance
 * Uses [rustls][rustls] for all TLS operations
