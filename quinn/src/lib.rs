@@ -228,6 +228,9 @@ impl Pending {
 ///
 /// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both client and server for
 /// different connections.
+///
+/// May be cloned to obtain another handle to the same endpoint.
+#[derive(Clone)]
 pub struct Endpoint(Rc<RefCell<EndpointInner>>);
 
 /// A future that drives IO on an endpoint.
@@ -442,7 +445,7 @@ impl Endpoint {
             handle
         };
         let conn = ConnectionInner {
-            endpoint: Endpoint(self.0.clone()),
+            endpoint: self.clone(),
             conn: handle,
             side: Side::Client,
         };
@@ -781,6 +784,9 @@ struct ConnectionInner {
 ///
 /// If a `Connection` is dropped without being explicitly closed, it will be automatically closed with an `error_code`
 /// of 0 and an empty `reason`.
+///
+/// May be cloned to obtain another handle to the same connection.
+#[derive(Clone)]
 pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
@@ -831,22 +837,33 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
     /// should be kept under 1KiB.
+    ///
+    /// # Panics
+    /// - If called more than once on handles to the same connection
     // FIXME: Infallible
-    pub fn close(self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
+    pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
         let (send, recv) = oneshot::channel();
         {
             let endpoint = &mut *self.0.endpoint.0.borrow_mut();
+
+            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+            assert!(
+                pending.draining.is_none(),
+                "a connection can only be closed once"
+            );
+            pending.draining = Some(send);
+
             endpoint.inner.close(
                 micros_from(endpoint.epoch.elapsed()),
                 self.0.conn,
                 error_code,
                 reason.into(),
             );
-            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
-            pending.draining = Some(send);
         }
+        let handle = self.clone();
         recv.then(move |_| {
-            let _ = self;
+            // Ensure the connection isn't dropped until it's fully drained.
+            let _ = handle;
             Ok(())
         })
     }
