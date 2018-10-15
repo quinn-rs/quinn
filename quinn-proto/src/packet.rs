@@ -28,16 +28,12 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn destination_id(&self) -> &ConnectionId {
+    pub fn destination_id(&self) -> ConnectionId {
         use self::Header::*;
-        match *self {
-            Long {
-                ref destination_id, ..
-            } => destination_id,
-            Short { ref id, .. } => id,
-            VersionNegotiate {
-                ref destination_id, ..
-            } => destination_id,
+        match self {
+            Long { destination_id, .. } => *destination_id,
+            Short { id, .. } => *id,
+            VersionNegotiate { destination_id, .. } => *destination_id,
         }
     }
 

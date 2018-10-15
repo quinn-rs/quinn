@@ -63,12 +63,14 @@ extern crate tokio_timer;
 extern crate tokio_udp;
 extern crate untrusted;
 extern crate webpki;
+extern crate webpki_roots;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
+use std::str;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, mem};
@@ -77,10 +79,10 @@ use bytes::Bytes;
 use fnv::FnvHashMap;
 use futures::stream::FuturesUnordered;
 use futures::task::{self, Task};
-use futures::unsync::{mpsc, oneshot};
+use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll};
-use rustls::{Certificate, KeyLogFile, PrivateKey, TLSError};
+use futures::{Async, Future, Poll, Sink};
+use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
@@ -88,7 +90,7 @@ use tokio_udp::UdpSocket;
 
 use quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quinn::{ClientConfig, Config, ConnectError, ConnectionError, ConnectionId, ListenKeys};
+pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ListenKeys, ALPN_QUIC_HTTP};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -140,8 +142,9 @@ struct EndpointInner {
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
     timers: FuturesUnordered<Timer>,
-    incoming: mpsc::UnboundedSender<NewConnection>,
+    incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
+    default_client_config: ClientConfig,
 }
 
 impl EndpointInner {
@@ -225,13 +228,16 @@ impl Pending {
 ///
 /// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both client and server for
 /// different connections.
+///
+/// May be cloned to obtain another handle to the same endpoint.
+#[derive(Clone)]
 pub struct Endpoint(Rc<RefCell<EndpointInner>>);
 
 /// A future that drives IO on an endpoint.
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
 /// Stream of incoming connections.
-pub type Incoming = mpsc::UnboundedReceiver<NewConnection>;
+pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
 
 /// A helper for constructing an `Endpoint`.
 pub struct EndpointBuilder<'a> {
@@ -239,6 +245,7 @@ pub struct EndpointBuilder<'a> {
     logger: Logger,
     listen: Option<ListenKeys>,
     config: Config,
+    client_config: ClientConfig,
 }
 
 #[allow(missing_docs)]
@@ -251,9 +258,13 @@ impl<'a> EndpointBuilder<'a> {
         self.logger = logger;
         self
     }
-    pub fn config(&mut self, config: Config) -> &mut Self {
-        self.config = config;
-        self
+
+    /// Start a builder with a specific initial low-level configuration.
+    pub fn from_config(config: Config) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
     }
 
     /// Prefer `listen_with_keys`.
@@ -268,10 +279,11 @@ impl<'a> EndpointBuilder<'a> {
         self
     }
 
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
         {
-            let tls_client_config = Arc::get_mut(&mut self.config.tls_client_config).unwrap();
-            tls_client_config.key_log = Arc::new(KeyLogFile::new());
             let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
             tls_server_config.key_log = Arc::new(KeyLogFile::new());
         }
@@ -290,16 +302,28 @@ impl<'a> EndpointBuilder<'a> {
         Ok(self)
     }
 
-    pub fn add_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
+    /// Set the application-layer protocols to accept.
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    // TODO: Cite IANA registery for ALPN IDs
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         {
-            let tls_client_config = Arc::get_mut(&mut self.config.tls_client_config).unwrap();
-            let anchor =
-                webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(der))?;
-            tls_client_config
-                .root_store
-                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
+            let protocols_strings = protocols
+                .iter()
+                .map(|p| str::from_utf8(p).unwrap().into())
+                .collect::<Vec<_>>();
+            tls_server_config.set_protocols(&protocols_strings);
         }
-        Ok(self)
+        self
+    }
+
+    /// Set the default configuration used for outgoing connections.
+    ///
+    /// The default can be overriden by using `Endpoint:;connect_with`.
+    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
+        self.client_config = config;
+        self
     }
 
     pub fn from_socket(
@@ -312,7 +336,7 @@ impl<'a> EndpointBuilder<'a> {
             Cow::Owned(tokio_reactor::Handle::current())
         };
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
-        let (send, recv) = mpsc::unbounded();
+        let (send, recv) = futures::sync::mpsc::channel(4);
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
@@ -323,6 +347,7 @@ impl<'a> EndpointBuilder<'a> {
             timers: FuturesUnordered::new(),
             incoming: send,
             driver: None,
+            default_client_config: self.client_config,
         }));
         Ok((Endpoint(rc.clone()), Driver(rc), recv))
     }
@@ -335,19 +360,127 @@ impl<'a> EndpointBuilder<'a> {
 
 impl<'a> Default for EndpointBuilder<'a> {
     fn default() -> Self {
-        Endpoint::new()
+        Self {
+            reactor: None,
+            logger: Logger::root(slog::Discard, o!()),
+            listen: None,
+            config: Config::default(),
+            client_config: ClientConfig::default(),
+        }
+    }
+}
+
+/// Helper for creating new outgoing connections.
+pub struct ClientConfigBuilder {
+    config: quinn::ClientConfig,
+}
+
+impl ClientConfigBuilder {
+    /// Create a new builder with default options set.
+    pub fn new() -> Self {
+        let mut config = quinn::ClientConfig::new();
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config.versions = vec![ProtocolVersion::TLSv1_3];
+        Self { config }
+    }
+
+    /// Add a trusted certificate authority.
+    pub fn add_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
+        {
+            let anchor =
+                webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(der))?;
+            self.config
+                .root_store
+                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
+        }
+        Ok(self)
+    }
+
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
+    pub fn enable_keylog(&mut self) -> &mut Self {
+        self.config.key_log = Arc::new(KeyLogFile::new());
+        self
+    }
+
+    /// Set application-layer protocols to declare support for.
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
+        self.config.alpn_protocols = protocols
+            .iter()
+            .map(|p| {
+                str::from_utf8(p)
+                    .expect("non-UTF8 protocols unsupported")
+                    .into()
+            }).collect();
+        self
+    }
+
+    /// Begin connecting from `endpoint` to `addr`.
+    pub fn build(self) -> ClientConfig {
+        ClientConfig {
+            tls_config: Arc::new(self.config),
+        }
+    }
+
+    /// DANGEROUS - Connect even if the server presents an invalid certificate.
+    ///
+    /// Restricted by the `dangerous_configuration` feature. Use with care.
+    ///
+    /// This allows connecting to servers whose certificates aren't signed by a trusted authority, e.g. servers using
+    /// self-signed certificates. This allows an attacker to impersonate the server and therefore read and modify
+    /// traffic, but is useful for applications where trust is not expected or is enforced by external means.
+    ///
+    /// Convenience method for specifying a custom `ServerCertVerifier` in the TLS configuration.
+    #[cfg(feature = "dangerous_configuration")]
+    pub fn accept_insecure_certs(&mut self) -> &mut Self {
+        struct NullVerifier;
+        impl rustls::ServerCertVerifier for NullVerifier {
+            fn verify_server_cert(
+                &self,
+                _roots: &rustls::RootCertStore,
+                _presented_certs: &[Certificate],
+                _dns_name: webpki::DNSNameRef,
+                _ocsp_response: &[u8],
+            ) -> Result<rustls::ServerCertVerified, TLSError> {
+                Ok(rustls::ServerCertVerified::assertion())
+            }
+        }
+
+        self.config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NullVerifier));
+        self
+    }
+}
+
+impl Default for ClientConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Configuration for outgoing connections
+#[derive(Clone)]
+pub struct ClientConfig {
+    /// TLS configuration to use.
+    ///
+    /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
+    pub tls_config: Arc<quinn::ClientConfig>,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        ClientConfigBuilder::default().build()
     }
 }
 
 impl Endpoint {
     /// Begin constructing an `Endpoint`
     pub fn new<'a>() -> EndpointBuilder<'a> {
-        EndpointBuilder {
-            reactor: None,
-            logger: Logger::root(slog::Discard, o!()),
-            listen: None,
-            config: Config::default(),
-        }
+        EndpointBuilder::default()
     }
 
     /// Connect to a remote endpoint.
@@ -359,7 +492,20 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
     {
-        let (fut, conn) = self.connect_inner(addr, server_name)?;
+        self.connect_with(&self.0.borrow().default_client_config, addr, server_name)
+    }
+
+    /// Connect to a remote endpoint using a custom configuration.
+    ///
+    /// May fail immediately due to configuration errors, or in the future if the connection could not be established.
+    pub fn connect_with(
+        &self,
+        config: &ClientConfig,
+        addr: &SocketAddr,
+        server_name: &str,
+    ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
+    {
+        let (fut, conn) = self.connect_inner(addr, &config.tls_config, server_name)?;
         Ok(fut.map_err(|_| unreachable!()).and_then(move |err| {
             if let Some(err) = err {
                 Err(err)
@@ -411,6 +557,7 @@ impl Endpoint {
     fn connect_inner(
         &self,
         addr: &SocketAddr,
+        config: &Arc<quinn::ClientConfig>,
         server_name: &str,
     ) -> Result<
         (
@@ -422,12 +569,14 @@ impl Endpoint {
         let (send, recv) = oneshot::channel();
         let handle = {
             let mut endpoint = self.0.borrow_mut();
-            let handle = endpoint.inner.connect(normalize(*addr), server_name)?;
+            let handle = endpoint
+                .inner
+                .connect(normalize(*addr), config, server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
             handle
         };
         let conn = ConnectionInner {
-            endpoint: Endpoint(self.0.clone()),
+            endpoint: self.clone(),
             conn: handle,
             side: Side::Client,
         };
@@ -705,11 +854,20 @@ impl Future for Driver {
                     }
                 }
             }
-            while let Some(x) = endpoint.inner.accept() {
-                let _ = endpoint
-                    .incoming
-                    .unbounded_send(NewConnection::new(&Endpoint(self.0.clone()), x));
+            while let Ok(Async::Ready(_)) = endpoint.incoming.poll_ready() {
+                if let Some(x) = endpoint.inner.accept() {
+                    if endpoint
+                        .incoming
+                        .start_send(NewConnection::new(&Endpoint(self.0.clone()), x))
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
+            let _ = endpoint.incoming.poll_complete();
             let mut fired = false;
             loop {
                 match endpoint.timers.poll() {
@@ -757,6 +915,9 @@ struct ConnectionInner {
 ///
 /// If a `Connection` is dropped without being explicitly closed, it will be automatically closed with an `error_code`
 /// of 0 and an empty `reason`.
+///
+/// May be cloned to obtain another handle to the same connection.
+#[derive(Clone)]
 pub struct Connection(Rc<ConnectionInner>);
 
 impl Connection {
@@ -807,22 +968,33 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
     /// should be kept under 1KiB.
+    ///
+    /// # Panics
+    /// - If called more than once on handles to the same connection
     // FIXME: Infallible
-    pub fn close(self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
+    pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
         let (send, recv) = oneshot::channel();
         {
             let endpoint = &mut *self.0.endpoint.0.borrow_mut();
+
+            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+            assert!(
+                pending.draining.is_none(),
+                "a connection can only be closed once"
+            );
+            pending.draining = Some(send);
+
             endpoint.inner.close(
                 micros_from(endpoint.epoch.elapsed()),
                 self.0.conn,
                 error_code,
                 reason.into(),
             );
-            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
-            pending.draining = Some(send);
         }
+        let handle = self.clone();
         recv.then(move |_| {
-            let _ = self;
+            // Ensure the connection isn't dropped until it's fully drained.
+            let _ = handle;
             Ok(())
         })
     }
@@ -840,23 +1012,11 @@ impl Connection {
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn local_id(&self) -> ConnectionId {
-        self.0
-            .endpoint
-            .0
-            .borrow()
-            .inner
-            .get_local_id(self.0.conn)
-            .clone()
+        self.0.endpoint.0.borrow().inner.get_local_id(self.0.conn)
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0
-            .endpoint
-            .0
-            .borrow()
-            .inner
-            .get_remote_id(self.0.conn)
-            .clone()
+        self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn)
     }
 
     /// The negotiated application protocol

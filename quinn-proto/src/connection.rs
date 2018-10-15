@@ -1,5 +1,6 @@
 use std::collections::{hash_map, BTreeMap, VecDeque};
 use std::net::SocketAddrV6;
+use std::sync::Arc;
 use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -8,7 +9,9 @@ use rand::distributions::Distribution;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{reset_token_for, ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
+use crypto::{
+    reset_token_for, ClientConfig, ConnectError, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT,
+};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
     set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
@@ -378,12 +381,15 @@ impl Connection {
     }
 
     /// Initiate a connection
-    pub fn connect(&mut self, ctx: &Context, server_name: &str) -> Result<(), ConnectError> {
-        let mut tls = TlsSession::new_client(
-            &ctx.config.tls_client_config,
-            server_name,
-            &TransportParameters::new(&ctx.config),
-        ).unwrap();
+    pub fn connect(
+        &mut self,
+        ctx: &Context,
+        config: &Arc<ClientConfig>,
+        server_name: &str,
+    ) -> Result<(), ConnectError> {
+        let mut tls =
+            TlsSession::new_client(config, server_name, &TransportParameters::new(&ctx.config))
+                .unwrap();
         self.server_name = Some(server_name.into());
         let mut outgoing = Vec::new();
         tls.write_tls(&mut outgoing).unwrap();
@@ -542,7 +548,7 @@ impl Connection {
                 self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
                     stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
-                    self.maybe_cleanup(id);
+                    self.maybe_cleanup(config, id);
                 }
             }
         }
@@ -562,7 +568,7 @@ impl Connection {
                 }
             };
             if recvd {
-                self.maybe_cleanup(frame.id);
+                self.maybe_cleanup(config, frame.id);
                 self.finished_streams.push(frame.id);
             }
         }
@@ -968,11 +974,10 @@ impl Connection {
                                 Ok(()) => {
                                     self.on_packet_authenticated(ctx, now, number as u64);
                                     trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
-                                    let local_id = self.local_id.clone();
                                     // Discard transport state
                                     let mut new = Connection::new(
-                                        remote_id.clone(),
-                                        local_id,
+                                        remote_id,
+                                        self.local_id,
                                         remote_id,
                                         remote,
                                         ctx.initial_packet_number.sample(&mut ctx.rng),
@@ -983,16 +988,11 @@ impl Connection {
                                     mem::replace(self, new);
                                     // Send updated ClientHello
                                     let mut outgoing = Vec::new();
-                                    let mut tls = TlsSession::new_client(
-                                        &ctx.config.tls_client_config,
-                                        self.server_name.as_ref().unwrap(),
-                                        &TransportParameters::new(&ctx.config),
-                                    ).unwrap();
                                     state.tls.write_tls(&mut outgoing).unwrap();
                                     self.transmit_handshake(&outgoing);
                                     // Prepare to receive Handshake packets that start stream 0 from offset 0
                                     Ok(State::Handshake(state::Handshake {
-                                        tls,
+                                        tls: state.tls,
                                         clienthello_packet: state.clienthello_packet,
                                         remote_id_set: state.remote_id_set,
                                     }))
@@ -1094,11 +1094,7 @@ impl Connection {
                                     debug!(ctx.log, "remote didn't send transport params");
                                     return Err(TransportError::TLS_HANDSHAKE_FAILED.into());
                                 }
-                                trace!(
-                                    ctx.log,
-                                    "{connection} established",
-                                    connection = id.clone()
-                                );
+                                trace!(ctx.log, "{connection} established", connection = id);
                                 self.handshake_cleanup(&ctx.config);
                                 let mut msgs = Vec::new();
                                 state.tls.write_tls(&mut msgs).unwrap();
@@ -1230,7 +1226,7 @@ impl Connection {
                 }
             }
             State::Established(mut state) => {
-                let id = self.local_id.clone();
+                let id = self.local_id;
                 if let Header::Long { .. } = packet.header {
                     trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
                     return Ok(State::Established(state));
@@ -1301,12 +1297,12 @@ impl Connection {
         payload: Bytes,
         tls: &mut TlsSession,
     ) -> Result<bool, state::CloseReason> {
-        let cid = self.local_id.clone();
+        let cid = self.local_id;
         for frame in frame::Iter::new(payload) {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(ctx.log, "got frame"; "connection" => cid.clone(), "type" => %frame.ty());
+                    trace!(ctx.log, "got frame"; "connection" => cid, "type" => %frame.ty());
                 }
             }
             match frame {
@@ -1509,8 +1505,9 @@ impl Connection {
                         Directionality::Uni => &mut self.max_uni_streams,
                         Directionality::Bi => &mut self.max_bi_streams,
                     };
-                    if id.index() > *limit {
-                        *limit = id.index();
+                    let update = id.index() + 1;
+                    if update > *limit {
+                        *limit = update;
                         ctx.events.push_back((
                             self.handle,
                             Event::StreamAvailable {
@@ -1605,7 +1602,7 @@ impl Connection {
                 Frame::NewConnectionId { .. } => {
                     if self.remote_id.is_empty() {
                         debug!(ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
-                               connection=self.local_id.clone());
+                               connection=self.local_id);
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1671,8 +1668,8 @@ impl Connection {
                 Header::Long {
                     ty,
                     number: number as u32,
-                    source_id: self.local_id.clone(),
-                    destination_id: self.remote_id.clone(),
+                    source_id: self.local_id,
+                    destination_id: self.remote_id,
                 }.encode(&mut buf);
                 pending = &mut self.handshake_pending;
                 crypto = &self.handshake_crypto;
@@ -1701,7 +1698,7 @@ impl Connection {
                 } else {*/
                 crypto = self.crypto.as_ref().unwrap();
                 Header::Short {
-                    id: self.remote_id.clone(),
+                    id: self.remote_id,
                     number: PacketNumber::new(number, self.largest_acked_packet),
                     key_phase: self.key_phase,
                 }.encode(&mut buf);
@@ -1826,7 +1823,7 @@ impl Connection {
             if pending.max_uni_stream_id && buf.len() + 9 < max_size {
                 pending.max_uni_stream_id = false;
                 sent.max_uni_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (unidirectional)");
+                trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.max_remote_uni_streams - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
@@ -1839,7 +1836,7 @@ impl Connection {
             if pending.max_bi_stream_id && buf.len() + 9 < max_size {
                 pending.max_bi_stream_id = false;
                 sent.max_bi_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (bidirectional)");
+                trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.max_remote_bi_streams - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
@@ -1922,7 +1919,7 @@ impl Connection {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: self.remote_id.clone(),
+            id: self.remote_id,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
         }.encode(&mut buf);
@@ -1951,7 +1948,7 @@ impl Connection {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
-            id: self.remote_id.clone(),
+            id: self.remote_id,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
         }.encode(&mut buf);
@@ -2058,26 +2055,51 @@ impl Connection {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.streams.entry(id) {
+    pub fn maybe_cleanup(&mut self, config: &Config, id: StreamId) {
+        let new = match self.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
                     e.remove_entry();
                     if id.initiator() != self.side {
-                        match id.directionality() {
+                        Some(match id.directionality() {
                             Directionality::Uni => {
                                 self.max_remote_uni_streams += 1;
                                 self.pending.max_uni_stream_id = true;
+                                (
+                                    StreamId::new(
+                                        !self.side,
+                                        Directionality::Uni,
+                                        self.max_remote_uni_streams - 1,
+                                    ),
+                                    stream::Recv::new(u64::from(
+                                        config.stream_receive_window as u64,
+                                    )).into(),
+                                )
                             }
                             Directionality::Bi => {
                                 self.max_remote_bi_streams += 1;
                                 self.pending.max_bi_stream_id = true;
+                                (
+                                    StreamId::new(
+                                        !self.side,
+                                        Directionality::Bi,
+                                        self.max_remote_bi_streams - 1,
+                                    ),
+                                    Stream::new_bi(config.stream_receive_window as u64),
+                                )
                             }
-                        }
+                        })
+                    } else {
+                        None
                     }
+                } else {
+                    None
                 }
             }
+        };
+        if let Some((id, stream)) = new {
+            self.streams.insert(id, stream);
         }
     }
 
@@ -2268,7 +2290,12 @@ impl Connection {
         Ok(self.streams.get_mut(&id))
     }
 
-    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+    pub fn write(
+        &mut self,
+        config: &Config,
+        stream: StreamId,
+        data: &[u8],
+    ) -> Result<usize, WriteError> {
         if self.state.as_ref().unwrap().is_closed() {
             return Err(WriteError::Blocked);
         }
@@ -2299,7 +2326,7 @@ impl Connection {
         };
 
         if let Some(error_code) = stop_reason {
-            self.maybe_cleanup(stream);
+            self.maybe_cleanup(config, stream);
             return Err(WriteError::Stopped { error_code });
         }
 

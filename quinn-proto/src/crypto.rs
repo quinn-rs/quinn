@@ -5,7 +5,7 @@ use std::{io, str};
 
 use blake2::{
     digest::{Input, VariableOutput},
-    Blake2b,
+    VarBlake2b,
 };
 use bytes::{Buf, BufMut, BytesMut};
 use ring::aead;
@@ -15,9 +15,7 @@ use ring::hmac::SigningKey;
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
-use rustls::{KeyLogFile, ProtocolVersion};
 use webpki::DNSNameRef;
-use webpki_roots;
 
 use endpoint::EndpointError;
 use packet::{ConnectionId, AEAD_TAG_SIZE};
@@ -78,22 +76,8 @@ impl DerefMut for TlsSession {
     }
 }
 
-pub fn build_client_config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    config.versions = vec![ProtocolVersion::TLSv1_3];
-    config.alpn_protocols = vec![ALPN_PROTOCOL.into()];
-    config.key_log = Arc::new(KeyLogFile::new());
-    config
-}
-
 pub fn build_server_config() -> ServerConfig {
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config.set_protocols(&[ALPN_PROTOCOL.into()]);
-    config.key_log = Arc::new(KeyLogFile::new());
-    config
+    ServerConfig::new(NoClientAuth::new())
 }
 
 fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
@@ -108,11 +92,11 @@ pub const ACK_DELAY_EXPONENT: u8 = 3;
 //pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
-    let mut mac = Blake2b::new_keyed(key, RESET_TOKEN_SIZE);
-    mac.process(id);
+    let mut mac = VarBlake2b::new_keyed(key, RESET_TOKEN_SIZE);
+    mac.input(id.as_ref());
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
-    mac.variable_result(&mut result).unwrap();
+    mac.variable_result(|res| result.copy_from_slice(res));
     result
 }
 
@@ -434,8 +418,6 @@ fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
     buf.put_slice(conn_id);
     hkdf::extract(&key, &buf)
 }
-
-const ALPN_PROTOCOL: &str = "hq-11";
 
 #[cfg(test)]
 mod test {

@@ -77,7 +77,6 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    pub tls_client_config: Arc<ClientConfig>,
     pub tls_server_config: Arc<ServerConfig>,
 }
 
@@ -109,7 +108,6 @@ impl Default for Config {
             minimum_window: 2 * 1460,
             loss_reduction_factor: 0x8000, // 1/2
 
-            tls_client_config: Arc::new(crypto::build_client_config()),
             tls_server_config: Arc::new(crypto::build_server_config()),
         }
     }
@@ -318,7 +316,7 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let dest_id = packet.header.destination_id().clone();
+        let dest_id = packet.header.destination_id();
         if let Some(&conn) = self.connection_ids.get(&dest_id) {
             self.handle_connected(now, conn, remote, packet);
             return;
@@ -401,7 +399,7 @@ impl Endpoint {
                         debug!(
                             self.ctx.log,
                             "ignoring short initial on {connection}",
-                            connection = destination_id.clone()
+                            connection = destination_id
                         );
                     }
                     return;
@@ -417,7 +415,7 @@ impl Endpoint {
                 }*/
                 _ => {
                     debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
-                           connection=destination_id.clone(), type=ty);
+                           connection=destination_id, type=ty);
                     return;
                 }
             }
@@ -466,19 +464,14 @@ impl Endpoint {
     pub fn connect(
         &mut self,
         remote: SocketAddrV6,
+        config: &Arc<ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
         trace!(self.ctx.log, "initial dcid"; "value" => %remote_id);
-        let conn = self.add_connection(
-            remote_id.clone(),
-            local_id.clone(),
-            remote_id,
-            remote,
-            Side::Client,
-        );
-        self.connections[conn.0].connect(&self.ctx, server_name)?;
+        let conn = self.add_connection(remote_id, local_id, remote_id, remote, Side::Client);
+        self.connections[conn.0].connect(&self.ctx, config, server_name)?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
@@ -498,7 +491,7 @@ impl Endpoint {
             let conn = ConnectionHandle(entry.key());
             entry.insert(Connection::new(
                 initial_id,
-                local_id.clone(),
+                local_id,
                 remote_id,
                 remote,
                 packet_num.into(),
@@ -555,13 +548,7 @@ impl Endpoint {
             return;
         }
 
-        let conn = self.add_connection(
-            dest_id.clone(),
-            local_id.clone(),
-            source_id.clone(),
-            remote,
-            Side::Server,
-        );
+        let conn = self.add_connection(dest_id, local_id, source_id, remote, Side::Server);
         self.connection_ids_initial.insert(dest_id, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,
@@ -570,7 +557,8 @@ impl Endpoint {
             payload.freeze(),
         ) {
             Ok(()) => {}
-            Err(_) => {
+            Err(e) => {
+                debug!(self.ctx.log, "handshake failed"; "reason" => %e);
                 let n = self.ctx.gen_initial_packet_num();
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
@@ -836,7 +824,7 @@ impl Endpoint {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        let r = self.connections[conn.0].write(stream, data);
+        let r = self.connections[conn.0].write(&self.ctx.config, stream, data);
         match r {
             Ok(n) => {
                 self.ctx.dirty_conns.insert(conn);
@@ -881,7 +869,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
                 x
             }
             x => x,
@@ -907,7 +895,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
                 x
             }
             x => x,
@@ -964,12 +952,12 @@ impl Endpoint {
     }
 
     /// The `ConnectionId` used for `conn` locally.
-    pub fn get_local_id(&self, conn: ConnectionHandle) -> &ConnectionId {
-        &self.connections[conn.0].local_id
+    pub fn get_local_id(&self, conn: ConnectionHandle) -> ConnectionId {
+        self.connections[conn.0].local_id
     }
     /// The `ConnectionId` used for `conn` by the peer.
-    pub fn get_remote_id(&self, conn: ConnectionHandle) -> &ConnectionId {
-        &self.connections[conn.0].remote_id
+    pub fn get_remote_id(&self, conn: ConnectionHandle) -> ConnectionId {
+        self.connections[conn.0].remote_id
     }
     pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 {
         &self.connections[conn.0].remote
@@ -1102,8 +1090,8 @@ where
     let mut buf = Vec::<u8>::new();
     Header::Long {
         ty: types::HANDSHAKE,
-        destination_id: remote_id.clone(),
-        source_id: local_id.clone(),
+        destination_id: *remote_id,
+        source_id: *local_id,
         number: packet_number,
     }.encode(&mut buf);
     let header_len = buf.len();

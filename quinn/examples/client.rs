@@ -38,11 +38,11 @@ struct Opt {
 
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
-    /*
+
     /// whether to accept invalid (e.g. self-signed) TLS certificates
     #[structopt(long = "accept-insecure-certs")]
     accept_insecure_certs: bool,
-
+    /*
     /// file to read/write session tickets to
     #[structopt(long = "session-cache", parse(from_os_str))]
     session_cache: Option<PathBuf>,
@@ -91,13 +91,20 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     */
 
     let mut builder = quinn::Endpoint::new();
+    let mut client_config = quinn::ClientConfigBuilder::new();
+    builder.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
     builder.logger(log.clone());
     if options.keylog {
-        builder.enable_keylog();
+        client_config.enable_keylog();
     }
     if let Some(ca_path) = options.ca {
-        builder.add_certificate_authority(&fs::read(&ca_path)?)?;
+        client_config.add_certificate_authority(&fs::read(&ca_path)?)?;
     }
+    if options.accept_insecure_certs {
+        client_config.accept_insecure_certs();
+    }
+
+    let client_config = client_config.build();
 
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
@@ -107,7 +114,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let start = Instant::now();
     runtime.block_on(
         endpoint
-            .connect(
+            .connect_with(
+                &client_config,
                 &remote,
                 url.host_str().ok_or(format_err!("URL missing host"))?,
             )?.map_err(|e| format_err!("failed to connect: {}", e))

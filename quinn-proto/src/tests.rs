@@ -8,7 +8,7 @@ use std::{fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
-use rustls::internal::pemfile;
+use rustls::{internal::pemfile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
@@ -70,7 +70,7 @@ impl Default for Pair {
         let mut server_config = server_config();
         server_config.max_remote_uni_streams = 32;
         server_config.max_remote_bi_streams = 32;
-        Pair::new(server_config, client_config())
+        Pair::new(server_config, Default::default())
     }
 }
 
@@ -89,6 +89,7 @@ fn server_config() -> Config {
     };
 
     let mut tls_server_config = crypto::build_server_config();
+    tls_server_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_server_config
         .set_single_cert(certs, keys[0].clone())
         .unwrap();
@@ -98,7 +99,7 @@ fn server_config() -> Config {
     }
 }
 
-fn client_config() -> Config {
+fn client_config() -> Arc<ClientConfig> {
     let mut f = fs::File::open("../certs/ca.der").expect("cannot open '../certs/ca.der'");
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).expect("error while reading");
@@ -106,14 +107,13 @@ fn client_config() -> Config {
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = crypto::build_client_config();
+    let mut tls_client_config = ClientConfig::new();
+    tls_client_config.versions = vec![ProtocolVersion::TLSv1_3];
+    tls_client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_client_config
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
-    Config {
-        tls_client_config: Arc::new(tls_client_config),
-        ..Default::default()
-    }
+    Arc::new(tls_client_config)
 }
 
 impl Pair {
@@ -206,7 +206,10 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self.client.connect(self.server.addr, "localhost").unwrap();
+        let client_conn = self
+            .client
+            .connect(self.server.addr, &client_config(), "localhost")
+            .unwrap();
         self.drive();
         let server_conn = if let Some(c) = self.server.accept() {
             c
@@ -528,19 +531,24 @@ fn stop_stream() {
     );
 }
 
-/*
 #[test]
 fn reject_self_signed_cert() {
-    let mut pair = Pair::new(Config::default(), Config::default());
+    let mut client_config = ClientConfig::new();
+    client_config.versions = vec![ProtocolVersion::TLSv1_3];
+    client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+
+    let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_conn = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &Arc::new(client_config), "localhost")
+        .unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
                         error_code: TransportError::TLS_HANDSHAKE_FAILED
                     }})) if conn == client_conn);
 }
-*/
 
 #[test]
 fn congestion() {
@@ -572,7 +580,10 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
     pair.drive();
     let server_conn = if let Some(c) = pair.server.accept() {
         c
@@ -621,7 +632,59 @@ fn zero_rtt() {
 #[test]
 fn close_during_handshake() {
     let mut pair = Pair::default();
-    let c = pair.client.connect(pair.server.addr, "localhost").unwrap();
+    let c = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
     pair.client.close(pair.time, c, 0, Bytes::new());
     // This never actually sends the client's Initial; we may want to behave better here.
+}
+
+#[test]
+fn stream_id_backpressure() {
+    let server_config = Config {
+        max_remote_uni_streams: 1,
+        ..server_config()
+    };
+    let mut pair = Pair::new(server_config, Default::default());
+    let (client_conn, server_conn) = pair.connect();
+
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Uni)
+        .expect("couldn't open first stream");
+    assert_eq!(
+        pair.client.open(client_conn, Directionality::Uni),
+        None,
+        "only one stream is permitted at a time"
+    );
+    // Close the first stream to make room for the second
+    pair.client.finish(client_conn, s);
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
+    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Finished)
+    );
+    // Server will only send MAX_STREAM_ID now that the application's been notified
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamAvailable { directionality: Directionality::Uni })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), None);
+
+    // Try opening the second stream again, now that we've made room
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Uni)
+        .expect("didn't get stream id budget");
+    pair.client.finish(client_conn, s);
+    pair.drive();
+    // Make sure the server actually processes data on the newly-available stream
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Finished)
+    );
 }
