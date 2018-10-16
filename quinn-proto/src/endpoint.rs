@@ -585,7 +585,6 @@ impl Endpoint {
         trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
-        let mut err_to_log: Option<ConnectionError> = None;
         // State transitions
         let prev_state = self.connections[conn.0].state.take().unwrap();
         let was_handshake = match prev_state {
@@ -600,34 +599,30 @@ impl Endpoint {
             prev_state,
         ) {
             Ok(state) => state,
-            Err(conn_err) => match conn_err {
-                ConnectionError::TransportError { error_code } => {
-                    err_to_log = Some(error_code.into());
-                    if was_handshake {
-                        State::handshake_failed(error_code, None)
-                    } else {
-                        State::closed(error_code)
+            Err(conn_err) => {
+                &mut self.ctx.events.push_back((
+                    conn,
+                    Event::ConnectionLost {
+                        reason: conn_err.clone(),
+                    },
+                ));
+
+                match conn_err {
+                    ConnectionError::TransportError { error_code } => {
+                        if was_handshake {
+                            State::handshake_failed(error_code, None)
+                        } else {
+                            State::closed(error_code)
+                        }
+                    }
+                    ConnectionError::VersionMismatch => State::Draining,
+                    _ => {
+                        debug!(self.ctx.log, "unexpected connection error received"; "error" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                        return;
                     }
                 }
-                ConnectionError::VersionMismatch => {
-                    err_to_log = Some(ConnectionError::VersionMismatch);
-                    State::Draining
-                }
-                _ => {
-                    debug!(self.ctx.log, "unexpected connection error received"; "error" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
-                    return;
-                }
-            },
+            }
         };
-
-        if err_to_log.is_some() {
-            &mut self.ctx.events.push_back((
-                conn,
-                Event::ConnectionLost {
-                    reason: err_to_log.unwrap(),
-                },
-            ));
-        }
 
         if !was_closed && state.is_closed() {
             self.connections[conn.0].close_common(&mut self.ctx, now);
