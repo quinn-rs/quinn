@@ -1,3 +1,4 @@
+extern crate aes_ctr;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
