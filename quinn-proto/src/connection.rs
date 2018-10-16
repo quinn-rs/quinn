@@ -828,17 +828,17 @@ impl Connection {
                         "{connection} got session ticket",
                         connection = self.local_id.clone()
                     );
-        
+
                     let params = &self.params;
                     let session = session
                         .to_der()
                         .expect("failed to serialize session ticket");
-        
+
                     let mut buf = Vec::new();
                     buf.put_u16_be(session.len() as u16);
                     buf.extend_from_slice(&session);
                     params.write(Side::Server, &mut buf);
-        
+
                     ctx.events
                         .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
                 } else {

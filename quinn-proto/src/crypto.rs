@@ -114,9 +114,9 @@ impl Crypto {
         let tls_cipher = tls.current_cipher().unwrap();
         let digest = tls_cipher.handshake_digest().unwrap();
         let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
-    
+
         const LABEL: &str = "EXPORTER-QUIC 0rtt";
-    
+
         let mut secret = vec![0; digest.size()];
         tls.export_keying_material_early(&mut secret, &LABEL, b"")
             .unwrap();
