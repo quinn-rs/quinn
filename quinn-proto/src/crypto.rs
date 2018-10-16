@@ -3,6 +3,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{io, str};
 
+use aes_ctr::stream_cipher::generic_array::GenericArray;
+use aes_ctr::stream_cipher::{NewFixStreamCipher, StreamCipherCore};
+use aes_ctr::Aes128Ctr;
 use blake2::{
     digest::{Input, VariableOutput},
     VarBlake2b,
@@ -332,6 +335,7 @@ pub struct CryptoState {
     secret: Vec<u8>,
     key: Vec<u8>,
     iv: Vec<u8>,
+    pn: Vec<u8>,
 }
 
 impl CryptoState {
@@ -345,7 +349,15 @@ impl CryptoState {
         qhkdf_expand(&secret_key, b"key", &mut key);
         let mut iv = vec![0; cipher.nonce_len()];
         qhkdf_expand(&secret_key, b"iv", &mut iv);
-        Self { secret, key, iv }
+        let pne_alg = PacketNumberEncryptionAlgorithm::from_aead(cipher);
+        let mut pn = vec![0; pne_alg.key_len()];
+        qhkdf_expand(&secret_key, b"pn", &mut pn);
+        Self {
+            secret,
+            key,
+            iv,
+            pn,
+        }
     }
 
     fn update(
@@ -417,6 +429,53 @@ fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
     let mut buf = Vec::with_capacity(8);
     buf.put_slice(conn_id);
     hkdf::extract(&key, &buf)
+}
+
+enum PacketNumberEncryptionAlgorithm {
+    AesCtr128,
+}
+
+impl PacketNumberEncryptionAlgorithm {
+    fn from_aead(alg: &aead::Algorithm) -> Self {
+        use self::PacketNumberEncryptionAlgorithm::*;
+        if alg == &aead::AES_128_GCM {
+            AesCtr128
+        } else {
+            unimplemented!()
+        }
+    }
+
+    fn key_len(&self) -> usize {
+        use self::PacketNumberEncryptionAlgorithm::*;
+        match *self {
+            AesCtr128 => 16,
+        }
+    }
+
+    fn sample_size(&self) -> usize {
+        use self::PacketNumberEncryptionAlgorithm::*;
+        match *self {
+            AesCtr128 => 16,
+        }
+    }
+
+    fn decrypt(&self, key: &[u8], sample: &[u8], in_out: &mut [u8]) {
+        use self::PacketNumberEncryptionAlgorithm::*;
+        let key = GenericArray::from_slice(key);
+        let nonce = GenericArray::from_slice(sample);
+        match *self {
+            AesCtr128 => Aes128Ctr::new(key, nonce).apply_keystream(in_out),
+        }
+    }
+
+    fn encrypt(&self, key: &[u8], sample: &[u8], in_out: &mut [u8]) {
+        use self::PacketNumberEncryptionAlgorithm::*;
+        let key = GenericArray::from_slice(key);
+        let nonce = GenericArray::from_slice(sample);
+        match *self {
+            AesCtr128 => Aes128Ctr::new(key, nonce).apply_keystream(in_out),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -502,6 +561,29 @@ mod test {
             &server_state.iv[..],
             [0x25, 0xb5, 0x8e, 0x24, 0x6d, 0x9e, 0x7d, 0x5f, 0xfe, 0x43, 0x23, 0xfe]
         );
+    }
+
+    // https://github.com/quicwg/base-drafts/wiki/Test-vector-for-AES-packet-number-encryption
+    #[test]
+    fn pne_test_vectors() {
+        let key = [
+            0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
+            0x4f, 0x3c,
+        ];
+        let mut received = [
+            0x30, 0x80, 0x6d, 0xbb, 0xb5, 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9,
+            0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0x20, 0x3f, 0xbe, 0x2e, 0x32, 0x17, 0xfc,
+            0x5b, 0x88, 0x55,
+        ];
+        let alg = PacketNumberEncryptionAlgorithm::AesCtr128;
+        // Cheating a little bit here...
+        let sample_offset = 5;
+        let (header, payload) = received.split_at_mut(sample_offset);
+        let sample = &payload[..alg.sample_size()];
+        alg.decrypt(&key, sample, &mut header[1..]);
+        assert_eq!(&header[1..], [0xba, 0xba, 0xc0, 0x01]);
+        alg.encrypt(&key, sample, &mut header[1..]);
+        assert_eq!(&header[1..], [0x80, 0x6d, 0xbb, 0xb5]);
     }
 }
 

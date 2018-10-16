@@ -19,6 +19,7 @@ maintenance = { status = "experimental" }
 dangerous_configuration = ["rustls/dangerous_configuration"]
 
 [dependencies]
+aes-ctr = "0.2"
 blake2 = "0.8"
 byteorder = "1.1"
 bytes = "0.4.7"
