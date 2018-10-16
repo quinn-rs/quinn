@@ -5,7 +5,7 @@ use std::{io, str};
 
 use aes_ctr::stream_cipher::generic_array::GenericArray;
 use aes_ctr::stream_cipher::{NewFixStreamCipher, StreamCipherCore};
-use aes_ctr::Aes128Ctr;
+use aes_ctr::{Aes128Ctr, Aes256Ctr};
 use blake2::{
     digest::{Input, VariableOutput},
     VarBlake2b,
@@ -433,6 +433,7 @@ fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
 
 enum PacketNumberEncryptionAlgorithm {
     AesCtr128,
+    AesCtr256,
 }
 
 impl PacketNumberEncryptionAlgorithm {
@@ -440,6 +441,8 @@ impl PacketNumberEncryptionAlgorithm {
         use self::PacketNumberEncryptionAlgorithm::*;
         if alg == &aead::AES_128_GCM {
             AesCtr128
+        } else if alg == &aead::AES_256_GCM {
+            AesCtr256
         } else {
             unimplemented!()
         }
@@ -449,6 +452,7 @@ impl PacketNumberEncryptionAlgorithm {
         use self::PacketNumberEncryptionAlgorithm::*;
         match *self {
             AesCtr128 => 16,
+            AesCtr256 => 32,
         }
     }
 
@@ -456,6 +460,7 @@ impl PacketNumberEncryptionAlgorithm {
         use self::PacketNumberEncryptionAlgorithm::*;
         match *self {
             AesCtr128 => 16,
+            AesCtr256 => 16,
         }
     }
 
@@ -465,6 +470,7 @@ impl PacketNumberEncryptionAlgorithm {
         let nonce = GenericArray::from_slice(sample);
         match *self {
             AesCtr128 => Aes128Ctr::new(key, nonce).apply_keystream(in_out),
+            AesCtr256 => Aes256Ctr::new(key, nonce).apply_keystream(in_out),
         }
     }
 
@@ -474,6 +480,7 @@ impl PacketNumberEncryptionAlgorithm {
         let nonce = GenericArray::from_slice(sample);
         match *self {
             AesCtr128 => Aes128Ctr::new(key, nonce).apply_keystream(in_out),
+            AesCtr256 => Aes256Ctr::new(key, nonce).apply_keystream(in_out),
         }
     }
 }
