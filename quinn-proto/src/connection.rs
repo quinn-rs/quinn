@@ -34,6 +34,7 @@ impl From<ConnectionHandle> for usize {
 }
 
 pub struct Connection {
+    pub app_closed: bool,
     /// DCID of Initial packet
     pub initial_id: ConnectionId,
     pub local_id: ConnectionId,
@@ -304,6 +305,7 @@ impl Connection {
             );
         }
         Self {
+            app_closed: false,
             initial_id,
             local_id,
             remote_id,
@@ -934,7 +936,7 @@ impl Connection {
         remote: SocketAddrV6,
         mut packet: Packet,
         state: State,
-    ) -> State {
+    ) -> Result<State, ConnectionError> {
         match state {
             State::Handshake(mut state) => {
                 match packet.header {
@@ -949,16 +951,10 @@ impl Connection {
                         if state.clienthello_packet.is_none() {
                             // Received Retry as a server
                             debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
-                            ctx.events.push_back((
-                                self.handle,
-                                Event::ConnectionLost {
-                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                },
-                            ));
-                            State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                            Err(TransportError::PROTOCOL_VIOLATION.into())
                         } else if state.clienthello_packet.unwrap() > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
-                            State::Handshake(state)
+                            Ok(State::Handshake(state))
                         } else if self
                             .decrypt(
                                 true,
@@ -972,16 +968,7 @@ impl Connection {
                                 self.read_tls(&mut state.tls, &frame);
                             } else {
                                 debug!(ctx.log, "invalid retry payload");
-                                ctx.events.push_back((
-                                    self.handle,
-                                    Event::ConnectionLost {
-                                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                    },
-                                ));
-                                return State::handshake_failed(
-                                    TransportError::PROTOCOL_VIOLATION,
-                                    None,
-                                );
+                                return Err(TransportError::PROTOCOL_VIOLATION.into());
                             }
                             match state.tls.process_new_packets() {
                                 Ok(()) => {
@@ -1004,29 +991,20 @@ impl Connection {
                                     state.tls.write_tls(&mut outgoing).unwrap();
                                     self.transmit_handshake(&outgoing);
                                     // Prepare to receive Handshake packets that start stream 0 from offset 0
-                                    State::Handshake(state::Handshake {
+                                    Ok(State::Handshake(state::Handshake {
                                         tls: state.tls,
                                         clienthello_packet: state.clienthello_packet,
                                         remote_id_set: state.remote_id_set,
-                                    })
+                                    }))
                                 }
                                 Err(e) => {
                                     debug!(ctx.log, "handshake failed"; "reason" => %e);
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
-                                        },
-                                    ));
-                                    State::handshake_failed(
-                                        TransportError::TLS_HANDSHAKE_FAILED,
-                                        None,
-                                    )
+                                    Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                                 }
                             }
                         } else {
                             debug!(ctx.log, "failed to authenticate retry packet");
-                            State::Handshake(state)
+                            Ok(State::Handshake(state))
                         }
                     }
                     Header::Long {
@@ -1050,7 +1028,7 @@ impl Connection {
                             ).is_err()
                         {
                             debug!(ctx.log, "failed to authenticate handshake packet");
-                            return State::Handshake(state);
+                            return Ok(State::Handshake(state));
                         };
                         self.on_packet_authenticated(ctx, now, number as u64);
                         // Complete handshake (and ultimately send Finished)
@@ -1070,16 +1048,7 @@ impl Connection {
                                 ) => self.read_tls(&mut state.tls, &frame),
                                 Frame::Stream(frame::Stream { .. }) => {
                                     debug!(ctx.log, "non-stream-0 stream frame in handshake");
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                        },
-                                    ));
-                                    return State::handshake_failed(
-                                        TransportError::PROTOCOL_VIOLATION,
-                                        None,
-                                    );
+                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 Frame::Ack(ack) => {
                                     self.on_ack_received(ctx, now, ack);
@@ -1091,7 +1060,7 @@ impl Connection {
                                             reason: ConnectionError::ConnectionClosed { reason },
                                         },
                                     ));
-                                    return State::Draining(state.into());
+                                    return Ok(State::Draining);
                                 }
                                 Frame::ApplicationClose(reason) => {
                                     ctx.events.push_back((
@@ -1100,23 +1069,14 @@ impl Connection {
                                             reason: ConnectionError::ApplicationClosed { reason },
                                         },
                                     ));
-                                    return State::Draining(state.into());
+                                    return Ok(State::Draining);
                                 }
                                 Frame::PathChallenge(value) => {
                                     self.handshake_pending.path_challenge(number as u64, value);
                                 }
                                 _ => {
                                     debug!(ctx.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                        },
-                                    ));
-                                    return State::handshake_failed(
-                                        TransportError::PROTOCOL_VIOLATION,
-                                        None,
-                                    );
+                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                             }
                         }
@@ -1132,17 +1092,7 @@ impl Connection {
                                     self.set_params(params);
                                 } else {
                                     debug!(ctx.log, "remote didn't send transport params");
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: TransportError::TRANSPORT_PARAMETER_ERROR
-                                                .into(),
-                                        },
-                                    ));
-                                    return State::handshake_failed(
-                                        TransportError::TLS_HANDSHAKE_FAILED,
-                                        None,
-                                    );
+                                    return Err(TransportError::TLS_HANDSHAKE_FAILED.into());
                                 }
                                 trace!(ctx.log, "{connection} established", connection = id);
                                 self.handshake_cleanup(&ctx.config);
@@ -1171,7 +1121,7 @@ impl Connection {
                                     }
                                 }
                                 self.crypto = Some(Crypto::new_1rtt(&state.tls, self.side));
-                                State::Established(state::Established { tls: state.tls })
+                                Ok(State::Established(state::Established { tls: state.tls }))
                             }
                             Ok(()) => {
                                 trace!(ctx.log, "handshake ongoing"; "connection" => %id);
@@ -1181,21 +1131,15 @@ impl Connection {
                                 if !response.is_empty() {
                                     self.transmit_handshake(&response);
                                 }
-                                State::Handshake(state::Handshake {
+                                Ok(State::Handshake(state::Handshake {
                                     tls: state.tls,
                                     clienthello_packet: state.clienthello_packet,
                                     remote_id_set: state.remote_id_set,
-                                })
+                                }))
                             }
                             Err(e) => {
                                 debug!(ctx.log, "handshake failed"; "reason" => %e);
-                                ctx.events.push_back((
-                                    self.handle,
-                                    Event::ConnectionLost {
-                                        reason: TransportError::TLS_HANDSHAKE_FAILED.into(),
-                                    },
-                                ));
-                                State::handshake_failed(TransportError::TLS_HANDSHAKE_FAILED, None)
+                                Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                             }
                         }
                     }
@@ -1205,7 +1149,7 @@ impl Connection {
                         if self.side == Side::Server =>
                     {
                         trace!(ctx.log, "dropping duplicate Initial");
-                        State::Handshake(state)
+                        Ok(State::Handshake(state))
                     }
                     /*Header::Long {
                         ty: types::ZERO_RTT,
@@ -1254,13 +1198,7 @@ impl Connection {
                     }*/
                     Header::Long { ty, .. } => {
                         debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
-                        ctx.events.push_back((
-                            self.handle,
-                            Event::ConnectionLost {
-                                reason: TransportError::PROTOCOL_VIOLATION.into(),
-                            },
-                        ));
-                        State::handshake_failed(TransportError::PROTOCOL_VIOLATION, None)
+                        Err(TransportError::PROTOCOL_VIOLATION.into())
                     }
                     Header::VersionNegotiate {
                         destination_id: id, ..
@@ -1268,37 +1206,22 @@ impl Connection {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
                         if packet.payload.len() % 4 != 0 {
                             debug!(ctx.log, "malformed version negotiation"; "connection" => %id);
-                            ctx.events.push_back((
-                                self.handle,
-                                Event::ConnectionLost {
-                                    reason: TransportError::PROTOCOL_VIOLATION.into(),
-                                },
-                            ));
-                            return State::handshake_failed(
-                                TransportError::PROTOCOL_VIOLATION,
-                                None,
-                            );
+                            return Err(TransportError::PROTOCOL_VIOLATION.into());
                         }
                         while payload.has_remaining() {
                             let version = payload.get::<u32>().unwrap();
                             if version == VERSION {
                                 // Our version is supported, so this packet is spurious
-                                return State::Handshake(state);
+                                return Ok(State::Handshake(state));
                             }
                         }
                         debug!(ctx.log, "remote doesn't support our version");
-                        ctx.events.push_back((
-                            self.handle,
-                            Event::ConnectionLost {
-                                reason: ConnectionError::VersionMismatch,
-                            },
-                        ));
-                        State::Draining(state.into())
+                        Err(ConnectionError::VersionMismatch)
                     }
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     Header::Short { .. } => {
                         trace!(ctx.log, "dropping short packet during handshake");
-                        State::Handshake(state)
+                        Ok(State::Handshake(state))
                     }
                 }
             }
@@ -1306,19 +1229,17 @@ impl Connection {
                 let id = self.local_id;
                 if let Header::Long { .. } = packet.header {
                     trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
-                    return State::Established(state);
+                    return Ok(State::Established(state));
                 }
                 let (payload, number) = match self.decrypt_packet(false, packet) {
                     Ok(x) => x,
                     Err(None) => {
                         trace!(ctx.log, "failed to authenticate packet"; "connection" => %id);
-                        return State::Established(state);
+                        return Ok(State::Established(state));
                     }
                     Err(Some(e)) => {
                         warn!(ctx.log, "got illegal packet"; "connection" => %id);
-                        ctx.events
-                            .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
-                        return State::closed(e);
+                        return Err(e.into());
                     }
                 };
                 self.on_packet_authenticated(ctx, now, number);
@@ -1331,16 +1252,14 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                match self
-                    .process_payload(ctx, now, number, payload.into(), &mut state.tls)
-                    .and_then(|x| {
-                        self.drive_tls(ctx, &mut state.tls)?;
-                        Ok(x)
-                    }) {
-                    Err(e) => State::closed(e),
-                    Ok(true) => State::Draining(state.into()),
-                    Ok(false) => State::Established(state),
-                }
+                let closed =
+                    self.process_payload(ctx, now, number, payload.into(), &mut state.tls)?;
+                self.drive_tls(ctx, &mut state.tls)?;
+                Ok(if closed {
+                    State::Draining
+                } else {
+                    State::Established(state)
+                })
             }
             State::HandshakeFailed(state) => {
                 if let Ok((payload, _)) = self.decrypt_packet(true, packet) {
@@ -1348,13 +1267,13 @@ impl Connection {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
-                                return State::Draining(state.into());
+                                return Ok(State::Draining);
                             }
                             _ => {}
                         }
                     }
                 }
-                State::HandshakeFailed(state)
+                Ok(State::HandshakeFailed(state))
             }
             State::Closed(state) => {
                 if let Ok((payload, _)) = self.decrypt_packet(false, packet) {
@@ -1362,16 +1281,16 @@ impl Connection {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
-                                return State::Draining(state.into());
+                                return Ok(State::Draining);
                             }
                             _ => {}
                         }
                     }
                 }
-                State::Closed(state)
+                Ok(State::Closed(state))
             }
-            State::Draining(x) => State::Draining(x),
-            State::Drained => State::Drained,
+            State::Draining => Ok(State::Draining),
+            State::Drained => Ok(State::Drained),
         }
     }
 
@@ -2068,25 +1987,17 @@ impl Connection {
             self.reset_idle_timeout(&ctx.config, now);
             ctx.dirty_conns.insert(self.handle);
         }
+
+        self.app_closed = true;
         self.state = Some(match self.state.take().unwrap() {
             State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
                 reason,
                 alert: None,
-                app_closed: true,
             }),
-            State::HandshakeFailed(x) => State::HandshakeFailed(state::HandshakeFailed {
-                app_closed: true,
-                ..x
-            }),
-            State::Established(_) => State::Closed(state::Closed {
-                reason,
-                app_closed: true,
-            }),
-            State::Closed(x) => State::Closed(state::Closed {
-                app_closed: true,
-                ..x
-            }),
-            State::Draining(_) => State::Draining(state::Draining { app_closed: true }),
+            State::HandshakeFailed(x) => State::HandshakeFailed(x),
+            State::Established(_) => State::Closed(state::Closed { reason }),
+            State::Closed(x) => State::Closed(x),
+            State::Draining => State::Draining,
             State::Drained => unreachable!(),
         });
     }
@@ -2515,6 +2426,17 @@ impl From<ConnectionError> for io::Error {
     }
 }
 
+impl From<state::CloseReason> for ConnectionError {
+    fn from(cr: state::CloseReason) -> ConnectionError {
+        match cr {
+            state::CloseReason::Connection(conn_close) => conn_close.error_code.into(),
+            state::CloseReason::Application(app_close) => {
+                ConnectionError::ApplicationClosed { reason: app_close }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
@@ -2543,7 +2465,7 @@ pub enum State {
     Established(state::Established),
     HandshakeFailed(state::HandshakeFailed),
     Closed(state::Closed),
-    Draining(state::Draining),
+    Draining,
     /// Waiting for application to call close so we can dispose of the resources
     Drained,
 }
@@ -2552,7 +2474,6 @@ impl State {
     pub fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
         State::Closed(state::Closed {
             reason: reason.into(),
-            app_closed: false,
         })
     }
 
@@ -2563,7 +2484,6 @@ impl State {
         State::HandshakeFailed(state::HandshakeFailed {
             reason: reason.into(),
             alert,
-            app_closed: false,
         })
     }
 
@@ -2571,17 +2491,8 @@ impl State {
         match *self {
             State::HandshakeFailed(_) => true,
             State::Closed(_) => true,
-            State::Draining(_) => true,
+            State::Draining => true,
             State::Drained => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_app_closed(&self) -> bool {
-        match *self {
-            State::HandshakeFailed(ref x) => x.app_closed,
-            State::Closed(ref x) => x.app_closed,
-            State::Draining(ref x) => x.app_closed,
             _ => false,
         }
     }
@@ -2614,7 +2525,6 @@ pub mod state {
         // Closed
         pub reason: CloseReason,
         pub alert: Option<Box<[u8]>>,
-        pub app_closed: bool,
     }
 
     #[derive(Clone)]
@@ -2641,39 +2551,6 @@ pub mod state {
 
     pub struct Closed {
         pub reason: CloseReason,
-        pub app_closed: bool,
-    }
-
-    pub struct Draining {
-        pub app_closed: bool,
-    }
-
-    impl From<Handshake> for Draining {
-        fn from(_: Handshake) -> Self {
-            Draining { app_closed: false }
-        }
-    }
-
-    impl From<HandshakeFailed> for Draining {
-        fn from(x: HandshakeFailed) -> Self {
-            Draining {
-                app_closed: x.app_closed,
-            }
-        }
-    }
-
-    impl From<Established> for Draining {
-        fn from(_: Established) -> Self {
-            Draining { app_closed: false }
-        }
-    }
-
-    impl From<Closed> for Draining {
-        fn from(x: Closed) -> Self {
-            Draining {
-                app_closed: x.app_closed,
-            }
-        }
     }
 }
 
