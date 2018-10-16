@@ -188,13 +188,19 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
                 // Execute the request
                 let resp = process_get(&root, &req).unwrap_or_else(move |e| {
                     error!(log, "failed to process request"; "reason" => %e.pretty());
-                    format!("failed to process request: {}\n", e.pretty()).into_bytes().into()
+                    format!("failed to process request: {}\n", e.pretty())
+                        .into_bytes()
+                        .into()
                 });
                 // Write the response
-                tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
+                tokio::io::write_all(stream, resp)
+                    .map_err(|e| format_err!("failed to send response: {}", e))
             })
             // Gracefully terminate the stream
-            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+            .and_then(|(stream, _)| {
+                tokio::io::shutdown(stream)
+                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+            })
             .map(move |_| info!(log3, "request complete"))
             .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty())),
     )

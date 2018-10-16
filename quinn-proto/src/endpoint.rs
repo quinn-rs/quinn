@@ -588,6 +588,10 @@ impl Endpoint {
         let mut err_to_log: Option<ConnectionError> = None;
         // State transitions
         let prev_state = self.connections[conn.0].state.take().unwrap();
+        let was_handshake = match prev_state {
+            State::Handshake(_) => true,
+            _ => false,
+        };
         let state = match self.connections[conn.0].handle_connected_inner(
             &mut self.ctx,
             now,
@@ -599,9 +603,10 @@ impl Endpoint {
             Err(conn_err) => match conn_err {
                 ConnectionError::TransportError { error_code } => {
                     err_to_log = Some(error_code.into());
-                    match prev_state {
-                        State::Handshake(_) => State::handshake_failed(error_code, None),
-                        _ => State::closed(error_code),
+                    if was_handshake {
+                        State::handshake_failed(error_code, None)
+                    } else {
+                        State::closed(error_code)
                     }
                 }
                 ConnectionError::VersionMismatch => {
