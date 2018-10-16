@@ -3,6 +3,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{io, str};
 
+use aes_ctr::stream_cipher::generic_array::GenericArray;
+use aes_ctr::stream_cipher::{NewFixStreamCipher, StreamCipherCore};
+use aes_ctr::Aes128Ctr;
 use bytes::{Buf, BufMut, BytesMut};
 use ring::aead;
 use ring::digest;
@@ -214,6 +217,21 @@ impl Crypto {
         }
     }
 
+    pub fn pn_decrypt_key(&self) -> &PacketNumberKey {
+        &self.ctx().remote.pn_key
+    }
+
+    pub fn pn_encrypt_key(&self) -> &PacketNumberKey {
+        &self.ctx().local.pn_key
+    }
+
+    fn ctx(&self) -> &CryptoContext {
+        use self::Crypto::*;
+        match self {
+            Initial(ctx) | OneRtt(ctx) => ctx,
+        }
+    }
+
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
         // FIXME: retain crypter
         let (cipher, state) = match *self {
@@ -322,6 +340,7 @@ pub struct CryptoState {
     secret: Vec<u8>,
     key: Vec<u8>,
     iv: Vec<u8>,
+    pn_key: PacketNumberKey,
 }
 
 impl CryptoState {
@@ -335,7 +354,12 @@ impl CryptoState {
         qhkdf_expand(&secret_key, b"key", &mut key);
         let mut iv = vec![0; cipher.nonce_len()];
         qhkdf_expand(&secret_key, b"iv", &mut iv);
-        Self { secret, key, iv }
+        Self {
+            secret,
+            key,
+            iv,
+            pn_key: PacketNumberKey::from_aead(cipher, &secret_key),
+        }
     }
 
     fn update(
@@ -384,6 +408,60 @@ pub enum ConnectError {
 impl From<TLSError> for ConnectError {
     fn from(x: TLSError) -> Self {
         ConnectError::Tls(x)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PacketNumberKey {
+    AesCtr128([u8; 16]),
+    ChaCha20([u8; 32]),
+}
+
+impl PacketNumberKey {
+    fn from_aead(alg: &aead::Algorithm, secret_key: &SigningKey) -> Self {
+        use self::PacketNumberKey::*;
+        if alg == &aead::AES_128_GCM {
+            let mut pn = [0; 16];
+            qhkdf_expand(&secret_key, b"pn", &mut pn);
+            AesCtr128(pn)
+        } else if alg == &aead::CHACHA20_POLY1305 {
+            let mut pn = [0; 32];
+            qhkdf_expand(&secret_key, b"pn", &mut pn);
+            ChaCha20(pn)
+        } else {
+            unimplemented!()
+        }
+    }
+
+    pub fn sample_size(&self) -> usize {
+        use self::PacketNumberKey::*;
+        match *self {
+            AesCtr128(_) | ChaCha20(_) => 16,
+        }
+    }
+
+    pub fn decrypt(&self, sample: &[u8], in_out: &mut [u8]) {
+        use self::PacketNumberKey::*;
+        match self {
+            AesCtr128(key) => {
+                let key = GenericArray::from_slice(key);
+                let nonce = GenericArray::from_slice(sample);
+                Aes128Ctr::new(key, nonce).apply_keystream(in_out)
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn encrypt(&self, sample: &[u8], in_out: &mut [u8]) {
+        use self::PacketNumberKey::*;
+        match self {
+            AesCtr128(key) => {
+                let key = GenericArray::from_slice(key);
+                let nonce = GenericArray::from_slice(sample);
+                Aes128Ctr::new(key, nonce).apply_keystream(in_out)
+            }
+            _ => unimplemented!(),
+        }
     }
 }
 
@@ -476,6 +554,13 @@ mod test {
             &client_state.iv[..],
             [0xab, 0x95, 0x0b, 0x01, 0x98, 0x63, 0x79, 0x78, 0xcf, 0x44, 0xaa, 0xb9,]
         );
+        assert_eq!(
+            client_state.pn_key,
+            PacketNumberKey::AesCtr128([
+                0x68, 0xc3, 0xf6, 0x4e, 0x2d, 0x66, 0x34, 0x41, 0x2b, 0x8e, 0x32, 0x94, 0x62, 0x8d,
+                0x76, 0xf1
+            ])
+        );
 
         let server_secret = expanded_initial_secret(&initial_secret, b"server in");
         assert_eq!(
@@ -497,6 +582,13 @@ mod test {
         assert_eq!(
             &server_state.iv[..],
             [0x32, 0x05, 0x03, 0x5a, 0x3c, 0x93, 0x7c, 0x90, 0x2e, 0xe4, 0xf4, 0xd6,]
+        );
+        assert_eq!(
+            server_state.pn_key,
+            PacketNumberKey::AesCtr128([
+                0xa3, 0x13, 0xc8, 0x6d, 0x13, 0x73, 0xec, 0xbc, 0xcb, 0x32, 0x94, 0xb1, 0x49, 0x74,
+                0x22, 0x6c
+            ])
         );
     }
 }
