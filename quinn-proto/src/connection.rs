@@ -398,6 +398,7 @@ impl Connection {
             tls,
             clienthello_packet: None,
             remote_id_set: false,
+            token: None,
         }));
         Ok(())
     }
@@ -420,6 +421,7 @@ impl Connection {
             tls,
             clienthello_packet: None,
             remote_id_set: true,
+            token: None,
         }));
         self.set_params(params);
         ctx.dirty_conns.insert(self.handle);
@@ -946,9 +948,7 @@ impl Connection {
         match state {
             State::Handshake(mut state) => {
                 match packet.header {
-                    Header::Long {
-                        ty: LongType::Retry,
-                        number,
+                    Header::Retry {
                         destination_id: conn_id,
                         source_id: remote_id,
                         ..
@@ -958,59 +958,31 @@ impl Connection {
                             // Received Retry as a server
                             debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
                             Err(TransportError::PROTOCOL_VIOLATION.into())
-                        } else if state.clienthello_packet.unwrap() > number {
-                            // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
-                            Ok(State::Handshake(state))
-                        } else if self
-                            .decrypt(
-                                true,
-                                number as u64,
-                                &packet.header_data,
-                                &mut packet.payload,
-                            ).is_ok()
-                        {
-                            if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
-                            {
-                                self.read_tls(&mut state.tls, &frame);
-                            } else {
-                                debug!(ctx.log, "invalid retry payload");
-                                return Err(TransportError::PROTOCOL_VIOLATION.into());
-                            }
-                            match state.tls.process_new_packets() {
-                                Ok(()) => {
-                                    self.on_packet_authenticated(ctx, now, number as u64);
-                                    trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
-                                    // Discard transport state
-                                    let mut new = Connection::new(
-                                        remote_id,
-                                        self.local_id,
-                                        remote_id,
-                                        remote,
-                                        ctx.initial_packet_number.sample(&mut ctx.rng),
-                                        Side::Client,
-                                        &ctx.config,
-                                        self.handle,
-                                    );
-                                    mem::replace(self, new);
-                                    // Send updated ClientHello
-                                    let mut outgoing = Vec::new();
-                                    state.tls.write_tls(&mut outgoing).unwrap();
-                                    self.transmit_handshake(&outgoing);
-                                    // Prepare to receive Handshake packets that start stream 0 from offset 0
-                                    Ok(State::Handshake(state::Handshake {
-                                        tls: state.tls,
-                                        clienthello_packet: state.clienthello_packet,
-                                        remote_id_set: state.remote_id_set,
-                                    }))
-                                }
-                                Err(e) => {
-                                    debug!(ctx.log, "handshake failed"; "reason" => %e);
-                                    Err(TransportError::TLS_HANDSHAKE_FAILED.into())
-                                }
-                            }
                         } else {
-                            debug!(ctx.log, "failed to authenticate retry packet");
-                            Ok(State::Handshake(state))
+                            trace!(ctx.log, "resending ClientHello"; "remote_id" => %remote_id);
+                            // Discard transport state
+                            let mut new = Connection::new(
+                                remote_id,
+                                self.local_id,
+                                remote_id,
+                                remote,
+                                ctx.initial_packet_number.sample(&mut ctx.rng),
+                                Side::Client,
+                                &ctx.config,
+                                self.handle,
+                            );
+                            mem::replace(self, new);
+                            // Send updated ClientHello
+                            let mut outgoing = Vec::new();
+                            state.tls.write_tls(&mut outgoing).unwrap();
+                            self.transmit_handshake(&outgoing);
+                            // Prepare to receive Handshake packets that start stream 0 from offset 0
+                            Ok(State::Handshake(state::Handshake {
+                                tls: state.tls,
+                                clienthello_packet: state.clienthello_packet,
+                                remote_id_set: state.remote_id_set,
+                                token: Some(packet.payload),
+                            }))
                         }
                     }
                     Header::Long {
@@ -1141,6 +1113,7 @@ impl Connection {
                                     tls: state.tls,
                                     clienthello_packet: state.clienthello_packet,
                                     remote_id_set: state.remote_id_set,
+                                    token: None,
                                 }))
                             }
                             Err(e) => {
@@ -2528,6 +2501,7 @@ pub mod state {
         /// the client.
         pub clienthello_packet: Option<u32>,
         pub remote_id_set: bool,
+        pub token: Option<BytesMut>,
     }
 
     pub struct Established {
