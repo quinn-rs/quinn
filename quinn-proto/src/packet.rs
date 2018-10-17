@@ -18,95 +18,7 @@ impl Packet {
         mut packet: BytesMut,
         dest_id_len: usize,
     ) -> Result<(Self, BytesMut), HeaderError> {
-        let (header_len, payload_len, header) = {
-            let mut buf = io::Cursor::new(&packet[..]);
-            let ty = buf.get::<u8>()?;
-            let long = ty & 0x80 != 0;
-            let ty = ty & !0x80;
-            let mut cid_stage = [0; MAX_CID_SIZE];
-            if long {
-                let version = buf.get::<u32>()?;
-                let ci_lengths = buf.get::<u8>()?;
-                let mut dcil = ci_lengths >> 4;
-                if dcil > 0 {
-                    dcil += 3
-                };
-                let mut scil = ci_lengths & 0xF;
-                if scil > 0 {
-                    scil += 3
-                };
-                if buf.remaining() < (dcil + scil) as usize {
-                    return Err(HeaderError::InvalidHeader(
-                        "connection IDs longer than packet",
-                    ));
-                }
-                buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-                let destination_id = ConnectionId::new(&cid_stage[..dcil as usize]);
-                buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-                let source_id = ConnectionId::new(&cid_stage[..scil as usize]);
-                match version {
-                    0 => (
-                        buf.position() as usize,
-                        packet.len() - buf.position() as usize,
-                        Header::VersionNegotiate {
-                            ty,
-                            source_id,
-                            destination_id,
-                        },
-                    ),
-                    VERSION => {
-                        let len = buf.get_var()?;
-                        let number = buf.get()?;
-                        let header_len = buf.position() as usize;
-                        if buf.position() + len > packet.len() as u64 {
-                            return Err(HeaderError::InvalidHeader("payload longer than packet"));
-                        }
-                        (
-                            header_len,
-                            len as usize,
-                            Header::Long {
-                                ty,
-                                source_id,
-                                destination_id,
-                                number,
-                            },
-                        )
-                    }
-                    _ => {
-                        return Err(HeaderError::UnsupportedVersion {
-                            source: source_id,
-                            destination: destination_id,
-                        })
-                    }
-                }
-            } else {
-                if buf.remaining() < dest_id_len {
-                    return Err(HeaderError::InvalidHeader(
-                        "destination connection ID longer than packet",
-                    ));
-                }
-                buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
-                let id = ConnectionId::new(&cid_stage[..dest_id_len]);
-                let key_phase = ty & KEY_PHASE_BIT != 0;
-                let number = match ty & 0b11 {
-                    0x0 => PacketNumber::U8(buf.get()?),
-                    0x1 => PacketNumber::U16(buf.get()?),
-                    0x2 => PacketNumber::U32(buf.get()?),
-                    _ => {
-                        return Err(HeaderError::InvalidHeader("unknown packet type"));
-                    }
-                };
-                (
-                    buf.position() as usize,
-                    packet.len() - buf.position() as usize,
-                    Header::Short {
-                        id,
-                        number,
-                        key_phase,
-                    },
-                )
-            }
-        };
+        let (header_len, payload_len, header) = Header::decode(&mut packet, dest_id_len)?;
         let header_data = packet.split_to(header_len).freeze();
         let payload = packet.split_to(payload_len);
         Ok((
@@ -154,6 +66,99 @@ impl Header {
         match *self {
             Header::Short { key_phase, .. } => key_phase,
             _ => false,
+        }
+    }
+
+    fn decode(
+        packet: &mut BytesMut,
+        dest_id_len: usize,
+    ) -> Result<(usize, usize, Self), HeaderError> {
+        let mut buf = io::Cursor::new(&packet[..]);
+        let ty = buf.get::<u8>()?;
+        let long = ty & 0x80 != 0;
+        let ty = ty & !0x80;
+        let mut cid_stage = [0; MAX_CID_SIZE];
+        if long {
+            let version = buf.get::<u32>()?;
+            let ci_lengths = buf.get::<u8>()?;
+            let mut dcil = ci_lengths >> 4;
+            if dcil > 0 {
+                dcil += 3
+            };
+            let mut scil = ci_lengths & 0xF;
+            if scil > 0 {
+                scil += 3
+            };
+            if buf.remaining() < (dcil + scil) as usize {
+                return Err(HeaderError::InvalidHeader(
+                    "connection IDs longer than packet",
+                ));
+            }
+            buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
+            let destination_id = ConnectionId::new(&cid_stage[..dcil as usize]);
+            buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
+            let source_id = ConnectionId::new(&cid_stage[..scil as usize]);
+            match version {
+                0 => Ok((
+                    buf.position() as usize,
+                    packet.len() - buf.position() as usize,
+                    Header::VersionNegotiate {
+                        ty,
+                        source_id,
+                        destination_id,
+                    },
+                )),
+                VERSION => {
+                    let len = buf.get_var()?;
+                    let number = buf.get()?;
+                    let header_len = buf.position() as usize;
+                    if buf.position() + len > packet.len() as u64 {
+                        return Err(HeaderError::InvalidHeader("payload longer than packet"));
+                    }
+                    Ok((
+                        header_len,
+                        len as usize,
+                        Header::Long {
+                            ty,
+                            source_id,
+                            destination_id,
+                            number,
+                        },
+                    ))
+                }
+                _ => {
+                    return Err(HeaderError::UnsupportedVersion {
+                        source: source_id,
+                        destination: destination_id,
+                    })
+                }
+            }
+        } else {
+            if buf.remaining() < dest_id_len {
+                return Err(HeaderError::InvalidHeader(
+                    "destination connection ID longer than packet",
+                ));
+            }
+            buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
+            let id = ConnectionId::new(&cid_stage[..dest_id_len]);
+            let key_phase = ty & KEY_PHASE_BIT != 0;
+            let number = match ty & 0b11 {
+                0x0 => PacketNumber::U8(buf.get()?),
+                0x1 => PacketNumber::U16(buf.get()?),
+                0x2 => PacketNumber::U32(buf.get()?),
+                _ => {
+                    return Err(HeaderError::InvalidHeader("unknown packet type"));
+                }
+            };
+            Ok((
+                buf.position() as usize,
+                packet.len() - buf.position() as usize,
+                Header::Short {
+                    id,
+                    number,
+                    key_phase,
+                },
+            ))
         }
     }
 
