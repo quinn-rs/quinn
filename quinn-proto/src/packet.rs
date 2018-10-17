@@ -40,6 +40,11 @@ pub enum Header {
         destination_id: ConnectionId,
         number: u32,
     },
+    Retry {
+        source_id: ConnectionId,
+        destination_id: ConnectionId,
+        orig_dst_cid: ConnectionId,
+    },
     Short {
         id: ConnectionId,
         number: PacketNumber,
@@ -56,6 +61,7 @@ impl Header {
         use self::Header::*;
         match self {
             Long { destination_id, .. } => *destination_id,
+            Retry { destination_id, .. } => *destination_id,
             Short { id, .. } => *id,
             VersionNegotiate { destination_id, .. } => *destination_id,
         }
@@ -142,6 +148,22 @@ impl Header {
         }
 
         let ty = LongType::from_byte(first)?;
+        if let LongType::Retry = ty {
+            let odcil = buf.get::<u8>()? as usize;
+            let mut odci_stage = [0; 18];
+            buf.copy_to_slice(&mut odci_stage[0..odcil]);
+            let orig_dst_cid = ConnectionId::new(&cid_stage[..odcil]);
+            return Ok((
+                buf.position() as usize,
+                packet.len() - buf.position() as usize,
+                Header::Retry {
+                    source_id,
+                    destination_id,
+                    orig_dst_cid,
+                },
+            ));
+        }
+
         let len = buf.get_var()?;
         let number = buf.get()?;
         let header_len = buf.position() as usize;
@@ -175,6 +197,17 @@ impl Header {
                 Self::encode_cids(w, destination_id, source_id);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 w.write(number);
+            }
+            Retry {
+                ref source_id,
+                ref destination_id,
+                ref orig_dst_cid,
+            } => {
+                w.write(u8::from(LongType::Retry));
+                w.write(VERSION);
+                Self::encode_cids(w, destination_id, source_id);
+                w.write(orig_dst_cid.len() as u8);
+                w.put_slice(orig_dst_cid);
             }
             Short {
                 ref id,
