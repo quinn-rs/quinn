@@ -278,7 +278,7 @@ impl Connection {
         config: &Config,
         handle: ConnectionHandle,
     ) -> Self {
-        let handshake_crypto = Crypto::new_handshake(&initial_id, side);
+        let handshake_crypto = Crypto::new_initial(&initial_id, side);
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_uni_streams {
             streams.insert(
@@ -1869,7 +1869,7 @@ impl Connection {
                 set_payload_length(&mut buf, header_len as usize);
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
-            handshake = crypto.is_handshake();
+            handshake = crypto.is_initial();
         }
 
         // If we sent any acks, don't immediately resend them.  Setting this even if ack_only is false needlessly
