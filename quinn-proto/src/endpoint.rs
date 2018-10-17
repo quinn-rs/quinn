@@ -378,7 +378,7 @@ impl Endpoint {
                     return None;
                 }
 
-                let crypto = Crypto::new_handshake(&partial_decode.dst_cid(), Side::Server);
+                let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 return match partial_decode.finish() {
                     Ok((packet, rest)) => {
                         self.handle_initial(now, remote, packet, crypto);
