@@ -7,191 +7,10 @@ use slog;
 use coding::{self, BufExt, BufMutExt};
 use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
-#[derive(Debug, Clone)]
-pub enum Header {
-    Long {
-        ty: u8,
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
-        number: u32,
-    },
-    Short {
-        id: ConnectionId,
-        number: PacketNumber,
-        key_phase: bool,
-    },
-    VersionNegotiate {
-        ty: u8,
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
-    },
-}
-
-impl Header {
-    pub fn destination_id(&self) -> ConnectionId {
-        use self::Header::*;
-        match self {
-            Long { destination_id, .. } => *destination_id,
-            Short { id, .. } => *id,
-            VersionNegotiate { destination_id, .. } => *destination_id,
-        }
-    }
-
-    pub fn key_phase(&self) -> bool {
-        match *self {
-            Header::Short { key_phase, .. } => key_phase,
-            _ => false,
-        }
-    }
-}
-
-// An encoded packet number
-#[derive(Debug, Copy, Clone)]
-pub enum PacketNumber {
-    U8(u8),
-    U16(u16),
-    U32(u32),
-}
-
-impl PacketNumber {
-    pub fn new(n: u64, largest_acked: u64) -> Self {
-        if largest_acked == 0 {
-            return PacketNumber::U32(n as u32);
-        }
-        let range = (n - largest_acked) / 2;
-        if range < 1 << 8 {
-            PacketNumber::U8(n as u8)
-        } else if range < 1 << 16 {
-            PacketNumber::U16(n as u16)
-        } else if range < 1 << 32 {
-            PacketNumber::U32(n as u32)
-        } else {
-            panic!("packet number too large to encode")
-        }
-    }
-
-    fn ty(self) -> u8 {
-        use self::PacketNumber::*;
-        match self {
-            U8(_) => 0x00,
-            U16(_) => 0x01,
-            U32(_) => 0x02,
-        }
-    }
-
-    pub fn encode<W: BufMut>(self, w: &mut W) {
-        use self::PacketNumber::*;
-        match self {
-            U8(x) => w.write(x),
-            U16(x) => w.write(x),
-            U32(x) => w.write(x),
-        }
-    }
-
-    pub fn expand(self, prev: u64) -> u64 {
-        use self::PacketNumber::*;
-        let t = prev + 1;
-        // Compute missing bits that minimize the difference from expected
-        let d = match self {
-            U8(_) => 1 << 8,
-            U16(_) => 1 << 16,
-            U32(_) => 1 << 32,
-        };
-        let x = match self {
-            U8(x) => x as u64,
-            U16(x) => x as u64,
-            U32(x) => x as u64,
-        };
-        if t > d / 2 {
-            x + d * ((t + d / 2 - x) / d)
-        } else {
-            x % d
-        }
-    }
-}
-
-const KEY_PHASE_BIT: u8 = 0x40;
-
-impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) {
-        use self::Header::*;
-        match *self {
-            Long {
-                ty,
-                ref source_id,
-                ref destination_id,
-                number,
-            } => {
-                w.write(0b1000_0000 | ty);
-                w.write(VERSION);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
-                w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
-                w.write(number);
-            }
-            Short {
-                ref id,
-                number,
-                key_phase,
-            } => {
-                let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
-                w.write(ty);
-                w.put_slice(id);
-                number.encode(w);
-            }
-            VersionNegotiate {
-                ty,
-                ref source_id,
-                ref destination_id,
-            } => {
-                w.write(0x80 | ty);
-                w.write::<u32>(0);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
-            }
-        }
-    }
-}
-
 pub struct Packet {
     pub header: Header,
     pub header_data: Bytes,
     pub payload: BytesMut,
-}
-
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum HeaderError {
-    #[fail(display = "unsupported version")]
-    UnsupportedVersion {
-        source: ConnectionId,
-        destination: ConnectionId,
-    },
-    #[fail(display = "invalid header: {}", _0)]
-    InvalidHeader(&'static str),
-}
-
-impl From<coding::UnexpectedEnd> for HeaderError {
-    fn from(_: coding::UnexpectedEnd) -> Self {
-        HeaderError::InvalidHeader("unexpected end of packet")
-    }
 }
 
 impl Packet {
@@ -301,6 +120,183 @@ impl Packet {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Header {
+    Long {
+        ty: u8,
+        source_id: ConnectionId,
+        destination_id: ConnectionId,
+        number: u32,
+    },
+    Short {
+        id: ConnectionId,
+        number: PacketNumber,
+        key_phase: bool,
+    },
+    VersionNegotiate {
+        ty: u8,
+        source_id: ConnectionId,
+        destination_id: ConnectionId,
+    },
+}
+
+impl Header {
+    pub fn destination_id(&self) -> ConnectionId {
+        use self::Header::*;
+        match self {
+            Long { destination_id, .. } => *destination_id,
+            Short { id, .. } => *id,
+            VersionNegotiate { destination_id, .. } => *destination_id,
+        }
+    }
+
+    pub fn key_phase(&self) -> bool {
+        match *self {
+            Header::Short { key_phase, .. } => key_phase,
+            _ => false,
+        }
+    }
+
+    pub fn encode<W: BufMut>(&self, w: &mut W) {
+        use self::Header::*;
+        match *self {
+            Long {
+                ty,
+                ref source_id,
+                ref destination_id,
+                number,
+            } => {
+                w.write(0b1000_0000 | ty);
+                w.write(VERSION);
+                let mut dcil = destination_id.len() as u8;
+                if dcil > 0 {
+                    dcil -= 3;
+                }
+                let mut scil = source_id.len() as u8;
+                if scil > 0 {
+                    scil -= 3;
+                }
+                w.write(dcil << 4 | scil);
+                w.put_slice(destination_id);
+                w.put_slice(source_id);
+                w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
+                w.write(number);
+            }
+            Short {
+                ref id,
+                number,
+                key_phase,
+            } => {
+                let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
+                w.write(ty);
+                w.put_slice(id);
+                number.encode(w);
+            }
+            VersionNegotiate {
+                ty,
+                ref source_id,
+                ref destination_id,
+            } => {
+                w.write(0x80 | ty);
+                w.write::<u32>(0);
+                let mut dcil = destination_id.len() as u8;
+                if dcil > 0 {
+                    dcil -= 3;
+                }
+                let mut scil = source_id.len() as u8;
+                if scil > 0 {
+                    scil -= 3;
+                }
+                w.write(dcil << 4 | scil);
+                w.put_slice(destination_id);
+                w.put_slice(source_id);
+            }
+        }
+    }
+}
+
+// An encoded packet number
+#[derive(Debug, Copy, Clone)]
+pub enum PacketNumber {
+    U8(u8),
+    U16(u16),
+    U32(u32),
+}
+
+impl PacketNumber {
+    pub fn new(n: u64, largest_acked: u64) -> Self {
+        if largest_acked == 0 {
+            return PacketNumber::U32(n as u32);
+        }
+        let range = (n - largest_acked) / 2;
+        if range < 1 << 8 {
+            PacketNumber::U8(n as u8)
+        } else if range < 1 << 16 {
+            PacketNumber::U16(n as u16)
+        } else if range < 1 << 32 {
+            PacketNumber::U32(n as u32)
+        } else {
+            panic!("packet number too large to encode")
+        }
+    }
+
+    fn ty(self) -> u8 {
+        use self::PacketNumber::*;
+        match self {
+            U8(_) => 0x00,
+            U16(_) => 0x01,
+            U32(_) => 0x02,
+        }
+    }
+
+    pub fn encode<W: BufMut>(self, w: &mut W) {
+        use self::PacketNumber::*;
+        match self {
+            U8(x) => w.write(x),
+            U16(x) => w.write(x),
+            U32(x) => w.write(x),
+        }
+    }
+
+    pub fn expand(self, prev: u64) -> u64 {
+        use self::PacketNumber::*;
+        let t = prev + 1;
+        // Compute missing bits that minimize the difference from expected
+        let d = match self {
+            U8(_) => 1 << 8,
+            U16(_) => 1 << 16,
+            U32(_) => 1 << 32,
+        };
+        let x = match self {
+            U8(x) => x as u64,
+            U16(x) => x as u64,
+            U32(x) => x as u64,
+        };
+        if t > d / 2 {
+            x + d * ((t + d / 2 - x) / d)
+        } else {
+            x % d
+        }
+    }
+}
+
+#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum HeaderError {
+    #[fail(display = "unsupported version")]
+    UnsupportedVersion {
+        source: ConnectionId,
+        destination: ConnectionId,
+    },
+    #[fail(display = "invalid header: {}", _0)]
+    InvalidHeader(&'static str),
+}
+
+impl From<coding::UnexpectedEnd> for HeaderError {
+    fn from(_: coding::UnexpectedEnd) -> Self {
+        HeaderError::InvalidHeader("unexpected end of packet")
+    }
+}
+
 /// Protocol-level identifier for a connection.
 ///
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
@@ -308,25 +304,6 @@ impl Packet {
 pub struct ConnectionId {
     pub len: u8,
     pub bytes: [u8; MAX_CID_SIZE],
-}
-
-impl ::std::ops::Deref for ConnectionId {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        &self.bytes[0..self.len as usize]
-    }
-}
-
-impl ::std::ops::DerefMut for ConnectionId {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes[0..self.len as usize]
-    }
-}
-
-impl fmt::Debug for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.bytes[0..self.len as usize].fmt(f)
-    }
 }
 
 impl ConnectionId {
@@ -352,6 +329,25 @@ impl ConnectionId {
         rng.fill_bytes(&mut rng_bytes);
         res.bytes[..len as usize].clone_from_slice(&rng_bytes[..len as usize]);
         res
+    }
+}
+
+impl ::std::ops::Deref for ConnectionId {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes[0..self.len as usize]
+    }
+}
+
+impl ::std::ops::DerefMut for ConnectionId {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes[0..self.len as usize]
+    }
+}
+
+impl fmt::Debug for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.bytes[0..self.len as usize].fmt(f)
     }
 }
 
@@ -382,6 +378,7 @@ pub fn set_payload_length(packet: &mut [u8], header_len: usize) {
 }
 
 pub const AEAD_TAG_SIZE: usize = 16;
+const KEY_PHASE_BIT: u8 = 0x40;
 
 pub mod types {
     pub const INITIAL: u8 = 0x7F;
