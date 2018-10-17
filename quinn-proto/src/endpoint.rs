@@ -519,7 +519,7 @@ impl Endpoint {
             mut payload,
         } = packet;
         let (src_cid, dst_cid, packet_number) = match header {
-            Header::Long {
+            Header::Initial {
                 src_cid,
                 dst_cid,
                 number,

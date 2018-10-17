@@ -478,6 +478,7 @@ impl Connection {
         self.state = Some(State::Handshake(state::Handshake {
             clienthello_packet: None,
             rem_cid_set: false,
+            token: None,
         }));
     }
 
@@ -497,6 +498,7 @@ impl Connection {
         self.state = Some(State::Handshake(state::Handshake {
             clienthello_packet: None,
             rem_cid_set: true,
+            token: None,
         }));
         self.set_params(params);
         ctx.dirty_conns.insert(self.handle);
@@ -1110,7 +1112,9 @@ impl Connection {
                 if !state.rem_cid_set {
                     match packet.header {
                         Header::Long {
-                            src_cid: rem_cid, ..
+                            ty: LongType::Handshake,
+                            src_cid: rem_cid,
+                            ..
                         } => {
                             trace!(self.log, "got remote connection id"; "rem_cid" => %rem_cid);
                             self.rem_cid = rem_cid;
@@ -1237,11 +1241,8 @@ impl Connection {
         match state {
             State::Handshake(state) => {
                 match packet.header {
-                    Header::Long {
-                        ty: LongType::Retry,
-                        number,
-                        src_cid: rem_cid,
-                        ..
+                    Header::Retry {
+                        src_cid: rem_cid, ..
                     } => {
                         // FIXME: the below guards fail to handle repeated retries resulting from
                         // retransmitted initials
@@ -1249,55 +1250,39 @@ impl Connection {
                             // Received Retry as a server
                             debug!(self.log, "received retry from client");
                             Err(TransportError::PROTOCOL_VIOLATION.into())
-                        } else if state.clienthello_packet.unwrap() > number {
+                        } else if state.clienthello_packet.unwrap() as u64 > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so
                             // ignore it
                             Ok(State::Handshake(state))
                         } else {
-                            if let Ok(Some(frame)) = parse_initial(&self.log, packet.payload.into())
-                            {
-                                self.read_tls(&frame);
-                            } else {
-                                debug!(self.log, "invalid retry payload");
-                                return Err(TransportError::PROTOCOL_VIOLATION.into());
-                            }
-                            match self.tls.process_new_packets() {
-                                Ok(()) => {
-                                    self.on_packet_authenticated(ctx, now, number as u64);
-                                    trace!(self.log, "resending ClientHello"; "rem_cid" => %rem_cid);
-                                    // Send updated ClientHello
-                                    let mut outgoing = Vec::new();
-                                    self.tls.write_tls(&mut outgoing).unwrap();
-                                    let tls =
-                                        make_tls(&ctx, &self.loc_cid, self.client_config.as_ref());
+                            trace!(self.log, "resending ClientHello"; "rem_cid" => %rem_cid);
+                            // Send updated ClientHello
+                            let mut outgoing = Vec::new();
+                            self.tls.write_tls(&mut outgoing).unwrap();
+                            let tls = make_tls(&ctx, &self.loc_cid, self.client_config.as_ref());
 
-                                    // Discard transport state
-                                    let mut new = Connection::new(
-                                        self.log.clone(),
-                                        rem_cid,
-                                        self.loc_cid,
-                                        rem_cid,
-                                        remote,
-                                        ctx.initial_packet_number.sample(&mut ctx.rng),
-                                        self.client_config.clone(),
-                                        tls,
-                                        ctx,
-                                        self.handle,
-                                    );
-                                    mem::replace(self, new);
-                                    self.transmit_handshake(&outgoing);
-                                    // Prepare to receive Handshake packets that start stream 0
-                                    // from offset 0
-                                    Ok(State::Handshake(state::Handshake {
-                                        clienthello_packet: state.clienthello_packet,
-                                        rem_cid_set: state.rem_cid_set,
-                                    }))
-                                }
-                                Err(e) => {
-                                    debug!(self.log, "handshake failed"; "reason" => %e);
-                                    Err(TransportError::TLS_HANDSHAKE_FAILED.into())
-                                }
-                            }
+                            // Discard transport state
+                            let mut new = Connection::new(
+                                self.log.clone(),
+                                rem_cid,
+                                self.loc_cid,
+                                rem_cid,
+                                remote,
+                                ctx.initial_packet_number.sample(&mut ctx.rng),
+                                self.client_config.clone(),
+                                tls,
+                                ctx,
+                                self.handle,
+                            );
+                            mem::replace(self, new);
+                            self.transmit_handshake(&outgoing);
+                            // Prepare to receive Handshake packets that start stream 0
+                            // from offset 0
+                            Ok(State::Handshake(state::Handshake {
+                                clienthello_packet: state.clienthello_packet,
+                                rem_cid_set: state.rem_cid_set,
+                                token: Some(packet.payload),
+                            }))
                         }
                     }
                     Header::Long {
@@ -1411,6 +1396,7 @@ impl Connection {
                                 Ok(State::Handshake(state::Handshake {
                                     clienthello_packet: state.clienthello_packet,
                                     rem_cid_set: state.rem_cid_set,
+                                    token: None,
                                 }))
                             }
                             Err(e) => {
@@ -1419,10 +1405,7 @@ impl Connection {
                             }
                         }
                     }
-                    Header::Long {
-                        ty: LongType::Initial,
-                        ..
-                    } => {
+                    Header::Initial { .. } => {
                         if self.side == Side::Server {
                             trace!(self.log, "dropping duplicate Initial");
                         } else {
@@ -1913,7 +1896,7 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 let number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
-                let ty = if self.side == Side::Client && self
+                let header = if self.side == Side::Client && self
                     .handshake_pending
                     .stream
                     .front()
@@ -1924,15 +1907,19 @@ impl Connection {
                             state.clienthello_packet = Some(number as u32);
                         }
                     }
-                    LongType::Initial
+                    Header::Initial {
+                        src_cid: self.loc_cid,
+                        dst_cid: self.rem_cid,
+                        token: vec![], // TODO: determine what's needed here
+                        number: number as u32,
+                    }
                 } else {
-                    LongType::Handshake
-                };
-                let header = Header::Long {
-                    ty,
-                    number: number as u32,
-                    src_cid: self.loc_cid,
-                    dst_cid: self.rem_cid,
+                    Header::Long {
+                        ty: LongType::Handshake,
+                        src_cid: self.loc_cid,
+                        dst_cid: self.rem_cid,
+                        number: number as u32,
+                    }
                 };
                 (
                     number,
@@ -2152,11 +2139,7 @@ impl Connection {
                 }
             }
 
-            if let Header::Long {
-                ty: LongType::Initial,
-                ..
-            } = header
-            {
+            if let Header::Initial { .. } = header {
                 if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
                     buf.resize(
                         MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
@@ -2532,7 +2515,9 @@ impl Connection {
             {
                 (key_phase, number)
             }
-            Header::Long { number, .. } if handshake => (false, PacketNumber::U32(number)),
+            Header::Initial { number, .. } | Header::Long { number, .. } if handshake => {
+                (false, PacketNumber::U32(number))
+            }
             _ => {
                 return Err(None);
             }
@@ -2869,6 +2854,7 @@ pub mod state {
         /// ClientHello. Present iff we're the client.
         pub clienthello_packet: Option<u32>,
         pub rem_cid_set: bool,
+        pub token: Option<BytesMut>,
     }
 
     pub struct HandshakeFailed {
