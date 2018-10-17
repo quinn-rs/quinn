@@ -12,7 +12,7 @@ use coding::{BufExt, BufMutExt};
 use crypto::{self, reset_token_for, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
-    set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
+    set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
 use stream::{self, Stream};
@@ -969,7 +969,7 @@ impl Connection {
             State::Handshake(mut state) => {
                 match packet.header {
                     Header::Long {
-                        ty: types::RETRY,
+                        ty: LongType::Retry,
                         number,
                         destination_id: conn_id,
                         source_id: remote_id,
@@ -1039,7 +1039,7 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: types::HANDSHAKE,
+                        ty: LongType::Handshake,
                         destination_id: id,
                         source_id: remote_id,
                         number,
@@ -1177,11 +1177,14 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: types::INITIAL, ..
-                    }
-                        if self.side == Side::Server =>
-                    {
-                        trace!(ctx.log, "dropping duplicate Initial");
+                        ty: LongType::Initial,
+                        ..
+                    } => {
+                        if self.side == Side::Server {
+                            trace!(ctx.log, "dropping duplicate Initial");
+                        } else {
+                            trace!(ctx.log, "dropping Initial for initiated connection");
+                        }
                         Ok(State::Handshake(state))
                     }
                     /*Header::Long {
@@ -1229,9 +1232,12 @@ impl Connection {
                             Ok(false) => State::Handshake(state),
                         }
                     }*/
-                    Header::Long { ty, .. } => {
-                        debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
-                        Err(TransportError::PROTOCOL_VIOLATION.into())
+                    Header::Long {
+                        ty: LongType::ZeroRtt,
+                        ..
+                    } => {
+                        debug!(ctx.log, "dropping 0-RTT packet (currently unimplemented)");
+                        Ok(State::Handshake(state))
                     }
                     Header::VersionNegotiate {
                         destination_id: id, ..
@@ -1697,10 +1703,10 @@ impl Connection {
                         }
                     }
                     is_initial = true;
-                    types::INITIAL
+                    LongType::Initial
                 } else {
                     is_initial = false;
-                    types::HANDSHAKE
+                    LongType::Handshake
                 };
                 Header::Long {
                     ty,
