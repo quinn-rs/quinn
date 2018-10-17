@@ -36,34 +36,34 @@ impl Packet {
 pub enum Header {
     Long {
         ty: LongType,
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
         number: u32,
     },
     Retry {
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
         orig_dst_cid: ConnectionId,
     },
     Short {
-        id: ConnectionId,
+        dst_cid: ConnectionId,
         number: PacketNumber,
         key_phase: bool,
     },
     VersionNegotiate {
-        source_id: ConnectionId,
-        destination_id: ConnectionId,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
     },
 }
 
 impl Header {
-    pub fn destination_id(&self) -> ConnectionId {
+    pub fn dst_cid(&self) -> ConnectionId {
         use self::Header::*;
         match self {
-            Long { destination_id, .. } => *destination_id,
-            Retry { destination_id, .. } => *destination_id,
-            Short { id, .. } => *id,
-            VersionNegotiate { destination_id, .. } => *destination_id,
+            Long { dst_cid, .. } => *dst_cid,
+            Retry { dst_cid, .. } => *dst_cid,
+            Short { dst_cid, .. } => *dst_cid,
+            VersionNegotiate { dst_cid, .. } => *dst_cid,
         }
     }
 
@@ -89,7 +89,7 @@ impl Header {
                 ));
             }
             buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
-            let id = ConnectionId::new(&cid_stage[..dest_id_len]);
+            let dst_cid = ConnectionId::new(&cid_stage[..dest_id_len]);
             let key_phase = first & KEY_PHASE_BIT != 0;
             let number = match first & 0b11 {
                 0x0 => PacketNumber::U8(buf.get()?),
@@ -103,7 +103,7 @@ impl Header {
                 buf.position() as usize,
                 packet.len() - buf.position() as usize,
                 Header::Short {
-                    id,
+                    dst_cid,
                     number,
                     key_phase,
                 },
@@ -127,23 +127,20 @@ impl Header {
         }
 
         buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-        let destination_id = ConnectionId::new(&cid_stage[..dcil as usize]);
+        let dst_cid = ConnectionId::new(&cid_stage[..dcil as usize]);
         buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-        let source_id = ConnectionId::new(&cid_stage[..scil as usize]);
+        let src_cid = ConnectionId::new(&cid_stage[..scil as usize]);
 
         if version == 0 {
             return Ok((
                 buf.position() as usize,
                 packet.len() - buf.position() as usize,
-                Header::VersionNegotiate {
-                    source_id,
-                    destination_id,
-                },
+                Header::VersionNegotiate { src_cid, dst_cid },
             ));
         } else if version != VERSION {
             return Err(HeaderError::UnsupportedVersion {
-                source: source_id,
-                destination: destination_id,
+                source: src_cid,
+                destination: dst_cid,
             });
         }
 
@@ -157,8 +154,8 @@ impl Header {
                 buf.position() as usize,
                 packet.len() - buf.position() as usize,
                 Header::Retry {
-                    source_id,
-                    destination_id,
+                    src_cid,
+                    dst_cid,
                     orig_dst_cid,
                 },
             ));
@@ -176,8 +173,8 @@ impl Header {
             len as usize,
             Header::Long {
                 ty,
-                source_id,
-                destination_id,
+                src_cid,
+                dst_cid,
                 number,
             },
         ))
@@ -188,60 +185,60 @@ impl Header {
         match *self {
             Long {
                 ty,
-                ref source_id,
-                ref destination_id,
+                ref src_cid,
+                ref dst_cid,
                 number,
             } => {
                 w.write(u8::from(ty));
                 w.write(VERSION);
-                Self::encode_cids(w, destination_id, source_id);
+                Self::encode_cids(w, dst_cid, src_cid);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 w.write(number);
             }
             Retry {
-                ref source_id,
-                ref destination_id,
+                ref src_cid,
+                ref dst_cid,
                 ref orig_dst_cid,
             } => {
                 w.write(u8::from(LongType::Retry));
                 w.write(VERSION);
-                Self::encode_cids(w, destination_id, source_id);
+                Self::encode_cids(w, dst_cid, src_cid);
                 w.write(orig_dst_cid.len() as u8);
                 w.put_slice(orig_dst_cid);
             }
             Short {
-                ref id,
+                ref dst_cid,
                 number,
                 key_phase,
             } => {
                 let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
                 w.write(ty);
-                w.put_slice(id);
+                w.put_slice(dst_cid);
                 number.encode(w);
             }
             VersionNegotiate {
-                ref source_id,
-                ref destination_id,
+                ref src_cid,
+                ref dst_cid,
             } => {
                 w.write(0x80u8);
                 w.write::<u32>(0);
-                Self::encode_cids(w, destination_id, source_id);
+                Self::encode_cids(w, dst_cid, src_cid);
             }
         }
     }
 
-    fn encode_cids<W: BufMut>(w: &mut W, destination_id: &ConnectionId, source_id: &ConnectionId) {
-        let mut dcil = destination_id.len() as u8;
+    fn encode_cids<W: BufMut>(w: &mut W, dst_cid: &ConnectionId, src_cid: &ConnectionId) {
+        let mut dcil = dst_cid.len() as u8;
         if dcil > 0 {
             dcil -= 3;
         }
-        let mut scil = source_id.len() as u8;
+        let mut scil = src_cid.len() as u8;
         if scil > 0 {
             scil -= 3;
         }
         w.write(dcil << 4 | scil);
-        w.put_slice(destination_id);
-        w.put_slice(source_id);
+        w.put_slice(dst_cid);
+        w.put_slice(src_cid);
     }
 }
 
