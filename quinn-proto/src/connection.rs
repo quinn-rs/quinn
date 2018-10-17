@@ -607,6 +607,58 @@ impl Connection {
         self.pending_acks.subtract(&info.acks);
     }
 
+    pub fn check_packet_loss(&mut self, ctx: &mut Context, now: u64) {
+        if self.awaiting_handshake {
+            trace!(ctx.log, "retransmitting handshake packets"; "connection" => %self.loc_cid);
+            let packets = self
+                .sent_packets
+                .iter()
+                .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
+                .collect::<Vec<_>>();
+            for number in packets {
+                let mut info = self.sent_packets.remove(&number).unwrap();
+                self.handshake_pending += info.retransmits;
+                self.bytes_in_flight -= info.bytes as u64;
+            }
+            self.handshake_count += 1;
+        } else if self.loss_time != 0 {
+            // Early retransmit or Time Loss Detection
+            let largest = self.largest_acked_packet;
+            self.detect_lost_packets(&ctx.config, now, largest);
+        } else if self.tlp_count < ctx.config.max_tlps {
+            trace!(ctx.log, "sending TLP {number} in {pn}",
+                           number=self.tlp_count,
+                           pn=self.largest_sent_packet + 1;
+                           "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
+                           "in flight" => self.bytes_in_flight);
+            // Tail Loss Probe.
+            ctx.io.push_back(Io::Transmit {
+                destination: self.remote,
+                packet: self.force_transmit(&ctx.config, now),
+            });
+            self.reset_idle_timeout(&ctx.config, now);
+            self.tlp_count += 1;
+        } else {
+            trace!(ctx.log, "RTO fired, retransmitting"; "pn" => self.largest_sent_packet + 1,
+                           "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
+                           "in flight" => self.bytes_in_flight);
+            // RTO
+            if self.rto_count == 0 {
+                self.largest_sent_before_rto = self.largest_sent_packet;
+            }
+            for _ in 0..2 {
+                ctx.io.push_back(Io::Transmit {
+                    destination: self.remote,
+                    packet: self.force_transmit(&ctx.config, now),
+                });
+            }
+            self.reset_idle_timeout(&ctx.config, now);
+            self.rto_count += 1;
+        }
+        self.set_loss_detection_alarm(&ctx.config);
+        ctx.dirty_conns.insert(self.handle);
+    }
+
     pub fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
         self.loss_time = 0;
         let mut lost_packets = Vec::<u64>::new();
