@@ -2275,6 +2275,30 @@ impl Connection {
 
     pub fn write(
         &mut self,
+        ctx: &mut Context,
+        stream: StreamId,
+        data: &[u8],
+    ) -> Result<usize, WriteError> {
+        let r = self.write_inner(&ctx.config, stream, data);
+        match r {
+            Ok(n) => {
+                ctx.dirty_conns.insert(self.handle);
+                trace!(ctx.log, "write"; "connection" => %self.loc_cid, "stream" => stream.0, "len" => n)
+            }
+            Err(WriteError::Blocked) => {
+                if self.congestion_blocked() {
+                    trace!(ctx.log, "write blocked by congestion"; "connection" => %self.loc_cid);
+                } else {
+                    trace!(ctx.log, "write blocked by flow control"; "connection" => %self.loc_cid, "stream" => stream.0);
+                }
+            }
+            _ => {}
+        }
+        r
+    }
+
+    pub fn write_inner(
+        &mut self,
         config: &Config,
         stream: StreamId,
         data: &[u8],

@@ -837,22 +837,7 @@ impl Endpoint {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        let r = self.connections[conn.0].write(&self.ctx.config, stream, data);
-        match r {
-            Ok(n) => {
-                self.ctx.dirty_conns.insert(conn);
-                trace!(self.ctx.log, "write"; "connection" => %self.connections[conn.0].loc_cid, "stream" => stream.0, "len" => n)
-            }
-            Err(WriteError::Blocked) => {
-                if self.connections[conn.0].congestion_blocked() {
-                    trace!(self.ctx.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].loc_cid);
-                } else {
-                    trace!(self.ctx.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].loc_cid, "stream" => stream.0);
-                }
-            }
-            _ => {}
-        }
-        r
+        self.connections[conn.0].write(&mut self.ctx, stream, data)
     }
 
     /// Indicate that no more data will be sent on a stream
