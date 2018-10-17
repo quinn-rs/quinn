@@ -16,7 +16,7 @@ use connection::{
 };
 use crypto::{self, reset_token_for, ClientConfig, ConnectError, Crypto, ServerConfig};
 use packet::{
-    set_payload_length, types, ConnectionId, Header, HeaderError, Packet, PacketNumber,
+    set_payload_length, ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber,
     AEAD_TAG_SIZE,
 };
 use {
@@ -383,7 +383,7 @@ impl Endpoint {
         } = header
         {
             match ty {
-                types::INITIAL => {
+                LongType::Initial => {
                     if datagram_len >= MIN_INITIAL_SIZE {
                         self.handle_initial(
                             now,
@@ -413,7 +413,7 @@ impl Endpoint {
                     return;
                 }*/
                 _ => {
-                    debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:02x}",
+                    debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:?}",
                            connection=destination_id, type=ty);
                     return;
                 }
@@ -1102,7 +1102,7 @@ where
 {
     let mut buf = Vec::<u8>::new();
     Header::Long {
-        ty: types::HANDSHAKE,
+        ty: LongType::Handshake,
         destination_id: *remote_id,
         source_id: *local_id,
         number: packet_number,

@@ -14,7 +14,7 @@ use crypto::{
 };
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
-    set_payload_length, types, ConnectionId, Header, Packet, PacketNumber, AEAD_TAG_SIZE,
+    set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
 use stream::{self, Stream};
@@ -941,7 +941,7 @@ impl Connection {
             State::Handshake(mut state) => {
                 match packet.header {
                     Header::Long {
-                        ty: types::RETRY,
+                        ty: LongType::Retry,
                         number,
                         destination_id: conn_id,
                         source_id: remote_id,
@@ -1008,7 +1008,7 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: types::HANDSHAKE,
+                        ty: LongType::Handshake,
                         destination_id: id,
                         source_id: remote_id,
                         number,
@@ -1144,7 +1144,8 @@ impl Connection {
                         }
                     }
                     Header::Long {
-                        ty: types::INITIAL, ..
+                        ty: LongType::Initial,
+                        ..
                     }
                         if self.side == Side::Server =>
                     {
@@ -1197,7 +1198,7 @@ impl Connection {
                         }
                     }*/
                     Header::Long { ty, .. } => {
-                        debug!(ctx.log, "unexpected packet type"; "type" => format!("{:02X}", ty));
+                        debug!(ctx.log, "unexpected packet type"; "type" => format!("{:?}", ty));
                         Err(TransportError::PROTOCOL_VIOLATION.into())
                     }
                     Header::VersionNegotiate {
@@ -1665,10 +1666,10 @@ impl Connection {
                         }
                     }
                     is_initial = true;
-                    types::INITIAL
+                    LongType::Initial
                 } else {
                     is_initial = false;
-                    types::HANDSHAKE
+                    LongType::Handshake
                 };
                 Header::Long {
                     ty,

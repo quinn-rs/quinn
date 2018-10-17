@@ -35,7 +35,7 @@ impl Packet {
 #[derive(Debug, Clone)]
 pub enum Header {
     Long {
-        ty: u8,
+        ty: LongType,
         source_id: ConnectionId,
         destination_id: ConnectionId,
         number: u32,
@@ -73,9 +73,8 @@ impl Header {
         dest_id_len: usize,
     ) -> Result<(usize, usize, Self), HeaderError> {
         let mut buf = io::Cursor::new(&packet[..]);
-        let ty = buf.get::<u8>()?;
-        let long = ty & 0x80 != 0;
-        let ty = ty & !0x80;
+        let first = buf.get::<u8>()?;
+        let long = first & LONG_HEADER_FORM != 0;
         let mut cid_stage = [0; MAX_CID_SIZE];
         if long {
             let version = buf.get::<u32>()?;
@@ -107,6 +106,7 @@ impl Header {
                     },
                 )),
                 VERSION => {
+                    let ty = LongType::from_byte(first)?;
                     let len = buf.get_var()?;
                     let number = buf.get()?;
                     let header_len = buf.position() as usize;
@@ -139,8 +139,8 @@ impl Header {
             }
             buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
             let id = ConnectionId::new(&cid_stage[..dest_id_len]);
-            let key_phase = ty & KEY_PHASE_BIT != 0;
-            let number = match ty & 0b11 {
+            let key_phase = first & KEY_PHASE_BIT != 0;
+            let number = match first & 0b11 {
                 0x0 => PacketNumber::U8(buf.get()?),
                 0x1 => PacketNumber::U16(buf.get()?),
                 0x2 => PacketNumber::U32(buf.get()?),
@@ -169,7 +169,7 @@ impl Header {
                 ref destination_id,
                 number,
             } => {
-                w.write(0b1000_0000 | ty);
+                w.write(u8::from(ty));
                 w.write(VERSION);
                 let mut dcil = destination_id.len() as u8;
                 if dcil > 0 {
@@ -282,6 +282,51 @@ impl PacketNumber {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum LongType {
+    Initial,
+    Retry,
+    Handshake,
+    ZeroRtt,
+}
+
+impl LongType {
+    fn from_byte(b: u8) -> Result<Self, HeaderError> {
+        use self::LongType::*;
+        debug_assert_eq!(b & LONG_HEADER_FORM, LONG_HEADER_FORM);
+        match b ^ LONG_HEADER_FORM {
+            0x7f => Ok(Initial),
+            0x7e => Ok(Retry),
+            0x7d => Ok(Handshake),
+            0x7c => Ok(ZeroRtt),
+            _ => Err(HeaderError::InvalidLongHeaderType(b)),
+        }
+    }
+}
+
+impl From<LongType> for u8 {
+    fn from(ty: LongType) -> u8 {
+        use self::LongType::*;
+        LONG_HEADER_FORM | match ty {
+            Initial => 0x7f,
+            Retry => 0x7e,
+            Handshake => 0x7d,
+            ZeroRtt => 0x7c,
+        }
+    }
+}
+
+impl slog::Value for LongType {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum HeaderError {
     #[fail(display = "unsupported version")]
@@ -291,6 +336,8 @@ pub enum HeaderError {
     },
     #[fail(display = "invalid header: {}", _0)]
     InvalidHeader(&'static str),
+    #[fail(display = "invalid long header type: {:02x}", _0)]
+    InvalidLongHeaderType(u8),
 }
 
 impl From<coding::UnexpectedEnd> for HeaderError {
@@ -372,11 +419,5 @@ pub fn set_payload_length(packet: &mut [u8], header_len: usize) {
 }
 
 pub const AEAD_TAG_SIZE: usize = 16;
+const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x40;
-
-pub mod types {
-    pub const INITIAL: u8 = 0x7F;
-    pub const RETRY: u8 = 0x7E;
-    //pub const ZERO_RTT: u8 = 0x7C;
-    pub const HANDSHAKE: u8 = 0x7D;
-}
