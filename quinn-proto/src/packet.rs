@@ -46,7 +46,6 @@ pub enum Header {
         key_phase: bool,
     },
     VersionNegotiate {
-        ty: u8,
         source_id: ConnectionId,
         destination_id: ConnectionId,
     },
@@ -103,7 +102,6 @@ impl Header {
                     buf.position() as usize,
                     packet.len() - buf.position() as usize,
                     Header::VersionNegotiate {
-                        ty,
                         source_id,
                         destination_id,
                     },
@@ -198,11 +196,10 @@ impl Header {
                 number.encode(w);
             }
             VersionNegotiate {
-                ty,
                 ref source_id,
                 ref destination_id,
             } => {
-                w.write(0x80 | ty);
+                w.write(0x80u8);
                 w.write::<u32>(0);
                 let mut dcil = destination_id.len() as u8;
                 if dcil > 0 {
