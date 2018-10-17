@@ -396,7 +396,7 @@ fn version_negotiate() {
     assert_matches!(io, Some(Io::Transmit { .. }));
     if let Some(Io::Transmit { packet, .. }) = io {
         assert!(packet[0] | 0x80 != 0);
-        assert!(&packet[1..14] == hex!("00000000 11 00000000 00000000"));
+        assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
         assert!(
             packet[14..]
                 .chunks(4)
