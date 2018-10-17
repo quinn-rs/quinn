@@ -174,17 +174,7 @@ impl Header {
             } => {
                 w.write(u8::from(ty));
                 w.write(VERSION);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
+                Self::encode_cids(w, destination_id, source_id);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 w.write(number);
             }
@@ -205,19 +195,23 @@ impl Header {
             } => {
                 w.write(0x80u8 | random);
                 w.write::<u32>(0);
-                let mut dcil = destination_id.len() as u8;
-                if dcil > 0 {
-                    dcil -= 3;
-                }
-                let mut scil = source_id.len() as u8;
-                if scil > 0 {
-                    scil -= 3;
-                }
-                w.write(dcil << 4 | scil);
-                w.put_slice(destination_id);
-                w.put_slice(source_id);
+                Self::encode_cids(w, destination_id, source_id);
             }
         }
+    }
+
+    fn encode_cids<W: BufMut>(w: &mut W, destination_id: &ConnectionId, source_id: &ConnectionId) {
+        let mut dcil = destination_id.len() as u8;
+        if dcil > 0 {
+            dcil -= 3;
+        }
+        let mut scil = source_id.len() as u8;
+        if scil > 0 {
+            scil -= 3;
+        }
+        w.write(dcil << 4 | scil);
+        w.put_slice(destination_id);
+        w.put_slice(source_id);
     }
 }
 
