@@ -285,8 +285,8 @@ impl Endpoint {
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
                         random: self.ctx.rng.gen(),
-                        source_id: destination,
-                        destination_id: source,
+                        src_cid: destination,
+                        dst_cid: source,
                     }.encode(&mut buf);
                     buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
@@ -317,12 +317,12 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let dest_id = packet.header.destination_id();
-        if let Some(&conn) = self.connection_ids.get(&dest_id) {
+        let dst_cid = packet.header.dst_cid();
+        if let Some(&conn) = self.connection_ids.get(&dst_cid) {
             self.handle_connected(now, conn, remote, packet);
             return;
         }
-        if let Some(&conn) = self.connection_ids_initial.get(&dest_id) {
+        if let Some(&conn) = self.connection_ids_initial.get(&dst_cid) {
             self.handle_connected(now, conn, remote, packet);
             return;
         }
@@ -337,7 +337,7 @@ impl Endpoint {
                         .unwrap()
                         .is_drained()
                     {
-                        debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].local_id);
+                        debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].loc_cid);
                         self.ctx.io.push_back(Io::TimerStop {
                             connection: conn,
                             timer: Timer::LossDetection,
@@ -368,7 +368,7 @@ impl Endpoint {
         //
 
         if !self.listen() {
-            debug!(self.ctx.log, "dropping packet on unrecognized connection {connection} because listening is disabled", connection=packet.header.destination_id());
+            debug!(self.ctx.log, "dropping packet on unrecognized connection {connection} because listening is disabled", connection=packet.header.dst_cid());
             return;
         }
         let key_phase = packet.header.key_phase();
@@ -379,8 +379,8 @@ impl Endpoint {
         } = packet;
         if let Header::Long {
             ty,
-            ref destination_id,
-            ref source_id,
+            ref dst_cid,
+            ref src_cid,
             number,
         } = header
         {
@@ -390,8 +390,8 @@ impl Endpoint {
                         self.handle_initial(
                             now,
                             remote,
-                            destination_id.clone(),
-                            source_id.clone(),
+                            dst_cid.clone(),
+                            src_cid.clone(),
                             number,
                             &header_data,
                             payload,
@@ -400,7 +400,7 @@ impl Endpoint {
                         debug!(
                             self.ctx.log,
                             "ignoring short initial on {connection}",
-                            connection = destination_id
+                            connection = dst_cid
                         );
                     }
                     return;
@@ -410,13 +410,13 @@ impl Endpoint {
                     trace!(
                         self.ctx.log,
                         "dropping 0-RTT packet for unknown connection {connection}",
-                        connection = destination_id.clone()
+                        connection = dst_cid.clone()
                     );
                     return;
                 }*/
                 _ => {
                     debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:?}",
-                           connection=destination_id, type=ty);
+                           connection=dst_cid, type=ty);
                     return;
                 }
             }
@@ -426,7 +426,7 @@ impl Endpoint {
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
         //
 
-        if !dest_id.is_empty() {
+        if !dst_cid.is_empty() {
             debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
@@ -436,7 +436,7 @@ impl Endpoint {
             );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
-                id: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8),
+                dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8),
                 number: PacketNumber::U8(self.ctx.rng.gen()),
                 key_phase,
             }.encode(&mut buf);
@@ -447,7 +447,7 @@ impl Endpoint {
             }
             buf.extend(&reset_token_for(
                 &self.ctx.listen_keys.as_ref().unwrap().reset,
-                &dest_id,
+                &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
@@ -522,13 +522,13 @@ impl Endpoint {
         &mut self,
         now: u64,
         remote: SocketAddrV6,
-        dest_id: ConnectionId,
-        source_id: ConnectionId,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
         packet_number: u32,
         header: &[u8],
         mut payload: BytesMut,
     ) {
-        let crypto = Crypto::new_handshake(&dest_id, Side::Server);
+        let crypto = Crypto::new_handshake(&dst_cid, Side::Server);
         if crypto
             .decrypt(packet_number as u64, header, &mut payload)
             .is_err()
@@ -536,7 +536,7 @@ impl Endpoint {
             debug!(self.ctx.log, "failed to authenticate initial packet");
             return;
         };
-        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
+        let loc_cid = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
 
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
             == self.ctx.config.accept_buffer as usize
@@ -550,8 +550,8 @@ impl Endpoint {
                 destination: remote,
                 packet: handshake_close(
                     &crypto,
-                    &source_id,
-                    &local_id,
+                    &src_cid,
+                    &loc_cid,
                     n,
                     TransportError::SERVER_BUSY,
                     None,
@@ -560,8 +560,8 @@ impl Endpoint {
             return;
         }
 
-        let conn = self.add_connection(dest_id, local_id, source_id, remote, None);
-        self.connection_ids_initial.insert(dest_id, conn);
+        let conn = self.add_connection(dst_cid, loc_cid, src_cid, remote, None);
+        self.connection_ids_initial.insert(dst_cid, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,
             now,
@@ -576,8 +576,8 @@ impl Endpoint {
                     destination: remote,
                     packet: handshake_close(
                         &crypto,
-                        &source_id,
-                        &local_id,
+                        &src_cid,
+                        &loc_cid,
                         n,
                         TransportError::TLS_HANDSHAKE_FAILED,
                         None,
@@ -594,7 +594,7 @@ impl Endpoint {
         remote: SocketAddrV6,
         packet: Packet,
     ) {
-        trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].local_id, "len" => packet.payload.len());
+        trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].loc_cid, "len" => packet.payload.len());
         let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
 
         // State transitions
@@ -635,11 +635,11 @@ impl Endpoint {
                         }
                     }
                     ConnectionError::Reset => {
-                        debug!(self.ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                        debug!(self.ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].init_cid);
                         panic!("unexpected connection reset error received");
                     }
                     ConnectionError::TimedOut => {
-                        debug!(self.ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].initial_id);
+                        debug!(self.ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].init_cid);
                         panic!("unexpected connection timed out error received");
                     }
                     ConnectionError::TransportError { error_code } => {
@@ -669,8 +669,8 @@ impl Endpoint {
                     destination: remote,
                     packet: handshake_close(
                         &self.connections[conn.0].handshake_crypto,
-                        &self.connections[conn.0].remote_id,
-                        &self.connections[conn.0].local_id,
+                        &self.connections[conn.0].rem_cid,
+                        &self.connections[conn.0].loc_cid,
                         n as u32,
                         state.reason.clone(),
                         state.alert.as_ref().map(|x| &x[..]),
@@ -742,10 +742,10 @@ impl Endpoint {
     fn forget(&mut self, conn: ConnectionHandle) {
         if self.connections[conn.0].side == Side::Server {
             self.connection_ids_initial
-                .remove(&self.connections[conn.0].initial_id);
+                .remove(&self.connections[conn.0].init_cid);
         }
         self.connection_ids
-            .remove(&self.connections[conn.0].local_id);
+            .remove(&self.connections[conn.0].loc_cid);
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
         self.ctx.dirty_conns.remove(&conn);
@@ -781,7 +781,7 @@ impl Endpoint {
             }
             Timer::LossDetection => {
                 if self.connections[conn.0].awaiting_handshake {
-                    trace!(self.ctx.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].local_id);
+                    trace!(self.ctx.log, "retransmitting handshake packets"; "connection" => %self.connections[conn.0].loc_cid);
                     let packets = self.connections[conn.0]
                         .sent_packets
                         .iter()
@@ -854,13 +854,13 @@ impl Endpoint {
         match r {
             Ok(n) => {
                 self.ctx.dirty_conns.insert(conn);
-                trace!(self.ctx.log, "write"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0, "len" => n)
+                trace!(self.ctx.log, "write"; "connection" => %self.connections[conn.0].loc_cid, "stream" => stream.0, "len" => n)
             }
             Err(WriteError::Blocked) => {
                 if self.connections[conn.0].congestion_blocked() {
-                    trace!(self.ctx.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].local_id);
+                    trace!(self.ctx.log, "write blocked by congestion"; "connection" => %self.connections[conn.0].loc_cid);
                 } else {
-                    trace!(self.ctx.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].local_id, "stream" => stream.0);
+                    trace!(self.ctx.log, "write blocked by flow control"; "connection" => %self.connections[conn.0].loc_cid, "stream" => stream.0);
                 }
             }
             _ => {}
@@ -979,11 +979,11 @@ impl Endpoint {
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn get_local_id(&self, conn: ConnectionHandle) -> ConnectionId {
-        self.connections[conn.0].local_id
+        self.connections[conn.0].loc_cid
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn get_remote_id(&self, conn: ConnectionHandle) -> ConnectionId {
-        self.connections[conn.0].remote_id
+        self.connections[conn.0].rem_cid
     }
     pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 {
         &self.connections[conn.0].remote
@@ -1111,8 +1111,8 @@ where
     let mut buf = Vec::<u8>::new();
     Header::Long {
         ty: LongType::Handshake,
-        destination_id: *remote_id,
-        source_id: *local_id,
+        dst_cid: *remote_id,
+        src_cid: *local_id,
         number: packet_number,
     }.encode(&mut buf);
     let header_len = buf.len();
