@@ -283,7 +283,6 @@ impl Endpoint {
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
-                        ty: self.ctx.rng.gen(),
                         source_id: destination,
                         destination_id: source,
                     }.encode(&mut buf);
