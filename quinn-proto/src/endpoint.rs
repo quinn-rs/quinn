@@ -515,7 +515,7 @@ impl Endpoint {
         header: &[u8],
         mut payload: BytesMut,
     ) {
-        let crypto = Crypto::new_handshake(&dest_id, Side::Server);
+        let crypto = Crypto::new_initial(&dest_id, Side::Server);
         if crypto
             .decrypt(packet_number as u64, header, &mut payload)
             .is_err()

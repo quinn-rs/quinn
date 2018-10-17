@@ -103,7 +103,7 @@ pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] 
 #[derive(Clone)]
 pub enum Crypto {
     // ZeroRtt(ZeroRttCrypto),
-    Handshake(CryptoContext),
+    Initial(CryptoContext),
     OneRtt(CryptoContext),
 }
 
@@ -127,25 +127,25 @@ impl Crypto {
     }
     */
 
-    pub fn new_handshake(id: &ConnectionId, side: Side) -> Self {
+    pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
         let (local_label, remote_label) = if side == Side::Client {
-            (b"client hs", b"server hs")
+            (b"client in", b"server in")
         } else {
-            (b"server hs", b"client hs")
+            (b"server in", b"client in")
         };
-        let hs_secret = handshake_secret(id);
+        let hs_secret = initial_secret(id);
         let local = CryptoState::new(
             digest,
             cipher,
-            expanded_handshake_secret(&hs_secret, local_label),
+            expanded_initial_secret(&hs_secret, local_label),
         );
         let remote = CryptoState::new(
             digest,
             cipher,
-            expanded_handshake_secret(&hs_secret, remote_label),
+            expanded_initial_secret(&hs_secret, remote_label),
         );
-        Crypto::Handshake(CryptoContext {
+        Crypto::Initial(CryptoContext {
             local,
             remote,
             digest,
@@ -191,9 +191,9 @@ impl Crypto {
     }
     */
 
-    pub fn is_handshake(&self) -> bool {
+    pub fn is_initial(&self) -> bool {
         match *self {
-            Crypto::Handshake(_) => true,
+            Crypto::Initial(_) => true,
             _ => false,
         }
     }
@@ -223,7 +223,7 @@ impl Crypto {
         // FIXME: retain crypter
         let (cipher, state) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
-            Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.local)
             }
         };
@@ -246,7 +246,7 @@ impl Crypto {
 
         let (cipher, state) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
-            Crypto::Handshake(ref crypto) | Crypto::OneRtt(ref crypto) => {
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
                 (crypto.cipher, &crypto.remote)
             }
         };
@@ -322,11 +322,6 @@ pub struct ConnectionInfo {
     pub(crate) remote: SocketAddrV6,
 }
 
-const HANDSHAKE_SALT: [u8; 20] = [
-    0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f,
-    0xe0, 0x6d, 0x6c, 0x38,
-];
-
 #[derive(Clone)]
 pub struct CryptoState {
     secret: Vec<u8>,
@@ -397,7 +392,7 @@ impl From<TLSError> for ConnectError {
     }
 }
 
-pub fn expanded_handshake_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
+pub fn expanded_initial_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; digest::SHA256.output_len];
     qhkdf_expand(prk, label, &mut out);
     out
@@ -407,17 +402,23 @@ pub fn qhkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
     let mut info = Vec::with_capacity(2 + 1 + 5 + out.len());
     info.put_u16_be(out.len() as u16);
     info.put_u8(5 + (label.len() as u8));
-    info.extend_from_slice(b"QUIC ");
+    info.extend_from_slice(b"quic ");
     info.extend_from_slice(&label);
+    info.put_u8(0);
     hkdf::expand(key, &info, out);
 }
 
-fn handshake_secret(conn_id: &ConnectionId) -> SigningKey {
-    let key = SigningKey::new(&digest::SHA256, &HANDSHAKE_SALT);
+fn initial_secret(conn_id: &ConnectionId) -> SigningKey {
+    let key = SigningKey::new(&digest::SHA256, &INITIAL_SALT);
     let mut buf = Vec::with_capacity(8);
     buf.put_slice(conn_id);
     hkdf::extract(&key, &buf)
 }
+
+const INITIAL_SALT: [u8; 20] = [
+    0x9c, 0x10, 0x8f, 0x98, 0x52, 0x0a, 0x5c, 0x5c, 0x32, 0x96, 0x8e, 0x95, 0x0e, 0x8a, 0x2c, 0x5f,
+    0xe0, 0x6d, 0x6c, 0x38,
+];
 
 #[cfg(test)]
 mod test {
@@ -441,8 +442,8 @@ mod test {
     #[test]
     fn handshake_crypto_roundtrip() {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
-        let client = Crypto::new_handshake(&conn, Side::Client);
-        let server = Crypto::new_handshake(&conn, Side::Server);
+        let client = Crypto::new_initial(&conn, Side::Client);
+        let server = Crypto::new_initial(&conn, Side::Server);
 
         let mut buf = b"headerpayload".to_vec();
         client.encrypt(0, &mut buf, 6);
@@ -458,49 +459,49 @@ mod test {
         let id = ConnectionId::new(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
         let digest = &digest::SHA256;
         let cipher = &aead::AES_128_GCM;
-        let hs_secret = handshake_secret(&id);
-        let client_secret = expanded_handshake_secret(&hs_secret, b"client hs");
+        let initial_secret = initial_secret(&id);
+        let client_secret = expanded_initial_secret(&initial_secret, b"client in");
         assert_eq!(
             &client_secret[..],
             [
-                0x83, 0x55, 0xf2, 0x1a, 0x3d, 0x8f, 0x83, 0xec, 0xb3, 0xd0, 0xf9, 0x71, 0x08, 0xd3,
-                0xf9, 0x5e, 0x0f, 0x65, 0xb4, 0xd8, 0xae, 0x88, 0xa0, 0x61, 0x1e, 0xe4, 0x9d, 0xb0,
-                0xb5, 0x23, 0x59, 0x1d
+                0x9f, 0x53, 0x64, 0x57, 0xf3, 0x2a, 0x1e, 0x0a, 0xe8, 0x64, 0xbc, 0xb3, 0xca, 0xf1,
+                0x23, 0x51, 0x10, 0x63, 0x0e, 0x1d, 0x1f, 0xb3, 0x38, 0x35, 0xbd, 0x05, 0x41, 0x70,
+                0xf9, 0x9b, 0xf7, 0xdc,
             ]
         );
         let client_state = CryptoState::new(digest, cipher, client_secret);
         assert_eq!(
             &client_state.key[..],
             [
-                0x3a, 0xd0, 0x54, 0x2c, 0x4a, 0x85, 0x84, 0x74, 0x00, 0x63, 0x04, 0x9e, 0x3b, 0x3c,
-                0xaa, 0xb2
+                0xf2, 0x92, 0x8f, 0x26, 0x14, 0xad, 0x6c, 0x20, 0xb9, 0xbd, 0x00, 0x8e, 0x9c, 0x89,
+                0x63, 0x1c,
             ]
         );
         assert_eq!(
             &client_state.iv[..],
-            [0xd1, 0xfd, 0x26, 0x05, 0x42, 0x75, 0x3a, 0xba, 0x38, 0x58, 0x9b, 0xad]
+            [0xab, 0x95, 0x0b, 0x01, 0x98, 0x63, 0x79, 0x78, 0xcf, 0x44, 0xaa, 0xb9,]
         );
 
-        let server_secret = expanded_handshake_secret(&hs_secret, b"server hs");
+        let server_secret = expanded_initial_secret(&initial_secret, b"server in");
         assert_eq!(
             &server_secret[..],
             [
-                0xf8, 0x0e, 0x57, 0x71, 0x48, 0x4b, 0x21, 0xcd, 0xeb, 0xb5, 0xaf, 0xe0, 0xa2, 0x56,
-                0xa3, 0x17, 0x41, 0xef, 0xe2, 0xb5, 0xc6, 0xb6, 0x17, 0xba, 0xe1, 0xb2, 0xf1, 0x5a,
-                0x83, 0x04, 0x83, 0xd6
+                0xb0, 0x87, 0xdc, 0xd7, 0x47, 0x8d, 0xda, 0x8a, 0x85, 0x8f, 0xbf, 0x3d, 0x60, 0x5c,
+                0x88, 0x85, 0x86, 0xc0, 0xa3, 0xa9, 0x87, 0x54, 0x23, 0xad, 0x4f, 0x11, 0x4f, 0x0b,
+                0xa3, 0x8e, 0x5a, 0x2e,
             ]
         );
         let server_state = CryptoState::new(digest, cipher, server_secret);
         assert_eq!(
             &server_state.key[..],
             [
-                0xbe, 0xe4, 0xc2, 0x4d, 0x2a, 0xf1, 0x33, 0x80, 0xa9, 0xfa, 0x24, 0xa5, 0xe2, 0xba,
-                0x2c, 0xff
+                0xf5, 0x68, 0x17, 0xd0, 0xfc, 0x59, 0x5c, 0xfc, 0x0a, 0x2b, 0x0b, 0xcf, 0xb1, 0x87,
+                0x35, 0xec,
             ]
         );
         assert_eq!(
             &server_state.iv[..],
-            [0x25, 0xb5, 0x8e, 0x24, 0x6d, 0x9e, 0x7d, 0x5f, 0xfe, 0x43, 0x23, 0xfe]
+            [0x32, 0x05, 0x03, 0x5a, 0x3c, 0x93, 0x7c, 0x90, 0x2e, 0xe4, 0xf4, 0xd6,]
         );
     }
 }
