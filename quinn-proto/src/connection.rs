@@ -357,7 +357,7 @@ impl Connection {
         } else {
             Side::Server
         };
-        let handshake_crypto = Crypto::new_handshake(&init_cid, side);
+        let handshake_crypto = Crypto::new_initial(&init_cid, side);
         let mut streams = FnvHashMap::default();
         for i in 0..ctx.config.max_remote_uni_streams {
             streams.insert(
@@ -2151,7 +2151,7 @@ impl Connection {
                 set_payload_length(&mut buf, header_len as usize);
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
-            (number, acks, ack_only, crypto.is_handshake())
+            (number, acks, ack_only, crypto.is_initial())
         };
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
