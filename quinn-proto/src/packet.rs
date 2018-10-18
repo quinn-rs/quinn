@@ -5,7 +5,7 @@ use rand::Rng;
 use slog;
 
 use coding::{self, BufExt, BufMutExt};
-use {MAX_CID_SIZE, VERSION};
+use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 #[derive(Debug, Clone)]
 pub enum Header {
@@ -325,7 +325,9 @@ impl ::std::ops::DerefMut for ConnectionId {
 
 impl ConnectionId {
     pub fn new(bytes: &[u8]) -> Self {
-        debug_assert!(bytes.is_empty() || (bytes.len() > 3 && bytes.len() <= MAX_CID_SIZE));
+        debug_assert!(
+            bytes.is_empty() || (bytes.len() >= MIN_CID_SIZE && bytes.len() <= MAX_CID_SIZE)
+        );
         let mut res = Self {
             len: bytes.len() as u8,
             bytes: [0; MAX_CID_SIZE],
