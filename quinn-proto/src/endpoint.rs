@@ -32,7 +32,7 @@ pub struct Config {
     pub max_remote_uni_streams: u16,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
-    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's own idle timeout.
+    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
     pub idle_timeout: u16,
     /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
     ///
