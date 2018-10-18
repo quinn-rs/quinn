@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 
 use coding::{BufExt, BufMutExt};
 use endpoint::Config;
-use {Side, VERSION};
+use {Side, TransportError, VERSION};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct TransportParameters {
@@ -54,6 +54,15 @@ pub enum Error {
     IllegalValue,
     #[fail(display = "parameters were malformed")]
     Malformed,
+}
+
+impl From<Error> for TransportError {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::VersionNegotiation => TransportError::VERSION_NEGOTIATION_ERROR,
+            Error::IllegalValue | Error::Malformed => TransportError::TRANSPORT_PARAMETER_ERROR,
+        }
+    }
 }
 
 impl TransportParameters {

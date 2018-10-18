@@ -18,7 +18,7 @@ use packet::{
 };
 use range_set::RangeSet;
 use stream::{self, Stream};
-use transport_parameters::TransportParameters;
+use transport_parameters::{self, TransportParameters};
 use {
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
     VERSION,
@@ -890,7 +890,7 @@ impl Connection {
         now: u64,
         packet_number: u64,
         payload: Bytes,
-    ) -> Result<(), TLSError> {
+    ) -> Result<(), TransportError> {
         let frame = if let Ok(Some(frame)) = parse_initial(&ctx.log, payload) {
             frame
         } else {
@@ -907,11 +907,13 @@ impl Connection {
         };
         let mut tls = TlsSession::new_server(&ctx.config.tls_server_config, &server_params);
         self.read_tls(&mut tls, &frame);
-        tls.process_new_packets()?;
+        if tls.process_new_packets().is_err() {
+            return Err(TransportError::TLS_HANDSHAKE_FAILED);
+        }
         let params = TransportParameters::read(
             Side::Server,
             &mut io::Cursor::new(tls.get_quic_transport_parameters().unwrap()),
-        ).unwrap();
+        )?;
         self.handshake_complete(ctx, tls, params, now, packet_number);
         Ok(())
     }
@@ -1088,7 +1090,7 @@ impl Connection {
                                     let params = TransportParameters::read(
                                         self.side,
                                         &mut io::Cursor::new(params),
-                                    ).unwrap();
+                                    )?;
                                     self.set_params(params);
                                 } else {
                                     debug!(ctx.log, "remote didn't send transport params");
@@ -2434,6 +2436,12 @@ impl From<state::CloseReason> for ConnectionError {
                 ConnectionError::ApplicationClosed { reason: app_close }
             }
         }
+    }
+}
+
+impl From<transport_parameters::Error> for ConnectionError {
+    fn from(e: transport_parameters::Error) -> Self {
+        TransportError::from(e).into()
     }
 }
 
