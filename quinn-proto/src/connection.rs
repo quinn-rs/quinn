@@ -2269,11 +2269,11 @@ impl Connection {
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.streams.max_bi = params.initial_max_streams_bidi as u64;
+        self.streams.max_bi = params.initial_max_bidi_streams as u64;
         if self.side == Side::Client {
             self.streams.max_bi += 1;
         } // Account for TLS stream
-        self.streams.max_uni = params.initial_max_streams_uni as u64;
+        self.streams.max_uni = params.initial_max_uni_streams as u64;
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.streams.max_remote_bi {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
@@ -2283,7 +2283,7 @@ impl Connection {
                 .unwrap()
                 .send_mut()
                 .unwrap()
-                .max_data = params.initial_max_stream_data as u64;
+                .max_data = params.initial_max_stream_data_bidi_local as u64;
         }
         self.params = params;
     }
@@ -2308,7 +2308,10 @@ impl Connection {
                 return None;
             } // TODO: Queue STREAM_ID_BLOCKED
         };
-        stream.send_mut().unwrap().max_data = self.params.initial_max_stream_data as u64;
+        stream.send_mut().unwrap().max_data = match direction {
+            Directionality::Uni => self.params.initial_max_stream_data_uni,
+            Directionality::Bi => self.params.initial_max_stream_data_bidi_remote,
+        } as u64;
         let old = self.streams.streams.insert(id, stream);
         assert!(old.is_none());
         Some(id)
