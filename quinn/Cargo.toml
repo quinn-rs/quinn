@@ -54,4 +54,3 @@ required-features = ["dangerous_configuration"]
 
 [[example]]
 name = "client"
-required-features = ["dangerous_configuration"]

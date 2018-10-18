@@ -27,19 +27,24 @@ use slog::{Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// HTTP/0.9 over QUIC client
+///
+/// Build with the dangerous_configuration feature to support connecting to servers with invalid certificates.
 #[derive(StructOpt, Debug)]
 #[structopt(name = "client")]
 struct Opt {
-    /// file to log TLS keys to for debugging
+    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
     #[structopt(long = "keylog")]
     keylog: bool,
 
     url: Url,
 
+    /// Custom certificate authority to trust, in DER format
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
 
-    /// whether to accept invalid (e.g. self-signed) TLS certificates
+    /// Accept invalid (e.g. self-signed) TLS certificates
+    #[cfg(feature = "dangerous_configuration")]
     #[structopt(long = "accept-insecure-certs")]
     accept_insecure_certs: bool,
     /*
@@ -100,8 +105,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     if let Some(ca_path) = options.ca {
         client_config.add_certificate_authority(&fs::read(&ca_path)?)?;
     }
-    if options.accept_insecure_certs {
-        client_config.accept_insecure_certs();
+    #[cfg(feature = "dangerous_configuration")]
+    {
+        if options.accept_insecure_certs {
+            client_config.accept_insecure_certs();
+        }
     }
 
     let client_config = client_config.build();
