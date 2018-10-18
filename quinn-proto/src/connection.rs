@@ -692,8 +692,12 @@ impl Connection {
     }
 
     pub fn reset_idle_timeout(&mut self, config: &Config, now: u64) {
-        let dt = cmp::min(config.idle_timeout, self.params.idle_timeout) as u64 * 1_000_000;
-        self.set_idle = Some(Some(now + dt));
+        let dt = if config.idle_timeout == 0 || self.params.idle_timeout == 0 {
+            cmp::max(config.idle_timeout, self.params.idle_timeout)
+        } else {
+            cmp::min(config.idle_timeout, self.params.idle_timeout)
+        };
+        self.set_idle = Some(Some(now + dt as u64 * 1_000_000));
     }
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we receive a new handshake packet.
