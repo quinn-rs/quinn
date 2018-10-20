@@ -144,7 +144,6 @@ struct EndpointInner {
     timers: FuturesUnordered<Timer>,
     incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
-    default_client_config: ClientConfig,
 }
 
 impl EndpointInner {
@@ -231,7 +230,10 @@ impl Pending {
 ///
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Clone)]
-pub struct Endpoint(Rc<RefCell<EndpointInner>>);
+pub struct Endpoint {
+    inner: Rc<RefCell<EndpointInner>>,
+    default_client_config: ClientConfig,
+}
 
 /// A future that drives IO on an endpoint.
 pub struct Driver(Rc<RefCell<EndpointInner>>);
@@ -347,9 +349,15 @@ impl<'a> EndpointBuilder<'a> {
             timers: FuturesUnordered::new(),
             incoming: send,
             driver: None,
-            default_client_config: self.client_config,
         }));
-        Ok((Endpoint(rc.clone()), Driver(rc), recv))
+        Ok((
+            Endpoint {
+                inner: rc.clone(),
+                default_client_config: self.client_config,
+            },
+            Driver(rc),
+            recv,
+        ))
     }
 
     pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
@@ -492,7 +500,7 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
     {
-        self.connect_with(&self.0.borrow().default_client_config, addr, server_name)
+        self.connect_with(&self.default_client_config, addr, server_name)
     }
 
     /// Connect to a remote endpoint using a custom configuration.
@@ -568,7 +576,7 @@ impl Endpoint {
     > {
         let (send, recv) = oneshot::channel();
         let handle = {
-            let mut endpoint = self.0.borrow_mut();
+            let mut endpoint = self.inner.borrow_mut();
             let handle = endpoint
                 .inner
                 .connect(normalize(*addr), config, server_name)?;
@@ -576,7 +584,7 @@ impl Endpoint {
             handle
         };
         let conn = ConnectionInner {
-            endpoint: self.clone(),
+            endpoint: self.inner.clone(),
             conn: handle,
             side: Side::Client,
         };
@@ -593,9 +601,9 @@ pub struct NewConnection {
 }
 
 impl NewConnection {
-    fn new(endpoint: &Endpoint, handle: quinn::ConnectionHandle) -> Self {
+    fn new(endpoint: Rc<RefCell<EndpointInner>>, handle: quinn::ConnectionHandle) -> Self {
         let conn = Rc::new(ConnectionInner {
-            endpoint: Endpoint(endpoint.0.clone()),
+            endpoint,
             conn: handle,
             side: Side::Server,
         });
@@ -858,7 +866,7 @@ impl Future for Driver {
                 if let Some(x) = endpoint.inner.accept() {
                     if endpoint
                         .incoming
-                        .start_send(NewConnection::new(&Endpoint(self.0.clone()), x))
+                        .start_send(NewConnection::new(self.0.clone(), x))
                         .is_err()
                     {
                         break;
@@ -906,7 +914,7 @@ fn normalize(x: SocketAddr) -> SocketAddrV6 {
 }
 
 struct ConnectionInner {
-    endpoint: Endpoint,
+    endpoint: Rc<RefCell<EndpointInner>>,
     conn: ConnectionHandle,
     side: Side,
 }
@@ -925,7 +933,7 @@ impl Connection {
     pub fn open_uni(&self) -> impl Future<Item = SendStream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
-            let mut endpoint = self.0.endpoint.0.borrow_mut();
+            let mut endpoint = self.0.endpoint.borrow_mut();
             if let Some(x) = endpoint.inner.open(self.0.conn, Directionality::Uni) {
                 let _ = send.send(Ok(x));
             } else {
@@ -944,7 +952,7 @@ impl Connection {
     pub fn open_bi(&self) -> impl Future<Item = Stream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
-            let mut endpoint = self.0.endpoint.0.borrow_mut();
+            let mut endpoint = self.0.endpoint.borrow_mut();
             if let Some(x) = endpoint.inner.open(self.0.conn, Directionality::Bi) {
                 let _ = send.send(Ok(x));
             } else {
@@ -975,7 +983,7 @@ impl Connection {
     pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
         let (send, recv) = oneshot::channel();
         {
-            let endpoint = &mut *self.0.endpoint.0.borrow_mut();
+            let endpoint = &mut *self.0.endpoint.borrow_mut();
 
             let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
             assert!(
@@ -1004,7 +1012,6 @@ impl Connection {
         (*self
             .0
             .endpoint
-            .0
             .borrow()
             .inner
             .get_remote_address(self.0.conn)).into()
@@ -1012,18 +1019,17 @@ impl Connection {
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn local_id(&self) -> ConnectionId {
-        self.0.endpoint.0.borrow().inner.get_local_id(self.0.conn)
+        self.0.endpoint.borrow().inner.get_local_id(self.0.conn)
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0.endpoint.0.borrow().inner.get_remote_id(self.0.conn)
+        self.0.endpoint.borrow().inner.get_remote_id(self.0.conn)
     }
 
     /// The negotiated application protocol
     pub fn protocol(&self) -> Option<Box<[u8]>> {
         self.0
             .endpoint
-            .0
             .borrow()
             .inner
             .get_protocol(self.0.conn)
@@ -1034,7 +1040,6 @@ impl Connection {
     pub fn session_resumed(&self) -> bool {
         self.0
             .endpoint
-            .0
             .borrow()
             .inner
             .get_session_resumed(self.0.conn)
@@ -1043,7 +1048,7 @@ impl Connection {
 
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
-        let endpoint = &mut *self.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.endpoint.borrow_mut();
         if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.conn) {
             if pending.get().draining.is_none() && !pending.get().drained {
                 endpoint.inner.close(
@@ -1135,7 +1140,7 @@ impl Stream {
 
 impl Write for Stream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
-        let mut endpoint = self.conn.endpoint.0.borrow_mut();
+        let mut endpoint = self.conn.endpoint.borrow_mut();
         use quinn::WriteError::*;
         let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
             Ok(n) => n,
@@ -1156,7 +1161,7 @@ impl Write for Stream {
     }
 
     fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
-        let mut endpoint = self.conn.endpoint.0.borrow_mut();
+        let mut endpoint = self.conn.endpoint.borrow_mut();
         if self.finishing.is_none() {
             endpoint.inner.finish(self.conn.conn, self.stream);
             let (send, recv) = oneshot::channel();
@@ -1181,7 +1186,7 @@ impl Write for Stream {
     }
 
     fn reset(&mut self, error_code: u16) {
-        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.conn.endpoint.borrow_mut();
         endpoint
             .inner
             .reset(self.conn.conn, self.stream, error_code);
@@ -1191,7 +1196,7 @@ impl Write for Stream {
 
 impl Read for Stream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
-        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.conn.endpoint.borrow_mut();
         use quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
@@ -1215,7 +1220,7 @@ impl Read for Stream {
     }
 
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
-        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.conn.endpoint.borrow_mut();
         use quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
@@ -1239,7 +1244,7 @@ impl Read for Stream {
     }
 
     fn stop(&mut self, error_code: u16) {
-        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.conn.endpoint.borrow_mut();
         endpoint
             .inner
             .stop_sending(self.conn.conn, self.stream, error_code);
@@ -1282,7 +1287,7 @@ impl AsyncWrite for Stream {
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        let endpoint = &mut *self.conn.endpoint.0.borrow_mut();
+        let endpoint = &mut *self.conn.endpoint.borrow_mut();
         let ours = self.stream.initiator() == self.conn.side;
         let (send, recv) = match self.stream.directionality() {
             Directionality::Bi => (true, true),
@@ -1451,7 +1456,7 @@ impl FuturesStream for IncomingStreams {
     type Item = NewStream;
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut endpoint = self.0.endpoint.0.borrow_mut();
+        let mut endpoint = self.0.endpoint.borrow_mut();
         let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
         if let Some(x) = pending.incoming_streams.pop_front() {
             let stream = Stream::new(self.0.clone(), x);
@@ -1478,7 +1483,7 @@ impl FuturesStream for IncomingSessionTickets {
     type Item = Box<[u8]>;
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut endpoint = self.0.endpoint.0.borrow_mut();
+        let mut endpoint = self.0.endpoint.borrow_mut();
         let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
         if let Some(x) = pending.incoming_session_tickets.pop_front() {
             return Ok(Async::Ready(Some(x)));
