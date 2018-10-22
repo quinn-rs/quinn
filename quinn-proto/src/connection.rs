@@ -1009,6 +1009,104 @@ impl Connection {
         self.tls.read_tls(&mut io::Cursor::new(&buf[..n])).unwrap();
     }
 
+    pub fn handle_connected(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        remote: SocketAddrV6,
+        packet: Packet,
+    ) {
+        trace!(ctx.log, "connection got packet"; "connection" => %self.loc_cid, "len" => packet.payload.len());
+        let was_closed = self.state.as_ref().unwrap().is_closed();
+
+        // State transitions
+        let prev_state = self.state.take().unwrap();
+        let was_handshake = match prev_state {
+            State::Handshake(_) => true,
+            _ => false,
+        };
+        let state = match self.handle_connected_inner(ctx, now, remote, packet, prev_state) {
+            Ok(state) => state,
+            Err(conn_err) => {
+                ctx.events.push_back((
+                    self.handle,
+                    Event::ConnectionLost {
+                        reason: conn_err.clone(),
+                    },
+                ));
+
+                match conn_err {
+                    ConnectionError::ApplicationClosed { reason } => {
+                        if was_handshake {
+                            State::handshake_failed(reason, None)
+                        } else {
+                            State::closed(reason)
+                        }
+                    }
+                    ConnectionError::ConnectionClosed { reason } => {
+                        if was_handshake {
+                            State::handshake_failed(reason, None)
+                        } else {
+                            State::closed(reason)
+                        }
+                    }
+                    ConnectionError::Reset => {
+                        debug!(ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                        panic!("unexpected connection reset error received");
+                    }
+                    ConnectionError::TimedOut => {
+                        debug!(ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                        panic!("unexpected connection timed out error received");
+                    }
+                    ConnectionError::TransportError { error_code } => {
+                        if was_handshake {
+                            State::handshake_failed(error_code, None)
+                        } else {
+                            State::closed(error_code)
+                        }
+                    }
+                    ConnectionError::VersionMismatch => State::Draining,
+                }
+            }
+        };
+
+        if !was_closed && state.is_closed() {
+            self.close_common(ctx, now);
+        }
+
+        // Transmit CONNECTION_CLOSE if necessary
+        match state {
+            State::HandshakeFailed(ref state) => {
+                if !was_closed && self.side == Side::Server {
+                    ctx.incoming_handshakes -= 1;
+                }
+                let n = self.get_tx_number();
+                ctx.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: handshake_close(
+                        &self.handshake_crypto,
+                        &self.rem_cid,
+                        &self.loc_cid,
+                        n as u32,
+                        state.reason.clone(),
+                        state.alert.as_ref().map(|x| &x[..]),
+                    ),
+                });
+                self.reset_idle_timeout(&ctx.config, now);
+            }
+            State::Closed(ref state) => {
+                ctx.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: self.make_close(&state.reason),
+                });
+                self.reset_idle_timeout(&ctx.config, now);
+            }
+            _ => {}
+        }
+        self.state = Some(state);
+        ctx.dirty_conns.insert(self.handle);
+    }
+
     pub fn handle_connected_inner(
         &mut self,
         ctx: &mut Context,
