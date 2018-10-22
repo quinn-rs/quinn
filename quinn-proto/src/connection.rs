@@ -996,6 +996,34 @@ impl Connection {
         remote: SocketAddrV6,
         packet: Packet,
     ) {
+        if let Some(token) = self.params.stateless_reset_token {
+            if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
+                if !self.state.as_ref().unwrap().is_drained() {
+                    debug!(ctx.log, "got stateless reset"; "connection" => %self.loc_cid);
+                    ctx.io.push_back(Io::TimerStop {
+                        connection: self.handle,
+                        timer: Timer::LossDetection,
+                    });
+                    ctx.io.push_back(Io::TimerStop {
+                        connection: self.handle,
+                        timer: Timer::Close,
+                    });
+                    ctx.io.push_back(Io::TimerStop {
+                        connection: self.handle,
+                        timer: Timer::Idle,
+                    });
+                    ctx.events.push_back((
+                        self.handle,
+                        Event::ConnectionLost {
+                            reason: ConnectionError::Reset,
+                        },
+                    ));
+                    self.state = Some(State::Drained);
+                }
+                return;
+            }
+        }
+
         trace!(ctx.log, "connection got packet"; "connection" => %self.loc_cid, "len" => packet.payload.len());
         let was_closed = self.state.as_ref().unwrap().is_closed();
 

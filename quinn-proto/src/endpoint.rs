@@ -312,50 +312,19 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let dest_id = packet.header.dst_cid();
-        if let Some(&conn) = self.connection_ids.get(&dest_id) {
+        let dst_cid = packet.header.dst_cid();
+        let conn = if let Some(&conn) = self.connection_ids.get(&dst_cid) {
+            Some(conn)
+        } else if let Some(&conn) = self.connection_ids_initial.get(&dst_cid) {
+            Some(conn)
+        } else if let Some(&conn) = self.connection_remotes.get(&remote) {
+            Some(conn)
+        } else {
+            None
+        };
+        if let Some(conn) = conn {
             self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
             return;
-        }
-        if let Some(&conn) = self.connection_ids_initial.get(&dest_id) {
-            self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
-            return;
-        }
-        if let Some(&conn) = self.connection_remotes.get(&remote) {
-            if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
-                if packet.payload.len() >= 16
-                    && packet.payload[packet.payload.len() - 16..] == token
-                {
-                    if !self.connections[conn.0]
-                        .state
-                        .as_ref()
-                        .unwrap()
-                        .is_drained()
-                    {
-                        debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].loc_cid);
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::LossDetection,
-                        });
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::Close,
-                        });
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::Idle,
-                        });
-                        self.ctx.events.push_back((
-                            conn,
-                            Event::ConnectionLost {
-                                reason: ConnectionError::Reset,
-                            },
-                        ));
-                        self.connections[conn.0].state = Some(State::Drained);
-                    }
-                    return;
-                }
-            }
         }
 
         //
@@ -421,7 +390,7 @@ impl Endpoint {
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
         //
 
-        if !dest_id.is_empty() {
+        if !dst_cid.is_empty() {
             debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
@@ -442,7 +411,7 @@ impl Endpoint {
             }
             buf.extend(&reset_token_for(
                 &self.ctx.listen_keys.as_ref().unwrap().reset,
-                &dest_id,
+                &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
