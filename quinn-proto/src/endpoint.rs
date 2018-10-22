@@ -12,16 +12,13 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    make_tls, state, ClientConfig, Connection, ConnectionError, ConnectionHandle, ReadError, State,
-    WriteError,
+    handshake_close, make_tls, ClientConfig, Connection, ConnectionError, ConnectionHandle,
+    ReadError, State, WriteError,
 };
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
-use packet::{
-    set_payload_length, ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber,
-    AEAD_TAG_SIZE,
-};
+use packet::{ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber};
 use {
-    frame, Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU,
+    Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
 
@@ -1027,43 +1024,4 @@ impl slog::Value for Timer {
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
-}
-
-fn handshake_close<R>(
-    crypto: &Crypto,
-    remote_id: &ConnectionId,
-    local_id: &ConnectionId,
-    packet_number: u32,
-    reason: R,
-    tls_alert: Option<&[u8]>,
-) -> Box<[u8]>
-where
-    R: Into<state::CloseReason>,
-{
-    let mut buf = Vec::<u8>::new();
-    Header::Long {
-        ty: LongType::Handshake,
-        dst_cid: *remote_id,
-        src_cid: *local_id,
-        number: packet_number,
-    }.encode(&mut buf);
-    let header_len = buf.len();
-    let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
-    match reason.into() {
-        state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
-        state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
-    }
-    if let Some(data) = tls_alert {
-        if !data.is_empty() {
-            frame::Stream {
-                id: StreamId(0),
-                fin: false,
-                offset: 0,
-                data,
-            }.encode(false, &mut buf);
-        }
-    }
-    set_payload_length(&mut buf, header_len);
-    crypto.encrypt(packet_number as u64, &mut buf, header_len);
-    buf.into()
 }
