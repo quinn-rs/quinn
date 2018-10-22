@@ -315,49 +315,15 @@ impl Endpoint {
         //
 
         let dst_cid = packet.header.dst_cid();
-        if let Some(&conn) = self.connection_ids.get(&dst_cid) {
+        let conn = self
+            .connection_ids
+            .get(&dst_cid)
+            .or_else(|| self.connection_ids_initial.get(&dst_cid))
+            .or_else(|| self.connection_remotes.get(&remote))
+            .cloned();
+        if let Some(conn) = conn {
             self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
             return;
-        }
-        if let Some(&conn) = self.connection_ids_initial.get(&dst_cid) {
-            self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
-            return;
-        }
-        if let Some(&conn) = self.connection_remotes.get(&remote) {
-            if let Some(token) = self.connections[conn.0].params.stateless_reset_token {
-                if packet.payload.len() >= 16
-                    && packet.payload[packet.payload.len() - 16..] == token
-                {
-                    if !self.connections[conn.0]
-                        .state
-                        .as_ref()
-                        .unwrap()
-                        .is_drained()
-                    {
-                        debug!(self.ctx.log, "got stateless reset"; "connection" => %self.connections[conn.0].loc_cid);
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::LossDetection,
-                        });
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::Close,
-                        });
-                        self.ctx.io.push_back(Io::TimerStop {
-                            connection: conn,
-                            timer: Timer::Idle,
-                        });
-                        self.ctx.events.push_back((
-                            conn,
-                            Event::ConnectionLost {
-                                reason: ConnectionError::Reset,
-                            },
-                        ));
-                        self.connections[conn.0].state = Some(State::Drained);
-                    }
-                    return;
-                }
-            }
         }
 
         //
