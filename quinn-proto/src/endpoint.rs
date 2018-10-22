@@ -333,68 +333,35 @@ impl Endpoint {
             debug!(self.ctx.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
             return;
         }
-        let key_phase = packet.header.key_phase();
-        let Packet {
-            header_data,
-            header,
-            payload,
-        } = packet;
-        if let Header::Long {
-            ty,
-            ref dst_cid,
-            ref src_cid,
-            number,
-        } = header
-        {
-            match ty {
-                LongType::Initial => {
-                    if datagram_len >= MIN_INITIAL_SIZE {
-                        self.handle_initial(
-                            now,
-                            remote,
-                            dst_cid.clone(),
-                            src_cid.clone(),
-                            number,
-                            &header_data,
-                            payload,
-                        );
-                    } else {
-                        debug!(
-                            self.ctx.log,
-                            "ignoring short initial on {connection}",
-                            connection = dst_cid
-                        );
-                    }
-                    return;
-                }
-                /*types::ZERO_RTT => {
-                    // MAY buffer a limited amount
-                    trace!(
-                        self.ctx.log,
-                        "dropping 0-RTT packet for unknown connection {connection}",
-                        connection = dst_cid.clone()
-                    );
-                    return;
-                }*/
-                _ => {
-                    debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:?}",
-                           connection=dst_cid, type=ty);
-                    return;
-                }
+
+        match packet.header {
+            Header::Long {
+                ty: LongType::Initial,
+                ..
+            } => {
+                self.handle_initial(now, remote, packet, datagram_len);
+                return;
             }
+            Header::Long { ty, .. } => {
+                debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:?}",
+                       connection=dst_cid, type=ty);
+                return;
+            }
+            _ => {}
         }
 
         //
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
         //
 
+        let key_phase = packet.header.key_phase();
         if !dst_cid.is_empty() {
             debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
             let padding = self.ctx.rng.gen_range(
                 0,
-                cmp::max(RESET_TOKEN_SIZE + 8, payload.len()) - RESET_TOKEN_SIZE,
+                cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE,
             );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
@@ -473,15 +440,36 @@ impl Endpoint {
         &mut self,
         now: u64,
         remote: SocketAddrV6,
-        dest_id: ConnectionId,
-        src_cid: ConnectionId,
-        packet_number: u32,
-        header: &[u8],
-        mut payload: BytesMut,
+        packet: Packet,
+        datagram_len: usize,
     ) {
-        let crypto = Crypto::new_initial(&dest_id, Side::Server);
+        if datagram_len < MIN_INITIAL_SIZE {
+            debug!(
+                self.ctx.log,
+                "ignoring short initial on {connection}",
+                connection = packet.header.dst_cid()
+            );
+            return;
+        }
+
+        let Packet {
+            header,
+            header_data,
+            mut payload,
+        } = packet;
+        let (src_cid, dst_cid, packet_number) = match header {
+            Header::Long {
+                src_cid,
+                dst_cid,
+                number,
+                ..
+            } => (src_cid, dst_cid, number),
+            _ => panic!("non-initial packet in handle_initial()"),
+        };
+
+        let crypto = Crypto::new_initial(&dst_cid, Side::Server);
         if crypto
-            .decrypt(packet_number as u64, header, &mut payload)
+            .decrypt(packet_number as u64, &header_data, &mut payload)
             .is_err()
         {
             debug!(self.ctx.log, "failed to authenticate initial packet");
@@ -511,8 +499,8 @@ impl Endpoint {
             return;
         }
 
-        let conn = self.add_connection(dest_id, local_id, src_cid, remote, Side::Server);
-        self.connection_ids_initial.insert(dest_id, conn);
+        let conn = self.add_connection(dst_cid, local_id, src_cid, remote, Side::Server);
+        self.connection_ids_initial.insert(dst_cid, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,
             now,
