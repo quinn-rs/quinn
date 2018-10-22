@@ -172,6 +172,7 @@ impl coding::Codec for StreamId {
 // Useful internal constants
 //
 
+const LOCAL_ID_LEN: usize = 8;
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 18;
 const MIN_CID_SIZE: usize = 4;

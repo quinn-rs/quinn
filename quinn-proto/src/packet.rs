@@ -5,7 +5,7 @@ use rand::Rng;
 use slog;
 
 use coding::{self, BufExt, BufMutExt};
-use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use {LOCAL_ID_LEN, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 pub struct Packet {
     pub header: Header,
@@ -14,11 +14,8 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub fn decode(
-        mut packet: BytesMut,
-        dest_id_len: usize,
-    ) -> Result<(Self, BytesMut), HeaderError> {
-        let (header_len, payload_len, header) = Header::decode(&mut packet, dest_id_len)?;
+    pub fn decode(mut packet: BytesMut) -> Result<(Self, BytesMut), HeaderError> {
+        let (header_len, payload_len, header) = Header::decode(&mut packet)?;
         let header_data = packet.split_to(header_len).freeze();
         let payload = packet.split_to(payload_len);
         Ok((
@@ -69,22 +66,19 @@ impl Header {
         }
     }
 
-    fn decode(
-        packet: &mut BytesMut,
-        dest_id_len: usize,
-    ) -> Result<(usize, usize, Self), HeaderError> {
+    fn decode(packet: &mut BytesMut) -> Result<(usize, usize, Self), HeaderError> {
         let mut buf = io::Cursor::new(&packet[..]);
         let first = buf.get::<u8>()?;
         let mut cid_stage = [0; MAX_CID_SIZE];
 
         if first & LONG_HEADER_FORM == 0 {
-            if buf.remaining() < dest_id_len {
+            if buf.remaining() < LOCAL_ID_LEN {
                 return Err(HeaderError::InvalidHeader(
                     "destination connection ID longer than packet",
                 ));
             }
-            buf.copy_to_slice(&mut cid_stage[..dest_id_len]);
-            let dst_cid = ConnectionId::new(&cid_stage[..dest_id_len]);
+            buf.copy_to_slice(&mut cid_stage[..LOCAL_ID_LEN]);
+            let dst_cid = ConnectionId::new(&cid_stage[..LOCAL_ID_LEN]);
             let key_phase = first & KEY_PHASE_BIT != 0;
             let number = match first & 0b11 {
                 0x0 => PacketNumber::U8(buf.get()?),

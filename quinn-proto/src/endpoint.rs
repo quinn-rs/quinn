@@ -18,7 +18,7 @@ use connection::{
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
 use packet::{ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber};
 use {
-    Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    Directionality, Side, StreamId, TransportError, LOCAL_ID_LEN, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
 
@@ -144,8 +144,6 @@ impl Context {
     }
 }
 
-const LOCAL_ID_LEN: usize = 8;
-
 /// Information that should be preserved between restarts for server endpoints.
 ///
 /// Keeping this around allows better behavior by clients that communicated with a previous instance of the same
@@ -267,7 +265,7 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            let (packet, rest) = match Packet::decode(data, LOCAL_ID_LEN) {
+            let (packet, rest) = match Packet::decode(data) {
                 Ok(x) => x,
                 Err(HeaderError::UnsupportedVersion {
                     source,
