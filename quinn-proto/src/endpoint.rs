@@ -15,9 +15,7 @@ use connection::{
     handshake_close, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
 };
 use crypto::{self, reset_token_for, ClientConfig, ConnectError, Crypto, ServerConfig};
-use packet::{
-    set_payload_length, ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber,
-};
+use packet::{ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber};
 use {
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
@@ -316,11 +314,11 @@ impl Endpoint {
 
         let dest_id = packet.header.dst_cid();
         if let Some(&conn) = self.connection_ids.get(&dest_id) {
-            self.handle_connected(now, conn, remote, packet);
+            self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
             return;
         }
         if let Some(&conn) = self.connection_ids_initial.get(&dest_id) {
-            self.handle_connected(now, conn, remote, packet);
+            self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
             return;
         }
         if let Some(&conn) = self.connection_remotes.get(&remote) {
@@ -571,111 +569,6 @@ impl Endpoint {
                 });
             }
         }
-    }
-
-    fn handle_connected(
-        &mut self,
-        now: u64,
-        conn: ConnectionHandle,
-        remote: SocketAddrV6,
-        packet: Packet,
-    ) {
-        trace!(self.ctx.log, "connection got packet"; "connection" => %self.connections[conn.0].loc_cid, "len" => packet.payload.len());
-        let was_closed = self.connections[conn.0].state.as_ref().unwrap().is_closed();
-
-        // State transitions
-        let prev_state = self.connections[conn.0].state.take().unwrap();
-        let was_handshake = match prev_state {
-            State::Handshake(_) => true,
-            _ => false,
-        };
-        let state = match self.connections[conn.0].handle_connected_inner(
-            &mut self.ctx,
-            now,
-            remote,
-            packet,
-            prev_state,
-        ) {
-            Ok(state) => state,
-            Err(conn_err) => {
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: conn_err.clone(),
-                    },
-                ));
-
-                match conn_err {
-                    ConnectionError::ApplicationClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
-                        }
-                    }
-                    ConnectionError::ConnectionClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
-                        }
-                    }
-                    ConnectionError::Reset => {
-                        debug!(self.ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].init_cid);
-                        panic!("unexpected connection reset error received");
-                    }
-                    ConnectionError::TimedOut => {
-                        debug!(self.ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.connections[conn.0].init_cid);
-                        panic!("unexpected connection timed out error received");
-                    }
-                    ConnectionError::TransportError { error_code } => {
-                        if was_handshake {
-                            State::handshake_failed(error_code, None)
-                        } else {
-                            State::closed(error_code)
-                        }
-                    }
-                    ConnectionError::VersionMismatch => State::Draining,
-                }
-            }
-        };
-
-        if !was_closed && state.is_closed() {
-            self.connections[conn.0].close_common(&mut self.ctx, now);
-        }
-
-        // Transmit CONNECTION_CLOSE if necessary
-        match state {
-            State::HandshakeFailed(ref state) => {
-                if !was_closed && self.connections[conn.0].side == Side::Server {
-                    self.ctx.incoming_handshakes -= 1;
-                }
-                let n = self.connections[conn.0].get_tx_number();
-                self.ctx.io.push_back(Io::Transmit {
-                    destination: remote,
-                    packet: handshake_close(
-                        &self.connections[conn.0].handshake_crypto,
-                        &self.connections[conn.0].rem_cid,
-                        &self.connections[conn.0].loc_cid,
-                        n as u32,
-                        state.reason.clone(),
-                        state.alert.as_ref().map(|x| &x[..]),
-                    ),
-                });
-                self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-            }
-            State::Closed(ref state) => {
-                self.ctx.io.push_back(Io::Transmit {
-                    destination: remote,
-                    packet: self.connections[conn.0].make_close(&state.reason),
-                });
-                self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-            }
-            _ => {}
-        }
-        self.connections[conn.0].state = Some(state);
-
-        self.ctx.dirty_conns.insert(conn);
     }
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
