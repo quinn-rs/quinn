@@ -7,26 +7,141 @@ use slog;
 use coding::{self, BufExt, BufMutExt};
 use {LOCAL_ID_LEN, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
-pub struct Packet {
-    pub header: Header,
-    pub header_data: Bytes,
-    pub payload: BytesMut,
+// Due to packet number encryption, it is impossible to fully decode a header
+// (which includes a variable-length packet number) without crypto context.
+// The crypto context (represented by the `Crypto` type in Quinn) is usually
+// part of the `Connection`, or can be derived from the destination CID for
+// Initial packets.
+//
+// To cope with this, we decode the invariant header (which should be stable
+// across QUIC versions), which gives us the destination CID and allows us
+// to inspect the version and packet type (which depends on the version).
+// This information allows us to fully decode and decrypt the packet.
+pub struct PartialDecode {
+    invariant_header: InvariantHeader,
+    buf: io::Cursor<BytesMut>,
 }
 
-impl Packet {
-    pub fn decode(mut packet: BytesMut) -> Result<(Self, BytesMut), HeaderError> {
-        let (header_len, payload_len, header) = Header::decode(&mut packet)?;
-        let header_data = packet.split_to(header_len).freeze();
-        let payload = packet.split_to(payload_len);
+impl PartialDecode {
+    pub fn new(bytes: BytesMut) -> Result<Self, HeaderError> {
+        let mut buf = io::Cursor::new(bytes);
+        let invariant_header = InvariantHeader::decode(&mut buf)?;
+        Ok(Self {
+            invariant_header,
+            buf,
+        })
+    }
+
+    pub fn has_long_header(&self) -> bool {
+        use self::InvariantHeader::*;
+        match self.invariant_header {
+            Long { .. } => true,
+            Short { .. } => false,
+        }
+    }
+
+    pub fn is_initial(&self) -> bool {
+        use self::InvariantHeader::*;
+        match self.invariant_header {
+            Long {
+                version: VERSION,
+                first,
+                ..
+            } => LongType::from_byte(first) == Ok(LongType::Initial),
+            Long { .. } | Short { .. } => false,
+        }
+    }
+
+    pub fn dst_cid(&self) -> ConnectionId {
+        self.invariant_header.dst_cid()
+    }
+
+    pub fn finish(self) -> Result<(Packet, Option<BytesMut>), HeaderError> {
+        let Self {
+            invariant_header,
+            mut buf,
+        } = self;
+        let (header_len, payload_len, header, allow_coalesced) = match invariant_header {
+            InvariantHeader::Short { first, dst_cid } => {
+                let key_phase = first & KEY_PHASE_BIT != 0;
+                let number = match first & 0b11 {
+                    0x0 => PacketNumber::U8(buf.get()?),
+                    0x1 => PacketNumber::U16(buf.get()?),
+                    0x2 => PacketNumber::U32(buf.get()?),
+                    _ => {
+                        return Err(HeaderError::InvalidHeader("unknown packet type"));
+                    }
+                };
+                (
+                    buf.position() as usize,
+                    buf.remaining(),
+                    Header::Short {
+                        dst_cid,
+                        number,
+                        key_phase,
+                    },
+                    false,
+                )
+            }
+            InvariantHeader::Long {
+                first,
+                version,
+                dst_cid,
+                src_cid,
+            } => {
+                if version == 0 {
+                    (
+                        buf.position() as usize,
+                        buf.remaining(),
+                        Header::VersionNegotiate {
+                            random: first & !LONG_HEADER_FORM,
+                            src_cid,
+                            dst_cid,
+                        },
+                        false,
+                    )
+                } else {
+                    debug_assert_eq!(version, VERSION);
+                    let ty = LongType::from_byte(first)?;
+                    let len = buf.get_var()?;
+                    let number = buf.get()?;
+                    let header_len = buf.position() as usize;
+                    if len > buf.remaining() as u64 {
+                        return Err(HeaderError::InvalidHeader("payload longer than packet"));
+                    }
+                    (
+                        header_len,
+                        len as usize,
+                        Header::Long {
+                            ty,
+                            src_cid,
+                            dst_cid,
+                            number,
+                        },
+                        true,
+                    )
+                }
+            }
+        };
+
+        let mut bytes = buf.into_inner();
+        let header_data = bytes.split_to(header_len).freeze();
+        let payload = bytes.split_to(payload_len);
         Ok((
             Packet {
                 header,
                 header_data,
                 payload,
             },
-            packet,
+            if allow_coalesced { Some(bytes) } else { None },
         ))
     }
+}
+
+pub struct Packet {
+    pub header: Header,
+    pub header_data: Bytes,
+    pub payload: BytesMut,
 }
 
 #[derive(Debug, Clone)]
@@ -50,113 +165,6 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn dst_cid(&self) -> ConnectionId {
-        use self::Header::*;
-        match self {
-            Long { dst_cid, .. } | Short { dst_cid, .. } | VersionNegotiate { dst_cid, .. } => {
-                *dst_cid
-            }
-        }
-    }
-
-    pub fn key_phase(&self) -> bool {
-        match *self {
-            Header::Short { key_phase, .. } => key_phase,
-            _ => false,
-        }
-    }
-
-    fn decode(packet: &mut BytesMut) -> Result<(usize, usize, Self), HeaderError> {
-        let mut buf = io::Cursor::new(&packet[..]);
-        let first = buf.get::<u8>()?;
-        let mut cid_stage = [0; MAX_CID_SIZE];
-
-        if first & LONG_HEADER_FORM == 0 {
-            if buf.remaining() < LOCAL_ID_LEN {
-                return Err(HeaderError::InvalidHeader(
-                    "destination connection ID longer than packet",
-                ));
-            }
-            buf.copy_to_slice(&mut cid_stage[..LOCAL_ID_LEN]);
-            let dst_cid = ConnectionId::new(&cid_stage[..LOCAL_ID_LEN]);
-            let key_phase = first & KEY_PHASE_BIT != 0;
-            let number = match first & 0b11 {
-                0x0 => PacketNumber::U8(buf.get()?),
-                0x1 => PacketNumber::U16(buf.get()?),
-                0x2 => PacketNumber::U32(buf.get()?),
-                _ => {
-                    return Err(HeaderError::InvalidHeader("unknown packet type"));
-                }
-            };
-            return Ok((
-                buf.position() as usize,
-                packet.len() - buf.position() as usize,
-                Header::Short {
-                    dst_cid,
-                    number,
-                    key_phase,
-                },
-            ));
-        }
-
-        let version = buf.get::<u32>()?;
-        let ci_lengths = buf.get::<u8>()?;
-        let mut dcil = ci_lengths >> 4;
-        if dcil > 0 {
-            dcil += 3
-        };
-        let mut scil = ci_lengths & 0xF;
-        if scil > 0 {
-            scil += 3
-        };
-        if buf.remaining() < (dcil + scil) as usize {
-            return Err(HeaderError::InvalidHeader(
-                "connection IDs longer than packet",
-            ));
-        }
-
-        buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-        let dst_cid = ConnectionId::new(&cid_stage[..dcil as usize]);
-        buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-        let src_cid = ConnectionId::new(&cid_stage[..scil as usize]);
-
-        if version == 0 {
-            return Ok((
-                buf.position() as usize,
-                packet.len() - buf.position() as usize,
-                Header::VersionNegotiate {
-                    random: first & !LONG_HEADER_FORM,
-                    src_cid,
-                    dst_cid,
-                },
-            ));
-        } else if version != VERSION {
-            return Err(HeaderError::UnsupportedVersion {
-                source: src_cid,
-                destination: dst_cid,
-            });
-        }
-
-        let ty = LongType::from_byte(first)?;
-        let len = buf.get_var()?;
-        let number = buf.get()?;
-        let header_len = buf.position() as usize;
-        if buf.position() + len > packet.len() as u64 {
-            return Err(HeaderError::InvalidHeader("payload longer than packet"));
-        }
-
-        Ok((
-            header_len,
-            len as usize,
-            Header::Long {
-                ty,
-                src_cid,
-                dst_cid,
-                number,
-            },
-        ))
-    }
-
     pub fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
         match *self {
@@ -206,6 +214,80 @@ impl Header {
         w.write(dcil << 4 | scil);
         w.put_slice(dst_cid);
         w.put_slice(src_cid);
+    }
+}
+
+pub enum InvariantHeader {
+    Long {
+        first: u8,
+        version: u32,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+    },
+    Short {
+        first: u8,
+        dst_cid: ConnectionId,
+    },
+}
+
+impl InvariantHeader {
+    fn dst_cid(&self) -> ConnectionId {
+        use self::InvariantHeader::*;
+        match self {
+            Long { dst_cid, .. } => *dst_cid,
+            Short { dst_cid, .. } => *dst_cid,
+        }
+    }
+
+    fn decode<R: Buf>(buf: &mut R) -> Result<Self, HeaderError> {
+        let first = buf.get::<u8>()?;
+        let mut cid_stage = [0; MAX_CID_SIZE];
+
+        if first & LONG_HEADER_FORM == 0 {
+            if buf.remaining() < LOCAL_ID_LEN {
+                return Err(HeaderError::InvalidHeader(
+                    "destination connection ID longer than packet",
+                ));
+            }
+            buf.copy_to_slice(&mut cid_stage[..LOCAL_ID_LEN]);
+            let dst_cid = ConnectionId::new(&cid_stage[..LOCAL_ID_LEN]);
+            Ok(InvariantHeader::Short { first, dst_cid })
+        } else {
+            let version = buf.get::<u32>()?;
+            let ci_lengths = buf.get::<u8>()?;
+            let mut dcil = ci_lengths >> 4;
+            if dcil > 0 {
+                dcil += 3
+            };
+            let mut scil = ci_lengths & 0xF;
+            if scil > 0 {
+                scil += 3
+            };
+            if buf.remaining() < (dcil + scil) as usize {
+                return Err(HeaderError::InvalidHeader(
+                    "connection IDs longer than packet",
+                ));
+            }
+
+            buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
+            let dst_cid = ConnectionId::new(&cid_stage[..dcil as usize]);
+            buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
+            let src_cid = ConnectionId::new(&cid_stage[..scil as usize]);
+
+            if version > 0 && version != VERSION {
+                return Err(HeaderError::UnsupportedVersion {
+                    source: src_cid,
+                    destination: dst_cid,
+                });
+            }
+
+            Ok(InvariantHeader::Long {
+                first,
+                version,
+                dst_cid,
+                src_cid,
+            })
+        }
     }
 }
 
@@ -274,7 +356,7 @@ impl PacketNumber {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LongType {
     Initial,
     Retry,
