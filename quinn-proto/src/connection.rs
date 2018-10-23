@@ -1155,7 +1155,7 @@ impl Connection {
         ctx: &mut Context,
         now: u64,
         remote: SocketAddrV6,
-        mut packet: Packet,
+        packet: Packet,
         state: State,
     ) -> Result<State, ConnectionError> {
         match state {
@@ -1243,20 +1243,16 @@ impl Connection {
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
                         }
-                        if self
-                            .decrypt(
-                                true,
-                                number as u64,
-                                &packet.header_data,
-                                &mut packet.payload,
-                            ).is_err()
-                        {
-                            debug!(ctx.log, "failed to authenticate handshake packet");
-                            return Ok(State::Handshake(state));
+                        let payload = match self.decrypt_packet(true, packet) {
+                            Ok((payload, _)) => payload,
+                            Err(_) => {
+                                debug!(ctx.log, "failed to authenticate handshake packet");
+                                return Ok(State::Handshake(state));
+                            }
                         };
                         self.on_packet_authenticated(ctx, now, number as u64);
                         // Complete handshake (and ultimately send Finished)
-                        for frame in frame::Iter::new(packet.payload.into()) {
+                        for frame in frame::Iter::new(payload.into()) {
                             match frame {
                                 Frame::Ack(_) => {}
                                 _ => {
