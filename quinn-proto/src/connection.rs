@@ -788,20 +788,6 @@ impl Connection {
         Ok(())
     }
 
-    pub fn decrypt(
-        &self,
-        handshake: bool,
-        packet: u64,
-        header: &[u8],
-        payload: &mut BytesMut,
-    ) -> Result<(), ()> {
-        match (handshake, &self.prev_crypto) {
-            (true, _) => &self.handshake_crypto,
-            (false, &Some((boundary, ref prev))) if packet < boundary => prev,
-            _ => self.crypto.as_ref().unwrap(),
-        }.decrypt(packet, header, payload)
-    }
-
     pub fn transmit_handshake(&mut self, messages: &[u8]) {
         let offset = {
             let ss = self
@@ -2431,14 +2417,16 @@ impl Connection {
                 // Invalid key update
                 Err(None)
             }
-        } else if self
-            .decrypt(handshake, number, &packet.header_data, &mut packet.payload)
-            .is_ok()
-        {
-            Ok((packet.payload.to_vec(), number))
         } else {
-            // Unable to authenticate
-            Err(None)
+            let crypto = match (handshake, &self.prev_crypto) {
+                (true, _) => &self.handshake_crypto,
+                (false, &Some((boundary, ref prev))) if number < boundary => prev,
+                _ => self.crypto.as_ref().unwrap(),
+            };
+            match crypto.decrypt(number, &packet.header_data, &mut packet.payload) {
+                Ok(()) => Ok((packet.payload.to_vec(), number)),
+                Err(()) => Err(None),
+            }
         }
     }
 
