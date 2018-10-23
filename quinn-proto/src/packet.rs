@@ -23,7 +23,7 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
-    pub fn new(bytes: BytesMut) -> Result<Self, HeaderError> {
+    pub fn new(bytes: BytesMut) -> Result<Self, PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let invariant_header = InvariantHeader::decode(&mut buf)?;
         Ok(Self {
@@ -56,7 +56,7 @@ impl PartialDecode {
         self.invariant_header.dst_cid()
     }
 
-    pub fn finish(self) -> Result<(Packet, Option<BytesMut>), HeaderError> {
+    pub fn finish(self) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
         let Self {
             invariant_header,
             mut buf,
@@ -69,7 +69,7 @@ impl PartialDecode {
                     0x1 => PacketNumber::U16(buf.get()?),
                     0x2 => PacketNumber::U32(buf.get()?),
                     _ => {
-                        return Err(HeaderError::InvalidHeader("unknown packet type"));
+                        return Err(PacketDecodeError::InvalidHeader("unknown packet type"));
                     }
                 };
                 (
@@ -107,7 +107,9 @@ impl PartialDecode {
                     let number = buf.get()?;
                     let header_len = buf.position() as usize;
                     if len > buf.remaining() as u64 {
-                        return Err(HeaderError::InvalidHeader("payload longer than packet"));
+                        return Err(PacketDecodeError::InvalidHeader(
+                            "payload longer than packet",
+                        ));
                     }
                     (
                         header_len,
@@ -239,13 +241,13 @@ impl InvariantHeader {
         }
     }
 
-    fn decode<R: Buf>(buf: &mut R) -> Result<Self, HeaderError> {
+    fn decode<R: Buf>(buf: &mut R) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         let mut cid_stage = [0; MAX_CID_SIZE];
 
         if first & LONG_HEADER_FORM == 0 {
             if buf.remaining() < LOCAL_ID_LEN {
-                return Err(HeaderError::InvalidHeader(
+                return Err(PacketDecodeError::InvalidHeader(
                     "destination connection ID longer than packet",
                 ));
             }
@@ -264,7 +266,7 @@ impl InvariantHeader {
                 scil += 3
             };
             if buf.remaining() < (dcil + scil) as usize {
-                return Err(HeaderError::InvalidHeader(
+                return Err(PacketDecodeError::InvalidHeader(
                     "connection IDs longer than packet",
                 ));
             }
@@ -275,7 +277,7 @@ impl InvariantHeader {
             let src_cid = ConnectionId::new(&cid_stage[..scil as usize]);
 
             if version > 0 && version != VERSION {
-                return Err(HeaderError::UnsupportedVersion {
+                return Err(PacketDecodeError::UnsupportedVersion {
                     source: src_cid,
                     destination: dst_cid,
                 });
@@ -365,7 +367,7 @@ pub enum LongType {
 }
 
 impl LongType {
-    fn from_byte(b: u8) -> Result<Self, HeaderError> {
+    fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
         use self::LongType::*;
         debug_assert_eq!(b & LONG_HEADER_FORM, LONG_HEADER_FORM);
         match b ^ LONG_HEADER_FORM {
@@ -373,7 +375,7 @@ impl LongType {
             0x7e => Ok(Retry),
             0x7d => Ok(Handshake),
             0x7c => Ok(ZeroRtt),
-            _ => Err(HeaderError::InvalidLongHeaderType(b)),
+            _ => Err(PacketDecodeError::InvalidLongHeaderType(b)),
         }
     }
 }
@@ -402,7 +404,7 @@ impl slog::Value for LongType {
 }
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum HeaderError {
+pub enum PacketDecodeError {
     #[fail(display = "unsupported version")]
     UnsupportedVersion {
         source: ConnectionId,
@@ -414,9 +416,9 @@ pub enum HeaderError {
     InvalidLongHeaderType(u8),
 }
 
-impl From<coding::UnexpectedEnd> for HeaderError {
+impl From<coding::UnexpectedEnd> for PacketDecodeError {
     fn from(_: coding::UnexpectedEnd) -> Self {
-        HeaderError::InvalidHeader("unexpected end of packet")
+        PacketDecodeError::InvalidHeader("unexpected end of packet")
     }
 }
 

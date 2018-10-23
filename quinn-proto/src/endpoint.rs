@@ -16,7 +16,7 @@ use connection::{
     ReadError, State, WriteError,
 };
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
-use packet::{ConnectionId, Header, HeaderError, Packet, PacketNumber, PartialDecode};
+use packet::{ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode};
 use {
     Directionality, Side, StreamId, TransportError, LOCAL_ID_LEN, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
@@ -276,7 +276,7 @@ impl Endpoint {
                         }
                     }
                 }
-                Err(HeaderError::UnsupportedVersion {
+                Err(PacketDecodeError::UnsupportedVersion {
                     source,
                     destination,
                 }) => {
