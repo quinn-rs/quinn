@@ -12,7 +12,8 @@ use coding::{BufExt, BufMutExt};
 use crypto::{self, reset_token_for, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
-    set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, AEAD_TAG_SIZE,
+    set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
+    AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
 use stream::{self, Stream};
@@ -1009,13 +1010,26 @@ impl Connection {
         self.tls.read_tls(&mut io::Cursor::new(&buf[..n])).unwrap();
     }
 
-    pub fn handle_connected(
+    pub fn handle_decode(
         &mut self,
         ctx: &mut Context,
         now: u64,
         remote: SocketAddrV6,
-        packet: Packet,
-    ) {
+        partial_decode: PartialDecode,
+    ) -> Option<BytesMut> {
+        match partial_decode.finish() {
+            Ok((packet, rest)) => {
+                self.handle_packet(ctx, now, remote, packet);
+                rest
+            }
+            Err(e) => {
+                trace!(ctx.log, "unable to complete packet decoding"; "reason" => %e);
+                None
+            }
+        }
+    }
+
+    fn handle_packet(&mut self, ctx: &mut Context, now: u64, remote: SocketAddrV6, packet: Packet) {
         if let Some(token) = self.params.stateless_reset_token {
             if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
                 if !self.state.as_ref().unwrap().is_drained() {
@@ -1053,6 +1067,7 @@ impl Connection {
             State::Handshake(_) => true,
             _ => false,
         };
+
         let state = match self.handle_connected_inner(ctx, now, remote, packet, prev_state) {
             Ok(state) => state,
             Err(conn_err) => {
