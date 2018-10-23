@@ -774,20 +774,6 @@ impl Connection {
         self.set_loss_detection_alarm(config);
     }
 
-    pub fn update_keys(
-        &mut self,
-        packet: u64,
-        header: &[u8],
-        payload: &mut BytesMut,
-    ) -> Result<(), ()> {
-        let new = self.crypto.as_mut().unwrap().update(self.side);
-        new.decrypt(packet, header, payload)?;
-        let old = mem::replace(self.crypto.as_mut().unwrap(), new);
-        self.prev_crypto = Some((packet, old));
-        self.key_phase = !self.key_phase;
-        Ok(())
-    }
-
     pub fn transmit_handshake(&mut self, messages: &[u8]) {
         let offset = {
             let ss = self
@@ -2408,15 +2394,19 @@ impl Connection {
                 // Illegal key update
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
-            if self
-                .update_keys(number, &packet.header_data, &mut packet.payload)
-                .is_ok()
-            {
-                Ok((packet.payload.to_vec(), number))
-            } else {
-                // Invalid key update
-                Err(None)
+
+            let new = self.crypto.as_mut().unwrap().update(self.side);
+            match new.decrypt(number, &packet.header_data, &mut packet.payload) {
+                Ok(()) => {}
+                Err(_) => {
+                    return Err(None);
+                }
             }
+
+            let old = mem::replace(self.crypto.as_mut().unwrap(), new);
+            self.prev_crypto = Some((number, old));
+            self.key_phase = !self.key_phase;
+            Ok((packet.payload.to_vec(), number))
         } else {
             let crypto = match (handshake, &self.prev_crypto) {
                 (true, _) => &self.handshake_crypto,
