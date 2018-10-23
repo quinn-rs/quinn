@@ -1127,7 +1127,7 @@ impl Connection {
         ctx: &mut Context,
         now: u64,
         remote: SocketAddrV6,
-        packet: Packet,
+        mut packet: Packet,
         state: State,
     ) -> Result<State, ConnectionError> {
         match state {
@@ -1149,15 +1149,13 @@ impl Connection {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                             Ok(State::Handshake(state))
                         } else {
-                            let payload = match self.decrypt_packet(true, packet) {
-                                Ok((payload, _)) => payload,
-                                Err(_) => {
-                                    debug!(ctx.log, "failed to authenticate retry packet");
-                                    return Ok(State::Handshake(state));
-                                }
-                            };
+                            if self.decrypt_packet(true, &mut packet).is_err() {
+                                debug!(ctx.log, "failed to authenticate retry packet");
+                                return Ok(State::Handshake(state));
+                            }
 
-                            if let Ok(Some(frame)) = parse_initial(&ctx.log, payload.into()) {
+                            if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
+                            {
                                 self.read_tls(&frame);
                             } else {
                                 debug!(ctx.log, "invalid retry payload");
@@ -1204,7 +1202,6 @@ impl Connection {
                         ty: LongType::Handshake,
                         dst_cid: id,
                         src_cid: rem_cid,
-                        number,
                         ..
                     } => {
                         if !state.rem_cid_set {
@@ -1212,8 +1209,8 @@ impl Connection {
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
                         }
-                        let payload = match self.decrypt_packet(true, packet) {
-                            Ok((payload, _)) => payload,
+                        let number = match self.decrypt_packet(true, &mut packet) {
+                            Ok(number) => number,
                             Err(_) => {
                                 debug!(ctx.log, "failed to authenticate handshake packet");
                                 return Ok(State::Handshake(state));
@@ -1221,7 +1218,7 @@ impl Connection {
                         };
                         self.on_packet_authenticated(ctx, now, number as u64);
                         // Complete handshake (and ultimately send Finished)
-                        for frame in frame::Iter::new(payload.into()) {
+                        for frame in frame::Iter::new(packet.payload.into()) {
                             match frame {
                                 Frame::Ack(_) => {}
                                 _ => {
@@ -1426,7 +1423,7 @@ impl Connection {
                     trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
                     return Ok(State::Established);
                 }
-                let (payload, number) = match self.decrypt_packet(false, packet) {
+                let number = match self.decrypt_packet(false, &mut packet) {
                     Ok(x) => x,
                     Err(None) => {
                         trace!(ctx.log, "failed to authenticate packet"; "connection" => %id);
@@ -1447,7 +1444,7 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                let closed = self.process_payload(ctx, now, number, payload.into())?;
+                let closed = self.process_payload(ctx, now, number, packet.payload.into())?;
                 self.drive_tls(ctx)?;
                 Ok(if closed {
                     State::Draining
@@ -1456,8 +1453,8 @@ impl Connection {
                 })
             }
             State::HandshakeFailed(state) => {
-                if let Ok((payload, _)) = self.decrypt_packet(true, packet) {
-                    for frame in frame::Iter::new(payload.into()) {
+                if self.decrypt_packet(true, &mut packet).is_ok() {
+                    for frame in frame::Iter::new(packet.payload.into()) {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
@@ -1470,8 +1467,8 @@ impl Connection {
                 Ok(State::HandshakeFailed(state))
             }
             State::Closed(state) => {
-                if let Ok((payload, _)) = self.decrypt_packet(false, packet) {
-                    for frame in frame::Iter::new(payload.into()) {
+                if self.decrypt_packet(false, &mut packet).is_ok() {
+                    for frame in frame::Iter::new(packet.payload.into()) {
                         match frame {
                             Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                                 trace!(ctx.log, "draining");
@@ -2425,8 +2422,8 @@ impl Connection {
     pub fn decrypt_packet(
         &mut self,
         handshake: bool,
-        mut packet: Packet,
-    ) -> Result<(Vec<u8>, u64), Option<TransportError>> {
+        packet: &mut Packet,
+    ) -> Result<u64, Option<TransportError>> {
         let (key_phase, number) = match packet.header {
             Header::Short {
                 key_phase, number, ..
@@ -2453,7 +2450,7 @@ impl Connection {
             let old = mem::replace(self.crypto.as_mut().unwrap(), new);
             self.prev_crypto = Some((number, old));
             self.key_phase = !self.key_phase;
-            Ok((packet.payload.to_vec(), number))
+            Ok(number)
         } else {
             let crypto = match (handshake, &self.prev_crypto) {
                 (true, _) => &self.handshake_crypto,
@@ -2463,7 +2460,7 @@ impl Connection {
             crypto
                 .decrypt(number, &packet.header_data, &mut packet.payload)
                 .map_err(|()| None)?;
-            Ok((packet.payload.to_vec(), number))
+            Ok(number)
         }
     }
 
