@@ -429,14 +429,14 @@ impl Connection {
         ctx.incoming_handshakes += 1;
     }
 
-    pub fn get_tx_number(&mut self) -> u64 {
+    fn get_tx_number(&mut self) -> u64 {
         self.largest_sent_packet = self.largest_sent_packet.overflowing_add(1).0;
         // TODO: Handle packet number overflow gracefully
         assert!(self.largest_sent_packet < 2u64.pow(62));
         self.largest_sent_packet
     }
 
-    pub fn on_packet_sent(
+    fn on_packet_sent(
         &mut self,
         config: &Config,
         now: u64,
@@ -460,7 +460,7 @@ impl Connection {
         }
     }
 
-    pub fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
+    fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
         trace!(ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
@@ -490,7 +490,7 @@ impl Connection {
         }
     }
 
-    pub fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {
+    fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {
         self.min_rtt = cmp::min(self.min_rtt, self.latest_rtt);
         if self.latest_rtt - self.min_rtt > ack_delay {
             self.latest_rtt -= ack_delay;
@@ -509,7 +509,7 @@ impl Connection {
     }
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from high-latency handshakes
-    pub fn on_packet_acked(&mut self, config: &Config, packet: u64) {
+    fn on_packet_acked(&mut self, config: &Config, packet: u64) {
         let info = if let Some(x) = self.sent_packets.remove(&packet) {
             x
         } else {
@@ -630,7 +630,7 @@ impl Connection {
         ctx.dirty_conns.insert(self.handle);
     }
 
-    pub fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
+    fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
         self.loss_time = 0;
         let mut lost_packets = Vec::<u64>::new();
         let delay_until_lost;
@@ -681,11 +681,11 @@ impl Connection {
         }
     }
 
-    pub fn in_recovery(&self, packet: u64) -> bool {
+    fn in_recovery(&self, packet: u64) -> bool {
         packet <= self.end_of_recovery
     }
 
-    pub fn set_loss_detection_alarm(&mut self, config: &Config) {
+    fn set_loss_detection_alarm(&mut self, config: &Config) {
         if self.bytes_in_flight == 0 {
             self.set_loss_detection = Some(None);
             return;
@@ -728,12 +728,12 @@ impl Connection {
     }
 
     /// Retransmit time-out
-    pub fn rto(&self, config: &Config) -> u64 {
+    fn rto(&self, config: &Config) -> u64 {
         let computed = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay;
         cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    pub fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: u64) {
+    fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: u64) {
         trace!(ctx.log, "packet authenticated"; "connection" => %self.loc_cid, "pn" => packet);
         self.reset_idle_timeout(&ctx.config, now);
         self.pending_acks.insert_one(packet);
@@ -756,7 +756,7 @@ impl Connection {
     }
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we receive a new handshake packet.
-    pub fn handshake_cleanup(&mut self, config: &Config) {
+    fn handshake_cleanup(&mut self, config: &Config) {
         if !self.awaiting_handshake {
             return;
         }
@@ -774,7 +774,7 @@ impl Connection {
         self.set_loss_detection_alarm(config);
     }
 
-    pub fn transmit_handshake(&mut self, messages: &[u8]) {
+    fn transmit_handshake(&mut self, messages: &[u8]) {
         let offset = {
             let ss = self
                 .streams
@@ -796,7 +796,7 @@ impl Connection {
         self.awaiting_handshake = true;
     }
 
-    pub fn transmit(&mut self, stream: StreamId, data: Bytes) {
+    fn transmit(&mut self, stream: StreamId, data: Bytes) {
         let ss = self.streams.get_mut(&stream).unwrap().send_mut().unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
         let offset = ss.offset;
@@ -843,11 +843,7 @@ impl Connection {
         ctx.dirty_conns.insert(self.handle);
     }
 
-    pub fn drive_tls(
-        &mut self,
-        ctx: &mut Context,
-        tls: &mut TlsSession,
-    ) -> Result<(), TransportError> {
+    fn drive_tls(&mut self, ctx: &mut Context, tls: &mut TlsSession) -> Result<(), TransportError> {
         trace!(ctx.log, "processed stream 0 bytes");
         /* Process any new session tickets that might have been delivered
         {
@@ -1137,7 +1133,7 @@ impl Connection {
         ctx.dirty_conns.insert(self.handle);
     }
 
-    pub fn handle_connected_inner(
+    fn handle_connected_inner(
         &mut self,
         ctx: &mut Context,
         now: u64,
@@ -1439,7 +1435,7 @@ impl Connection {
         }
     }
 
-    pub fn process_payload(
+    fn process_payload(
         &mut self,
         ctx: &mut Context,
         now: u64,
@@ -2065,7 +2061,7 @@ impl Connection {
     }
 
     // TLP/RTO transmit
-    pub fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
+    fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
@@ -2094,7 +2090,7 @@ impl Connection {
         buf.into()
     }
 
-    pub fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
+    fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         Header::Short {
@@ -2157,7 +2153,7 @@ impl Connection {
         });
     }
 
-    pub fn set_params(&mut self, params: TransportParameters) {
+    fn set_params(&mut self, params: TransportParameters) {
         self.max_bi_streams = params.initial_max_bidi_streams as u64;
         if self.side == Side::Client {
             self.max_bi_streams += 1;
@@ -2368,15 +2364,15 @@ impl Connection {
         }
     }
 
-    pub fn congestion_blocked(&self) -> bool {
+    fn congestion_blocked(&self) -> bool {
         self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
     }
 
-    pub fn blocked(&self) -> bool {
+    fn blocked(&self) -> bool {
         self.data_sent >= self.max_data || self.congestion_blocked()
     }
 
-    pub fn decrypt_packet(
+    fn decrypt_packet(
         &mut self,
         handshake: bool,
         packet: &mut Packet,
@@ -2473,7 +2469,7 @@ impl Connection {
         r
     }
 
-    pub fn write_inner(
+    fn write_inner(
         &mut self,
         config: &Config,
         stream: StreamId,
@@ -2525,7 +2521,7 @@ impl Connection {
 }
 
 /// Extract stream 0 data from an Initial or Retry packet payload
-pub fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Stream>, ()> {
+fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Stream>, ()> {
     let mut result = None;
     for frame in frame::Iter::new(payload) {
         match frame {
