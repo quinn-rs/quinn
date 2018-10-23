@@ -15,7 +15,7 @@ use connection::{
     handshake_close, Connection, ConnectionError, ConnectionHandle, ReadError, State, WriteError,
 };
 use crypto::{self, reset_token_for, ClientConfig, ConnectError, Crypto, ServerConfig};
-use packet::{ConnectionId, Header, HeaderError, LongType, Packet, PacketNumber};
+use packet::{ConnectionId, Header, HeaderError, Packet, PacketNumber, PartialDecode};
 use {
     Directionality, Side, StreamId, TransportError, LOCAL_ID_LEN, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
@@ -264,8 +264,17 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            let (packet, rest) = match Packet::decode(data) {
-                Ok(x) => x,
+            match PartialDecode::new(data) {
+                Ok(partial_decode) => {
+                    match self.handle_decode(now, remote, partial_decode, datagram_len) {
+                        Some(rest) => {
+                            data = rest;
+                        }
+                        None => {
+                            return;
+                        }
+                    }
+                }
                 Err(HeaderError::UnsupportedVersion {
                     source,
                     destination,
@@ -290,27 +299,25 @@ impl Endpoint {
                     return;
                 }
                 Err(e) => {
-                    trace!(self.ctx.log, "unable to process packet"; "reason" => %e);
+                    trace!(self.ctx.log, "unable to decode invariant header"; "reason" => %e);
                     return;
                 }
-            };
-            self.handle_packet(now, remote, packet, datagram_len);
-            data = rest;
+            }
         }
     }
 
-    fn handle_packet(
+    fn handle_decode(
         &mut self,
         now: u64,
         remote: SocketAddrV6,
-        packet: Packet,
+        partial_decode: PartialDecode,
         datagram_len: usize,
-    ) {
+    ) -> Option<BytesMut> {
         //
         // Handle packet on existing connection, if any
         //
 
-        let dst_cid = packet.header.dst_cid();
+        let dst_cid = partial_decode.dst_cid();
         let conn = if let Some(&conn) = self.connection_ids.get(&dst_cid) {
             Some(conn)
         } else if let Some(&conn) = self.connection_ids_initial.get(&dst_cid) {
@@ -321,8 +328,12 @@ impl Endpoint {
             None
         };
         if let Some(conn) = conn {
-            self.connections[conn.0].handle_connected(&mut self.ctx, now, remote, packet);
-            return;
+            return self.connections[conn.0].handle_decode(
+                &mut self.ctx,
+                now,
+                remote,
+                partial_decode,
+            );
         }
 
         //
@@ -330,44 +341,63 @@ impl Endpoint {
         //
 
         if !self.listen() {
-            debug!(self.ctx.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
-            return;
+            debug!(
+                self.ctx.log,
+                "dropping packet from unrecognized connection {connection}",
+                connection = dst_cid
+            );
+            return None;
         }
 
-        match packet.header {
-            Header::Long {
-                ty: LongType::Initial,
-                ..
-            } => {
-                self.handle_initial(now, remote, packet, datagram_len);
-                return;
+        if partial_decode.has_long_header() {
+            if partial_decode.is_initial() {
+                if datagram_len < MIN_INITIAL_SIZE {
+                    debug!(
+                        self.ctx.log,
+                        "ignoring short initial on {connection}",
+                        connection = partial_decode.dst_cid()
+                    );
+                    return None;
+                }
+
+                let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
+                return match partial_decode.finish() {
+                    Ok((packet, rest)) => {
+                        self.handle_initial(now, remote, packet, crypto);
+                        rest
+                    }
+                    Err(e) => {
+                        trace!(self.ctx.log, "unable to decode packet"; "reason" => %e);
+                        None
+                    }
+                };
+            } else {
+                debug!(
+                    self.ctx.log,
+                    "ignoring packet for unknown connection {connection} with unexpected type",
+                    connection = dst_cid
+                );
+                return None;
             }
-            Header::Long { ty, .. } => {
-                debug!(self.ctx.log, "ignoring packet for unknown connection {connection} with unexpected type {type:?}",
-                       connection=dst_cid, type=ty);
-                return;
-            }
-            _ => {}
         }
 
         //
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
         //
 
-        let key_phase = packet.header.key_phase();
         if !dst_cid.is_empty() {
             debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
             let padding = self.ctx.rng.gen_range(
                 0,
-                cmp::max(RESET_TOKEN_SIZE + 8, packet.payload.len()) - RESET_TOKEN_SIZE,
+                cmp::max(RESET_TOKEN_SIZE + 8, datagram_len) - RESET_TOKEN_SIZE,
             );
             buf.reserve_exact(1 + MAX_CID_SIZE + 1 + padding + RESET_TOKEN_SIZE);
             Header::Short {
                 dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8),
                 number: PacketNumber::U8(self.ctx.rng.gen()),
-                key_phase,
+                key_phase: false,
             }.encode(&mut buf);
             {
                 let start = buf.len();
@@ -388,6 +418,7 @@ impl Endpoint {
                 "dropping unrecognized short packet without ID"
             );
         }
+        None
     }
 
     /// Initiate a connection
@@ -436,22 +467,7 @@ impl Endpoint {
         conn
     }
 
-    fn handle_initial(
-        &mut self,
-        now: u64,
-        remote: SocketAddrV6,
-        packet: Packet,
-        datagram_len: usize,
-    ) {
-        if datagram_len < MIN_INITIAL_SIZE {
-            debug!(
-                self.ctx.log,
-                "ignoring short initial on {connection}",
-                connection = packet.header.dst_cid()
-            );
-            return;
-        }
-
+    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: Crypto) {
         let Packet {
             header,
             header_data,
@@ -467,7 +483,6 @@ impl Endpoint {
             _ => panic!("non-initial packet in handle_initial()"),
         };
 
-        let crypto = Crypto::new_initial(&dst_cid, Side::Server);
         if crypto
             .decrypt(packet_number as u64, &header_data, &mut payload)
             .is_err()
