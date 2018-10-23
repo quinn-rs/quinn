@@ -818,20 +818,6 @@ impl Connection {
         Ok(())
     }
 
-    pub fn decrypt(
-        &self,
-        handshake: bool,
-        packet: u64,
-        header: &[u8],
-        payload: &mut BytesMut,
-    ) -> Result<(), ()> {
-        match (handshake, &self.prev_crypto) {
-            (true, _) => &self.handshake_crypto,
-            (false, &Some((boundary, ref prev))) if packet < boundary => prev,
-            _ => self.crypto.as_ref().unwrap(),
-        }.decrypt(packet, header, payload)
-    }
-
     pub fn transmit_handshake(&mut self, messages: &[u8]) {
         let offset = {
             let ss = self
@@ -1176,16 +1162,16 @@ impl Connection {
                         } else if state.clienthello_packet.unwrap() > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
                             Ok(State::Handshake(state))
-                        } else if self
-                            .decrypt(
-                                true,
-                                number as u64,
-                                &packet.header_data,
-                                &mut packet.payload,
-                            ).is_ok()
-                        {
-                            if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
-                            {
+                        } else {
+                            let payload = match self.decrypt_packet(true, packet) {
+                                Ok((payload, _)) => payload,
+                                Err(_) => {
+                                    debug!(ctx.log, "failed to authenticate retry packet");
+                                    return Ok(State::Handshake(state));
+                                }
+                            };
+
+                            if let Ok(Some(frame)) = parse_initial(&ctx.log, payload.into()) {
                                 self.read_tls(&frame);
                             } else {
                                 debug!(ctx.log, "invalid retry payload");
@@ -1226,9 +1212,6 @@ impl Connection {
                                     Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                                 }
                             }
-                        } else {
-                            debug!(ctx.log, "failed to authenticate retry packet");
-                            Ok(State::Handshake(state))
                         }
                     }
                     Header::Long {
@@ -2477,23 +2460,19 @@ impl Connection {
                 // Illegal key update
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
-            if self
-                .update_keys(number, &packet.header_data, &mut packet.payload)
-                .is_ok()
-            {
-                Ok((packet.payload.to_vec(), number))
-            } else {
-                // Invalid key update
-                Err(None)
-            }
-        } else if self
-            .decrypt(handshake, number, &packet.header_data, &mut packet.payload)
-            .is_ok()
-        {
+            self.update_keys(number, &packet.header_data, &mut packet.payload)
+                .map_err(|_| None)?;
             Ok((packet.payload.to_vec(), number))
         } else {
-            // Unable to authenticate
-            Err(None)
+            let crypto = match (handshake, &self.prev_crypto) {
+                (true, _) => &self.handshake_crypto,
+                (false, &Some((boundary, ref prev))) if number < boundary => prev,
+                _ => self.crypto.as_ref().unwrap(),
+            };
+            crypto
+                .decrypt(number, &packet.header_data, &mut packet.payload)
+                .map_err(|()| None)?;
+            Ok((packet.payload.to_vec(), number))
         }
     }
 
