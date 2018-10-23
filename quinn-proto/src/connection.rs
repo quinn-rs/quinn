@@ -981,7 +981,13 @@ impl Connection {
         }
     }
 
-    fn handle_packet(&mut self, ctx: &mut Context, now: u64, remote: SocketAddrV6, packet: Packet) {
+    fn handle_packet(
+        &mut self,
+        ctx: &mut Context,
+        now: u64,
+        remote: SocketAddrV6,
+        mut packet: Packet,
+    ) {
         if let Some(token) = self.params.stateless_reset_token {
             if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
                 if !self.state.as_ref().unwrap().is_drained() {
@@ -1011,58 +1017,87 @@ impl Connection {
         }
 
         trace!(ctx.log, "connection got packet"; "connection" => %self.loc_cid, "len" => packet.payload.len());
-        let was_closed = self.state.as_ref().unwrap().is_closed();
+        let (prev_state, was_handshake) = match self.state.take().unwrap() {
+            State::Handshake(mut state) => {
+                if !state.rem_cid_set {
+                    match packet.header {
+                        Header::Long {
+                            src_cid: rem_cid, ..
+                        } => {
+                            trace!(ctx.log, "got remote connection id"; "connection" => %self.loc_cid, "rem_cid" => %rem_cid);
+                            self.rem_cid = rem_cid;
+                            state.rem_cid_set = true;
+                        }
+                        _ => {}
+                    }
+                }
+                (State::Handshake(state), true)
+            }
+            state => (state, false),
+        };
+        let was_closed = prev_state.is_closed();
 
-        // State transitions
-        let prev_state = self.state.take().unwrap();
-        let was_handshake = match prev_state {
-            State::Handshake(_) => true,
-            _ => false,
+        let number = match self.decrypt_packet(was_handshake, &mut packet) {
+            Ok(number) => Some(number),
+            Err(Some(e)) => {
+                warn!(ctx.log, "got illegal packet"; "connection" => %self.loc_cid, "reason" => %e);
+                None
+            }
+            Err(None) => {
+                debug!(ctx.log, "failed to authenticate packet"; "connection" => %self.loc_cid);
+                None
+            }
         };
 
-        let state = match self.handle_connected_inner(ctx, now, remote, packet, prev_state) {
-            Ok(state) => state,
-            Err(conn_err) => {
-                ctx.events.push_back((
-                    self.handle,
-                    Event::ConnectionLost {
-                        reason: conn_err.clone(),
-                    },
-                ));
+        // State transitions
+        let state = if let Some(number) = number {
+            self.on_packet_authenticated(ctx, now, number);
+            match self.handle_connected_inner(ctx, now, remote, number, packet, prev_state) {
+                Ok(state) => state,
+                Err(conn_err) => {
+                    ctx.events.push_back((
+                        self.handle,
+                        Event::ConnectionLost {
+                            reason: conn_err.clone(),
+                        },
+                    ));
 
-                match conn_err {
-                    ConnectionError::ApplicationClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
+                    match conn_err {
+                        ConnectionError::ApplicationClosed { reason } => {
+                            if was_handshake {
+                                State::handshake_failed(reason, None)
+                            } else {
+                                State::closed(reason)
+                            }
                         }
-                    }
-                    ConnectionError::ConnectionClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
+                        ConnectionError::ConnectionClosed { reason } => {
+                            if was_handshake {
+                                State::handshake_failed(reason, None)
+                            } else {
+                                State::closed(reason)
+                            }
                         }
-                    }
-                    ConnectionError::Reset => {
-                        debug!(ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
-                        panic!("unexpected connection reset error received");
-                    }
-                    ConnectionError::TimedOut => {
-                        debug!(ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
-                        panic!("unexpected connection timed out error received");
-                    }
-                    ConnectionError::TransportError { error_code } => {
-                        if was_handshake {
-                            State::handshake_failed(error_code, None)
-                        } else {
-                            State::closed(error_code)
+                        ConnectionError::Reset => {
+                            debug!(ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                            panic!("unexpected connection reset error received");
                         }
+                        ConnectionError::TimedOut => {
+                            debug!(ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                            panic!("unexpected connection timed out error received");
+                        }
+                        ConnectionError::TransportError { error_code } => {
+                            if was_handshake {
+                                State::handshake_failed(error_code, None)
+                            } else {
+                                State::closed(error_code)
+                            }
+                        }
+                        ConnectionError::VersionMismatch => State::Draining,
                     }
-                    ConnectionError::VersionMismatch => State::Draining,
                 }
             }
+        } else {
+            prev_state
         };
 
         if !was_closed && state.is_closed() {
@@ -1107,7 +1142,8 @@ impl Connection {
         ctx: &mut Context,
         now: u64,
         remote: SocketAddrV6,
-        mut packet: Packet,
+        number: u64,
+        packet: Packet,
         state: State,
     ) -> Result<State, ConnectionError> {
         match state {
@@ -1153,22 +1189,8 @@ impl Connection {
                     Header::Long {
                         ty: LongType::Handshake,
                         dst_cid: id,
-                        src_cid: rem_cid,
                         ..
                     } => {
-                        if !state.rem_cid_set {
-                            trace!(ctx.log, "got remote connection id"; "connection" => %id, "rem_cid" => %rem_cid);
-                            self.rem_cid = rem_cid;
-                            state.rem_cid_set = true;
-                        }
-                        let number = match self.decrypt_packet(true, &mut packet) {
-                            Ok(number) => number,
-                            Err(_) => {
-                                debug!(ctx.log, "failed to authenticate handshake packet");
-                                return Ok(State::Handshake(state));
-                            }
-                        };
-                        self.on_packet_authenticated(ctx, now, number as u64);
                         // Complete handshake (and ultimately send Finished)
                         for frame in frame::Iter::new(packet.payload.into()) {
                             match frame {
@@ -1369,18 +1391,7 @@ impl Connection {
                     trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
                     return Ok(State::Established(state));
                 }
-                let number = match self.decrypt_packet(false, &mut packet) {
-                    Ok(x) => x,
-                    Err(None) => {
-                        trace!(ctx.log, "failed to authenticate packet"; "connection" => %id);
-                        return Ok(State::Established(state));
-                    }
-                    Err(Some(e)) => {
-                        warn!(ctx.log, "got illegal packet"; "connection" => %id);
-                        return Err(e.into());
-                    }
-                };
-                self.on_packet_authenticated(ctx, now, number);
+
                 if self.awaiting_handshake {
                     assert_eq!(
                         self.side,
@@ -1400,29 +1411,25 @@ impl Connection {
                 })
             }
             State::HandshakeFailed(state) => {
-                if self.decrypt_packet(true, &mut packet).is_ok() {
-                    for frame in frame::Iter::new(packet.payload.into()) {
-                        match frame {
-                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                                trace!(ctx.log, "draining");
-                                return Ok(State::Draining);
-                            }
-                            _ => {}
+                for frame in frame::Iter::new(packet.payload.into()) {
+                    match frame {
+                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                            trace!(ctx.log, "draining");
+                            return Ok(State::Draining);
                         }
+                        _ => {}
                     }
                 }
                 Ok(State::HandshakeFailed(state))
             }
             State::Closed(state) => {
-                if self.decrypt_packet(false, &mut packet).is_ok() {
-                    for frame in frame::Iter::new(packet.payload.into()) {
-                        match frame {
-                            Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                                trace!(ctx.log, "draining");
-                                return Ok(State::Draining);
-                            }
-                            _ => {}
+                for frame in frame::Iter::new(packet.payload.into()) {
+                    match frame {
+                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                            trace!(ctx.log, "draining");
+                            return Ok(State::Draining);
                         }
+                        _ => {}
                     }
                 }
                 Ok(State::Closed(state))
