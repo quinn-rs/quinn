@@ -1018,7 +1018,9 @@ impl Connection {
                 if !state.rem_cid_set {
                     match packet.header {
                         Header::Long {
-                            src_cid: rem_cid, ..
+                            ty: LongType::Handshake,
+                            src_cid: rem_cid,
+                            ..
                         } => {
                             trace!(ctx.log, "got remote connection id"; "connection" => %self.loc_cid, "rem_cid" => %rem_cid);
                             self.rem_cid = rem_cid;
@@ -1300,12 +1302,7 @@ impl Connection {
                             }
                         }
                     }
-                    Header::Long {
-                        ty: LongType::Initial,
-                        ..
-                    }
-                        if self.side == Side::Server =>
-                    {
+                    Header::Initial { .. } => {
                         trace!(ctx.log, "dropping duplicate Initial");
                         Ok(State::Handshake(state))
                     }
@@ -1794,7 +1791,7 @@ impl Connection {
                 buf.reserve_exact(self.mtu as usize);
                 number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
-                let ty = if self.side == Side::Client && self
+                let header = if self.side == Side::Client && self
                     .handshake_pending
                     .stream
                     .front()
@@ -1806,17 +1803,22 @@ impl Connection {
                         }
                     }
                     is_initial = true;
-                    LongType::Initial
+                    Header::Initial {
+                        src_cid: self.loc_cid,
+                        dst_cid: self.rem_cid,
+                        token: vec![],
+                        number: number as u32,
+                    }
                 } else {
                     is_initial = false;
-                    LongType::Handshake
+                    Header::Long {
+                        ty: LongType::Handshake,
+                        src_cid: self.loc_cid,
+                        dst_cid: self.rem_cid,
+                        number: number as u32,
+                    }
                 };
-                Header::Long {
-                    ty,
-                    number: number as u32,
-                    src_cid: self.loc_cid,
-                    dst_cid: self.rem_cid,
-                }.encode(&mut buf);
+                header.encode(&mut buf);
                 pending = &mut self.handshake_pending;
                 crypto = &self.handshake_crypto;
             } else if established {

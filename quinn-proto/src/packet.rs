@@ -61,7 +61,7 @@ impl PartialDecode {
             invariant_header,
             mut buf,
         } = self;
-        let (header_len, payload_len, header, allow_coalesced) = match invariant_header {
+        let (payload_len, header, allow_coalesced) = match invariant_header {
             InvariantHeader::Short { first, dst_cid } => {
                 let key_phase = first & KEY_PHASE_BIT != 0;
                 let number = match first & 0b11 {
@@ -73,7 +73,6 @@ impl PartialDecode {
                     }
                 };
                 (
-                    buf.position() as usize,
                     buf.remaining(),
                     Header::Short {
                         dst_cid,
@@ -84,28 +83,29 @@ impl PartialDecode {
                 )
             }
             InvariantHeader::Long {
+                version: 0,
+                dst_cid,
+                src_cid,
+                ..
+            } => (
+                buf.remaining(),
+                Header::VersionNegotiate { src_cid, dst_cid },
+                false,
+            ),
+            InvariantHeader::Long {
                 first,
                 version,
                 dst_cid,
                 src_cid,
             } => {
-                if version == 0 {
-                    (
-                        buf.position() as usize,
-                        buf.remaining(),
-                        Header::VersionNegotiate { src_cid, dst_cid },
-                        false,
-                    )
-                } else {
-                    debug_assert_eq!(version, VERSION);
-                    let ty = LongType::from_byte(first)?;
-                    if let LongType::Retry = ty {
+                debug_assert_eq!(version, VERSION);
+                match LongType::from_byte(first)? {
+                    LongType::Retry => {
                         let odcil = buf.get::<u8>()? as usize;
                         let mut odci_stage = [0; 18];
                         buf.copy_to_slice(&mut odci_stage[0..odcil]);
                         let orig_dst_cid = ConnectionId::new(&odci_stage[..odcil]);
                         (
-                            buf.position() as usize,
                             buf.remaining(),
                             Header::Retry {
                                 src_cid,
@@ -114,17 +114,29 @@ impl PartialDecode {
                             },
                             false,
                         )
-                    } else {
+                    }
+                    LongType::Initial => {
+                        let token_length = buf.get_var()? as usize;
+                        let mut token = vec![0; token_length];
+                        buf.copy_to_slice(&mut token);
+
                         let len = buf.get_var()?;
                         let number = buf.get()?;
-                        let header_len = buf.position() as usize;
-                        if len > buf.remaining() as u64 {
-                            return Err(PacketDecodeError::InvalidHeader(
-                                "payload longer than packet",
-                            ));
-                        }
                         (
-                            header_len,
+                            len as usize,
+                            Header::Initial {
+                                src_cid,
+                                dst_cid,
+                                token,
+                                number,
+                            },
+                            true,
+                        )
+                    }
+                    ty @ LongType::Handshake | ty @ LongType::ZeroRtt => {
+                        let len = buf.get_var()?;
+                        let number = buf.get()?;
+                        (
                             len as usize,
                             Header::Long {
                                 ty,
@@ -139,7 +151,14 @@ impl PartialDecode {
             }
         };
 
+        let header_len = buf.position() as usize;
         let mut bytes = buf.into_inner();
+        if bytes.len() < header_len + payload_len {
+            return Err(PacketDecodeError::InvalidHeader(
+                "payload longer than packet",
+            ));
+        }
+
         let header_data = bytes.split_to(header_len).freeze();
         let payload = bytes.split_to(payload_len);
         Ok((
@@ -161,6 +180,12 @@ pub struct Packet {
 
 #[derive(Debug, Clone)]
 pub enum Header {
+    Initial {
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
+        token: Vec<u8>,
+        number: u32,
+    },
     Long {
         ty: LongType,
         src_cid: ConnectionId,
@@ -187,6 +212,20 @@ impl Header {
     pub fn encode<W: BufMut>(&self, w: &mut W) {
         use self::Header::*;
         match *self {
+            Initial {
+                ref src_cid,
+                ref dst_cid,
+                ref token,
+                number,
+            } => {
+                w.write(u8::from(LongType::Initial));
+                w.write(VERSION);
+                Self::encode_cids(w, dst_cid, src_cid);
+                w.write_var(token.len() as u64);
+                w.put_slice(token);
+                w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
+                w.write(number);
+            }
             Long {
                 ty,
                 ref src_cid,
