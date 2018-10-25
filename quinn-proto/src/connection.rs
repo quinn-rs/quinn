@@ -965,7 +965,12 @@ impl Connection {
         remote: SocketAddrV6,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
-        match partial_decode.finish() {
+        let pn_key = if partial_decode.is_handshake() {
+            &self.handshake_crypto.pn_key
+        } else {
+            &self.crypto.as_ref().unwrap().pn_key
+        };
+        match partial_decode.finish(pn_key) {
             Ok((packet, rest)) => {
                 self.handle_packet(ctx, now, remote, packet);
                 rest

@@ -5,6 +5,8 @@ use rand::Rng;
 use slog;
 
 use coding::{self, BufExt, BufMutExt};
+use crypto::PacketNumberKey;
+use varint;
 use {LOCAL_ID_LEN, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
@@ -52,11 +54,31 @@ impl PartialDecode {
         }
     }
 
+    pub fn is_handshake(&self) -> bool {
+        match self.invariant_header {
+            InvariantHeader::Long {
+                version: VERSION,
+                first,
+                ..
+            } => match LongType::from_byte(first).unwrap() {
+                LongType::Initial => true,
+                LongType::Handshake => true,
+                LongType::Retry => false,
+                LongType::ZeroRtt => false,
+            },
+            InvariantHeader::Long { .. } => false,
+            InvariantHeader::Short { .. } => false,
+        }
+    }
+
     pub fn dst_cid(&self) -> ConnectionId {
         self.invariant_header.dst_cid()
     }
 
-    pub fn finish(self) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
+    pub fn finish(
+        self,
+        pn_key: &PacketNumberKey,
+    ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
         let Self {
             invariant_header,
             mut buf,
@@ -64,14 +86,20 @@ impl PartialDecode {
         let (payload_len, header, allow_coalesced) = match invariant_header {
             InvariantHeader::Short { first, dst_cid } => {
                 let key_phase = first & KEY_PHASE_BIT != 0;
-                let number = match first & 0b11 {
-                    0x0 => PacketNumber::U8(buf.get()?),
-                    0x1 => PacketNumber::U16(buf.get()?),
-                    0x2 => PacketNumber::U32(buf.get()?),
-                    _ => {
-                        return Err(PacketDecodeError::InvalidHeader("unknown packet type"));
-                    }
-                };
+                if buf.remaining() < 1 {
+                    return Err(PacketDecodeError::InvalidHeader(
+                        "cannot read packet number",
+                    ));
+                }
+
+                let sample_offset = 1 + dst_cid.len() + 4;
+                let packet_length = buf.get_ref().len();
+                if sample_offset + pn_key.sample_size() > packet_length {
+                    sample_offset = packet_length - pn_key.sample_size();
+                }
+
+                let sample = &buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()];
+                let number = self.get_packet_number(pn_key, sample)?;
                 (
                     buf.remaining(),
                     Header::Short {
@@ -121,6 +149,13 @@ impl PartialDecode {
                         buf.copy_to_slice(&mut token);
 
                         let len = buf.get_var()?;
+                        let sample_offset = 10
+                            + dst_cid.len()
+                            + src_cid.len()
+                            + varint::size(len).unwrap()
+                            + varint::size(token_length as u64).unwrap()
+                            + token.len();
+
                         let number = buf.get()?;
                         (
                             len as usize,
@@ -135,6 +170,9 @@ impl PartialDecode {
                     }
                     ty @ LongType::Handshake | ty @ LongType::ZeroRtt => {
                         let len = buf.get_var()?;
+                        let sample_offset =
+                            10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
+
                         let number = buf.get()?;
                         (
                             len as usize,
@@ -169,6 +207,31 @@ impl PartialDecode {
             },
             if allow_coalesced { Some(bytes) } else { None },
         ))
+    }
+
+    fn get_packet_number(
+        &mut self,
+        pn_key: &PacketNumberKey,
+        sample: &[u8],
+    ) -> Result<PacketNumber, PacketDecodeError> {
+        let mut first = [self.buf.bytes()[0]; 1];
+        pn_key.decrypt(sample, &mut first);
+        let len = if first[0] < 0x80 {
+            1
+        } else if first[0] < 0xb0 {
+            2
+        } else {
+            4
+        };
+
+        let pos = self.buf.position() as usize;
+        pn_key.decrypt(sample, &mut self.buf.get_mut()[pos..pos + len]);
+        match len {
+            1 => Ok(PacketNumber::U8(self.buf.get()?)),
+            2 => Ok(PacketNumber::U16(self.buf.get()?)),
+            4 => Ok(PacketNumber::U32(self.buf.get()?)),
+            _ => Err(PacketDecodeError::InvalidHeader("unknown packet type")),
+        }
     }
 }
 
