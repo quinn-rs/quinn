@@ -22,7 +22,7 @@ presentation, Quinn has been merged with quicr, another Rust implementation.
 All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the [issue tracker][issues].
 
-Quinn was created and is maintained by by Dirkjan Ochtman and Benjamin Saunders.
+Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 
 ## Features
 
