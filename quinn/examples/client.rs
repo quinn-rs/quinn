@@ -7,9 +7,9 @@ extern crate slog;
 extern crate futures;
 extern crate rustls;
 extern crate slog_term;
-extern crate url;
 #[macro_use]
 extern crate structopt;
+extern crate url;
 
 use std::fs;
 use std::io::{self, Write};
