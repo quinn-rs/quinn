@@ -194,7 +194,7 @@ impl Pending {
         }
     }
 
-    fn fail(&mut self, reason: ConnectionError) {
+    fn fail(&mut self, reason: &ConnectionError) {
         self.error = Some(reason.clone());
         for (_, writer) in self.blocked_writers.drain() {
             writer.notify()
@@ -681,7 +681,7 @@ impl Future for Driver {
                         // HACK HACK HACK: Handshake currently emits ConnectionLost, which means we might not know about
                         // this connection yet. This should probably be made more consistent.
                         if let Some(x) = endpoint.pending.get_mut(&connection) {
-                            x.fail(reason);
+                            x.fail(&reason);
                         }
                     }
                     ConnectionDrained => {
