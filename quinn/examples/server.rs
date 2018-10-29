@@ -7,7 +7,6 @@ extern crate slog;
 extern crate futures;
 extern crate rustls;
 extern crate slog_term;
-#[macro_use]
 extern crate structopt;
 extern crate tokio_current_thread;
 
