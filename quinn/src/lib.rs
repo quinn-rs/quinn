@@ -903,7 +903,7 @@ fn duration_micros(x: u64) -> Duration {
     Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
 }
 fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
+    x.as_secs() * 1000 * 1000 + u64::from(x.subsec_micros())
 }
 
 fn normalize(x: SocketAddr) -> SocketAddrV6 {
