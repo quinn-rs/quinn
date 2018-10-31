@@ -22,7 +22,7 @@ use webpki::DNSNameRef;
 
 use endpoint::EndpointError;
 use packet::{ConnectionId, AEAD_TAG_SIZE};
-use transport_parameters::TransportParameters;
+use transport_parameters::{ClientTransportParameters, ServerTransportParameters};
 use {Side, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
@@ -34,21 +34,29 @@ impl TlsSession {
     pub fn new_client(
         config: &Arc<ClientConfig>,
         hostname: &str,
-        params: &TransportParameters,
+        params: &ClientTransportParameters,
     ) -> Result<TlsSession, EndpointError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
             .map_err(|_| EndpointError::InvalidDnsName(hostname.into()))?;
         Ok(TlsSession::Client(ClientSession::new_quic(
             &config,
             pki_server_name,
-            to_vec(Side::Client, params),
+            {
+                let mut bytes = Vec::new();
+                params.write(&mut bytes);
+                bytes
+            },
         )))
     }
 
-    pub fn new_server(config: &Arc<ServerConfig>, params: &TransportParameters) -> TlsSession {
+    pub fn new_server(config: &Arc<ServerConfig>, params: &ServerTransportParameters) -> TlsSession {
         TlsSession::Server(ServerSession::new_quic(
             config,
-            to_vec(Side::Server, params),
+            {
+                let mut bytes = Vec::new();
+                params.write(&mut bytes);
+                bytes
+            },
         ))
     }
 
@@ -81,12 +89,6 @@ impl DerefMut for TlsSession {
 
 pub fn build_server_config() -> ServerConfig {
     ServerConfig::new(NoClientAuth::new())
-}
-
-fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    params.write(side, &mut bytes);
-    bytes
 }
 
 /// Value used in ACKs we transmit

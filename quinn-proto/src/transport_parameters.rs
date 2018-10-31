@@ -8,7 +8,7 @@ use bytes::{Buf, BufMut};
 use coding::{BufExt, BufMutExt};
 use endpoint::Config;
 use packet::ConnectionId;
-use {Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use {TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Apply a given macro to a list of all the transport parameters having simple integer types, along with their codes and
 // default values. Using this helps us avoid error-prone duplication of the contained information across decoding,
@@ -41,11 +41,6 @@ macro_rules! make_struct {
             $(pub $name : $ty,)*
 
             pub disable_migration: bool,
-
-            // Server-only
-            pub original_connection_id: Option<ConnectionId>,
-            pub stateless_reset_token: Option<[u8; 16]>,
-            pub preferred_address: Option<PreferredAddress>,
         }
 
         impl Default for TransportParameters {
@@ -55,10 +50,6 @@ macro_rules! make_struct {
                     $($name: $default,)*
 
                     disable_migration: false,
-
-                    original_connection_id: None,
-                    stateless_reset_token: None,
-                    preferred_address: None,
                 }
             }
         }
@@ -81,6 +72,17 @@ impl TransportParameters {
             ..Self::default()
         }
     }
+}
+
+pub struct ClientTransportParameters {
+    pub params: TransportParameters,
+}
+
+pub struct ServerTransportParameters {
+    pub params: TransportParameters,
+    pub original_connection_id: Option<ConnectionId>,
+    pub stateless_reset_token: Option<[u8; 16]>,
+    pub preferred_address: Option<PreferredAddress>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -187,31 +189,147 @@ impl From<Error> for TransportError {
     }
 }
 
-impl TransportParameters {
-    pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
-        if side == Side::Server {
-            w.write::<u32>(VERSION); // Negotiated version
-            w.write::<u8>(8); // Bytes of supported versions
-            w.write::<u32>(0x0a1a_2a3a); // Reserved version
-            w.write::<u32>(VERSION); // Real supported version
-        } else {
-            w.write::<u32>(VERSION); // Initially requested version
+// State to check for duplicate transport parameters.
+macro_rules! param_state {
+    {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
+        struct ParamState {
+            $($name: bool,)*
         }
+    }
+}
+apply_params!(param_state);
 
-        let mut buf = Vec::new();
-
+impl TransportParameters {
+    pub fn write<W: BufMut>(&self, w: &mut W) {
         macro_rules! write_params {
             {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
                 $(
                     if self.$name != $default {
-                        buf.write::<u16>($code);
-                        buf.write::<u16>(mem::size_of::<$ty>() as u16);
-                        buf.write(self.$name);
+                        w.write::<u16>($code);
+                        w.write::<u16>(mem::size_of::<$ty>() as u16);
+                        w.write(self.$name);
                     }
                 )*
             }
         }
         apply_params!(write_params);
+
+        if self.disable_migration {
+            w.write::<u16>(0x0009);
+            w.write::<u16>(0);
+        }
+    }
+
+    pub fn read<R: Buf>(&mut self, id: u16, len: u16, r: &mut R, got: &mut ParamState) -> Result<(), Error> {
+        if id == 0x0009 {
+            if len != 0 || self.disable_migration {
+                return Err(Error::Malformed);
+            }
+            self.disable_migration = true;
+        }
+        else {
+            macro_rules! parse {
+                {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
+                    match id {
+                        $($code => {
+                            if len != mem::size_of::<$ty>() as u16 || got.$name { return Err(Error::Malformed); }
+                            self.$name = r.get().unwrap();
+                            got.$name = true;
+                        })*
+                        _ => r.advance(len as usize),
+                    }
+                }
+            }
+            apply_params!(parse);
+        }
+
+        if self.ack_delay_exponent > 20 {
+            return Err(Error::IllegalValue);
+        }
+
+        Ok(())
+    }
+}
+
+impl ClientTransportParameters {
+    pub fn new(config: &Config) -> Self {
+        ClientTransportParameters {
+            params: TransportParameters::new(config)
+        }
+    }
+
+    pub fn write<W: BufMut>(&self, w: &mut W) {
+        w.write::<u32>(VERSION); // Initially requested version
+
+        let mut buf = Vec::new();
+
+        self.params.write(&mut buf);
+
+        w.write::<u16>(buf.len() as u16);
+        w.put_slice(&buf);
+    }
+
+    pub fn read<R: Buf>(r: &mut R) -> Result<Self, Error> {
+        if r.remaining() < 26 {
+            return Err(Error::Malformed);
+        }
+        // We only support one version, so there is no validation to do here.
+        r.get::<u32>().unwrap();
+
+        let params_len = r.get::<u16>().unwrap();
+        if params_len as usize != r.remaining() {
+            return Err(Error::Malformed);
+        }
+
+        let params_len = r.get::<u16>().unwrap();
+        if params_len as usize != r.remaining() {
+            return Err(Error::Malformed);
+        }
+
+        let mut params = TransportParameters::default();
+
+        // State to check for duplicate transport parameters.
+        macro_rules! make_guard {
+            {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {{
+                ParamState {
+                    $($name: false,)*
+                }
+            }}
+        }
+        let mut got = apply_params!(make_guard);
+
+        while r.has_remaining() {
+            if r.remaining() < 4 {
+                return Err(Error::Malformed);
+            }
+            let id = r.get::<u16>().unwrap();
+            let len = r.get::<u16>().unwrap();
+            if r.remaining() < len as usize {
+                return Err(Error::Malformed);
+            }
+
+            match id {
+                0x000d => return Err(Error::Malformed),
+                0x0006 => return Err(Error::Malformed),
+                0x0004 => return Err(Error::Malformed),
+                _ => params.read(id, len, r, &mut got)?
+            }
+        }
+
+        Ok(ClientTransportParameters {params})
+    }
+}
+
+impl ServerTransportParameters {
+    pub fn write<W: BufMut>(&self, w: &mut W) {
+        w.write::<u32>(VERSION); // Negotiated version
+        w.write::<u8>(8); // Bytes of supported versions
+        w.write::<u32>(0x0a1a_2a3a); // Reserved version
+        w.write::<u32>(VERSION); // Real supported version
+
+        let mut buf = Vec::new();
+
+        self.params.write(&mut buf);
 
         if let Some(ref x) = self.original_connection_id {
             buf.write::<u16>(0x000d);
@@ -231,64 +349,52 @@ impl TransportParameters {
             x.write(&mut buf);
         }
 
-        if self.disable_migration {
-            buf.write::<u16>(0x0009);
-            buf.write::<u16>(0);
-        }
-
         w.write::<u16>(buf.len() as u16);
         w.put_slice(&buf);
     }
 
-    pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
-        if side == Side::Server {
-            if r.remaining() < 26 {
-                return Err(Error::Malformed);
-            }
-            // We only support one version, so there is no validation to do here.
-            r.get::<u32>().unwrap();
-        } else {
-            if r.remaining() < 31 {
-                return Err(Error::Malformed);
-            }
-            let negotiated = r.get::<u32>().unwrap();
-            if negotiated != VERSION {
-                return Err(Error::VersionNegotiation);
-            }
-            let supported_bytes = r.get::<u8>().unwrap();
-            if supported_bytes < 4 || supported_bytes > 252 || supported_bytes % 4 != 0 {
-                return Err(Error::Malformed);
-            }
-            let mut found = false;
-            for _ in 0..(supported_bytes / 4) {
-                found |= r.get::<u32>().unwrap() == negotiated;
-            }
-            if !found {
-                return Err(Error::VersionNegotiation);
-            }
+    pub fn read<R: Buf>(r: &mut R) -> Result<Self, Error> {
+        if r.remaining() < 31 {
+            return Err(Error::Malformed);
         }
-
-        // Initialize to protocol-specified defaults
-        let mut params = TransportParameters::default();
+        let negotiated = r.get::<u32>().unwrap();
+        if negotiated != VERSION {
+            return Err(Error::VersionNegotiation);
+        }
+        let supported_bytes = r.get::<u8>().unwrap();
+        if supported_bytes < 4 || supported_bytes > 252 || supported_bytes % 4 != 0 {
+            return Err(Error::Malformed);
+        }
+        let mut found = false;
+        for _ in 0..(supported_bytes / 4) {
+            found |= r.get::<u32>().unwrap() == negotiated;
+        }
+        if !found {
+            return Err(Error::VersionNegotiation);
+        }
 
         let params_len = r.get::<u16>().unwrap();
         if params_len as usize != r.remaining() {
             return Err(Error::Malformed);
         }
 
-        // State to check for duplicate transport parameters.
-        macro_rules! param_state {
-            {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {{
-                struct ParamState {
-                    $($name: bool,)*
-                }
+        let mut params = TransportParameters::default();
+        let mut server_params = ServerTransportParameters {
+            params,
+            original_connection_id: None,
+            stateless_reset_token: None,
+            preferred_address: None,
+        };
 
+        // State to check for duplicate transport parameters.
+        macro_rules! make_guard {
+            {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {{
                 ParamState {
                     $($name: false,)*
                 }
             }}
         }
-        let mut got = apply_params!(param_state);
+        let mut got = apply_params!(make_guard);
 
         while r.has_remaining() {
             if r.remaining() < 4 {
@@ -301,65 +407,39 @@ impl TransportParameters {
             }
 
             match id {
-                0x0009 => {
-                    if len != 0 || params.disable_migration {
-                        return Err(Error::Malformed);
-                    }
-                    params.disable_migration = true;
-                }
                 0x000d => {
                     if len < MIN_CID_SIZE as u16
                         || len > MAX_CID_SIZE as u16
-                        || params.original_connection_id.is_some()
+                        || server_params.original_connection_id.is_some()
                     {
                         return Err(Error::Malformed);
                     }
                     let mut staging = [0; MAX_CID_SIZE];
                     r.copy_to_slice(&mut staging[0..len as usize]);
-                    params.original_connection_id =
+                    server_params.original_connection_id =
                         Some(ConnectionId::new(&staging[0..len as usize]));
                 }
                 0x0006 => {
-                    if len != 16 || params.stateless_reset_token.is_some() {
+                    if len != 16 || server_params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
                     }
                     let mut tok = [0; 16];
                     r.copy_to_slice(&mut tok);
-                    params.stateless_reset_token = Some(tok);
+                    server_params.stateless_reset_token = Some(tok);
                 }
                 0x0004 => {
-                    if params.preferred_address.is_some() {
+                    if server_params.preferred_address.is_some() {
                         return Err(Error::Malformed);
                     }
-                    params.preferred_address =
+                    server_params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
                 }
-                _ => {
-                    macro_rules! parse {
-                        {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
-                            match id {
-                                $($code => {
-                                    if len != mem::size_of::<$ty>() as u16 || got.$name { return Err(Error::Malformed); }
-                                    params.$name = r.get().unwrap();
-                                    got.$name = true;
-                                })*
-                                _ => r.advance(len as usize),
-                            }
-                        }
-                    }
-                    apply_params!(parse);
-                }
+                _ => params.read(id, len, r, &mut got)?
             }
         }
 
-        if params.ack_delay_exponent > 20
-            || (side == Side::Server
-                && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
-        {
-            return Err(Error::IllegalValue);
-        }
-
-        Ok(params)
+        server_params.params = params;
+        Ok(server_params)
     }
 }
 
@@ -371,22 +451,29 @@ mod test {
     #[test]
     fn coding() {
         let mut buf = Vec::new();
-        let params = TransportParameters {
-            initial_max_bidi_streams: 16,
-            initial_max_uni_streams: 16,
-            ack_delay_exponent: 2,
+        
+        let config = Config {
+            max_remote_bi_streams: 16,
+            max_remote_uni_streams: 16,
             max_packet_size: 1200,
+            ..Config::default()
+        };
+
+        let server_params = ServerTransportParameters {
+            params: TransportParameters::new(&config),
             preferred_address: Some(PreferredAddress {
                 address: SocketAddr::new(IpAddr::V4([127, 0, 0, 1].into()), 42),
                 connection_id: ConnectionId::new(&[]),
                 stateless_reset_token: [0xab; 16],
             }),
-            ..TransportParameters::default()
+            original_connection_id: None,
+            stateless_reset_token: None,
         };
-        params.write(Side::Server, &mut buf);
+
+        server_params.write(&mut buf);
         assert_eq!(
-            TransportParameters::read(Side::Client, &mut buf.into_buf()).unwrap(),
-            params
+            ServerTransportParameters::read(&mut buf.into_buf()).unwrap(),
+            server_params
         );
     }
 }

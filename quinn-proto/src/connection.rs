@@ -19,7 +19,7 @@ use packet::{
 };
 use range_set::RangeSet;
 use stream::{self, Stream};
-use transport_parameters::{self, TransportParameters};
+use transport_parameters::{self, TransportParameters, ClientTransportParameters, ServerTransportParameters};
 use {
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
     VERSION,
@@ -389,7 +389,7 @@ impl Connection {
         server_name: &str,
     ) -> Result<(), ConnectError> {
         let mut tls =
-            TlsSession::new_client(config, server_name, &TransportParameters::new(&ctx.config))
+            TlsSession::new_client(config, server_name, &ClientTransportParameters::new(&ctx.config))
                 .unwrap();
         self.server_name = Some(server_name.into());
         let mut outgoing = Vec::new();
@@ -925,23 +925,24 @@ impl Connection {
         }; // TODO: Send close?
 
         trace!(ctx.log, "got initial");
-        let server_params = TransportParameters {
+        let server_params = ServerTransportParameters {
             stateless_reset_token: Some(reset_token_for(
                 &ctx.listen_keys.as_ref().unwrap().reset,
                 &self.loc_cid,
             )),
-            ..TransportParameters::new(&ctx.config)
+            preferred_address: None,
+            original_connection_id: None,
+            params: TransportParameters::new(&ctx.config),
         };
         let mut tls = TlsSession::new_server(&ctx.config.tls_server_config, &server_params);
         self.read_tls(&mut tls, &frame);
         if tls.process_new_packets().is_err() {
             return Err(TransportError::TLS_HANDSHAKE_FAILED);
         }
-        let params = TransportParameters::read(
-            Side::Server,
+        let params = ServerTransportParameters::read(
             &mut io::Cursor::new(tls.get_quic_transport_parameters().unwrap()),
         )?;
-        self.handshake_complete(ctx, tls, params, now, packet_number);
+        self.handshake_complete(ctx, tls, params.params, now, packet_number);
         Ok(())
     }
 
@@ -1248,10 +1249,11 @@ impl Connection {
                             Ok(()) if !state.tls.is_handshaking() => {
                                 trace!(ctx.log, "no longer handshaking");
                                 if let Some(params) = state.tls.get_quic_transport_parameters() {
-                                    let params = TransportParameters::read(
-                                        self.side,
-                                        &mut io::Cursor::new(params),
-                                    )?;
+                                    let params = if self.side == Side::Client {
+                                        ClientTransportParameters::read(&mut io::Cursor::new(params))?.params
+                                    } else {
+                                        ServerTransportParameters::read(&mut io::Cursor::new(params))?.params
+                                    };
                                     self.set_params(params);
                                 } else {
                                     debug!(ctx.log, "remote didn't send transport params");
