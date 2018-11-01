@@ -368,7 +368,7 @@ impl Endpoint {
         //
 
         if !self.listen() {
-            debug!(self.ctx.log, "dropping packet from unrecognized connection"; "header" => ?packet.header);
+            debug!(self.ctx.log, "dropping packet on unrecognized connection {connection} because listening is disabled", connection=packet.header.destination_id());
             return;
         }
         let key_phase = packet.header.key_phase();
