@@ -77,7 +77,6 @@ use std::{io, mem};
 
 use bytes::Bytes;
 use fnv::FnvHashMap;
-use futures::stream::FuturesUnordered;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
@@ -85,10 +84,10 @@ use futures::{Async, Future, Poll, Sink};
 use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
+use tokio_timer::delay_queue::{DelayQueue, Key as TimerKey};
 use tokio_udp::UdpSocket;
 
-use quinn::{ConnectionHandle, Directionality, Side, StreamId};
+use quinn::{ConnectionHandle, Directionality, Side, StreamId, Timer};
 
 pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ListenKeys, ALPN_QUIC_HTTP};
 
@@ -140,8 +139,7 @@ struct EndpointInner {
     outgoing: VecDeque<(SocketAddrV6, Box<[u8]>)>,
     epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
-    // TODO: Replace this with something custom that avoids using oneshots to cancel
-    timers: FuturesUnordered<Timer>,
+    timers: DelayQueue<(ConnectionHandle, Timer)>,
     incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
 }
@@ -161,8 +159,8 @@ struct Pending {
     connecting: Option<oneshot::Sender<Option<ConnectionError>>>,
     uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    cancel_loss_detect: Option<oneshot::Sender<()>>,
-    cancel_idle: Option<oneshot::Sender<()>>,
+    loss_detect_timer: Option<TimerKey>,
+    idle_timer: Option<TimerKey>,
     incoming_streams: VecDeque<StreamId>,
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
@@ -181,8 +179,8 @@ impl Pending {
             connecting,
             uni_opening: VecDeque::new(),
             bi_opening: VecDeque::new(),
-            cancel_loss_detect: None,
-            cancel_idle: None,
+            loss_detect_timer: None,
+            idle_timer: None,
             incoming_streams: VecDeque::new(),
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
@@ -346,7 +344,7 @@ impl<'a> EndpointBuilder<'a> {
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
-            timers: FuturesUnordered::new(),
+            timers: DelayQueue::new(),
             incoming: send,
             driver: None,
         }));
@@ -801,16 +799,11 @@ impl Future for Driver {
                     }
                     TimerStart {
                         connection,
-                        timer: timer @ quinn::Timer::Close,
+                        timer: timer @ Timer::Close,
                         time,
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
-                        endpoint.timers.push(Timer {
-                            conn: connection,
-                            ty: timer,
-                            delay: Delay::new(instant),
-                            cancel: None,
-                        });
+                        endpoint.timers.insert_at((connection, timer), instant);
                     }
                     TimerStart {
                         connection,
@@ -822,41 +815,36 @@ impl Future for Driver {
                             .pending
                             .entry(connection)
                             .or_insert_with(|| Pending::new(None));
-                        use quinn::Timer::*;
-                        let mut cancel = match timer {
-                            LossDetection => &mut pending.cancel_loss_detect,
-                            Idle => &mut pending.cancel_idle,
-                            Close => unreachable!(),
+                        let timer_key = match timer {
+                            Timer::LossDetection => &mut pending.loss_detect_timer,
+                            Timer::Idle => &mut pending.idle_timer,
+                            Timer::Close => unreachable!(),
                         };
                         let instant = endpoint.epoch + duration_micros(time);
-                        if let Some(cancel) = cancel.take() {
-                            let _ = cancel.send(());
+                        if let Some(ref key) = timer_key {
+                            endpoint.timers.reset_at(key, instant);
+                        } else {
+                            *timer_key =
+                                Some(endpoint.timers.insert_at((connection, timer), instant));
                         }
-                        let (send, recv) = oneshot::channel();
-                        *cancel = Some(send);
                         trace!(endpoint.log, "timer start"; "timer" => ?timer, "time" => ?duration_micros(time));
-                        endpoint.timers.push(Timer {
-                            conn: connection,
-                            ty: timer,
-                            delay: Delay::new(instant),
-                            cancel: Some(recv),
-                        });
                     }
                     TimerStop { connection, timer } => {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
-                            use quinn::Timer::*;
                             match timer {
-                                LossDetection => {
-                                    if let Some(x) = pending.cancel_loss_detect.take() {
-                                        let _ = x.send(());
+                                Timer::LossDetection => {
+                                    if let Some(key) = pending.loss_detect_timer.take() {
+                                        endpoint.timers.remove(&key);
                                     }
                                 }
-                                Idle => {
-                                    pending.cancel_idle.take().map(|x| x.send(()));
+                                Timer::Idle => {
+                                    if let Some(key) = pending.idle_timer.take() {
+                                        endpoint.timers.remove(&key);
+                                    }
                                 }
-                                Close => {} // Arises from stateless reset
+                                Timer::Close => {} // Arises from stateless reset
                             }
                         }
                     }
@@ -879,16 +867,43 @@ impl Future for Driver {
             let mut fired = false;
             loop {
                 match endpoint.timers.poll() {
-                    Ok(Async::Ready(Some(Some((conn, timer))))) => {
+                    Ok(Async::Ready(Some(expired))) => {
+                        let (conn, timer) = expired.into_inner();
                         trace!(endpoint.log, "timeout"; "timer" => ?timer);
+                        endpoint
+                            .pending
+                            .entry(conn)
+                            .and_modify(|pending| match timer {
+                                Timer::Idle => pending.idle_timer = None,
+                                Timer::LossDetection => pending.loss_detect_timer = None,
+                                Timer::Close => {}
+                            });
                         endpoint.inner.timeout(now, conn, timer);
                         fired = true;
                     }
-                    Ok(Async::Ready(Some(None))) => {}
+                    // Ready(None) is returned if there's not active timer, and NotReady is
+                    // returned if there are active timers but none expired yet.
                     Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
                         break;
                     }
-                    Err(()) => unreachable!(),
+                    Err(timer_err) => {
+                        if timer_err.is_shutdown() {
+                            // This error is not recoverable and happens if a timer instance is
+                            // dropped in tokio, which we cannot control, so it's ok to panic.
+                            panic!("{}", timer_err);
+                        }
+                        if timer_err.is_at_capacity() {
+                            // This occurs if there are too many Delay instances. But the delay
+                            // queue uses a single timer so there's not much we can do here in
+                            // terms of backpressure.
+                            panic!("{}", timer_err);
+                        }
+
+                        // There are only two types of error in tokio-timer, but there might be
+                        // more in future releases, so let's panic here in case we forget to update
+                        // this code when/if new errors are introduced.
+                        panic!("unhandled error {}", timer_err);
+                    }
                 }
             }
             if !fired {
@@ -1414,31 +1429,6 @@ pub enum ReadError {
     /// The connection was closed.
     #[fail(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
-}
-
-struct Timer {
-    conn: ConnectionHandle,
-    ty: quinn::Timer,
-    delay: Delay,
-    cancel: Option<oneshot::Receiver<()>>,
-}
-
-impl Future for Timer {
-    type Item = Option<(ConnectionHandle, quinn::Timer)>;
-    type Error = (); // FIXME
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(ref mut cancel) = self.cancel {
-            if let Ok(Async::NotReady) = cancel.poll() {
-            } else {
-                return Ok(Async::Ready(None));
-            }
-        }
-        match self.delay.poll() {
-            Err(e) => panic!("unexpected timer error: {}", e),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(())) => Ok(Async::Ready(Some((self.conn, self.ty)))),
-        }
-    }
 }
 
 /// A stream of QUIC streams initiated by a remote peer.
