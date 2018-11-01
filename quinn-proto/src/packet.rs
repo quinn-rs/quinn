@@ -304,7 +304,7 @@ impl Packet {
 /// Protocol-level identifier for a connection.
 ///
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ConnectionId {
     pub len: u8,
     pub bytes: [u8; MAX_CID_SIZE],
@@ -320,6 +320,12 @@ impl ::std::ops::Deref for ConnectionId {
 impl ::std::ops::DerefMut for ConnectionId {
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.bytes[0..self.len as usize]
+    }
+}
+
+impl fmt::Debug for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.bytes[0..self.len as usize].fmt(f)
     }
 }
 
