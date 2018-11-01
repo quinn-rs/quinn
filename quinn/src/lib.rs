@@ -803,7 +803,13 @@ impl Future for Driver {
                         time,
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
-                        endpoint.timers.insert_at((connection, timer), instant);
+                        trace!(
+                            endpoint.log,
+                            "inserting timer";
+                            "timer" => ?timer,
+                            "duration" => ?duration_micros(time));
+                        let key = endpoint.timers.insert_at((connection, timer), instant);
+                        trace!(endpoint.log, "new key"; "key" => ?key);
                     }
                     TimerStart {
                         connection,
@@ -822,12 +828,23 @@ impl Future for Driver {
                         };
                         let instant = endpoint.epoch + duration_micros(time);
                         if let Some(ref key) = timer_key {
+                            trace!(
+                                endpoint.log,
+                                "resetting timer";
+                                "timer" => ?timer,
+                                "key" => ?key,
+                                "duration" => ?duration_micros(time));
                             endpoint.timers.reset_at(key, instant);
                         } else {
+                            trace!(
+                                endpoint.log,
+                                "inserting timer";
+                                "timer" => ?timer,
+                                "duration" => ?duration_micros(time));
                             *timer_key =
                                 Some(endpoint.timers.insert_at((connection, timer), instant));
+                            trace!(endpoint.log, "new key" ; "key" => ?timer_key);
                         }
-                        trace!(endpoint.log, "timer start"; "timer" => ?timer, "time" => ?duration_micros(time));
                     }
                     TimerStop { connection, timer } => {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
@@ -836,11 +853,13 @@ impl Future for Driver {
                             match timer {
                                 Timer::LossDetection => {
                                     if let Some(key) = pending.loss_detect_timer.take() {
+                                        trace!(endpoint.log, "removing timer"; "timer" => ?timer, "key" => ?key);
                                         endpoint.timers.remove(&key);
                                     }
                                 }
                                 Timer::Idle => {
                                     if let Some(key) = pending.idle_timer.take() {
+                                        trace!(endpoint.log, "removing timer"; "timer" => ?timer, "key" => ?key);
                                         endpoint.timers.remove(&key);
                                     }
                                 }
@@ -866,10 +885,11 @@ impl Future for Driver {
             let _ = endpoint.incoming.poll_complete();
             let mut fired = false;
             loop {
+                trace!(endpoint.log, "polling delay queue");
                 match endpoint.timers.poll() {
                     Ok(Async::Ready(Some(expired))) => {
+                        trace!(endpoint.log, "timer expired"; "timer" => ?expired);
                         let (conn, timer) = expired.into_inner();
-                        trace!(endpoint.log, "timeout"; "timer" => ?timer);
                         endpoint
                             .pending
                             .entry(conn)
@@ -884,6 +904,7 @@ impl Future for Driver {
                     // Ready(None) is returned if there's not active timer, and NotReady is
                     // returned if there are active timers but none expired yet.
                     Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
+                        trace!(endpoint.log, "no timer expired");
                         break;
                     }
                     Err(timer_err) => {
