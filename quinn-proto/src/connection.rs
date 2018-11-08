@@ -73,13 +73,14 @@ pub struct Connection {
     pub tlp_count: u32,
     /// The number of times an rto has been sent without receiving an ack.
     pub rto_count: u32,
-    /// The largest packet number gap between the largest acked retransmittable packet and an unacknowledged
-    /// retransmittable packet before it is declared lost.
+    /// The largest packet number gap between the largest acked retransmittable packet and an
+    /// unacknowledged retransmittable packet before it is declared lost.
     pub reordering_threshold: u32,
-    /// The time at which the next packet will be considered lost based on early transmit or exceeding the reordering
-    /// window in time.
+    /// The time at which the next packet will be considered lost based on early transmit or
+    /// exceeding the reordering window in time.
     pub loss_time: u64,
-    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet. μs
+    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet.
+    /// μs
     pub latest_rtt: u64,
     /// The smoothed RTT of the connection, computed as described in RFC6298. μs
     pub smoothed_rtt: u64,
@@ -89,7 +90,8 @@ pub struct Connection {
     pub min_rtt: u64,
     /// The maximum ack delay in an incoming ACK frame for this connection.
     ///
-    /// Excludes ack delays for ack only packets and those that create an RTT sample less than min_rtt.
+    /// Excludes ack delays for ack only packets and those that create an RTT sample less than
+    /// min_rtt.
     pub max_ack_delay: u64,
     /// The last packet number sent prior to the first retransmission timeout.
     pub largest_sent_before_rto: u64,
@@ -107,26 +109,28 @@ pub struct Connection {
     //
     // Congestion Control
     //
-    /// The sum of the size in bytes of all sent packets that contain at least one retransmittable frame, and have not
-    /// been acked or declared lost.
+    /// The sum of the size in bytes of all sent packets that contain at least one retransmittable
+    /// frame, and have not been acked or declared lost.
     ///
-    /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not count towards
-    /// bytes_in_flight to ensure congestion control does not impede congestion feedback.
+    /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
+    /// count towards bytes_in_flight to ensure congestion control does not impede congestion
+    /// feedback.
     pub bytes_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
     pub congestion_window: u64,
-    /// The largest packet number sent when QUIC detects a loss. When a larger packet is acknowledged, QUIC exits recovery.
+    /// The largest packet number sent when QUIC detects a loss. When a larger packet is
+    /// acknowledged, QUIC exits recovery.
     pub end_of_recovery: u64,
-    /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is slow start and the
-    /// window grows by the number of bytes acknowledged.
+    /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
+    /// slow start and the window grows by the number of bytes acknowledged.
     pub ssthresh: u64,
 
     //
     // Handshake retransmit state
     //
-    /// Whether we've sent handshake packets that have not been either explicitly acknowledged or rendered moot by
-    /// handshake completion, i.e. whether we're waiting for proof that the peer has advanced their handshake state
-    /// machine.
+    /// Whether we've sent handshake packets that have not been either explicitly acknowledged or
+    /// rendered moot by handshake completion, i.e. whether we're waiting for proof that the peer
+    /// has advanced their handshake state machine.
     pub awaiting_handshake: bool,
     pub handshake_pending: Retransmits,
     pub handshake_crypto: Crypto,
@@ -493,7 +497,8 @@ impl Connection {
     fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
         trace!(ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
-        self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest); // TODO: Validate
+        // TODO: Validate
+        self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest);
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
             let delay = ack.delay << self.params.ack_delay_exponent;
@@ -538,7 +543,8 @@ impl Connection {
         }
     }
 
-    // Not timing-aware, so it's safe to call this for inferred acks, such as arise from high-latency handshakes
+    // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
+    // high-latency handshakes
     fn on_packet_acked(&mut self, config: &Config, packet: u64) {
         let info = if let Some(x) = self.sent_packets.remove(&packet) {
             x
@@ -563,7 +569,8 @@ impl Connection {
 
         // Loss recovery
 
-        // If a packet sent prior to RTO was acked, then the RTO was spurious.  Otherwise, inform congestion control.
+        // If a packet sent prior to RTO was acked, then the RTO was spurious. Otherwise, inform
+        // congestion control.
         if self.rto_count > 0 && packet > self.largest_sent_before_rto {
             // Retransmission timeout verified
             self.congestion_window = config.minimum_window;
@@ -677,8 +684,8 @@ impl Connection {
         for (&packet, info) in self.sent_packets.range(0..largest_acked) {
             let time_since_sent = now - info.time;
             let delta = largest_acked - packet;
-            // Use of >= for time comparison here is critical so that we successfully detect lost packets in testing
-            // when rtt = 0
+            // Use of >= for time comparison here is critical so that we successfully detect lost
+            // packets in testing when rtt = 0
             if time_since_sent >= delay_until_lost || delta > self.reordering_threshold as u64 {
                 lost_packets.push(packet);
             } else if self.loss_time == 0 && delay_until_lost != u64::max_value() {
@@ -699,7 +706,8 @@ impl Connection {
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
-            // Start a new recovery epoch if the lost packet is larger than the end of the previous recovery epoch.
+            // Start a new recovery epoch if the lost packet is larger than the end of the
+            // previous recovery epoch.
             if lost_nonack && !self.in_recovery(largest_lost) {
                 self.end_of_recovery = self.largest_sent_packet;
                 // *= factor
@@ -785,7 +793,8 @@ impl Connection {
         self.set_idle = Some(Some(now + dt as u64 * 1_000_000));
     }
 
-    /// Consider all previously transmitted handshake packets to be delivered. Called when we receive a new handshake packet.
+    /// Consider all previously transmitted handshake packets to be delivered. Called when we
+    /// receive a new handshake packet.
     fn handshake_cleanup(&mut self, config: &Config) {
         if !self.awaiting_handshake {
             return;
@@ -1176,13 +1185,15 @@ impl Connection {
                         src_cid: rem_cid,
                         ..
                     } => {
-                        // FIXME: the below guards fail to handle repeated retries resulting from retransmitted initials
+                        // FIXME: the below guards fail to handle repeated retries resulting from
+                        // retransmitted initials
                         if state.clienthello_packet.is_none() {
                             // Received Retry as a server
                             debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
                             Err(TransportError::PROTOCOL_VIOLATION.into())
                         } else if state.clienthello_packet.unwrap() > number {
-                            // Retry corresponds to an outdated Initial; must be a duplicate, so ignore it
+                            // Retry corresponds to an outdated Initial; must be a duplicate, so
+                            // ignore it
                             Ok(State::Handshake(state))
                         } else {
                             if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
@@ -1216,7 +1227,8 @@ impl Connection {
                                     );
                                     mem::replace(self, new);
                                     self.transmit_handshake(&outgoing);
-                                    // Prepare to receive Handshake packets that start stream 0 from offset 0
+                                    // Prepare to receive Handshake packets that start stream 0
+                                    // from offset 0
                                     Ok(State::Handshake(state::Handshake {
                                         clienthello_packet: state.clienthello_packet,
                                         rem_cid_set: state.rem_cid_set,
@@ -1919,8 +1931,8 @@ impl Connection {
             }
 
             // ACK
-            // We will never ack protected packets in handshake packets because handshake_cleanup ensures we never send
-            // handshake packets after receiving protected packets.
+            // We will never ack protected packets in handshake packets because handshake_cleanup
+            // ensures we never send handshake packets after receiving protected packets.
             // 0-RTT packets must never carry acks (which would have to be of handshake packets)
             if !self.pending_acks.is_empty() {
                 //&& !crypto.is_0rtt() {
@@ -2091,9 +2103,9 @@ impl Connection {
             handshake = crypto.is_handshake();
         }
 
-        // If we sent any acks, don't immediately resend them.  Setting this even if ack_only is false needlessly
-        // prevents us from ACKing the next packet if it's ACK-only, but saves the need for subtler logic to avoid
-        // double-transmitting acks all the time.
+        // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
+        // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
+        // the need for subtler logic to avoid double-transmitting acks all the time.
         self.permit_ack_only &= acks.is_empty();
 
         self.on_packet_sent(
@@ -2165,8 +2177,8 @@ impl Connection {
 
     /// Close a connection immediately
     ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
-    /// all important communications have been completed.
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility
+    /// to call this only when all important communications have been completed.
     pub fn close(&mut self, ctx: &mut Context, now: u64, error_code: u16, reason: Bytes) {
         let was_closed = self.state.as_ref().unwrap().is_closed();
         let reason =
@@ -2332,8 +2344,10 @@ impl Connection {
 
         // Return data we already have buffered, regardless of state
         if let Some(x) = rs.buffered.pop_front() {
-            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
-            self.local_max_data += x.0.len() as u64; // BUG: Don't issue credit for already-received data!
+            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
+            // reduce overhead
+            self.local_max_data += x.0.len() as u64; // BUG: Don't issue credit for
+                                                     // already-received data!
             self.pending.max_data = true;
             // Only bother issuing stream credit if the peer wants to send more
             if let stream::RecvState::Recv { size: None } = rs.state {
@@ -2371,7 +2385,8 @@ impl Connection {
 
         if !rs.assembler.blocked() {
             let n = rs.assembler.read(buf);
-            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to reduce overhead
+            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
+            // reduce overhead
             self.local_max_data += n as u64;
             self.pending.max_data = true;
             // Only bother issuing stream credit if the peer wants to send more
@@ -2773,8 +2788,8 @@ pub mod state {
     use super::*;
 
     pub struct Handshake {
-        /// The number of the packet that first contained the latest version of the TLS ClientHello. Present iff we're
-        /// the client.
+        /// The number of the packet that first contained the latest version of the TLS
+        /// ClientHello. Present iff we're the client.
         pub clienthello_packet: Option<u32>,
         pub rem_cid_set: bool,
     }

@@ -101,7 +101,8 @@ pub struct Recv {
     pub buffered: VecDeque<(Bytes, u64)>,
     /// Upper limit dictated by the peer
     pub max_data: u64,
-    /// Whether any unordered reads have been performed, making this stream unusable for ordered reads
+    /// Whether any unordered reads have been performed, making this stream unusable for ordered
+    /// reads
     pub unordered: bool,
     pub assembler: Assembler,
     /// Whether the application is aware of this stream yet
