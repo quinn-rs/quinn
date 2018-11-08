@@ -30,30 +30,37 @@ pub struct Config {
     pub max_remote_uni_streams: u16,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
-    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
+    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
+    /// own idle timeout. 0 for none.
     pub idle_timeout: u16,
     /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
     ///
-    /// This should be set to at least the expected connection latency multiplied by the maximum desired
-    /// throughput. Setting this smaller than `receive_window` helps ensure that a single stream doesn't monopolize
-    /// receive buffers, which may otherwise occur if the application chooses not to read from a large stream for a time
-    /// while still requiring data on other streams.
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Setting this smaller than `receive_window` helps ensure that a single
+    /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
+    /// chooses not to read from a large stream for a time while still requiring data on other
+    /// streams.
     pub stream_receive_window: u32,
-    /// Maximum number of bytes the peer may transmit across all streams of a connection before becoming blocked.
+    /// Maximum number of bytes the peer may transmit across all streams of a connection before
+    /// becoming blocked.
     ///
-    /// This should be set to at least the expected connection latency multiplied by the maximum desired
-    /// throughput. Larger values can be useful to allow maximum throughput within a stream while another is blocked.
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Larger values can be useful to allow maximum throughput within a
+    /// stream while another is blocked.
     pub receive_window: u32,
     /// Maximum number of incoming connections to buffer.
     ///
-    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to be large.
+    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
+    /// be large.
     pub accept_buffer: u32,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
-    /// Maximum reordering in packet number space before FACK style loss detection considers a packet lost.
+    /// Maximum reordering in packet number space before FACK style loss detection considers a
+    /// packet lost.
     pub reordering_threshold: u32,
-    /// Maximum reordering in time space before time based loss detection considers a packet lost. 0.16 format
+    /// Maximum reordering in time space before time based loss detection considers a packet lost.
+    /// 0.16 format
     pub time_reordering_fraction: u16,
     /// Whether time based loss detection is in use. If false, uses FACK style loss detection.
     pub using_time_loss_detection: bool,
@@ -82,7 +89,8 @@ impl Default for Config {
     fn default() -> Self {
         const EXPECTED_RTT: u32 = 100; // ms
         const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
-                                                        // Window size needed to avoid pipeline stalls
+                                                        // Window size needed to avoid pipeline
+                                                        // stalls
         const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
         Self {
             max_remote_bi_streams: 0,
@@ -113,8 +121,9 @@ impl Default for Config {
 
 /// The main entry point to the library
 ///
-/// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a backend to perform
-/// via `poll_io`, and consumes incoming packets and timer expirations via `handle` and `timeout`.
+/// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a
+/// backend to perform via `poll_io`, and consumes incoming packets and timer expirations via
+/// `handle` and `timeout`.
 pub struct Endpoint {
     pub(crate) ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
@@ -146,16 +155,16 @@ impl Context {
 
 /// Information that should be preserved between restarts for server endpoints.
 ///
-/// Keeping this around allows better behavior by clients that communicated with a previous instance of the same
-/// endpoint.
+/// Keeping this around allows better behavior by clients that communicated with a previous
+/// instance of the same endpoint.
 #[derive(Copy, Clone)]
 pub struct ListenKeys {
     /// Cryptographic key used to ensure integrity of data included in handshake cookies.
     ///
     /// Initialize with random bytes.
     pub cookie: [u8; 64],
-    /// Cryptographic key used to send authenticated connection resets to clients who were communicating with a previous
-    /// instance of tihs endpoint.
+    /// Cryptographic key used to send authenticated connection resets to clients who were
+    /// communicating with a previous instance of tihs endpoint.
     ///
     /// Initialize with random bytes.
     pub reset: [u8; 64],
@@ -381,13 +390,15 @@ impl Endpoint {
         }
 
         //
-        // If we got this far, we're a server receiving a seemingly valid packet for an unknown connection. Send a stateless reset.
+        // If we got this far, we're a server receiving a seemingly valid packet for an unknown
+        // connection. Send a stateless reset.
         //
 
         if !dst_cid.is_empty() {
             debug!(self.ctx.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
-            // Bound padding size to at most 8 bytes larger than input to mitigate amplification attacks
+            // Bound padding size to at most 8 bytes larger than input to mitigate amplification
+            // attacks
             let header_len = 1 + MAX_CID_SIZE + 1;
             let padding = self.ctx.rng.gen_range(
                 0,
@@ -640,7 +651,8 @@ impl Endpoint {
                         reason: ConnectionError::TimedOut,
                     },
                 ));
-                self.ctx.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation goes through
+                self.ctx.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
+                                                   // goes through
             }
             Timer::LossDetection => {
                 self.connections[conn.0].check_packet_loss(&mut self.ctx, now);
@@ -665,7 +677,8 @@ impl Endpoint {
 
     /// Indicate that no more data will be sent on a stream
     ///
-    /// All previously transmitted data will still be delivered. Incoming data on bidirectional streams is unaffected.
+    /// All previously transmitted data will still be delivered. Incoming data on bidirectional
+    /// streams is unaffected.
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
@@ -676,8 +689,8 @@ impl Endpoint {
 
     /// Read data from a stream
     ///
-    /// Treats a stream like a simple pipe, similar to a TCP connection. Subject to head-of-line blocking within the
-    /// stream. Consider `read_unordered` for higher throughput.
+    /// Treats a stream like a simple pipe, similar to a TCP connection. Subject to head-of-line
+    /// blocking within the stream. Consider `read_unordered` for higher throughput.
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
@@ -699,12 +712,13 @@ impl Endpoint {
 
     /// Read data from a stream out of order
     ///
-    /// Unlike `read`, this interface is not subject to head-of-line blocking within the stream, and hence can achieve
-    /// higher throughput over lossy links.
+    /// Unlike `read`, this interface is not subject to head-of-line blocking within the stream,
+    /// and hence can achieve higher throughput over lossy links.
     ///
     /// Some segments may be received multiple times.
     ///
-    /// On success, returns `Ok((data, offset))` where `offset` is the position `data` begins in the stream.
+    /// On success, returns `Ok((data, offset))` where `offset` is the position `data` begins in
+    /// the stream.
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active incoming channel
@@ -742,7 +756,8 @@ impl Endpoint {
 
     /// Create a new stream
     ///
-    /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint are already open.
+    /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint
+    /// are already open.
     pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
         self.connections[conn.0].open(&self.ctx.config, direction)
     }
@@ -757,8 +772,8 @@ impl Endpoint {
 
     /// Close a connection immediately
     ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
-    /// all important communications have been completed.
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility
+    /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
         if let State::Drained = *self.connections[conn.0].state.as_ref().unwrap() {
             self.forget(conn);
@@ -789,7 +804,8 @@ impl Endpoint {
             .get_alpn_protocol()
             .map(|p| p.as_bytes())
     }
-    /// The number of bytes of packets containing retransmittable frames that have not been acknowleded or declared lost
+    /// The number of bytes of packets containing retransmittable frames that have not been
+    /// acknowleded or declared lost
     pub fn get_bytes_in_flight(&self, conn: ConnectionHandle) -> u64 {
         self.connections[conn.0].bytes_in_flight
     }
