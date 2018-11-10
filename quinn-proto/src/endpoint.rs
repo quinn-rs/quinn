@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
-use std::{cmp, io, mem};
+use std::{cmp, io};
 
 use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
@@ -242,16 +242,8 @@ impl Endpoint {
         }
         loop {
             let &conn = self.ctx.readable_conns.iter().next()?;
-            if let Some(&stream) = self.connections[conn.0].readable_streams.iter().next() {
-                self.connections[conn.0].readable_streams.remove(&stream);
-                let rs = self.connections[conn.0]
-                    .streams
-                    .get_mut(&stream)
-                    .unwrap()
-                    .recv_mut()
-                    .unwrap();
-                let fresh = mem::replace(&mut rs.fresh, false);
-                return Some((conn, Event::StreamReadable { stream, fresh }));
+            if let Some(x) = self.connections[conn.0].poll() {
+                return Some((conn, x));
             }
             self.ctx.readable_conns.remove(&conn);
         }
