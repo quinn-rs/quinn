@@ -54,6 +54,15 @@ $ cargo run --example server -- --cert ../certs/server.chain --key ../certs/serv
 $ cargo run --example client -- --ca ../certs/ca.der https://localhost:4433/Cargo.toml
 ```
 
+## Development
+
+The quinn-proto test suite uses simulated IO for reproducibility and to avoid
+long sleeps in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
+environment variable is set, the tests will emit UDP packets for inspection
+using external protocol analyzers like Wireshark, and NSS-compatible key logs
+for the client side of each connection will be written to the path specified in
+the variable.
+
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
 [rustls]: https://github.com/ctz/rustls
