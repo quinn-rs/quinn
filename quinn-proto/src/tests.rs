@@ -4,11 +4,11 @@ use std::net::{Ipv6Addr, SocketAddrV6, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{fmt, fs, str};
+use std::{env, fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
-use rustls::{internal::pemfile, ProtocolVersion};
+use rustls::{internal::pemfile, KeyLogFile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
@@ -113,6 +113,7 @@ fn client_config() -> Arc<ClientConfig> {
     tls_client_config
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
+    tls_client_config.key_log = Arc::new(KeyLogFile::new());
     Arc::new(tls_client_config)
 }
 
@@ -180,10 +181,9 @@ impl Pair {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
         for packet in self.client.outbound.drain(..) {
-            self.client
-                .socket
-                .send_to(&packet, self.server.addr)
-                .unwrap();
+            if let Some(ref socket) = self.client.socket {
+                socket.send_to(&packet, self.server.addr).unwrap();
+            }
             self.server
                 .inbound
                 .push_back((self.time + self.latency, packet));
@@ -194,10 +194,9 @@ impl Pair {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
         for packet in self.server.outbound.drain(..) {
-            self.server
-                .socket
-                .send_to(&packet, self.client.addr)
-                .unwrap();
+            if let Some(ref socket) = self.server.socket {
+                socket.send_to(&packet, self.client.addr).unwrap();
+            }
             self.client
                 .inbound
                 .push_back((self.time + self.latency, packet));
@@ -225,7 +224,7 @@ struct TestEndpoint {
     side: Side,
     endpoint: Endpoint,
     addr: SocketAddrV6,
-    socket: UdpSocket,
+    socket: Option<UdpSocket>,
     idle: u64,
     loss: u64,
     close: u64,
@@ -236,10 +235,15 @@ struct TestEndpoint {
 
 impl TestEndpoint {
     fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self {
-        let socket = UdpSocket::bind(addr).unwrap();
-        socket
-            .set_read_timeout(Some(Duration::new(0, 10_000_000)))
-            .unwrap();
+        let socket = if env::var_os("SSLKEYLOGFILE").is_some() {
+            let socket = UdpSocket::bind(addr).expect("failed to bind UDP socket");
+            socket
+                .set_read_timeout(Some(Duration::new(0, 10_000_000)))
+                .unwrap();
+            Some(socket)
+        } else {
+            None
+        };
         Self {
             side,
             endpoint,
@@ -255,10 +259,12 @@ impl TestEndpoint {
     }
 
     fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
-        loop {
-            let mut buf = [0; 8192];
-            if self.socket.recv_from(&mut buf).is_err() {
-                break;
+        if let Some(ref socket) = self.socket {
+            loop {
+                let mut buf = [0; 8192];
+                if socket.recv_from(&mut buf).is_err() {
+                    break;
+                }
             }
         }
         if let Some(conn) = self.conn {
