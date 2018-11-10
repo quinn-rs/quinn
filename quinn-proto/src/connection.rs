@@ -150,16 +150,51 @@ pub struct Connection {
     //
     // Stream states
     //
-    pub streams: FnvHashMap<StreamId, Stream>,
-    pub next_uni_stream: u64,
-    pub next_bi_stream: u64,
+    streams: Streams,
+}
+
+struct Streams {
+    // Set of streams that are currently open, or could be immediately opened by the peer
+    streams: FnvHashMap<StreamId, Stream>,
+    next_uni: u64,
+    next_bi: u64,
     // Locally initiated
-    pub max_uni_streams: u64,
-    pub max_bi_streams: u64,
+    max_uni: u64,
+    max_bi: u64,
     // Remotely initiated
-    pub max_remote_uni_streams: u64,
-    pub max_remote_bi_streams: u64,
-    pub finished_streams: Vec<StreamId>,
+    max_remote_uni: u64,
+    max_remote_bi: u64,
+
+    finished: Vec<StreamId>,
+}
+
+impl Streams {
+    fn get_recv_stream(
+        &mut self,
+        side: Side,
+        id: StreamId,
+    ) -> Result<Option<&mut Stream>, TransportError> {
+        if side == id.initiator() {
+            match id.directionality() {
+                Directionality::Uni => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
+                Directionality::Bi if id.index() >= self.next_bi => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
+                Directionality::Bi => {}
+            };
+        } else {
+            let limit = match id.directionality() {
+                Directionality::Bi => self.max_remote_bi,
+                Directionality::Uni => self.max_remote_uni,
+            };
+            if id.index() >= limit {
+                return Err(TransportError::STREAM_ID_ERROR);
+            }
+        }
+        Ok(self.streams.get_mut(&id))
+    }
 }
 
 #[derive(Clone)]
@@ -409,17 +444,19 @@ impl Connection {
             set_idle: None,
             set_loss_detection: None,
 
-            streams,
-            next_uni_stream: 0,
-            next_bi_stream: match side {
-                Side::Client => 1,
-                Side::Server => 0,
+            streams: Streams {
+                streams,
+                next_uni: 0,
+                next_bi: match side {
+                    Side::Client => 1,
+                    Side::Server => 0,
+                },
+                max_uni: 0,
+                max_bi: 0,
+                max_remote_uni: ctx.config.max_remote_uni_streams as u64,
+                max_remote_bi: max_remote_bi_streams,
+                finished: Vec::new(),
             },
-            max_uni_streams: 0,
-            max_bi_streams: 0,
-            max_remote_uni_streams: ctx.config.max_remote_uni_streams as u64,
-            max_remote_bi_streams,
-            finished_streams: Vec::new(),
         };
         match side {
             Side::Client => {
@@ -582,11 +619,22 @@ impl Connection {
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
-            if let stream::SendState::ResetSent { stop_reason } =
-                self.streams.get_mut(&id).unwrap().send_mut().unwrap().state
+            if let stream::SendState::ResetSent { stop_reason } = self
+                .streams
+                .streams
+                .get_mut(&id)
+                .unwrap()
+                .send_mut()
+                .unwrap()
+                .state
             {
-                self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
-                    stream::SendState::ResetRecvd { stop_reason };
+                self.streams
+                    .streams
+                    .get_mut(&id)
+                    .unwrap()
+                    .send_mut()
+                    .unwrap()
+                    .state = stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.maybe_cleanup(config, id);
                 }
@@ -594,7 +642,7 @@ impl Connection {
         }
         for frame in info.retransmits.stream {
             let recvd = {
-                let ss = if let Some(x) = self.streams.get_mut(&frame.id) {
+                let ss = if let Some(x) = self.streams.streams.get_mut(&frame.id) {
                     x.send_mut().unwrap()
                 } else {
                     continue;
@@ -609,7 +657,7 @@ impl Connection {
             };
             if recvd {
                 self.maybe_cleanup(config, frame.id);
-                self.finished_streams.push(frame.id);
+                self.streams.finished.push(frame.id);
             }
         }
         self.pending_acks.subtract(&info.acks);
@@ -817,6 +865,7 @@ impl Connection {
         let offset = {
             let ss = self
                 .streams
+                .streams
                 .get_mut(&StreamId(0))
                 .unwrap()
                 .send_mut()
@@ -836,7 +885,13 @@ impl Connection {
     }
 
     fn transmit(&mut self, stream: StreamId, data: Bytes) {
-        let ss = self.streams.get_mut(&stream).unwrap().send_mut().unwrap();
+        let ss = self
+            .streams
+            .streams
+            .get_mut(&stream)
+            .unwrap()
+            .send_mut()
+            .unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
         let offset = ss.offset;
         ss.offset += data.len() as u64;
@@ -863,7 +918,7 @@ impl Connection {
         );
         {
             // reset is a noop on a closed stream
-            let stream = if let Some(x) = self.streams.get_mut(&stream) {
+            let stream = if let Some(x) = self.streams.streams.get_mut(&stream) {
                 x.send_mut().unwrap()
             } else {
                 return;
@@ -980,7 +1035,8 @@ impl Connection {
         let mut buf = [0; 8192];
         let n = {
             let rs = self
-                .get_recv_stream(StreamId(0))
+                .streams
+                .get_recv_stream(self.side, StreamId(0))
                 .unwrap()
                 .unwrap()
                 .recv_mut()
@@ -1526,7 +1582,7 @@ impl Connection {
                     let data_recvd = self.data_recvd;
                     let max_data = self.local_max_data;
                     let stream = {
-                        match self.get_recv_stream(frame.id) {
+                        match self.streams.get_recv_stream(self.side, frame.id) {
                             Err(e) => {
                                 debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
                                 ctx.events.push_back((
@@ -1541,7 +1597,7 @@ impl Connection {
                             }
                             _ => {}
                         }
-                        self.streams.get_mut(&frame.id).unwrap()
+                        self.streams.streams.get_mut(&frame.id).unwrap()
                     };
 
                     let new_bytes = {
@@ -1620,7 +1676,7 @@ impl Connection {
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(ctx, now, ack);
-                    for stream in self.finished_streams.drain(..) {
+                    for stream in self.streams.finished.drain(..) {
                         ctx.events
                             .push_back((self.handle, Event::StreamFinished { stream }));
                     }
@@ -1688,7 +1744,7 @@ impl Connection {
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    if let Some(stream) = self.streams.get_mut(&id) {
+                    if let Some(stream) = self.streams.streams.get_mut(&id) {
                         let ss = stream.send_mut().unwrap();
                         if offset > ss.max_data {
                             trace!(ctx.log, "stream limit increased"; "stream" => id.0,
@@ -1712,8 +1768,8 @@ impl Connection {
                 }
                 Frame::MaxStreamId(id) => {
                     let limit = match id.directionality() {
-                        Directionality::Uni => &mut self.max_uni_streams,
-                        Directionality::Bi => &mut self.max_bi_streams,
+                        Directionality::Uni => &mut self.streams.max_uni,
+                        Directionality::Bi => &mut self.streams.max_bi,
                     };
                     let update = id.index() + 1;
                     if update > *limit {
@@ -1742,7 +1798,7 @@ impl Connection {
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     let conn = self.handle;
-                    let offset = match self.get_recv_stream(id) {
+                    let offset = match self.streams.get_recv_stream(self.side, id) {
                         Err(e) => {
                             debug!(ctx.log, "received illegal RST_STREAM");
                             ctx.events
@@ -1791,6 +1847,7 @@ impl Connection {
                 Frame::StopSending { id, error_code } => {
                     if self
                         .streams
+                        .streams
                         .get(&id)
                         .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
                     {
@@ -1804,10 +1861,15 @@ impl Connection {
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
                     self.reset(ctx, id, 0);
-                    self.streams.get_mut(&id).unwrap().send_mut().unwrap().state =
-                        stream::SendState::ResetSent {
-                            stop_reason: Some(error_code),
-                        };
+                    self.streams
+                        .streams
+                        .get_mut(&id)
+                        .unwrap()
+                        .send_mut()
+                        .unwrap()
+                        .state = stream::SendState::ResetSent {
+                        stop_reason: Some(error_code),
+                    };
                 }
                 Frame::NewConnectionId { .. } => {
                     if self.rem_cid.is_empty() {
@@ -1961,7 +2023,7 @@ impl Connection {
                 } else {
                     break;
                 };
-                let stream = if let Some(x) = self.streams.get(&id) {
+                let stream = if let Some(x) = self.streams.streams.get(&id) {
                     x
                 } else {
                     continue;
@@ -1982,7 +2044,7 @@ impl Connection {
                 } else {
                     break;
                 };
-                let stream = if let Some(x) = self.streams.get(&id) {
+                let stream = if let Some(x) = self.streams.streams.get(&id) {
                     x.recv().unwrap()
                 } else {
                     continue;
@@ -2014,7 +2076,7 @@ impl Connection {
                     break;
                 };
                 pending.max_stream_data.remove(&id);
-                let rs = if let Some(x) = self.streams.get(&id) {
+                let rs = if let Some(x) = self.streams.streams.get(&id) {
                     x.recv().unwrap()
                 } else {
                     continue;
@@ -2033,12 +2095,12 @@ impl Connection {
             if pending.max_uni_stream_id && buf.len() + 9 < max_size {
                 pending.max_uni_stream_id = false;
                 sent.max_uni_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.max_remote_uni_streams - 1);
+                trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
                     Directionality::Uni,
-                    self.max_remote_uni_streams - 1,
+                    self.streams.max_remote_uni - 1,
                 ));
             }
 
@@ -2046,12 +2108,12 @@ impl Connection {
             if pending.max_bi_stream_id && buf.len() + 9 < max_size {
                 pending.max_bi_stream_id = false;
                 sent.max_bi_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.max_remote_bi_streams - 1);
+                trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
                 buf.write(frame::Type::MAX_STREAM_ID);
                 buf.write(StreamId::new(
                     !self.side,
                     Directionality::Bi,
-                    self.max_remote_bi_streams - 1,
+                    self.streams.max_remote_bi - 1,
                 ));
             }
 
@@ -2063,6 +2125,7 @@ impl Connection {
                     break;
                 };
                 if stream.id != StreamId(0) && self
+                    .streams
                     .streams
                     .get(&stream.id)
                     .map_or(true, |s| s.send().unwrap().state.was_reset())
@@ -2218,15 +2281,16 @@ impl Connection {
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.max_bi_streams = params.initial_max_streams_bidi as u64;
+        self.streams.max_bi = params.initial_max_streams_bidi as u64;
         if self.side == Side::Client {
-            self.max_bi_streams += 1;
+            self.streams.max_bi += 1;
         } // Account for TLS stream
-        self.max_uni_streams = params.initial_max_streams_uni as u64;
+        self.streams.max_uni = params.initial_max_streams_uni as u64;
         self.max_data = params.initial_max_data as u64;
-        for i in 0..self.max_remote_bi_streams {
+        for i in 0..self.streams.max_remote_bi {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
             self.streams
+                .streams
                 .get_mut(&id)
                 .unwrap()
                 .send_mut()
@@ -2238,17 +2302,17 @@ impl Connection {
 
     pub fn open(&mut self, config: &Config, direction: Directionality) -> Option<StreamId> {
         let (id, mut stream) = match direction {
-            Directionality::Uni if self.next_uni_stream < self.max_uni_streams => {
-                self.next_uni_stream += 1;
+            Directionality::Uni if self.streams.next_uni < self.streams.max_uni => {
+                self.streams.next_uni += 1;
                 (
-                    StreamId::new(self.side, direction, self.next_uni_stream - 1),
+                    StreamId::new(self.side, direction, self.streams.next_uni - 1),
                     stream::Send::new().into(),
                 )
             }
-            Directionality::Bi if self.next_bi_stream < self.max_bi_streams => {
-                self.next_bi_stream += 1;
+            Directionality::Bi if self.streams.next_bi < self.streams.max_bi => {
+                self.streams.next_bi += 1;
                 (
-                    StreamId::new(self.side, direction, self.next_bi_stream - 1),
+                    StreamId::new(self.side, direction, self.streams.next_bi - 1),
                     Stream::new_bi(config.stream_receive_window as u64),
                 )
             }
@@ -2257,7 +2321,7 @@ impl Connection {
             } // TODO: Queue STREAM_ID_BLOCKED
         };
         stream.send_mut().unwrap().max_data = self.params.initial_max_stream_data as u64;
-        let old = self.streams.insert(id, stream);
+        let old = self.streams.streams.insert(id, stream);
         assert!(old.is_none());
         Some(id)
     }
@@ -2266,7 +2330,7 @@ impl Connection {
     ///
     /// Called when one side of a stream transitions to a closed state
     pub fn maybe_cleanup(&mut self, config: &Config, id: StreamId) {
-        let new = match self.streams.entry(id) {
+        let new = match self.streams.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
@@ -2274,13 +2338,13 @@ impl Connection {
                     if id.initiator() != self.side {
                         Some(match id.directionality() {
                             Directionality::Uni => {
-                                self.max_remote_uni_streams += 1;
+                                self.streams.max_remote_uni += 1;
                                 self.pending.max_uni_stream_id = true;
                                 (
                                     StreamId::new(
                                         !self.side,
                                         Directionality::Uni,
-                                        self.max_remote_uni_streams - 1,
+                                        self.streams.max_remote_uni - 1,
                                     ),
                                     stream::Recv::new(u64::from(
                                         config.stream_receive_window as u64,
@@ -2288,13 +2352,13 @@ impl Connection {
                                 )
                             }
                             Directionality::Bi => {
-                                self.max_remote_bi_streams += 1;
+                                self.streams.max_remote_bi += 1;
                                 self.pending.max_bi_stream_id = true;
                                 (
                                     StreamId::new(
                                         !self.side,
                                         Directionality::Bi,
-                                        self.max_remote_bi_streams - 1,
+                                        self.streams.max_remote_bi - 1,
                                     ),
                                     Stream::new_bi(config.stream_receive_window as u64),
                                 )
@@ -2309,12 +2373,13 @@ impl Connection {
             }
         };
         if let Some((id, stream)) = new {
-            self.streams.insert(id, stream);
+            self.streams.streams.insert(id, stream);
         }
     }
 
     pub fn finish(&mut self, id: StreamId) {
         let ss = self
+            .streams
             .streams
             .get_mut(&id)
             .expect("unknown stream")
@@ -2338,7 +2403,13 @@ impl Connection {
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
-        let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
+        let rs = self
+            .streams
+            .streams
+            .get_mut(&id)
+            .unwrap()
+            .recv_mut()
+            .unwrap();
         rs.unordered = true;
         // TODO: Drain rs.assembler to handle ordered-then-unordered reads reliably
 
@@ -2373,7 +2444,13 @@ impl Connection {
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
-        let rs = self.streams.get_mut(&id).unwrap().recv_mut().unwrap();
+        let rs = self
+            .streams
+            .streams
+            .get_mut(&id)
+            .unwrap()
+            .recv_mut()
+            .unwrap();
         assert!(
             !rs.unordered,
             "cannot perform ordered reads following unordered reads on a stream"
@@ -2417,6 +2494,7 @@ impl Connection {
             "only streams supporting incoming data may be reset"
         );
         let stream = self
+            .streams
             .streams
             .get(&id)
             .expect("stream must have begun sending to be stopped")
@@ -2481,29 +2559,6 @@ impl Connection {
         }
     }
 
-    pub fn get_recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Stream>, TransportError> {
-        if self.side == id.initiator() {
-            match id.directionality() {
-                Directionality::Uni => {
-                    return Err(TransportError::STREAM_STATE_ERROR);
-                }
-                Directionality::Bi if id.index() >= self.next_bi_stream => {
-                    return Err(TransportError::STREAM_STATE_ERROR);
-                }
-                Directionality::Bi => {}
-            };
-        } else {
-            let limit = match id.directionality() {
-                Directionality::Bi => self.max_remote_bi_streams,
-                Directionality::Uni => self.max_remote_uni_streams,
-            };
-            if id.index() >= limit {
-                return Err(TransportError::STREAM_ID_ERROR);
-            }
-        }
-        Ok(self.streams.get_mut(&id))
-    }
-
     pub fn write(
         &mut self,
         ctx: &mut Context,
@@ -2545,6 +2600,7 @@ impl Connection {
         let (stop_reason, stream_budget) = {
             let ss = self
                 .streams
+                .streams
                 .get_mut(&stream)
                 .expect("stream already closed")
                 .send_mut()
@@ -2582,6 +2638,7 @@ impl Connection {
         if let Some(&stream) = self.readable_streams.iter().next() {
             self.readable_streams.remove(&stream);
             let rs = self
+                .streams
                 .streams
                 .get_mut(&stream)
                 .unwrap()
