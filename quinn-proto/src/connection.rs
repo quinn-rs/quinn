@@ -2603,7 +2603,7 @@ impl Connection {
                 .streams
                 .streams
                 .get_mut(&stream)
-                .expect("stream already closed")
+                .ok_or(WriteError::Stopped {error_code: 0})?
                 .send_mut()
                 .unwrap();
             (
