@@ -33,6 +33,7 @@ impl From<ConnectionHandle> for usize {
 }
 
 pub struct Connection {
+    log: Logger,
     pub tls: TlsSession,
     pub app_closed: bool,
     /// DCID of Initial packet
@@ -340,6 +341,7 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
 
 impl Connection {
     pub fn new(
+        log: Logger,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
@@ -382,6 +384,7 @@ impl Connection {
             );
         }
         let mut this = Self {
+            log,
             tls,
             app_closed: false,
             init_cid,
@@ -532,7 +535,7 @@ impl Connection {
     }
 
     fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
-        trace!(ctx.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
+        trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         // TODO: Validate
         self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest);
@@ -665,7 +668,7 @@ impl Connection {
 
     pub fn check_packet_loss(&mut self, ctx: &mut Context, now: u64) {
         if self.awaiting_handshake {
-            trace!(ctx.log, "retransmitting handshake packets"; "connection" => %self.loc_cid);
+            trace!(self.log, "retransmitting handshake packets");
             let packets = self
                 .sent_packets
                 .iter()
@@ -682,7 +685,7 @@ impl Connection {
             let largest = self.largest_acked_packet;
             self.detect_lost_packets(&ctx.config, now, largest);
         } else if self.tlp_count < ctx.config.max_tlps {
-            trace!(ctx.log, "sending TLP {number} in {pn}",
+            trace!(self.log, "sending TLP {number} in {pn}",
                            number=self.tlp_count,
                            pn=self.largest_sent_packet + 1;
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
@@ -695,7 +698,7 @@ impl Connection {
             self.reset_idle_timeout(&ctx.config, now);
             self.tlp_count += 1;
         } else {
-            trace!(ctx.log, "RTO fired, retransmitting"; "pn" => self.largest_sent_packet + 1,
+            trace!(self.log, "RTO fired, retransmitting"; "pn" => self.largest_sent_packet + 1,
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // RTO
@@ -820,7 +823,7 @@ impl Connection {
     }
 
     fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: u64) {
-        trace!(ctx.log, "packet authenticated"; "connection" => %self.loc_cid, "pn" => packet);
+        trace!(self.log, "packet authenticated"; "pn" => packet);
         self.reset_idle_timeout(&ctx.config, now);
         self.pending_acks.insert_one(packet);
         if self.pending_acks.len() > MAX_ACK_BLOCKS {
@@ -938,14 +941,14 @@ impl Connection {
     }
 
     fn drive_tls(&mut self, ctx: &mut Context) -> Result<(), TransportError> {
-        trace!(ctx.log, "processed stream 0 bytes");
+        trace!(self.log, "processed stream 0 bytes");
         /* Process any new session tickets that might have been delivered
         {
             let mut buffer = ctx.session_ticket_buffer.lock().unwrap();
             for session in buffer.drain(..) {
                 if let Ok(session) = session {
                     trace!(
-                        ctx.log,
+                        self.log,
                         "{connection} got session ticket",
                         connection = self.loc_cid.clone()
                     );
@@ -964,7 +967,7 @@ impl Connection {
                         .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
                 } else {
                     debug!(
-                        ctx.log,
+                        self.log,
                         "{connection} got malformed session ticket",
                         connection = self.loc_cid.clone()
                     );
@@ -983,7 +986,7 @@ impl Connection {
         match self.tls.process_new_packets() {
             Ok(()) => Ok(()),
             Err(e @ TLSError::AlertReceived(_)) => {
-                debug!(ctx.log, "TLS error {}", e);
+                debug!(self.log, "TLS error {}", e);
                 ctx.events.push_back((
                     self.handle,
                     Event::ConnectionLost {
@@ -993,7 +996,7 @@ impl Connection {
                 Err(TransportError::TLS_FATAL_ALERT_RECEIVED)
             }
             Err(e) => {
-                debug!(ctx.log, "TLS error {}", e);
+                debug!(self.log, "TLS error {}", e);
                 ctx.events.push_back((
                     self.handle,
                     Event::ConnectionLost {
@@ -1012,13 +1015,13 @@ impl Connection {
         packet_number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
-        let frame = if let Ok(Some(frame)) = parse_initial(&ctx.log, payload) {
+        let frame = if let Ok(Some(frame)) = parse_initial(&self.log, payload) {
             frame
         } else {
             return Ok(());
         }; // TODO: Send close?
 
-        trace!(ctx.log, "got initial");
+        trace!(self.log, "got initial");
         self.read_tls(&frame);
         if self.tls.process_new_packets().is_err() {
             return Err(TransportError::TLS_HANDSHAKE_FAILED);
@@ -1060,7 +1063,7 @@ impl Connection {
                 rest
             }
             Err(e) => {
-                trace!(ctx.log, "unable to complete packet decoding"; "reason" => %e);
+                trace!(self.log, "unable to complete packet decoding"; "reason" => %e);
                 None
             }
         }
@@ -1076,7 +1079,7 @@ impl Connection {
         if let Some(token) = self.params.stateless_reset_token {
             if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
                 if !self.state.as_ref().unwrap().is_drained() {
-                    debug!(ctx.log, "got stateless reset"; "connection" => %self.loc_cid);
+                    debug!(self.log, "got stateless reset");
                     ctx.io.push_back(Io::TimerStop {
                         connection: self.handle,
                         timer: Timer::LossDetection,
@@ -1101,7 +1104,7 @@ impl Connection {
             }
         }
 
-        trace!(ctx.log, "connection got packet"; "connection" => %self.loc_cid, "len" => packet.payload.len());
+        trace!(self.log, "connection got packet"; "len" => packet.payload.len());
         let (prev_state, was_handshake) = match self.state.take().unwrap() {
             State::Handshake(mut state) => {
                 if !state.rem_cid_set {
@@ -1109,7 +1112,7 @@ impl Connection {
                         Header::Long {
                             src_cid: rem_cid, ..
                         } => {
-                            trace!(ctx.log, "got remote connection id"; "connection" => %self.loc_cid, "rem_cid" => %rem_cid);
+                            trace!(self.log, "got remote connection id"; "rem_cid" => %rem_cid);
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
                         }
@@ -1130,11 +1133,11 @@ impl Connection {
                 self.handle_connected_inner(ctx, now, remote, number, packet, prev_state)
             }
             Err(Some(e)) => {
-                warn!(ctx.log, "got illegal packet"; "connection" => %self.loc_cid, "reason" => %e);
+                warn!(self.log, "got illegal packet"; "reason" => %e);
                 Err(e.into())
             }
             Err(None) => {
-                debug!(ctx.log, "failed to authenticate packet"; "connection" => %self.loc_cid);
+                debug!(self.log, "failed to authenticate packet");
                 Ok(State::Established)
             }
         };
@@ -1166,11 +1169,11 @@ impl Connection {
                         }
                     }
                     ConnectionError::Reset => {
-                        debug!(ctx.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                        debug!(self.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
                         panic!("unexpected connection reset error received");
                     }
                     ConnectionError::TimedOut => {
-                        debug!(ctx.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                        debug!(self.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
                         panic!("unexpected connection timed out error received");
                     }
                     ConnectionError::TransportError { error_code } => {
@@ -1237,7 +1240,6 @@ impl Connection {
                     Header::Long {
                         ty: LongType::Retry,
                         number,
-                        dst_cid: conn_id,
                         src_cid: rem_cid,
                         ..
                     } => {
@@ -1245,24 +1247,24 @@ impl Connection {
                         // retransmitted initials
                         if state.clienthello_packet.is_none() {
                             // Received Retry as a server
-                            debug!(ctx.log, "received retry from client"; "connection" => %conn_id);
+                            debug!(self.log, "received retry from client");
                             Err(TransportError::PROTOCOL_VIOLATION.into())
                         } else if state.clienthello_packet.unwrap() > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so
                             // ignore it
                             Ok(State::Handshake(state))
                         } else {
-                            if let Ok(Some(frame)) = parse_initial(&ctx.log, packet.payload.into())
+                            if let Ok(Some(frame)) = parse_initial(&self.log, packet.payload.into())
                             {
                                 self.read_tls(&frame);
                             } else {
-                                debug!(ctx.log, "invalid retry payload");
+                                debug!(self.log, "invalid retry payload");
                                 return Err(TransportError::PROTOCOL_VIOLATION.into());
                             }
                             match self.tls.process_new_packets() {
                                 Ok(()) => {
                                     self.on_packet_authenticated(ctx, now, number as u64);
-                                    trace!(ctx.log, "resending ClientHello"; "rem_cid" => %rem_cid);
+                                    trace!(self.log, "resending ClientHello"; "rem_cid" => %rem_cid);
                                     // Send updated ClientHello
                                     let mut outgoing = Vec::new();
                                     self.tls.write_tls(&mut outgoing).unwrap();
@@ -1271,6 +1273,7 @@ impl Connection {
 
                                     // Discard transport state
                                     let mut new = Connection::new(
+                                        self.log.clone(),
                                         rem_cid,
                                         self.loc_cid,
                                         rem_cid,
@@ -1291,7 +1294,7 @@ impl Connection {
                                     }))
                                 }
                                 Err(e) => {
-                                    debug!(ctx.log, "handshake failed"; "reason" => %e);
+                                    debug!(self.log, "handshake failed"; "reason" => %e);
                                     Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                                 }
                             }
@@ -1318,7 +1321,7 @@ impl Connection {
                                     },
                                 ) => self.read_tls(&frame),
                                 Frame::Stream(frame::Stream { .. }) => {
-                                    debug!(ctx.log, "non-stream-0 stream frame in handshake");
+                                    debug!(self.log, "non-stream-0 stream frame in handshake");
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 Frame::Ack(ack) => {
@@ -1346,7 +1349,7 @@ impl Connection {
                                     self.handshake_pending.path_challenge(number as u64, value);
                                 }
                                 _ => {
-                                    debug!(ctx.log, "unexpected frame type in handshake"; "connection" => %id, "type" => %frame.ty());
+                                    debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                             }
@@ -1354,12 +1357,12 @@ impl Connection {
 
                         match self.tls.process_new_packets() {
                             Ok(()) if !self.tls.is_handshaking() => {
-                                trace!(ctx.log, "no longer handshaking");
+                                trace!(self.log, "no longer handshaking");
                                 let params = self
                                     .tls
                                     .get_quic_transport_parameters()
                                     .ok_or_else(|| {
-                                        debug!(ctx.log, "remote didn't send transport params");
+                                        debug!(self.log, "remote didn't send transport params");
                                         ConnectionError::from(TransportError::TLS_HANDSHAKE_FAILED)
                                     }).and_then(|x| {
                                         TransportParameters::read(
@@ -1368,7 +1371,7 @@ impl Connection {
                                         ).map_err(Into::into)
                                     })?;
                                 self.set_params(params);
-                                trace!(ctx.log, "{connection} established", connection = id);
+                                trace!(self.log, "{connection} established", connection = id);
                                 self.handshake_cleanup(&ctx.config);
                                 let mut msgs = Vec::new();
                                 self.tls.write_tls(&mut msgs).unwrap();
@@ -1398,7 +1401,7 @@ impl Connection {
                                 Ok(State::Established)
                             }
                             Ok(()) => {
-                                trace!(ctx.log, "handshake ongoing"; "connection" => %id);
+                                trace!(self.log, "handshake ongoing");
                                 self.handshake_cleanup(&ctx.config);
                                 let mut response = Vec::new();
                                 self.tls.write_tls(&mut response).unwrap();
@@ -1411,7 +1414,7 @@ impl Connection {
                                 }))
                             }
                             Err(e) => {
-                                debug!(ctx.log, "handshake failed"; "reason" => %e);
+                                debug!(self.log, "handshake failed"; "reason" => %e);
                                 Err(TransportError::TLS_HANDSHAKE_FAILED.into())
                             }
                         }
@@ -1421,9 +1424,9 @@ impl Connection {
                         ..
                     } => {
                         if self.side == Side::Server {
-                            trace!(ctx.log, "dropping duplicate Initial");
+                            trace!(self.log, "dropping duplicate Initial");
                         } else {
-                            trace!(ctx.log, "dropping Initial for initiated connection");
+                            trace!(self.log, "dropping Initial for initiated connection");
                         }
                         Ok(State::Handshake(state))
                     }
@@ -1440,7 +1443,7 @@ impl Connection {
                                 .is_err()
                             {
                                 debug!(
-                                    ctx.log,
+                                    self.log,
                                     "{connection} failed to authenticate 0-RTT packet",
                                     connection = id.clone()
                                 );
@@ -1448,7 +1451,7 @@ impl Connection {
                             }
                         } else {
                             debug!(
-                                ctx.log,
+                                self.log,
                                 "{connection} ignoring unsupported 0-RTT packet",
                                 connection = id.clone()
                             );
@@ -1476,13 +1479,13 @@ impl Connection {
                         ty: LongType::ZeroRtt,
                         ..
                     } => {
-                        debug!(ctx.log, "dropping 0-RTT packet (currently unimplemented)");
+                        debug!(self.log, "dropping 0-RTT packet (currently unimplemented)");
                         Ok(State::Handshake(state))
                     }
-                    Header::VersionNegotiate { dst_cid: id, .. } => {
+                    Header::VersionNegotiate { .. } => {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
                         if packet.payload.len() % 4 != 0 {
-                            debug!(ctx.log, "malformed version negotiation"; "connection" => %id);
+                            debug!(self.log, "malformed version negotiation");
                             return Err(TransportError::PROTOCOL_VIOLATION.into());
                         }
                         while payload.has_remaining() {
@@ -1492,20 +1495,19 @@ impl Connection {
                                 return Ok(State::Handshake(state));
                             }
                         }
-                        debug!(ctx.log, "remote doesn't support our version");
+                        debug!(self.log, "remote doesn't support our version");
                         Err(ConnectionError::VersionMismatch)
                     }
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     Header::Short { .. } => {
-                        trace!(ctx.log, "dropping short packet during handshake");
+                        trace!(self.log, "dropping short packet during handshake");
                         Ok(State::Handshake(state))
                     }
                 }
             }
             State::Established => {
-                let id = self.loc_cid;
                 if let Header::Long { .. } = packet.header {
-                    trace!(ctx.log, "discarding unprotected packet"; "connection" => %id);
+                    trace!(self.log, "discarding unprotected packet");
                     return Ok(State::Established);
                 }
 
@@ -1530,7 +1532,7 @@ impl Connection {
                 for frame in frame::Iter::new(packet.payload.into()) {
                     match frame {
                         Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(ctx.log, "draining");
+                            trace!(self.log, "draining");
                             return Ok(State::Draining);
                         }
                         _ => {}
@@ -1542,7 +1544,7 @@ impl Connection {
                 for frame in frame::Iter::new(packet.payload.into()) {
                     match frame {
                         Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(ctx.log, "draining");
+                            trace!(self.log, "draining");
                             return Ok(State::Draining);
                         }
                         _ => {}
@@ -1562,12 +1564,11 @@ impl Connection {
         number: u64,
         payload: Bytes,
     ) -> Result<bool, state::CloseReason> {
-        let cid = self.loc_cid;
         for frame in frame::Iter::new(payload) {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(ctx.log, "got frame"; "connection" => cid, "type" => %frame.ty());
+                    trace!(self.log, "got frame"; "type" => %frame.ty());
                 }
             }
             match frame {
@@ -1578,13 +1579,13 @@ impl Connection {
             }
             match frame {
                 Frame::Stream(frame) => {
-                    trace!(ctx.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
+                    trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.data_recvd;
                     let max_data = self.local_max_data;
                     let stream = {
                         match self.streams.get_recv_stream(self.side, frame.id) {
                             Err(e) => {
-                                debug!(ctx.log, "received illegal stream frame"; "stream" => frame.id.0);
+                                debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
                                 ctx.events.push_back((
                                     self.handle,
                                     Event::ConnectionLost { reason: e.into() },
@@ -1592,7 +1593,7 @@ impl Connection {
                                 return Err(e.into());
                             }
                             Ok(None) => {
-                                trace!(ctx.log, "dropping frame for closed stream");
+                                trace!(self.log, "dropping frame for closed stream");
                                 continue;
                             }
                             _ => {}
@@ -1605,7 +1606,7 @@ impl Connection {
                         let rs = stream.recv_mut().unwrap();
                         if let Some(final_offset) = rs.final_offset() {
                             if end > final_offset || (frame.fin && end != final_offset) {
-                                debug!(ctx.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                                debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
                                 ctx.events.push_back((
                                     self.handle,
                                     Event::ConnectionLost {
@@ -1618,7 +1619,7 @@ impl Connection {
                         let prev_end = rs.limit();
                         let new_bytes = end.saturating_sub(prev_end);
                         if end > rs.max_data || data_recvd + new_bytes > max_data {
-                            debug!(ctx.log, "flow control error";
+                            debug!(self.log, "flow control error";
                                    "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
                                    "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
                             ctx.events.push_back((
@@ -1636,7 +1637,7 @@ impl Connection {
                         }
                         rs.recvd.insert(frame.offset..end);
                         if frame.id == StreamId(0) && frame.fin {
-                            debug!(ctx.log, "got fin on stream 0"; "connection" => cid);
+                            debug!(self.log, "got fin on stream 0");
                             ctx.events.push_back((
                                 self.handle,
                                 Event::ConnectionLost {
@@ -1701,7 +1702,7 @@ impl Connection {
                     return Ok(true);
                 }
                 Frame::Invalid(ty) => {
-                    debug!(ctx.log, "received malformed frame"; "type" => %ty);
+                    debug!(self.log, "received malformed frame"; "type" => %ty);
                     ctx.events.push_back((
                         self.handle,
                         Event::ConnectionLost {
@@ -1714,7 +1715,7 @@ impl Connection {
                     self.pending.path_challenge(number, x);
                 }
                 Frame::PathResponse(_) => {
-                    debug!(ctx.log, "unsolicited PATH_RESPONSE");
+                    debug!(self.log, "unsolicited PATH_RESPONSE");
                     ctx.events.push_back((
                         self.handle,
                         Event::ConnectionLost {
@@ -1735,7 +1736,7 @@ impl Connection {
                 }
                 Frame::MaxStreamData { id, offset } => {
                     if id.initiator() != self.side && id.directionality() == Directionality::Uni {
-                        debug!(ctx.log, "got MAX_STREAM_DATA on recv-only stream");
+                        debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1747,7 +1748,7 @@ impl Connection {
                     if let Some(stream) = self.streams.streams.get_mut(&id) {
                         let ss = stream.send_mut().unwrap();
                         if offset > ss.max_data {
-                            trace!(ctx.log, "stream limit increased"; "stream" => id.0,
+                            trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
                                 ctx.events
@@ -1756,7 +1757,7 @@ impl Connection {
                             ss.max_data = offset;
                         }
                     } else {
-                        debug!(ctx.log, "got MAX_STREAM_DATA on unopened stream");
+                        debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1788,7 +1789,7 @@ impl Connection {
                     final_offset,
                 }) => {
                     if id == StreamId(0) {
-                        debug!(ctx.log, "got RST_STREAM on stream 0");
+                        debug!(self.log, "got RST_STREAM on stream 0");
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1800,13 +1801,13 @@ impl Connection {
                     let conn = self.handle;
                     let offset = match self.streams.get_recv_stream(self.side, id) {
                         Err(e) => {
-                            debug!(ctx.log, "received illegal RST_STREAM");
+                            debug!(self.log, "received illegal RST_STREAM");
                             ctx.events
                                 .push_back((conn, Event::ConnectionLost { reason: e.into() }));
                             return Err(e.into());
                         }
                         Ok(None) => {
-                            trace!(ctx.log, "received RST_STREAM on closed stream");
+                            trace!(self.log, "received RST_STREAM on closed stream");
                             continue;
                         }
                         Ok(Some(stream)) => {
@@ -1836,13 +1837,13 @@ impl Connection {
                     ctx.readable_conns.insert(self.handle);
                 }
                 Frame::Blocked { offset } => {
-                    debug!(ctx.log, "peer claims to be blocked at connection level"; "offset" => offset);
+                    debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
                 }
                 Frame::StreamBlocked { id, offset } => {
-                    debug!(ctx.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
+                    debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
                 }
                 Frame::StreamIdBlocked { id } => {
-                    debug!(ctx.log, "peer claims to be blocked at stream ID level"; "stream" => id);
+                    debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => id);
                 }
                 Frame::StopSending { id, error_code } => {
                     if self
@@ -1851,7 +1852,7 @@ impl Connection {
                         .get(&id)
                         .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
                     {
-                        debug!(ctx.log, "got STOP_SENDING on invalid stream");
+                        debug!(self.log, "got STOP_SENDING on invalid stream");
                         ctx.events.push_back((
                             self.handle,
                             Event::ConnectionLost {
@@ -1873,7 +1874,7 @@ impl Connection {
                 }
                 Frame::NewConnectionId { .. } => {
                     if self.rem_cid.is_empty() {
-                        debug!(ctx.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
+                        debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
                                connection=self.loc_cid);
                         ctx.events.push_back((
                             self.handle,
@@ -1883,7 +1884,7 @@ impl Connection {
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    trace!(ctx.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                    trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
                 }
             }
         }
@@ -2271,7 +2272,7 @@ impl Connection {
     }
 
     pub fn close_common(&mut self, ctx: &mut Context, now: u64) {
-        trace!(ctx.log, "connection closed");
+        trace!(self.log, "connection closed");
         self.set_loss_detection = Some(None);
         ctx.io.push_back(Io::TimerStart {
             connection: self.handle,
@@ -2569,13 +2570,13 @@ impl Connection {
         match r {
             Ok(n) => {
                 ctx.dirty_conns.insert(self.handle);
-                trace!(ctx.log, "write"; "connection" => %self.loc_cid, "stream" => stream.0, "len" => n)
+                trace!(self.log, "write"; "stream" => stream.0, "len" => n)
             }
             Err(WriteError::Blocked) => {
                 if self.congestion_blocked() {
-                    trace!(ctx.log, "write blocked by congestion"; "connection" => %self.loc_cid);
+                    trace!(self.log, "write blocked by congestion");
                 } else {
-                    trace!(ctx.log, "write blocked by flow control"; "connection" => %self.loc_cid, "stream" => stream.0);
+                    trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
                 }
             }
             _ => {}

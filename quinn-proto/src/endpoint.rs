@@ -125,6 +125,7 @@ impl Default for Config {
 /// backend to perform via `poll_io`, and consumes incoming packets and timer expirations via
 /// `handle` and `timeout`.
 pub struct Endpoint {
+    log: Logger,
     pub(crate) ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
@@ -133,7 +134,6 @@ pub struct Endpoint {
 }
 
 pub struct Context {
-    pub log: Logger,
     pub rng: OsRng,
     pub config: Arc<Config>,
     pub io: VecDeque<Io>,
@@ -211,7 +211,6 @@ impl Endpoint {
         let config = Arc::new(config);
         Ok(Self {
             ctx: Context {
-                log,
                 rng,
                 config,
                 io: VecDeque::new(),
@@ -224,6 +223,7 @@ impl Endpoint {
                 incoming_handshakes: 0,
                 listen_keys: listen,
             },
+            log,
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
@@ -282,10 +282,10 @@ impl Endpoint {
                     destination,
                 }) => {
                     if !self.listen() {
-                        debug!(self.ctx.log, "dropping packet with unsupported version");
+                        debug!(self.log, "dropping packet with unsupported version");
                         return;
                     }
-                    trace!(self.ctx.log, "sending version negotiation");
+                    trace!(self.log, "sending version negotiation");
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
@@ -302,7 +302,7 @@ impl Endpoint {
                     return;
                 }
                 Err(e) => {
-                    trace!(self.ctx.log, "unable to decode invariant header"; "reason" => %e);
+                    trace!(self.log, "unable to decode invariant header"; "reason" => %e);
                     return;
                 }
             }
@@ -342,7 +342,7 @@ impl Endpoint {
 
         if !self.listen() {
             debug!(
-                self.ctx.log,
+                self.log,
                 "dropping packet on unrecognized connection {connection} because listening is disabled",
                 connection = dst_cid
             );
@@ -353,7 +353,7 @@ impl Endpoint {
             if partial_decode.is_initial() {
                 if datagram_len < MIN_INITIAL_SIZE {
                     debug!(
-                        self.ctx.log,
+                        self.log,
                         "ignoring short initial on {connection}",
                         connection = partial_decode.dst_cid()
                     );
@@ -367,13 +367,13 @@ impl Endpoint {
                         rest
                     }
                     Err(e) => {
-                        trace!(self.ctx.log, "unable to decode packet"; "reason" => %e);
+                        trace!(self.log, "unable to decode packet"; "reason" => %e);
                         None
                     }
                 };
             } else {
                 debug!(
-                    self.ctx.log,
+                    self.log,
                     "ignoring non-initial packet for unknown connection {connection}",
                     connection = dst_cid
                 );
@@ -387,7 +387,7 @@ impl Endpoint {
         //
 
         if !dst_cid.is_empty() {
-            debug!(self.ctx.log, "sending stateless reset");
+            debug!(self.log, "sending stateless reset");
             let mut buf = Vec::<u8>::new();
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification
             // attacks
@@ -419,10 +419,7 @@ impl Endpoint {
                 packet: buf.into(),
             });
         } else {
-            trace!(
-                self.ctx.log,
-                "dropping unrecognized short packet without ID"
-            );
+            trace!(self.log, "dropping unrecognized short packet without ID");
         }
         None
     }
@@ -436,7 +433,7 @@ impl Endpoint {
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
-        trace!(self.ctx.log, "initial dcid"; "value" => %remote_id);
+        trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id,
             local_id,
@@ -467,6 +464,7 @@ impl Endpoint {
             let tls = make_tls(&self.ctx, &local_id, client_config.as_ref());
 
             entry.insert(Connection::new(
+                self.log.new(o!("connection" => local_id)),
                 initial_id,
                 local_id,
                 remote_id,
@@ -504,7 +502,7 @@ impl Endpoint {
             .decrypt(packet_number as u64, &header_data, &mut payload)
             .is_err()
         {
-            debug!(self.ctx.log, "failed to authenticate initial packet");
+            debug!(self.log, "failed to authenticate initial packet");
             return;
         };
         let loc_cid = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
@@ -512,10 +510,7 @@ impl Endpoint {
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
             == self.ctx.config.accept_buffer as usize
         {
-            debug!(
-                self.ctx.log,
-                "rejecting connection due to full accept buffer"
-            );
+            debug!(self.log, "rejecting connection due to full accept buffer");
             let n = self.ctx.gen_initial_packet_num();
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
@@ -541,7 +536,7 @@ impl Endpoint {
         ) {
             Ok(()) => {}
             Err(e) => {
-                debug!(self.ctx.log, "handshake failed"; "reason" => %e);
+                debug!(self.log, "handshake failed"; "reason" => %e);
                 let n = self.ctx.gen_initial_packet_num();
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
@@ -561,7 +556,7 @@ impl Endpoint {
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
         let mut sent = false;
         while let Some(packet) =
-            self.connections[conn.0].next_packet(&self.ctx.log, &self.ctx.config, now)
+            self.connections[conn.0].next_packet(&self.log, &self.ctx.config, now)
         {
             self.ctx.io.push_back(Io::Transmit {
                 destination: self.connections[conn.0].remote,
