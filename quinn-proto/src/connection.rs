@@ -52,7 +52,7 @@ pub struct Connection {
     pub key_phase: bool,
     pub params: TransportParameters,
     /// Streams with data buffered for reading by the application
-    pub readable_streams: FnvHashSet<StreamId>,
+    readable_streams: FnvHashSet<StreamId>,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
     pub blocked_streams: FnvHashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
@@ -2576,6 +2576,21 @@ impl Connection {
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.transmit(stream, (&data[0..n]).into());
         Ok(n)
+    }
+
+    pub fn poll(&mut self) -> Option<Event> {
+        if let Some(&stream) = self.readable_streams.iter().next() {
+            self.readable_streams.remove(&stream);
+            let rs = self
+                .streams
+                .get_mut(&stream)
+                .unwrap()
+                .recv_mut()
+                .unwrap();
+            let fresh = mem::replace(&mut rs.fresh, false);
+            return Some(Event::StreamReadable { stream, fresh });
+        }
+        None
     }
 }
 
