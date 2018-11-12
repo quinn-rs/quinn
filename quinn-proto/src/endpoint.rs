@@ -5,8 +5,7 @@ use std::{cmp, io};
 
 use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use rand::distributions::Distribution;
-use rand::{distributions, rngs::OsRng, Rng, RngCore};
+use rand::{rngs::OsRng, Rng, RngCore};
 use ring::digest;
 use ring::hmac::SigningKey;
 use slab::Slab;
@@ -18,7 +17,10 @@ use connection::{
     ReadError, State, WriteError,
 };
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
-use packet::{ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode};
+use packet::{
+    ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
+    PACKET_NUMBER_32_MASK,
+};
 use {
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
@@ -153,14 +155,7 @@ pub struct Context {
     pub incoming_handshakes: usize,
     pub dirty_conns: FnvHashSet<ConnectionHandle>,
     pub readable_conns: FnvHashSet<ConnectionHandle>,
-    pub initial_packet_number: distributions::Uniform<u64>,
     pub listen_keys: Option<ListenKeys>,
-}
-
-impl Context {
-    fn gen_initial_packet_num(&mut self) -> u32 {
-        self.initial_packet_number.sample(&mut self.rng) as u32
-    }
 }
 
 /// Information that should be preserved between restarts for server endpoints.
@@ -229,7 +224,6 @@ impl Endpoint {
                 config,
                 io: VecDeque::new(),
                 // session_ticket_buffer,
-                initial_packet_number: distributions::Uniform::from(0..2u64.pow(32) - 1024),
                 events: VecDeque::new(),
                 dirty_conns: FnvHashSet::default(),
                 readable_conns: FnvHashSet::default(),
@@ -418,9 +412,10 @@ impl Endpoint {
                 ).saturating_sub(RESET_TOKEN_SIZE),
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
+            let number = self.ctx.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
             Header::Short {
                 dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE),
-                number: PacketNumber::U8(self.ctx.rng.gen()),
+                number: PacketNumber::U32(number),
                 key_phase: false,
             }.encode(&mut buf);
             {
@@ -485,7 +480,6 @@ impl Endpoint {
         client_config: Option<ClientConfig>,
     ) -> ConnectionHandle {
         debug_assert!(!local_id.is_empty());
-        let packet_num = self.ctx.gen_initial_packet_num();
         let conn = {
             let entry = self.connections.vacant_entry();
             let conn = ConnectionHandle(entry.key());
@@ -497,7 +491,6 @@ impl Endpoint {
                 local_id,
                 remote_id,
                 remote,
-                packet_num.into(),
                 client_config,
                 tls,
                 &mut self.ctx,
@@ -527,6 +520,7 @@ impl Endpoint {
             } => (src_cid, dst_cid, number),
             _ => panic!("non-initial packet in handle_initial()"),
         };
+        let packet_number = packet_number.expand(0);
 
         if crypto
             .decrypt(packet_number as u64, &header_data, &mut payload)
@@ -541,14 +535,13 @@ impl Endpoint {
             == self.ctx.config.accept_buffer as usize
         {
             debug!(self.log, "rejecting connection due to full accept buffer");
-            let n = self.ctx.gen_initial_packet_num();
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: handshake_close(
                     &crypto,
                     &src_cid,
                     &loc_cid,
-                    n,
+                    0,
                     TransportError::SERVER_BUSY,
                     None,
                 ),
@@ -567,14 +560,13 @@ impl Endpoint {
             Ok(()) => {}
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                let n = self.ctx.gen_initial_packet_num();
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
                         &crypto,
                         &src_cid,
                         &loc_cid,
-                        n,
+                        0,
                         TransportError::TLS_HANDSHAKE_FAILED,
                         None,
                     ),
