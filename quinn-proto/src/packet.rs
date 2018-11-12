@@ -4,7 +4,7 @@ use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
 use slog;
 
-use coding::{self, BufExt, BufMutExt};
+use coding::{self, BufExt, BufMutExt, Codec};
 use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
@@ -64,14 +64,7 @@ impl PartialDecode {
         let (payload_len, header, allow_coalesced) = match invariant_header {
             InvariantHeader::Short { first, dst_cid } => {
                 let key_phase = first & KEY_PHASE_BIT != 0;
-                let number = match first & 0b11 {
-                    0x0 => PacketNumber::U8(buf.get()?),
-                    0x1 => PacketNumber::U16(buf.get()?),
-                    0x2 => PacketNumber::U32(buf.get()?),
-                    _ => {
-                        return Err(PacketDecodeError::InvalidHeader("unknown packet type"));
-                    }
-                };
+                let number = PacketNumber::decode(&mut buf)?;
                 (
                     buf.remaining(),
                     Header::Short {
@@ -124,7 +117,7 @@ impl PartialDecode {
                     buf.copy_to_slice(&mut token);
 
                     let len = buf.get_var()?;
-                    let number = buf.get()?;
+                    let number = PacketNumber::decode(&mut buf)?;
                     (
                         len as usize,
                         Header::Initial {
@@ -138,7 +131,7 @@ impl PartialDecode {
                 }
                 PacketType::Long(ty) => {
                     let len = buf.get_var()?;
-                    let number = buf.get()?;
+                    let number = PacketNumber::decode(&mut buf)?;
                     (
                         len as usize,
                         Header::Long {
@@ -190,13 +183,13 @@ pub enum Header {
         src_cid: ConnectionId,
         dst_cid: ConnectionId,
         token: Vec<u8>,
-        number: u32,
+        number: PacketNumber,
     },
     Long {
         ty: LongType,
         src_cid: ConnectionId,
         dst_cid: ConnectionId,
-        number: u32,
+        number: PacketNumber,
     },
     Retry {
         src_cid: ConnectionId,
@@ -231,7 +224,7 @@ impl Header {
                 w.write_var(token.len() as u64);
                 w.put_slice(token);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
-                w.write(number);
+                number.encode(w);
             }
             Long {
                 ty,
@@ -243,7 +236,7 @@ impl Header {
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
-                w.write(number);
+                number.encode(w);
             }
             Retry {
                 ref src_cid,
@@ -261,8 +254,7 @@ impl Header {
                 number,
                 key_phase,
             } => {
-                let ty = number.ty() | 0x30 | if key_phase { KEY_PHASE_BIT } else { 0 };
-                w.write(ty);
+                w.write(0x30 | if key_phase { KEY_PHASE_BIT } else { 0 });
                 w.put_slice(dst_cid);
                 number.encode(w);
             }
@@ -369,7 +361,7 @@ impl InvariantHeader {
 }
 
 // An encoded packet number
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PacketNumber {
     U8(u8),
     U16(u16),
@@ -378,9 +370,6 @@ pub enum PacketNumber {
 
 impl PacketNumber {
     pub fn new(n: u64, largest_acked: u64) -> Self {
-        if largest_acked == 0 {
-            return PacketNumber::U32(n as u32);
-        }
         let range = (n - largest_acked) / 2;
         if range < 1 << 8 {
             PacketNumber::U8(n as u8)
@@ -393,21 +382,60 @@ impl PacketNumber {
         }
     }
 
-    fn ty(self) -> u8 {
+    pub fn len(self) -> usize {
         use self::PacketNumber::*;
         match self {
-            U8(_) => 0x00,
-            U16(_) => 0x01,
-            U32(_) => 0x02,
+            U8(_) => 1,
+            U16(_) => 2,
+            U32(_) => 4,
         }
     }
 
     pub fn encode<W: BufMut>(self, w: &mut W) {
         use self::PacketNumber::*;
         match self {
-            U8(x) => w.write(x),
-            U16(x) => w.write(x),
-            U32(x) => w.write(x),
+            U8(x) => {
+                debug_assert!(x < 128);
+                w.write(x)
+            }
+            U16(x) => {
+                debug_assert!(x >= 128);
+                debug_assert!(x < 16384);
+                w.write(x | 0x8000)
+            }
+            U32(x) => {
+                debug_assert!(x >= 16384);
+                debug_assert!(x < 1073741824);
+                w.write(x | 0xc0000000)
+            }
+        }
+    }
+
+    pub fn decode<R: Buf>(r: &mut R) -> Result<PacketNumber, PacketDecodeError> {
+        use self::PacketNumber::*;
+        if r.remaining() < 1 {
+            return Err(coding::UnexpectedEnd.into());
+        }
+
+        let first = r.bytes()[0];
+        let len = if first < 0x80 {
+            1
+        } else if first < 0xc0 {
+            2
+        } else {
+            4
+        };
+        if r.remaining() < len {
+            return Err(coding::UnexpectedEnd.into());
+        }
+
+        match len {
+            1 => Ok(U8(r.get()?)),
+            2 => Ok(U16(u16::decode(r)? & PACKET_NUMBER_16_MASK)),
+            4 => Ok(U32(u32::decode(r)? & PACKET_NUMBER_32_MASK)),
+            _ => Err(PacketDecodeError::InvalidHeader(
+                "unable to decode packet number",
+            )),
         }
     }
 
@@ -415,11 +443,7 @@ impl PacketNumber {
         use self::PacketNumber::*;
         let t = prev + 1;
         // Compute missing bits that minimize the difference from expected
-        let d = match self {
-            U8(_) => 1 << 8,
-            U16(_) => 1 << 16,
-            U32(_) => 1 << 32,
-        };
+        let d = 1 << (8 * self.len());
         let x = match self {
             U8(x) => x as u64,
             U16(x) => x as u64,
@@ -595,12 +619,41 @@ impl slog::Value for ConnectionId {
     }
 }
 
-pub fn set_payload_length(packet: &mut [u8], header_len: usize) {
+pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
     let len = packet.len() - header_len + AEAD_TAG_SIZE;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
-    BigEndian::write_u16(&mut packet[header_len - 6..], len as u16 | 0b01 << 14);
+    BigEndian::write_u16(
+        &mut packet[header_len - pn_len - 2..],
+        len as u16 | 0b01 << 14,
+    );
 }
 
 pub const AEAD_TAG_SIZE: usize = 16;
+pub const PACKET_NUMBER_16_MASK: u16 = 0x3fff;
+pub const PACKET_NUMBER_32_MASK: u32 = 0x3fffffff;
+
 const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x40;
+
+#[cfg(test)]
+mod tests {
+    use super::PacketNumber;
+    use std::io;
+
+    fn check_pn(typed: PacketNumber, encoded: &[u8]) {
+        let mut buf = Vec::new();
+        typed.encode(&mut buf);
+        assert_eq!(&buf[..encoded.len()], encoded);
+        let decoded = PacketNumber::decode(&mut io::Cursor::new(&buf)).unwrap();
+        assert_eq!(typed, decoded);
+    }
+
+    #[test]
+    fn roundtrip_packet_numbers() {
+        check_pn(PacketNumber::U8(127), &[0x7f]);
+        check_pn(PacketNumber::U16(128), &[0x80, 0x80]);
+        check_pn(PacketNumber::U16(16383), &[0xbf, 0xff]);
+        check_pn(PacketNumber::U32(16384), &[0xc0, 0x00, 0x40, 0x00]);
+        check_pn(PacketNumber::U32(1073741823), &[0xff, 0xff, 0xff, 0xff]);
+    }
+}

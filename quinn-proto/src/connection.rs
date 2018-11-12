@@ -5,7 +5,6 @@ use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
-use rand::distributions::Distribution;
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
@@ -346,7 +345,6 @@ impl Connection {
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddrV6,
-        initial_packet_number: u64,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
         ctx: &mut Context,
@@ -427,7 +425,7 @@ impl Connection {
             largest_sent_before_rto: 0,
             time_of_last_sent_retransmittable_packet: 0,
             time_of_last_sent_handshake_packet: 0,
-            largest_sent_packet: initial_packet_number.overflowing_sub(1).0,
+            largest_sent_packet: 0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
 
@@ -1203,13 +1201,17 @@ impl Connection {
                     ctx.incoming_handshakes -= 1;
                 }
                 let n = self.get_tx_number();
+                debug_assert!(n < 64); // handshake_close doesn't have the connection state
+                                       // to decide on packet number encoding length; since this
+                                       // is about closing the handshake, it seems reasonable to
+                                       // assume that the packet number will fit in one byte.
                 ctx.io.push_back(Io::Transmit {
                     destination: remote,
                     packet: handshake_close(
                         &self.handshake_crypto,
                         &self.rem_cid,
                         &self.loc_cid,
-                        n as u32,
+                        n as u8,
                         state.reason.clone(),
                         state.alert.as_ref().map(|x| &x[..]),
                     ),
@@ -1250,7 +1252,7 @@ impl Connection {
                             // Received Retry as a server
                             debug!(self.log, "received retry from client");
                             Err(TransportError::PROTOCOL_VIOLATION.into())
-                        } else if state.clienthello_packet.unwrap() as u64 > number {
+                        } else if state.clienthello_packet.unwrap() > number {
                             // Retry corresponds to an outdated Initial; must be a duplicate, so
                             // ignore it
                             Ok(State::Handshake(state))
@@ -1268,7 +1270,6 @@ impl Connection {
                                 self.loc_cid,
                                 rem_cid,
                                 remote,
-                                ctx.initial_packet_number.sample(&mut ctx.rng),
                                 self.client_config.clone(),
                                 tls,
                                 ctx,
@@ -1904,21 +1905,21 @@ impl Connection {
                 {
                     if let State::Handshake(ref mut state) = self.state.as_mut().unwrap() {
                         if state.clienthello_packet.is_none() {
-                            state.clienthello_packet = Some(number as u32);
+                            state.clienthello_packet = Some(number);
                         }
                     }
                     Header::Initial {
                         src_cid: self.loc_cid,
                         dst_cid: self.rem_cid,
                         token: vec![], // TODO: determine what's needed here
-                        number: number as u32,
+                        number: PacketNumber::new(number, self.largest_acked_packet),
                     }
                 } else {
                     Header::Long {
                         ty: LongType::Handshake,
                         src_cid: self.loc_cid,
                         dst_cid: self.rem_cid,
-                        number: number as u32,
+                        number: PacketNumber::new(number, self.largest_acked_packet),
                     }
                 };
                 (
@@ -2148,7 +2149,11 @@ impl Connection {
                 }
             }
             if !crypto.is_1rtt() {
-                set_payload_length(&mut buf, header_len as usize);
+                let pn_len = match header {
+                    Header::Initial { number, .. } | Header::Long { number, .. } => number.len(),
+                    _ => panic!("invalid header for packet payload length"),
+                };
+                set_payload_length(&mut buf, header_len as usize, pn_len);
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
             (number, acks, ack_only, crypto.is_initial())
@@ -2519,7 +2524,7 @@ impl Connection {
                 (key_phase, number)
             }
             Header::Initial { number, .. } | Header::Long { number, .. } if handshake => {
-                (false, PacketNumber::U32(number))
+                (false, number)
             }
             _ => {
                 return Err(None);
@@ -2677,20 +2682,23 @@ pub fn handshake_close<R>(
     crypto: &Crypto,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
-    packet_number: u32,
+    packet_number: u8,
     reason: R,
     tls_alert: Option<&[u8]>,
 ) -> Box<[u8]>
 where
     R: Into<state::CloseReason>,
 {
-    let mut buf = Vec::<u8>::new();
-    Header::Long {
+    let number = PacketNumber::U8(packet_number);
+    let header = Header::Long {
         ty: LongType::Handshake,
         dst_cid: *remote_id,
         src_cid: *local_id,
-        number: packet_number,
-    }.encode(&mut buf);
+        number,
+    };
+
+    let mut buf = Vec::<u8>::new();
+    header.encode(&mut buf);
     let header_len = buf.len();
     let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
     match reason.into() {
@@ -2707,7 +2715,7 @@ where
             }.encode(false, &mut buf);
         }
     }
-    set_payload_length(&mut buf, header_len);
+    set_payload_length(&mut buf, header_len, number.len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
     buf.into()
 }
@@ -2855,7 +2863,7 @@ pub mod state {
     pub struct Handshake {
         /// The number of the packet that first contained the latest version of the TLS
         /// ClientHello. Present iff we're the client.
-        pub clienthello_packet: Option<u32>,
+        pub clienthello_packet: Option<u64>,
         pub rem_cid_set: bool,
         pub token: Option<BytesMut>,
     }
