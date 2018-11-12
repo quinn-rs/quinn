@@ -1057,7 +1057,16 @@ impl Connection {
         remote: SocketAddrV6,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
-        match partial_decode.finish() {
+        let result = {
+            let crypto = if partial_decode.is_handshake() {
+                &self.handshake_crypto
+            } else {
+                &self.crypto.as_ref().unwrap()
+            };
+            partial_decode.finish(crypto.pn_decrypt_key())
+        };
+
+        match result {
             Ok((packet, rest)) => {
                 self.handle_packet(ctx, now, remote, packet);
                 rest
@@ -1966,7 +1975,7 @@ impl Connection {
                 return None;
             };
 
-            header.encode(&mut buf);
+            let partial_encode = header.encode(&mut buf);
             let ack_only = pending.is_empty();
             let header_len = buf.len() as u16;
             let max_size = self.mtu as usize - AEAD_TAG_SIZE;
@@ -2156,6 +2165,7 @@ impl Connection {
                 set_payload_length(&mut buf, header_len as usize, pn_len);
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
+            partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
             (number, acks, ack_only, crypto.is_initial())
         };
 
@@ -2184,17 +2194,19 @@ impl Connection {
     fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
-        Header::Short {
+        let header = Header::Short {
             dst_cid: self.rem_cid,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
-        }.encode(&mut buf);
+        };
+        let partial_encode = header.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.push(frame::Type::PING.into());
-        self.crypto
-            .as_ref()
-            .unwrap()
-            .encrypt(number, &mut buf, header_len as usize);
+        {
+            let crypto = self.crypto.as_ref().unwrap();
+            crypto.encrypt(number, &mut buf, header_len as usize);
+            partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
+        }
         self.on_packet_sent(
             config,
             now,
@@ -2213,21 +2225,26 @@ impl Connection {
     fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
-        Header::Short {
+        let header = Header::Short {
             dst_cid: self.rem_cid,
             number: PacketNumber::new(number, self.largest_acked_packet),
             key_phase: self.key_phase,
-        }.encode(&mut buf);
+        };
+        let partial_encode = header.encode(&mut buf);
         let header_len = buf.len() as u16;
+
         let max_len = self.mtu - header_len - AEAD_TAG_SIZE as u16;
         match *reason {
             state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
-        self.crypto
+
+        let crypto = self
+            .crypto
             .as_ref()
-            .unwrap_or_else(|| &self.handshake_crypto)
-            .encrypt(number, &mut buf, header_len as usize);
+            .unwrap_or_else(|| &self.handshake_crypto);
+        crypto.encrypt(number, &mut buf, header_len as usize);
+        partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
         buf.into()
     }
 
@@ -2698,7 +2715,7 @@ where
     };
 
     let mut buf = Vec::<u8>::new();
-    header.encode(&mut buf);
+    let partial_encode = header.encode(&mut buf);
     let header_len = buf.len();
     let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
     match reason.into() {
@@ -2717,6 +2734,7 @@ where
     }
     set_payload_length(&mut buf, header_len, number.len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
+    partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
     buf.into()
 }
 
