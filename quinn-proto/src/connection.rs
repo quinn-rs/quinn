@@ -1903,23 +1903,15 @@ impl Connection {
 
         let mut buf = Vec::new();
         let mut sent = Retransmits::default();
-        let acks;
-        let number;
-        let ack_only;
-        let is_initial;
-        let header_len;
-        let handshake;
 
-        {
-            let crypto;
-            let pending;
-            if (!established || self.awaiting_handshake)
+        let (number, acks, ack_only, handshake) = {
+            let (number, header, crypto, pending) = if (!established || self.awaiting_handshake)
                 && (!self.handshake_pending.is_empty()
                     || (!self.pending_acks.is_empty() && self.permit_ack_only))
             {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
-                number = self.get_tx_number();
+                let number = self.get_tx_number();
                 trace!(log, "sending handshake packet"; "pn" => number);
                 let ty = if self.side == Side::Client && self
                     .handshake_pending
@@ -1932,31 +1924,32 @@ impl Connection {
                             state.clienthello_packet = Some(number as u32);
                         }
                     }
-                    is_initial = true;
                     LongType::Initial
                 } else {
-                    is_initial = false;
                     LongType::Handshake
                 };
-                Header::Long {
+                let header = Header::Long {
                     ty,
                     number: number as u32,
                     src_cid: self.loc_cid,
                     dst_cid: self.rem_cid,
-                }.encode(&mut buf);
-                pending = &mut self.handshake_pending;
-                crypto = &self.handshake_crypto;
+                };
+                (
+                    number,
+                    header,
+                    &self.handshake_crypto,
+                    &mut self.handshake_pending,
+                )
             } else if established {
                 //|| (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
                 // Send 0RTT or 1RTT data
-                is_initial = false;
                 if self.congestion_blocked()
                     || self.pending.is_empty()
                         && (!self.permit_ack_only || self.pending_acks.is_empty())
                 {
                     return None;
                 }
-                number = self.get_tx_number();
+                let number = self.get_tx_number();
                 buf.reserve_exact(self.mtu as usize);
                 trace!(log, "sending protected packet"; "pn" => number);
 
@@ -1969,20 +1962,25 @@ impl Connection {
                         dst_cid: self.init_cid.clone(),
                     }.encode(&mut buf);
                 } else {*/
-                crypto = self.crypto.as_ref().unwrap();
-                Header::Short {
+                let header = Header::Short {
                     dst_cid: self.rem_cid,
                     number: PacketNumber::new(number, self.largest_acked_packet),
                     key_phase: self.key_phase,
-                }.encode(&mut buf);
+                };
                 //}
-
-                pending = &mut self.pending;
+                (
+                    number,
+                    header,
+                    self.crypto.as_ref().unwrap(),
+                    &mut self.pending,
+                )
             } else {
                 return None;
-            }
-            ack_only = pending.is_empty();
-            header_len = buf.len() as u16;
+            };
+
+            header.encode(&mut buf);
+            let ack_only = pending.is_empty();
+            let header_len = buf.len() as u16;
             let max_size = self.mtu as usize - AEAD_TAG_SIZE;
 
             // PING
@@ -1997,15 +1995,15 @@ impl Connection {
             // We will never ack protected packets in handshake packets because handshake_cleanup
             // ensures we never send handshake packets after receiving protected packets.
             // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-            if !self.pending_acks.is_empty() {
+            let acks = if !self.pending_acks.is_empty() {
                 //&& !crypto.is_0rtt() {
                 let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
                 trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
                 frame::Ack::encode(delay, &self.pending_acks, &mut buf);
-                acks = self.pending_acks.clone();
+                self.pending_acks.clone()
             } else {
-                acks = RangeSet::new();
-            }
+                RangeSet::new()
+            };
 
             // PATH_RESPONSE
             if buf.len() + 9 < max_size {
@@ -2154,18 +2152,24 @@ impl Connection {
                 }
             }
 
-            if is_initial && buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                buf.resize(
-                    MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
-                    frame::Type::PADDING.into(),
-                );
+            if let Header::Long {
+                ty: LongType::Initial,
+                ..
+            } = header
+            {
+                if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+                    buf.resize(
+                        MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
+                        frame::Type::PADDING.into(),
+                    );
+                }
             }
             if !crypto.is_1rtt() {
                 set_payload_length(&mut buf, header_len as usize);
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
-            handshake = crypto.is_handshake();
-        }
+            (number, acks, ack_only, crypto.is_handshake())
+        };
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
