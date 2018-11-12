@@ -55,7 +55,7 @@ mod transport_error;
 pub use transport_error::Error as TransportError;
 
 /// The QUIC protocol version implemented
-pub const VERSION: u32 = 0xff00_000b;
+pub const VERSION: u32 = 0xff00_000f;
 
 /// TLS ALPN value for HTTP over QUIC
 pub const ALPN_QUIC_HTTP: &[u8] = b"hq-11";
