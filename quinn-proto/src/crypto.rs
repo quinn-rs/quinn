@@ -6,7 +6,8 @@ use std::{io, str};
 use aes_ctr::stream_cipher::generic_array::GenericArray;
 use aes_ctr::stream_cipher::{NewFixStreamCipher, StreamCipherCore};
 use aes_ctr::Aes128Ctr;
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BigEndian, Buf, BufMut, ByteOrder, BytesMut};
+use orion::hazardous::stream::chacha20;
 use ring::aead;
 use ring::digest;
 use ring::hkdf;
@@ -448,7 +449,13 @@ impl PacketNumberKey {
                 let nonce = GenericArray::from_slice(sample);
                 Aes128Ctr::new(key, nonce).apply_keystream(in_out)
             }
-            _ => unimplemented!(),
+            ChaCha20(key) => {
+                let counter = BigEndian::read_u32(&sample[..4]);
+                let nonce = &sample[4..];
+                let mut input = [0; 4];
+                (&mut input[..in_out.len()]).copy_from_slice(in_out);
+                chacha20::decrypt(key, nonce, counter, &input[..in_out.len()], in_out).unwrap();
+            }
         }
     }
 
@@ -460,7 +467,13 @@ impl PacketNumberKey {
                 let nonce = GenericArray::from_slice(sample);
                 Aes128Ctr::new(key, nonce).apply_keystream(in_out)
             }
-            _ => unimplemented!(),
+            ChaCha20(key) => {
+                let counter = BigEndian::read_u32(&sample[..4]);
+                let nonce = &sample[4..];
+                let mut input = [0; 4];
+                (&mut input[..in_out.len()]).copy_from_slice(in_out);
+                chacha20::encrypt(key, nonce, counter, &input[..in_out.len()], in_out).unwrap();
+            }
         }
     }
 }

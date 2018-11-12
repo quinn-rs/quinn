@@ -14,6 +14,7 @@ extern crate hex_literal;
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
+extern crate orion;
 extern crate rand;
 extern crate ring;
 extern crate rustls;
