@@ -265,11 +265,8 @@ impl Connection {
                 finished: Vec::new(),
             },
         };
-        match side {
-            Side::Client => {
-                this.connect();
-            }
-            _ => {}
+        if side == Side::Client {
+            this.connect();
         }
         this
     }
@@ -887,17 +884,14 @@ impl Connection {
         let (prev_state, was_handshake) = match self.state.take().unwrap() {
             State::Handshake(mut state) => {
                 if !state.rem_cid_set {
-                    match packet.header {
-                        Header::Long {
-                            ty: LongType::Handshake,
-                            src_cid: rem_cid,
-                            ..
-                        } => {
-                            trace!(self.log, "got remote connection id"; "rem_cid" => %rem_cid);
-                            self.rem_cid = rem_cid;
-                            state.rem_cid_set = true;
-                        }
-                        _ => {}
+                    if let Header::Long {
+                        ty: LongType::Handshake,
+                        src_cid: rem_cid, ..
+                    } = packet.header
+                    {
+                        trace!(self.log, "got remote connection id"; "rem_cid" => %rem_cid);
+                        self.rem_cid = rem_cid;
+                        state.rem_cid_set = true;
                     }
                 }
                 (State::Handshake(state), true)
@@ -2046,9 +2040,8 @@ impl Connection {
                                         Directionality::Uni,
                                         self.streams.max_remote_uni - 1,
                                     ),
-                                    stream::Recv::new(u64::from(
-                                        config.stream_receive_window as u64,
-                                    )).into(),
+                                    stream::Recv::new(u64::from(config.stream_receive_window))
+                                        .into(),
                                 )
                             }
                             Directionality::Bi => {
