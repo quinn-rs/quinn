@@ -20,7 +20,7 @@ use connection::{
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
 use packet::{ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode};
 use {
-    Directionality, Side, StreamId, TransportError, LOCAL_ID_LEN, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
 
@@ -85,6 +85,12 @@ pub struct Config {
     pub loss_reduction_factor: u16,
 
     pub tls_server_config: Arc<ServerConfig>,
+
+    /// Length of connection IDs for the endpoint. This must be either 0 or between 4 and 18
+    /// inclusive. The length of the local connection IDs constrains the amount of simultaneous
+    /// connections the endpoint can maintain. The API user is responsible for making sure that
+    /// the pool is large enough to cover the intended usage.
+    pub local_cid_len: usize,
 }
 
 impl Default for Config {
@@ -117,6 +123,8 @@ impl Default for Config {
             loss_reduction_factor: 0x8000, // 1/2
 
             tls_server_config: Arc::new(crypto::build_server_config()),
+
+            local_cid_len: 8,
         }
     }
 }
@@ -211,6 +219,10 @@ impl Endpoint {
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
+        assert!(
+            (config.local_cid_len == 0 || config.local_cid_len >= MIN_CID_SIZE)
+                && config.local_cid_len <= MAX_CID_SIZE
+        );
         Ok(Self {
             ctx: Context {
                 rng,
@@ -268,7 +280,7 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            match PartialDecode::new(data) {
+            match PartialDecode::new(data, self.ctx.config.local_cid_len) {
                 Ok(partial_decode) => {
                     match self.handle_decode(now, remote, partial_decode, datagram_len) {
                         Some(rest) => {
@@ -323,12 +335,16 @@ impl Endpoint {
         //
 
         let dst_cid = partial_decode.dst_cid();
-        let conn = self
-            .connection_ids
-            .get(&dst_cid)
-            .or_else(|| self.connection_ids_initial.get(&dst_cid))
-            .or_else(|| self.connection_remotes.get(&remote))
-            .cloned();
+        let conn = {
+            let conn = if self.ctx.config.local_cid_len > 0 {
+                self.connection_ids.get(&dst_cid)
+            } else {
+                None
+            };
+            conn.or_else(|| self.connection_ids_initial.get(&dst_cid))
+                .or_else(|| self.connection_remotes.get(&remote))
+                .cloned()
+        };
         if let Some(conn) = conn {
             return self.connections[conn.0].handle_decode(
                 &mut self.ctx,
@@ -433,7 +449,7 @@ impl Endpoint {
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN);
+        let local_id = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
@@ -479,7 +495,9 @@ impl Endpoint {
             ));
             conn
         };
-        self.connection_ids.insert(local_id, conn);
+        if self.ctx.config.local_cid_len > 0 {
+            self.connection_ids.insert(local_id, conn);
+        }
         self.connection_remotes.insert(remote, conn);
         conn
     }
@@ -507,7 +525,7 @@ impl Endpoint {
             debug!(self.log, "failed to authenticate initial packet");
             return;
         };
-        let loc_cid = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN);
+        let loc_cid = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
 
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
             == self.ctx.config.accept_buffer as usize
@@ -607,8 +625,10 @@ impl Endpoint {
             self.connection_ids_initial
                 .remove(&self.connections[conn.0].init_cid);
         }
-        self.connection_ids
-            .remove(&self.connections[conn.0].loc_cid);
+        if self.ctx.config.local_cid_len > 0 {
+            self.connection_ids
+                .remove(&self.connections[conn.0].loc_cid);
+        }
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
         self.ctx.dirty_conns.remove(&conn);

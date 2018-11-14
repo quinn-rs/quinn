@@ -5,7 +5,7 @@ use rand::Rng;
 use slog;
 
 use coding::{self, BufExt, BufMutExt};
-use {LOCAL_ID_LEN, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -23,9 +23,9 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
-    pub fn new(bytes: BytesMut) -> Result<Self, PacketDecodeError> {
+    pub fn new(bytes: BytesMut, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
-        let invariant_header = InvariantHeader::decode(&mut buf)?;
+        let invariant_header = InvariantHeader::decode(&mut buf, local_cid_len)?;
         Ok(Self {
             invariant_header,
             buf,
@@ -241,18 +241,18 @@ impl InvariantHeader {
         }
     }
 
-    fn decode<R: Buf>(buf: &mut R) -> Result<Self, PacketDecodeError> {
+    fn decode<R: Buf>(buf: &mut R, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         let mut cid_stage = [0; MAX_CID_SIZE];
 
         if first & LONG_HEADER_FORM == 0 {
-            if buf.remaining() < LOCAL_ID_LEN {
+            if buf.remaining() < local_cid_len {
                 return Err(PacketDecodeError::InvalidHeader(
                     "destination connection ID longer than packet",
                 ));
             }
-            buf.copy_to_slice(&mut cid_stage[..LOCAL_ID_LEN]);
-            let dst_cid = ConnectionId::new(&cid_stage[..LOCAL_ID_LEN]);
+            buf.copy_to_slice(&mut cid_stage[..local_cid_len]);
+            let dst_cid = ConnectionId::new(&cid_stage[..local_cid_len]);
             Ok(InvariantHeader::Short { first, dst_cid })
         } else {
             let version = buf.get::<u32>()?;
