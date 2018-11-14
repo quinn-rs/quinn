@@ -444,15 +444,15 @@ impl ConnectionId {
         res
     }
 
-    pub fn random<R: Rng>(rng: &mut R, len: u8) -> Self {
-        debug_assert!(len as usize <= MAX_CID_SIZE);
+    pub fn random<R: Rng>(rng: &mut R, len: usize) -> Self {
+        debug_assert!(len <= MAX_CID_SIZE);
         let mut res = Self {
             len: len as u8,
             bytes: [0; MAX_CID_SIZE],
         };
         let mut rng_bytes = [0; MAX_CID_SIZE];
         rng.fill_bytes(&mut rng_bytes);
-        res.bytes[..len as usize].clone_from_slice(&rng_bytes[..len as usize]);
+        res.bytes[..len].clone_from_slice(&rng_bytes[..len]);
         res
     }
 }
