@@ -243,25 +243,22 @@ impl InvariantHeader {
 
     fn decode<R: Buf>(buf: &mut R, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
-        let mut cid_stage = [0; MAX_CID_SIZE];
-
         if first & LONG_HEADER_FORM == 0 {
             if buf.remaining() < local_cid_len {
                 return Err(PacketDecodeError::InvalidHeader(
                     "destination connection ID longer than packet",
                 ));
             }
-            buf.copy_to_slice(&mut cid_stage[..local_cid_len]);
-            let dst_cid = ConnectionId::new(&cid_stage[..local_cid_len]);
+            let dst_cid = Self::get_cid(buf, local_cid_len);
             Ok(InvariantHeader::Short { first, dst_cid })
         } else {
             let version = buf.get::<u32>()?;
             let ci_lengths = buf.get::<u8>()?;
-            let mut dcil = ci_lengths >> 4;
+            let mut dcil = (ci_lengths >> 4) as usize;
             if dcil > 0 {
                 dcil += 3
             };
-            let mut scil = ci_lengths & 0xF;
+            let mut scil = (ci_lengths & 0xF) as usize;
             if scil > 0 {
                 scil += 3
             };
@@ -271,10 +268,8 @@ impl InvariantHeader {
                 ));
             }
 
-            buf.copy_to_slice(&mut cid_stage[0..dcil as usize]);
-            let dst_cid = ConnectionId::new(&cid_stage[..dcil as usize]);
-            buf.copy_to_slice(&mut cid_stage[0..scil as usize]);
-            let src_cid = ConnectionId::new(&cid_stage[..scil as usize]);
+            let dst_cid = Self::get_cid(buf, dcil);
+            let src_cid = Self::get_cid(buf, scil);
 
             if version > 0 && version != VERSION {
                 return Err(PacketDecodeError::UnsupportedVersion {
@@ -290,6 +285,12 @@ impl InvariantHeader {
                 src_cid,
             })
         }
+    }
+
+    fn get_cid<R: Buf>(buf: &mut R, len: usize) -> ConnectionId {
+        let cid = ConnectionId::new(&buf.bytes()[..len]);
+        buf.advance(len);
+        cid
     }
 }
 
