@@ -403,7 +403,7 @@ impl Endpoint {
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
             Header::Short {
-                dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8),
+                dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE),
                 number: PacketNumber::U8(self.ctx.rng.gen()),
                 key_phase: false,
             }.encode(&mut buf);
@@ -433,8 +433,8 @@ impl Endpoint {
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
-        let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE as u8);
+        let local_id = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN);
+        let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id,
@@ -507,7 +507,7 @@ impl Endpoint {
             debug!(self.log, "failed to authenticate initial packet");
             return;
         };
-        let loc_cid = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN as u8);
+        let loc_cid = ConnectionId::random(&mut self.ctx.rng, LOCAL_ID_LEN);
 
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
             == self.ctx.config.accept_buffer as usize

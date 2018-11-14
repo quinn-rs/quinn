@@ -435,7 +435,7 @@ mod test {
 
     #[test]
     fn handshake_crypto_roundtrip() {
-        let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE as u8);
+        let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let client = Crypto::new_handshake(&conn, Side::Client);
         let server = Crypto::new_handshake(&conn, Side::Server);
 
