@@ -262,11 +262,8 @@ impl Connection {
                 finished: Vec::new(),
             },
         };
-        match side {
-            Side::Client => {
-                this.connect();
-            }
-            _ => {}
+        if side == Side::Client {
+            this.connect();
         }
         this
     }
@@ -1924,9 +1921,8 @@ impl Connection {
                                         Directionality::Uni,
                                         self.streams.max_remote_uni - 1,
                                     ),
-                                    stream::Recv::new(u64::from(
-                                        config.stream_receive_window as u64,
-                                    )).into(),
+                                    stream::Recv::new(u64::from(config.stream_receive_window))
+                                        .into(),
                                 )
                             }
                             Directionality::Bi => {

@@ -381,7 +381,7 @@ impl Endpoint {
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 return match partial_decode.finish(crypto.pn_decrypt_key()) {
                     Ok((packet, rest)) => {
-                        self.handle_initial(now, remote, packet, crypto);
+                        self.handle_initial(now, remote, packet, &crypto);
                         rest
                     }
                     Err(e) => {
@@ -538,7 +538,7 @@ impl Endpoint {
         Ok(conn)
     }
 
-    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: Crypto) {
+    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: &Crypto) {
         let Packet {
             header,
             header_data,
