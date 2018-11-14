@@ -6,7 +6,7 @@ use std::{cmp, io};
 use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::distributions::Distribution;
-use rand::{distributions, OsRng, Rng, RngCore};
+use rand::{distributions, rngs::OsRng, Rng, RngCore};
 use slab::Slab;
 use slog::{self, Logger};
 

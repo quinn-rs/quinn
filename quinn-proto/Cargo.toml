@@ -26,7 +26,7 @@ constant_time_eq = "0.1"
 failure = "0.1"
 fnv = "1.0.6"
 lazy_static = "1"
-rand = "0.5"
+rand = "0.6"
 ring = "0.13"
 rustls = { version = "0.14", features = ["quic"] }
 slab = "0.4"
