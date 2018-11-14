@@ -449,7 +449,7 @@ impl Endpoint {
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let local_id = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
+        let local_id = self.new_cid();
         let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
@@ -464,6 +464,16 @@ impl Endpoint {
         );
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
+    }
+
+    fn new_cid(&mut self) -> ConnectionId {
+        loop {
+            let cid = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
+            if !self.connection_ids.contains_key(&cid) {
+                break cid;
+            }
+            assert!(self.ctx.config.local_cid_len > 0);
+        }
     }
 
     fn add_connection(
@@ -525,7 +535,7 @@ impl Endpoint {
             debug!(self.log, "failed to authenticate initial packet");
             return;
         };
-        let loc_cid = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
+        let loc_cid = self.new_cid();
 
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
             == self.ctx.config.accept_buffer as usize
