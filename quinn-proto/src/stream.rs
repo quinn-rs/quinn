@@ -238,7 +238,7 @@ impl Recv {
 
     pub fn buffer(&mut self, data: Bytes, offset: u64) {
         // TODO: Dedup
-        if data.len() == 0 {
+        if data.is_empty() {
             return;
         }
         self.buffered.push_back((data, offset));
