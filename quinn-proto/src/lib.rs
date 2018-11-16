@@ -1,7 +1,6 @@
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
-extern crate blake2;
 extern crate byteorder;
 extern crate bytes;
 extern crate constant_time_eq;
