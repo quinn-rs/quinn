@@ -528,7 +528,7 @@ fn stop_stream() {
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
-        Err(ReadError::Reset { error_code: 0 })
+        Err(ReadError::Reset { error_code: ERROR })
     );
 
     assert_matches!(
