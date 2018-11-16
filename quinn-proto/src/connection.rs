@@ -1861,7 +1861,7 @@ impl Connection {
                         ));
                         return Err(TransportError::PROTOCOL_VIOLATION.into());
                     }
-                    self.reset(ctx, id, 0);
+                    self.reset(ctx, id, error_code);
                     self.streams
                         .streams
                         .get_mut(&id)
