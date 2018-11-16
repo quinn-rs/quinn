@@ -945,11 +945,11 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| SendStream(Stream::new(conn, stream)))
+            .map(move |stream| SendStream(BiStream::new(conn, stream)))
     }
 
     /// Initiate a new outgoing bidirectional stream.
-    pub fn open_bi(&self) -> impl Future<Item = Stream, Error = ConnectionError> {
+    pub fn open_bi(&self) -> impl Future<Item = BiStream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.borrow_mut();
@@ -964,7 +964,7 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| Stream::new(conn.clone(), stream))
+            .map(move |stream| BiStream::new(conn.clone(), stream))
     }
 
     /// Close the connection immediately.
@@ -1070,19 +1070,11 @@ impl Drop for ConnectionInner {
 
 /// Trait of readable streams
 pub trait Read {
-    /// Read a segment of data from any offset in the stream.
-    ///
-    /// Returns a segment of data and their offset in the stream. Segments may be received in any order and may overlap.
-    ///
-    /// Using this function reduces latency improves throughput by avoiding head-of-line blocking within the stream, and
-    /// reduces computational overhead by allowing data to be passed on without any intermediate buffering. Prefer it
-    /// whenever possible.
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
-
     /// Read data contiguously from the stream.
     ///
-    /// Incurs latency, throughput, and computational overhead and is not necessary for most applications. Prefer
-    /// `poll_read_unordered` whenever possible.
+    /// Returns the number of bytes read into `buf` on success.
+    ///
+    /// Applications involving bulk data transfer should consider using unordered reads for improved performance.
     ///
     /// # Panics
     /// - If called after `poll_read_unordered` was called on the same stream.
@@ -1090,30 +1082,51 @@ pub trait Read {
     ///   of the receive buffer, making it impossible for future ordered reads to proceed.
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
 
-    /// Abandon receiving data on this stream.
+    /// Read a segment of data from any offset in the stream.
     ///
-    /// The peer is notified and will reset this stream in response.
+    /// Returns a segment of data and their offset in the stream. Segments may be received in any order and may overlap.
+    ///
+    /// Unordered reads have reduced overhead and higher throughput, and should therefore be preferred when applicable.
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
+
+    /// Close the receive stream immediately.
+    ///
+    /// The peer is notified and will cease transmitting on this stream, as if it had reset the stream itself. Further
+    /// data may still be received on this stream if it was already in flight. Once called, a `ReadError::Reset` should
+    /// be expected soon, although a peer might manage to finish the stream before it receives the reset, and a
+    /// misbehaving peer might ignore the request entirely and continue sending until halted by flow control.
+    ///
+    /// Has no effect if the incoming stream already finished.
     fn stop(&mut self, error_code: u16);
 }
 
 /// Trait of writable streams
 pub trait Write {
-    /// Write some bytes to the stream.
+    /// Write bytes to the stream.
+    ///
+    /// Returns the number of bytes written on success. Congestion and flow control may cause this to be shorter than
+    /// `buf.len()`, indicating that only a prefix of `buf` was written.
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
 
-    /// Indicate that no more data will be written.
+    /// Shut down the send stream gracefully.
     ///
-    /// Completes when the peer has acknowledged all sent data.
+    /// No new data may be written after calling this method. Completes when the peer has acknowledged all sent data,
+    /// retransmitting data as needed.
     fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
 
-    /// Abandon transmitting data on this stream.
+    /// Close the send stream immediately.
     ///
-    /// No new data may be transmitted, and no previously transmitted data will be retransmitted if lost.
+    /// No new data can be written after calling this method. Locally buffered data is dropped, and previously
+    /// transmitted data will no longer be retransmitted if lost. If `poll_finish` was called previously and all data
+    /// has already been transmitted at least once, the peer may still receive all written data.
     fn reset(&mut self, error_code: u16);
 }
 
-/// A stream that supports both sending and receiving data
-pub struct Stream {
+/// A bidirectional stream, supporting both sending and receiving data.
+///
+/// Similar to a TCP connection. Each direction of data flow can be reset or finished by the sending endpoint without
+/// interfering with activity in the other direction.
+pub struct BiStream {
     conn: Rc<ConnectionInner>,
     stream: StreamId,
 
@@ -1126,7 +1139,7 @@ pub struct Stream {
     recvd: bool,
 }
 
-impl Stream {
+impl BiStream {
     fn new(conn: Rc<ConnectionInner>, stream: StreamId) -> Self {
         Self {
             conn,
@@ -1138,7 +1151,7 @@ impl Stream {
     }
 }
 
-impl Write for Stream {
+impl Write for BiStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.conn.endpoint.borrow_mut();
         use quinn::WriteError::*;
@@ -1194,7 +1207,7 @@ impl Write for Stream {
     }
 }
 
-impl Read for Stream {
+impl Read for BiStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         use quinn::ReadError::*;
@@ -1253,7 +1266,7 @@ impl Read for Stream {
     }
 }
 
-impl io::Write for Stream {
+impl io::Write for BiStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match Write::poll_write(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
@@ -1274,7 +1287,7 @@ impl io::Write for Stream {
     }
 }
 
-impl AsyncWrite for Stream {
+impl AsyncWrite for BiStream {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
         self.poll_finish().map_err(|e| {
             io::Error::new(
@@ -1285,7 +1298,7 @@ impl AsyncWrite for Stream {
     }
 }
 
-impl Drop for Stream {
+impl Drop for BiStream {
     fn drop(&mut self) {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         let ours = self.stream.initiator() == self.conn.side;
@@ -1317,7 +1330,7 @@ pub enum WriteError {
     ConnectionClosed(ConnectionError),
 }
 
-impl io::Read for Stream {
+impl io::Read for BiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use ReadError::*;
         match Read::poll_read(self, buf) {
@@ -1336,14 +1349,14 @@ impl io::Read for Stream {
     }
 }
 
-impl AsyncRead for Stream {
+impl AsyncRead for BiStream {
     unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
         false
     }
 }
 
 /// A stream that can only be used to send data
-pub struct SendStream(Stream);
+pub struct SendStream(BiStream);
 
 impl Write for SendStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
@@ -1373,7 +1386,7 @@ impl AsyncWrite for SendStream {
 }
 
 /// A stream that can only be used to receive data
-pub struct RecvStream(Stream);
+pub struct RecvStream(BiStream);
 
 impl Read for RecvStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
@@ -1449,7 +1462,7 @@ pub enum NewStream {
     /// A unidirectional stream.
     Uni(RecvStream),
     /// A bidirectional stream.
-    Bi(Stream),
+    Bi(BiStream),
 }
 
 impl FuturesStream for IncomingStreams {
@@ -1459,7 +1472,7 @@ impl FuturesStream for IncomingStreams {
         let mut endpoint = self.0.endpoint.borrow_mut();
         let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
         if let Some(x) = pending.incoming_streams.pop_front() {
-            let stream = Stream::new(self.0.clone(), x);
+            let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
             } else {
