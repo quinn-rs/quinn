@@ -3,15 +3,11 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{io, str};
 
-use blake2::{
-    digest::{Input, VariableOutput},
-    VarBlake2b,
-};
 use bytes::{Buf, BufMut, BytesMut};
 use ring::aead;
 use ring::digest;
 use ring::hkdf;
-use ring::hmac::SigningKey;
+use ring::hmac::{self, SigningKey};
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
@@ -92,11 +88,11 @@ pub const ACK_DELAY_EXPONENT: u8 = 3;
 //pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
-    let mut mac = VarBlake2b::new_keyed(key, RESET_TOKEN_SIZE);
-    mac.input(id.as_ref());
+    let mac = SigningKey::new(&digest::SHA512_256, key);
+    let signature = hmac::sign(&mac, id);
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
-    mac.variable_result(|res| result.copy_from_slice(res));
+    result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
     result
 }
 

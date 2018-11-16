@@ -19,7 +19,6 @@ maintenance = { status = "experimental" }
 dangerous_configuration = ["rustls/dangerous_configuration"]
 
 [dependencies]
-blake2 = "0.8"
 byteorder = "1.1"
 bytes = "0.4.7"
 constant_time_eq = "0.1"
