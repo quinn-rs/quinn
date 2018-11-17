@@ -123,7 +123,7 @@ impl Pair {
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
             server_config,
-            Some(*LISTEN_KEYS),
+            Some(LISTEN_KEYS.clone()),
         ).unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
@@ -385,8 +385,11 @@ fn version_negotiate() {
     let log = logger();
     let client_addr = "[::2]:7890".parse().unwrap();
     let config = server_config();
-    let mut server =
-        Endpoint::new(log.new(o!("peer" => "server")), config, Some(*LISTEN_KEYS)).unwrap();
+    let mut server = Endpoint::new(
+        log.new(o!("peer" => "server")),
+        config,
+        Some(LISTEN_KEYS.clone()),
+    ).unwrap();
     server.handle(
         0,
         client_addr,
@@ -451,7 +454,7 @@ fn stateless_reset() {
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
-        Some(*LISTEN_KEYS),
+        Some(LISTEN_KEYS.clone()),
     ).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");

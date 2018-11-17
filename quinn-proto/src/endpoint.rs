@@ -7,6 +7,8 @@ use bytes::{Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::distributions::Distribution;
 use rand::{distributions, rngs::OsRng, Rng, RngCore};
+use ring::digest;
+use ring::hmac::SigningKey;
 use slab::Slab;
 use slog::{self, Logger};
 
@@ -157,7 +159,6 @@ impl Context {
 ///
 /// Keeping this around allows better behavior by clients that communicated with a previous
 /// instance of the same endpoint.
-#[derive(Copy, Clone)]
 pub struct ListenKeys {
     /// Cryptographic key used to ensure integrity of data included in handshake cookies.
     ///
@@ -168,6 +169,7 @@ pub struct ListenKeys {
     ///
     /// Initialize with random bytes.
     pub reset: [u8; 64],
+    pub reset_key: SigningKey,
 }
 
 impl ListenKeys {
@@ -179,7 +181,22 @@ impl ListenKeys {
         let mut reset = [0; 64];
         rng.fill_bytes(&mut cookie);
         rng.fill_bytes(&mut reset);
-        Self { cookie, reset }
+        let reset_key = SigningKey::new(&digest::SHA512_256, &reset);
+        Self {
+            cookie,
+            reset,
+            reset_key,
+        }
+    }
+}
+
+impl Clone for ListenKeys {
+    fn clone(&self) -> ListenKeys {
+        ListenKeys {
+            cookie: self.cookie,
+            reset: self.reset,
+            reset_key: SigningKey::new(&digest::SHA512_256, &self.reset),
+        }
     }
 }
 
@@ -411,7 +428,7 @@ impl Endpoint {
                 self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
-                &self.ctx.listen_keys.as_ref().unwrap().reset,
+                &self.ctx.listen_keys.as_ref().unwrap().reset_key,
                 &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {
