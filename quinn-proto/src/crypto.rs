@@ -87,9 +87,8 @@ pub const ACK_DELAY_EXPONENT: u8 = 3;
 /// Magic value used to indicate 0-RTT support in NewSessionTicket
 //pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
-pub fn reset_token_for(key: &[u8], id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
-    let mac = SigningKey::new(&digest::SHA512_256, key);
-    let signature = hmac::sign(&mac, id);
+pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
+    let signature = hmac::sign(key, id);
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
     result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
