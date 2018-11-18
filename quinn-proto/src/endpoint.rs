@@ -168,8 +168,7 @@ pub struct ListenKeys {
     /// communicating with a previous instance of tihs endpoint.
     ///
     /// Initialize with random bytes.
-    pub reset: [u8; 64],
-    pub reset_key: SigningKey,
+    pub reset: SigningKey,
 }
 
 impl ListenKeys {
@@ -178,25 +177,11 @@ impl ListenKeys {
     /// Be careful to use a cryptography-grade RNG.
     pub fn new<R: Rng>(rng: &mut R) -> Self {
         let mut cookie = [0; 64];
-        let mut reset = [0; 64];
+        let mut reset_value = [0; 64];
         rng.fill_bytes(&mut cookie);
-        rng.fill_bytes(&mut reset);
-        let reset_key = SigningKey::new(&digest::SHA512_256, &reset);
-        Self {
-            cookie,
-            reset,
-            reset_key,
-        }
-    }
-}
-
-impl Clone for ListenKeys {
-    fn clone(&self) -> ListenKeys {
-        ListenKeys {
-            cookie: self.cookie,
-            reset: self.reset,
-            reset_key: SigningKey::new(&digest::SHA512_256, &self.reset),
-        }
+        rng.fill_bytes(&mut reset_value);
+        let reset = SigningKey::new(&digest::SHA512_256, &reset_value);
+        Self { cookie, reset }
     }
 }
 
@@ -428,7 +413,7 @@ impl Endpoint {
                 self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
-                &self.ctx.listen_keys.as_ref().unwrap().reset_key,
+                &self.ctx.listen_keys.as_ref().unwrap().reset,
                 &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {

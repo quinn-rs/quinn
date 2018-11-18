@@ -221,7 +221,7 @@ pub fn make_tls(
         None => {
             let server_params = TransportParameters {
                 stateless_reset_token: Some(reset_token_for(
-                    &ctx.listen_keys.as_ref().unwrap().reset_key,
+                    &ctx.listen_keys.as_ref().unwrap().reset,
                     &local_id,
                 )),
                 ..TransportParameters::new(&ctx.config)
