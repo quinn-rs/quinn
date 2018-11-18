@@ -8,6 +8,9 @@ use std::{env, fmt, fs, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
+use rand::RngCore;
+use ring::digest;
+use ring::hmac::SigningKey;
 use rustls::{internal::pemfile, KeyLogFile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
@@ -51,7 +54,6 @@ fn logger() -> Logger {
 }
 
 lazy_static! {
-    static ref LISTEN_KEYS: ListenKeys = ListenKeys::new(&mut rand::thread_rng());
     static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
 }
@@ -70,7 +72,11 @@ impl Default for Pair {
         let mut server_config = server_config();
         server_config.max_remote_uni_streams = 32;
         server_config.max_remote_bi_streams = 32;
-        Pair::new(server_config, Default::default())
+        Pair::new(
+            server_config,
+            Default::default(),
+            ListenKeys::new(&mut rand::thread_rng()),
+        )
     }
 }
 
@@ -118,12 +124,12 @@ fn client_config() -> Arc<ClientConfig> {
 }
 
 impl Pair {
-    fn new(server_config: Config, client_config: Config) -> Self {
+    fn new(server_config: Config, client_config: Config, listen_keys: ListenKeys) -> Self {
         let log = logger();
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
             server_config,
-            Some(LISTEN_KEYS.clone()),
+            Some(listen_keys),
         ).unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
@@ -388,7 +394,7 @@ fn version_negotiate() {
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
         config,
-        Some(LISTEN_KEYS.clone()),
+        Some(ListenKeys::new(&mut rand::thread_rng())),
     ).unwrap();
     server.handle(
         0,
@@ -449,12 +455,28 @@ fn stateless_retry() {
 
 #[test]
 fn stateless_reset() {
-    let mut pair = Pair::default();
+    let mut server_config = server_config();
+    server_config.max_remote_uni_streams = 32;
+    server_config.max_remote_bi_streams = 32;
+
+    let mut reset_value = [0; 64];
+    let mut rng = rand::thread_rng();
+    rng.fill_bytes(&mut reset_value);
+
+    let mut listen_key = ListenKeys::new(&mut rand::thread_rng());
+    listen_key.reset = SigningKey::new(&digest::SHA512_256, &reset_value);
+
+    let pair_listen_keys = ListenKeys {
+        cookie: listen_key.cookie.clone(),
+        reset: SigningKey::new(&digest::SHA512_256, &reset_value),
+    };
+
+    let mut pair = Pair::new(server_config, Default::default(), listen_key);
     let (client_conn, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
-        Some(LISTEN_KEYS.clone()),
+        Some(pair_listen_keys),
     ).unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
@@ -655,7 +677,11 @@ fn stream_id_backpressure() {
         max_remote_uni_streams: 1,
         ..server_config()
     };
-    let mut pair = Pair::new(server_config, Default::default());
+    let mut pair = Pair::new(
+        server_config,
+        Default::default(),
+        ListenKeys::new(&mut rand::thread_rng()),
+    );
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair
