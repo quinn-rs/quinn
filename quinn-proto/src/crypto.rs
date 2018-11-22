@@ -99,7 +99,6 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
     result
 }
 
-#[derive(Clone)]
 pub enum Crypto {
     // ZeroRtt(ZeroRttCrypto),
     Initial(CryptoContext),
@@ -145,10 +144,11 @@ impl Crypto {
             expanded_initial_secret(&hs_secret, remote_label),
         );
         Crypto::Initial(CryptoContext {
+            sealing_key: aead::SealingKey::new(cipher, &local.key).unwrap(),
+            opening_key: aead::OpeningKey::new(cipher, &remote.key).unwrap(),
             local,
             remote,
             digest,
-            cipher,
         })
     }
 
@@ -174,10 +174,11 @@ impl Crypto {
             .unwrap();
         let remote = CryptoState::new(digest, cipher, remote_secret);
         Crypto::OneRtt(CryptoContext {
+            sealing_key: aead::SealingKey::new(cipher, &local.key).unwrap(),
+            opening_key: aead::OpeningKey::new(cipher, &remote.key).unwrap(),
             local,
             remote,
             digest,
-            cipher,
         })
     }
 
@@ -235,11 +236,13 @@ impl Crypto {
 
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
         // FIXME: retain crypter
-        let (cipher, state) = match *self {
-            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.cipher, &crypto.local)
-            }
+        let (cipher, state, key) = match *self {
+            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.sealing_key),
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+                crypto.sealing_key.algorithm(),
+                &crypto.local,
+                &crypto.sealing_key,
+            ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
@@ -248,7 +251,6 @@ impl Crypto {
         let tag = vec![0; cipher.tag_len()];
         buf.extend(tag);
 
-        let key = aead::SealingKey::new(cipher, &state.key).unwrap();
         let (header, payload) = buf.split_at_mut(header_len);
         aead::seal_in_place(&key, &*nonce, header, payload, cipher.tag_len()).unwrap();
     }
@@ -258,11 +260,13 @@ impl Crypto {
             return Err(());
         }
 
-        let (cipher, state) = match *self {
-            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.cipher, &crypto.remote)
-            }
+        let (cipher, state, key) = match *self {
+            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.opening_key),
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+                crypto.opening_key.algorithm(),
+                &crypto.remote,
+                &crypto.opening_key,
+            ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
@@ -270,7 +274,6 @@ impl Crypto {
         self.write_nonce(&state, packet, nonce);
         let payload_len = payload.len();
 
-        let key = aead::OpeningKey::new(cipher, &state.key).unwrap();
         aead::open_in_place(&key, &*nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
         payload.split_off(payload_len - cipher.tag_len());
         Ok(())
@@ -278,12 +281,18 @@ impl Crypto {
 
     pub fn update(&self, side: Side) -> Crypto {
         match *self {
-            Crypto::OneRtt(ref crypto) => Crypto::OneRtt(CryptoContext {
-                local: crypto.local.update(crypto.digest, crypto.cipher, side),
-                remote: crypto.local.update(crypto.digest, crypto.cipher, !side),
-                digest: crypto.digest,
-                cipher: crypto.cipher,
-            }),
+            Crypto::OneRtt(ref crypto) => {
+                let cipher = crypto.sealing_key.algorithm();
+                let local = crypto.local.update(crypto.digest, &cipher, side);
+                let remote = crypto.local.update(crypto.digest, &cipher, !side);
+                Crypto::OneRtt(CryptoContext {
+                    sealing_key: aead::SealingKey::new(&cipher, &local.key).unwrap(),
+                    opening_key: aead::OpeningKey::new(&cipher, &remote.key).unwrap(),
+                    local,
+                    remote,
+                    digest: crypto.digest,
+                })
+            }
             _ => unreachable!(),
         }
     }
@@ -336,7 +345,6 @@ pub struct ConnectionInfo {
     pub(crate) remote: SocketAddrV6,
 }
 
-#[derive(Clone)]
 pub struct CryptoState {
     secret: Vec<u8>,
     key: Vec<u8>,
@@ -384,18 +392,17 @@ impl CryptoState {
     }
 }
 
-#[derive(Clone)]
 pub struct ZeroRttCrypto {
     state: CryptoState,
     cipher: &'static aead::Algorithm,
 }
 
-#[derive(Clone)]
 pub struct CryptoContext {
     local: CryptoState,
+    sealing_key: aead::SealingKey,
     remote: CryptoState,
+    opening_key: aead::OpeningKey,
     digest: &'static digest::Algorithm,
-    cipher: &'static aead::Algorithm,
 }
 
 #[derive(Debug, Fail)]
