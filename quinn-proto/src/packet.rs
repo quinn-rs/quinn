@@ -93,7 +93,6 @@ impl PartialDecode {
 
                 let mut sample_offset = 1 + dst_cid.len() + 4;
                 let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
-
                 (
                     buf.remaining(),
                     Header::Short {
@@ -155,7 +154,7 @@ impl PartialDecode {
 
                     let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
                     (
-                        len as usize,
+                        (len as usize) - number.len(),
                         Header::Initial {
                             src_cid,
                             dst_cid,
@@ -171,7 +170,7 @@ impl PartialDecode {
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
                     let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
                     (
-                        len as usize,
+                        (len as usize) - number.len(),
                         Header::Long {
                             ty,
                             src_cid,
@@ -782,7 +781,7 @@ impl slog::Value for ConnectionId {
 }
 
 pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
-    let len = packet.len() - header_len + AEAD_TAG_SIZE;
+    let len = packet.len() - header_len + pn_len + AEAD_TAG_SIZE;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
     BigEndian::write_u16(
         &mut packet[header_len - pn_len - 2..],
