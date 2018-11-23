@@ -22,15 +22,6 @@ use {
     VERSION,
 };
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ConnectionHandle(pub usize);
-
-impl From<ConnectionHandle> for usize {
-    fn from(x: ConnectionHandle) -> usize {
-        x.0
-    }
-}
-
 pub struct Connection {
     log: Logger,
     pub tls: TlsSession,
@@ -151,191 +142,6 @@ pub struct Connection {
     // Stream states
     //
     streams: Streams,
-}
-
-struct Streams {
-    // Set of streams that are currently open, or could be immediately opened by the peer
-    streams: FnvHashMap<StreamId, Stream>,
-    next_uni: u64,
-    next_bi: u64,
-    // Locally initiated
-    max_uni: u64,
-    max_bi: u64,
-    // Remotely initiated
-    max_remote_uni: u64,
-    max_remote_bi: u64,
-
-    finished: Vec<StreamId>,
-}
-
-impl Streams {
-    fn get_recv_stream(
-        &mut self,
-        side: Side,
-        id: StreamId,
-    ) -> Result<Option<&mut Stream>, TransportError> {
-        if side == id.initiator() {
-            match id.directionality() {
-                Directionality::Uni => {
-                    return Err(TransportError::STREAM_STATE_ERROR);
-                }
-                Directionality::Bi if id.index() >= self.next_bi => {
-                    return Err(TransportError::STREAM_STATE_ERROR);
-                }
-                Directionality::Bi => {}
-            };
-        } else {
-            let limit = match id.directionality() {
-                Directionality::Bi => self.max_remote_bi,
-                Directionality::Uni => self.max_remote_uni,
-            };
-            if id.index() >= limit {
-                return Err(TransportError::STREAM_ID_ERROR);
-            }
-        }
-        Ok(self.streams.get_mut(&id))
-    }
-}
-
-#[derive(Clone)]
-pub struct ClientConfig {
-    pub server_name: String,
-    pub tls_config: Arc<crypto::ClientConfig>,
-}
-
-pub fn make_tls(
-    ctx: &Context,
-    local_id: &ConnectionId,
-    config: Option<&ClientConfig>,
-) -> TlsSession {
-    match config {
-        Some(&ClientConfig {
-            ref tls_config,
-            ref server_name,
-        }) => TlsSession::new_client(
-            tls_config,
-            server_name,
-            &TransportParameters::new(&ctx.config),
-        ).unwrap(),
-        None => {
-            let server_params = TransportParameters {
-                stateless_reset_token: Some(reset_token_for(
-                    &ctx.listen_keys.as_ref().unwrap().reset,
-                    &local_id,
-                )),
-                ..TransportParameters::new(&ctx.config)
-            };
-            TlsSession::new_server(&ctx.config.tls_server_config, &server_params)
-        }
-    }
-}
-
-/// Represents one or more packets subject to retransmission
-#[derive(Debug, Clone)]
-pub struct SentPacket {
-    pub time: u64,
-    /// 0 iff ack-only
-    pub bytes: u16,
-    pub handshake: bool,
-    pub acks: RangeSet,
-    pub retransmits: Retransmits,
-}
-
-impl SentPacket {
-    fn ack_only(&self) -> bool {
-        self.bytes == 0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Retransmits {
-    pub max_data: bool,
-    pub max_uni_stream_id: bool,
-    pub max_bi_stream_id: bool,
-    pub ping: bool,
-    pub new_connection_id: Option<ConnectionId>,
-    pub stream: VecDeque<frame::Stream>,
-    /// packet number, token
-    pub path_response: Option<(u64, u64)>,
-    pub rst_stream: Vec<(StreamId, u16)>,
-    pub stop_sending: Vec<(StreamId, u16)>,
-    pub max_stream_data: FnvHashSet<StreamId>,
-}
-
-impl Retransmits {
-    fn is_empty(&self) -> bool {
-        !self.max_data
-            && !self.max_uni_stream_id
-            && !self.max_bi_stream_id
-            && !self.ping
-            && self.new_connection_id.is_none()
-            && self.stream.is_empty()
-            && self.path_response.is_none()
-            && self.rst_stream.is_empty()
-            && self.stop_sending.is_empty()
-            && self.max_stream_data.is_empty()
-    }
-
-    pub fn path_challenge(&mut self, packet: u64, token: u64) {
-        match self.path_response {
-            None => {
-                self.path_response = Some((packet, token));
-            }
-            Some((existing, _)) if packet > existing => {
-                self.path_response = Some((packet, token));
-            }
-            Some(_) => {}
-        }
-    }
-}
-
-impl Default for Retransmits {
-    fn default() -> Self {
-        Self {
-            max_data: false,
-            max_uni_stream_id: false,
-            max_bi_stream_id: false,
-            ping: false,
-            new_connection_id: None,
-            stream: VecDeque::new(),
-            path_response: None,
-            rst_stream: Vec::new(),
-            stop_sending: Vec::new(),
-            max_stream_data: FnvHashSet::default(),
-        }
-    }
-}
-
-impl ::std::ops::AddAssign for Retransmits {
-    fn add_assign(&mut self, rhs: Self) {
-        self.max_data |= rhs.max_data;
-        self.ping |= rhs.ping;
-        self.max_uni_stream_id |= rhs.max_uni_stream_id;
-        self.max_bi_stream_id |= rhs.max_bi_stream_id;
-        if let Some(x) = rhs.new_connection_id {
-            self.new_connection_id = Some(x);
-        }
-        self.stream.extend(rhs.stream.into_iter());
-        if let Some((packet, token)) = rhs.path_response {
-            self.path_challenge(packet, token);
-        }
-        self.rst_stream.extend_from_slice(&rhs.rst_stream);
-        self.stop_sending.extend_from_slice(&rhs.stop_sending);
-        self.max_stream_data.extend(&rhs.max_stream_data);
-    }
-}
-
-impl ::std::iter::FromIterator<Retransmits> for Retransmits {
-    fn from_iter<T>(iter: T) -> Self
-    where
-        T: IntoIterator<Item = Retransmits>,
-    {
-        let mut result = Retransmits::default();
-        for packet in iter {
-            result += packet;
-        }
-        result
-    }
 }
 
 impl Connection {
@@ -2672,6 +2478,141 @@ where
     buf.into()
 }
 
+struct Streams {
+    // Set of streams that are currently open, or could be immediately opened by the peer
+    streams: FnvHashMap<StreamId, Stream>,
+    next_uni: u64,
+    next_bi: u64,
+    // Locally initiated
+    max_uni: u64,
+    max_bi: u64,
+    // Remotely initiated
+    max_remote_uni: u64,
+    max_remote_bi: u64,
+
+    finished: Vec<StreamId>,
+}
+
+impl Streams {
+    fn get_recv_stream(
+        &mut self,
+        side: Side,
+        id: StreamId,
+    ) -> Result<Option<&mut Stream>, TransportError> {
+        if side == id.initiator() {
+            match id.directionality() {
+                Directionality::Uni => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
+                Directionality::Bi if id.index() >= self.next_bi => {
+                    return Err(TransportError::STREAM_STATE_ERROR);
+                }
+                Directionality::Bi => {}
+            };
+        } else {
+            let limit = match id.directionality() {
+                Directionality::Bi => self.max_remote_bi,
+                Directionality::Uni => self.max_remote_uni,
+            };
+            if id.index() >= limit {
+                return Err(TransportError::STREAM_ID_ERROR);
+            }
+        }
+        Ok(self.streams.get_mut(&id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Retransmits {
+    pub max_data: bool,
+    pub max_uni_stream_id: bool,
+    pub max_bi_stream_id: bool,
+    pub ping: bool,
+    pub new_connection_id: Option<ConnectionId>,
+    pub stream: VecDeque<frame::Stream>,
+    /// packet number, token
+    pub path_response: Option<(u64, u64)>,
+    pub rst_stream: Vec<(StreamId, u16)>,
+    pub stop_sending: Vec<(StreamId, u16)>,
+    pub max_stream_data: FnvHashSet<StreamId>,
+}
+
+impl Retransmits {
+    fn is_empty(&self) -> bool {
+        !self.max_data
+            && !self.max_uni_stream_id
+            && !self.max_bi_stream_id
+            && !self.ping
+            && self.new_connection_id.is_none()
+            && self.stream.is_empty()
+            && self.path_response.is_none()
+            && self.rst_stream.is_empty()
+            && self.stop_sending.is_empty()
+            && self.max_stream_data.is_empty()
+    }
+
+    pub fn path_challenge(&mut self, packet: u64, token: u64) {
+        match self.path_response {
+            None => {
+                self.path_response = Some((packet, token));
+            }
+            Some((existing, _)) if packet > existing => {
+                self.path_response = Some((packet, token));
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+impl Default for Retransmits {
+    fn default() -> Self {
+        Self {
+            max_data: false,
+            max_uni_stream_id: false,
+            max_bi_stream_id: false,
+            ping: false,
+            new_connection_id: None,
+            stream: VecDeque::new(),
+            path_response: None,
+            rst_stream: Vec::new(),
+            stop_sending: Vec::new(),
+            max_stream_data: FnvHashSet::default(),
+        }
+    }
+}
+
+impl ::std::ops::AddAssign for Retransmits {
+    fn add_assign(&mut self, rhs: Self) {
+        self.max_data |= rhs.max_data;
+        self.ping |= rhs.ping;
+        self.max_uni_stream_id |= rhs.max_uni_stream_id;
+        self.max_bi_stream_id |= rhs.max_bi_stream_id;
+        if let Some(x) = rhs.new_connection_id {
+            self.new_connection_id = Some(x);
+        }
+        self.stream.extend(rhs.stream.into_iter());
+        if let Some((packet, token)) = rhs.path_response {
+            self.path_challenge(packet, token);
+        }
+        self.rst_stream.extend_from_slice(&rhs.rst_stream);
+        self.stop_sending.extend_from_slice(&rhs.stop_sending);
+        self.max_stream_data.extend(&rhs.max_stream_data);
+    }
+}
+
+impl ::std::iter::FromIterator<Retransmits> for Retransmits {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = Retransmits>,
+    {
+        let mut result = Retransmits::default();
+        for packet in iter {
+            result += packet;
+        }
+        result
+    }
+}
+
 /// Reasons why a connection might be lost.
 #[derive(Debug, Clone, Fail)]
 pub enum ConnectionError {
@@ -2850,6 +2791,65 @@ pub mod state {
 
     pub struct Closed {
         pub reason: CloseReason,
+    }
+}
+
+pub fn make_tls(
+    ctx: &Context,
+    local_id: &ConnectionId,
+    config: Option<&ClientConfig>,
+) -> TlsSession {
+    match config {
+        Some(&ClientConfig {
+            ref tls_config,
+            ref server_name,
+        }) => TlsSession::new_client(
+            tls_config,
+            server_name,
+            &TransportParameters::new(&ctx.config),
+        ).unwrap(),
+        None => {
+            let server_params = TransportParameters {
+                stateless_reset_token: Some(reset_token_for(
+                    &ctx.listen_keys.as_ref().unwrap().reset,
+                    &local_id,
+                )),
+                ..TransportParameters::new(&ctx.config)
+            };
+            TlsSession::new_server(&ctx.config.tls_server_config, &server_params)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ClientConfig {
+    pub server_name: String,
+    pub tls_config: Arc<crypto::ClientConfig>,
+}
+
+/// Represents one or more packets subject to retransmission
+#[derive(Debug, Clone)]
+pub struct SentPacket {
+    pub time: u64,
+    /// 0 iff ack-only
+    pub bytes: u16,
+    pub handshake: bool,
+    pub acks: RangeSet,
+    pub retransmits: Retransmits,
+}
+
+impl SentPacket {
+    fn ack_only(&self) -> bool {
+        self.bytes == 0
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ConnectionHandle(pub usize);
+
+impl From<ConnectionHandle> for usize {
+    fn from(x: ConnectionHandle) -> usize {
+        x.0
     }
 }
 
