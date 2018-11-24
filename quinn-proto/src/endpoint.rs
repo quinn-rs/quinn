@@ -543,7 +543,6 @@ impl Endpoint {
                     &loc_cid,
                     0,
                     TransportError::SERVER_BUSY,
-                    None,
                 ),
             });
             return;
@@ -562,14 +561,7 @@ impl Endpoint {
                 debug!(self.log, "handshake failed"; "reason" => %e);
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(
-                        &crypto,
-                        &src_cid,
-                        &loc_cid,
-                        0,
-                        TransportError::TLS_HANDSHAKE_FAILED,
-                        None,
-                    ),
+                    packet: handshake_close(&crypto, &src_cid, &loc_cid, 0, e),
                 });
             }
         }
