@@ -15,7 +15,7 @@ use packet::{
     AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
-use stream::{self, Stream};
+use stream::{self, ReadError, Stream};
 use transport_parameters::{self, TransportParameters};
 use {
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
@@ -2153,41 +2153,15 @@ impl Connection {
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_recv_mut(&id).unwrap();
-        assert!(
-            !rs.unordered,
-            "cannot perform ordered reads following unordered reads on a stream"
-        );
-
-        for (data, offset) in rs.buffered.drain(..) {
-            rs.assembler.insert(offset, &data);
+        let len = rs.read(buf)?;
+        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
+        // reduce overhead
+        self.local_max_data += len as u64;
+        self.pending.max_data = true;
+        if rs.receiving_unknown_size() {
+            self.pending.max_stream_data.insert(id);
         }
-
-        if !rs.assembler.blocked() {
-            let n = rs.assembler.read(buf);
-            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
-            // reduce overhead
-            self.local_max_data += n as u64;
-            self.pending.max_data = true;
-            // Only bother issuing stream credit if the peer wants to send more
-            if let stream::RecvState::Recv { size: None } = rs.state {
-                rs.max_data += n as u64;
-                self.pending.max_stream_data.insert(id);
-            }
-            Ok(n)
-        } else {
-            match rs.state {
-                stream::RecvState::ResetRecvd { error_code, .. } => {
-                    rs.state = stream::RecvState::Closed;
-                    Err(ReadError::Reset { error_code })
-                }
-                stream::RecvState::Closed => unreachable!(),
-                stream::RecvState::Recv { .. } => Err(ReadError::Blocked),
-                stream::RecvState::DataRecvd { .. } => {
-                    rs.state = stream::RecvState::Closed;
-                    Err(ReadError::Finished)
-                }
-            }
-        }
+        Ok(len)
     }
 
     pub fn stop_sending(&mut self, id: StreamId, error_code: u16) {
@@ -2627,19 +2601,6 @@ impl From<transport_parameters::Error> for ConnectionError {
     fn from(e: transport_parameters::Error) -> Self {
         TransportError::from(e).into()
     }
-}
-
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum ReadError {
-    /// No more data is currently available on this stream.
-    #[fail(display = "blocked")]
-    Blocked,
-    /// The peer abandoned transmitting data on this stream.
-    #[fail(display = "reset by peer: error {}", error_code)]
-    Reset { error_code: u16 },
-    /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[fail(display = "finished")]
-    Finished,
 }
 
 #[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]

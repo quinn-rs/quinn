@@ -122,6 +122,46 @@ impl Recv {
         }
     }
 
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
+        assert!(
+            !self.unordered,
+            "cannot perform ordered reads following unordered reads on a stream"
+        );
+
+        for (data, offset) in self.buffered.drain(..) {
+            self.assembler.insert(offset, &data);
+        }
+
+        if !self.assembler.blocked() {
+            let n = self.assembler.read(buf);
+            // Only bother issuing stream credit if the peer wants to send more
+            if self.receiving_unknown_size() {
+                self.max_data += n as u64;
+            }
+            Ok(n)
+        } else {
+            match self.state {
+                RecvState::ResetRecvd { error_code, .. } => {
+                    self.state = RecvState::Closed;
+                    Err(ReadError::Reset { error_code })
+                }
+                RecvState::Closed => unreachable!(),
+                RecvState::Recv { .. } => Err(ReadError::Blocked),
+                RecvState::DataRecvd { .. } => {
+                    self.state = RecvState::Closed;
+                    Err(ReadError::Finished)
+                }
+            }
+        }
+    }
+
+    pub fn receiving_unknown_size(&self) -> bool {
+        match self.state {
+            RecvState::Recv { size: None } => true,
+            _ => false,
+        }
+    }
+
     /// No more data expected from peer
     pub fn is_finished(&self) -> bool {
         match self.state {
@@ -156,6 +196,19 @@ impl Recv {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ReadError {
+    /// No more data is currently available on this stream.
+    #[fail(display = "blocked")]
+    Blocked,
+    /// The peer abandoned transmitting data on this stream.
+    #[fail(display = "reset by peer: error {}", error_code)]
+    Reset { error_code: u16 },
+    /// The data on this stream has been fully delivered and no more will be transmitted.
+    #[fail(display = "finished")]
+    Finished,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
