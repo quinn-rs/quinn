@@ -15,6 +15,7 @@ use packet::{
     AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
+use rustls::internal::msgs::enums::AlertDescription;
 use stream::{self, ReadError, Stream, WriteError};
 use transport_parameters::{self, TransportParameters};
 use {
@@ -933,20 +934,8 @@ impl Connection {
                 ));
 
                 match conn_err {
-                    ConnectionError::ApplicationClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
-                        }
-                    }
-                    ConnectionError::ConnectionClosed { reason } => {
-                        if was_handshake {
-                            State::handshake_failed(reason, None)
-                        } else {
-                            State::closed(reason)
-                        }
-                    }
+                    ConnectionError::ApplicationClosed { reason } => State::closed(reason),
+                    ConnectionError::ConnectionClosed { reason } => State::closed(reason),
                     ConnectionError::Reset => {
                         debug!(self.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
                         panic!("unexpected connection reset error received");
@@ -955,13 +944,7 @@ impl Connection {
                         debug!(self.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
                         panic!("unexpected connection timed out error received");
                     }
-                    ConnectionError::TransportError { error_code } => {
-                        if was_handshake {
-                            State::handshake_failed(error_code, None)
-                        } else {
-                            State::closed(error_code)
-                        }
-                    }
+                    ConnectionError::TransportError { error_code } => State::closed(error_code),
                     ConnectionError::VersionMismatch => State::Draining,
                 }
             }
@@ -972,36 +955,15 @@ impl Connection {
         }
 
         // Transmit CONNECTION_CLOSE if necessary
-        match state {
-            State::HandshakeFailed(ref state) => {
-                if !was_closed && self.side == Side::Server {
-                    ctx.incoming_handshakes -= 1;
-                }
-                let n = self.get_tx_number();
-                debug_assert!(n < 64); // handshake_close doesn't have the connection state
-                                       // to decide on packet number encoding length; since this
-                                       // is about closing the handshake, it seems reasonable to
-                                       // assume that the packet number will fit in one byte.
-                ctx.io.push_back(Io::Transmit {
-                    destination: remote,
-                    packet: handshake_close(
-                        &self.handshake_crypto,
-                        &self.rem_cid,
-                        &self.loc_cid,
-                        n as u8,
-                        state.reason.clone(),
-                    ),
-                });
-                self.reset_idle_timeout(&ctx.config, now);
+        if let State::Closed(ref state) = state {
+            if was_handshake && self.side == Side::Server {
+                ctx.incoming_handshakes -= 1;
             }
-            State::Closed(ref state) => {
-                ctx.io.push_back(Io::Transmit {
-                    destination: remote,
-                    packet: self.make_close(&state.reason),
-                });
-                self.reset_idle_timeout(&ctx.config, now);
-            }
-            _ => {}
+            ctx.io.push_back(Io::Transmit {
+                destination: remote,
+                packet: self.make_close(&state.reason),
+            });
+            self.reset_idle_timeout(&ctx.config, now);
         }
         self.state = Some(state);
         ctx.dirty_conns.insert(self.handle);
@@ -1287,18 +1249,6 @@ impl Connection {
                 } else {
                     State::Established
                 })
-            }
-            State::HandshakeFailed(state) => {
-                for frame in frame::Iter::new(packet.payload.into()) {
-                    match frame {
-                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(self.log, "draining");
-                            return Ok(State::Draining);
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(State::HandshakeFailed(state))
             }
             State::Closed(state) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
@@ -1912,12 +1862,22 @@ impl Connection {
     }
 
     fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
-        let number = self.get_tx_number();
+        let full_number = self.get_tx_number();
+        let number = PacketNumber::new(full_number, self.largest_acked_packet);
         let mut buf = Vec::new();
-        let header = Header::Short {
-            dst_cid: self.rem_cid,
-            number: PacketNumber::new(number, self.largest_acked_packet),
-            key_phase: self.key_phase,
+        let header = if self.crypto.is_some() {
+            Header::Short {
+                dst_cid: self.rem_cid,
+                number,
+                key_phase: self.key_phase,
+            }
+        } else {
+            Header::Long {
+                ty: LongType::Handshake,
+                dst_cid: self.rem_cid,
+                src_cid: self.loc_cid,
+                number,
+            }
         };
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len() as u16;
@@ -1928,11 +1888,15 @@ impl Connection {
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
         }
 
+        if let Header::Long { .. } = header {
+            set_payload_length(&mut buf, header_len as usize, number.len());
+        }
+
         let crypto = self
             .crypto
             .as_ref()
             .unwrap_or_else(|| &self.handshake_crypto);
-        crypto.encrypt(number, &mut buf, header_len as usize);
+        crypto.encrypt(full_number, &mut buf, header_len as usize);
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
         buf.into()
     }
@@ -1957,11 +1921,7 @@ impl Connection {
 
         self.app_closed = true;
         self.state = Some(match self.state.take().unwrap() {
-            State::Handshake(_) => State::HandshakeFailed(state::HandshakeFailed {
-                reason,
-                alert: None,
-            }),
-            State::HandshakeFailed(x) => State::HandshakeFailed(x),
+            State::Handshake(_) => State::Closed(state::Closed { reason }),
             State::Established => State::Closed(state::Closed { reason }),
             State::Closed(x) => State::Closed(x),
             State::Draining => State::Draining,
@@ -2538,7 +2498,6 @@ impl From<transport_parameters::Error> for ConnectionError {
 pub enum State {
     Handshake(state::Handshake),
     Established,
-    HandshakeFailed(state::HandshakeFailed),
     Closed(state::Closed),
     Draining,
     /// Waiting for application to call close so we can dispose of the resources
@@ -2552,19 +2511,8 @@ impl State {
         })
     }
 
-    pub fn handshake_failed<R: Into<state::CloseReason>>(
-        reason: R,
-        alert: Option<Box<[u8]>>,
-    ) -> Self {
-        State::HandshakeFailed(state::HandshakeFailed {
-            reason: reason.into(),
-            alert,
-        })
-    }
-
     pub fn is_closed(&self) -> bool {
         match *self {
-            State::HandshakeFailed(_) => true,
             State::Closed(_) => true,
             State::Draining => true,
             State::Drained => true,
@@ -2592,12 +2540,6 @@ pub mod state {
         pub token: Option<BytesMut>,
     }
 
-    pub struct HandshakeFailed {
-        // Closed
-        pub reason: CloseReason,
-        pub alert: Option<Box<[u8]>>,
-    }
-
     #[derive(Clone)]
     pub enum CloseReason {
         Connection(frame::ConnectionClose),
@@ -2617,6 +2559,11 @@ pub mod state {
     impl From<frame::ApplicationClose> for CloseReason {
         fn from(x: frame::ApplicationClose) -> Self {
             CloseReason::Application(x)
+        }
+    }
+    impl From<AlertDescription> for CloseReason {
+        fn from(x: AlertDescription) -> Self {
+            TransportError::crypto(x).into()
         }
     }
 
