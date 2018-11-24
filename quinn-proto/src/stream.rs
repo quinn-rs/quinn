@@ -155,6 +155,33 @@ impl Recv {
         }
     }
 
+    pub fn read_unordered(&mut self) -> Result<(Bytes, u64), ReadError> {
+        self.unordered = true;
+        // TODO: Drain rs.assembler to handle ordered-then-unordered reads reliably
+
+        // Return data we already have buffered, regardless of state
+        if let Some(x) = self.buffered.pop_front() {
+            // Only bother issuing stream credit if the peer wants to send more
+            if self.receiving_unknown_size() {
+                self.max_data += x.0.len() as u64;
+            }
+            Ok(x)
+        } else {
+            match self.state {
+                RecvState::ResetRecvd { error_code, .. } => {
+                    self.state = RecvState::Closed;
+                    Err(ReadError::Reset { error_code })
+                }
+                RecvState::Closed => unreachable!(),
+                RecvState::Recv { .. } => Err(ReadError::Blocked),
+                RecvState::DataRecvd { .. } => {
+                    self.state = RecvState::Closed;
+                    Err(ReadError::Finished)
+                }
+            }
+        }
+    }
+
     pub fn receiving_unknown_size(&self) -> bool {
         match self.state {
             RecvState::Recv { size: None } => true,

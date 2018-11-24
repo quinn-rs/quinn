@@ -2118,36 +2118,16 @@ impl Connection {
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_recv_mut(&id).unwrap();
-        rs.unordered = true;
-        // TODO: Drain rs.assembler to handle ordered-then-unordered reads reliably
-
-        // Return data we already have buffered, regardless of state
-        if let Some(x) = rs.buffered.pop_front() {
-            // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
-            // reduce overhead
-            self.local_max_data += x.0.len() as u64; // BUG: Don't issue credit for
-                                                     // already-received data!
-            self.pending.max_data = true;
-            // Only bother issuing stream credit if the peer wants to send more
-            if let stream::RecvState::Recv { size: None } = rs.state {
-                rs.max_data += x.0.len() as u64;
-                self.pending.max_stream_data.insert(id);
-            }
-            Ok(x)
-        } else {
-            match rs.state {
-                stream::RecvState::ResetRecvd { error_code, .. } => {
-                    rs.state = stream::RecvState::Closed;
-                    Err(ReadError::Reset { error_code })
-                }
-                stream::RecvState::Closed => unreachable!(),
-                stream::RecvState::Recv { .. } => Err(ReadError::Blocked),
-                stream::RecvState::DataRecvd { .. } => {
-                    rs.state = stream::RecvState::Closed;
-                    Err(ReadError::Finished)
-                }
-            }
+        let (buf, len) = rs.read_unordered()?;
+        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
+        // reduce overhead
+        self.local_max_data += buf.len() as u64; // BUG: Don't issue credit for
+                                                 // already-received data!
+        self.pending.max_data = true;
+        if rs.receiving_unknown_size() {
+            self.pending.max_stream_data.insert(id);
         }
+        Ok((buf, len))
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
