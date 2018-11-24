@@ -723,7 +723,7 @@ impl Connection {
         ctx.dirty_conns.insert(self.handle);
     }
 
-    fn drive_tls(&mut self, ctx: &mut Context) -> Result<(), TransportError> {
+    fn drive_tls(&mut self) -> Result<(), TransportError> {
         trace!(self.log, "processed stream 0 bytes");
         /* Process any new session tickets that might have been delivered
         {
@@ -766,28 +766,15 @@ impl Connection {
         }
         */
 
-        match self.tls.process_new_packets() {
-            Ok(()) => Ok(()),
-            Err(e @ TLSError::AlertReceived(_)) => {
-                debug!(self.log, "TLS error {}", e);
-                ctx.events.push_back((
-                    self.handle,
-                    Event::ConnectionLost {
-                        reason: TransportError::TLS_FATAL_ALERT_RECEIVED.into(),
-                    },
-                ));
-                Err(TransportError::TLS_FATAL_ALERT_RECEIVED)
-            }
-            Err(e) => {
-                debug!(self.log, "TLS error {}", e);
-                ctx.events.push_back((
-                    self.handle,
-                    Event::ConnectionLost {
-                        reason: TransportError::PROTOCOL_VIOLATION.into(),
-                    },
-                ));
-                Err(TransportError::PROTOCOL_VIOLATION)
-            }
+        if let Err(e) = self.tls.process_new_packets() {
+            debug!(self.log, "TLS error {}", e);
+            Err(if let TLSError::AlertReceived(_) = e {
+                TransportError::TLS_FATAL_ALERT_RECEIVED
+            } else {
+                TransportError::PROTOCOL_VIOLATION
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -1304,12 +1291,18 @@ impl Connection {
                         return Err(e.into());
                     }
                 };
-                self.drive_tls(ctx)?;
-                Ok(if closed {
-                    State::Draining
+
+                if let Err(e) = self.drive_tls() {
+                    ctx.events
+                        .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
+                    Err(e.into())
                 } else {
-                    State::Established
-                })
+                    Ok(if closed {
+                        State::Draining
+                    } else {
+                        State::Established
+                    })
+                }
             }
             State::HandshakeFailed(state) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
