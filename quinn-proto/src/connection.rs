@@ -57,6 +57,10 @@ pub struct Connection {
     /// Limit on incoming data
     pub local_max_data: u64,
     client_config: Option<ClientConfig>,
+    /// Incoming cryptographic handshake stream
+    crypto_stream: stream::Assembler,
+    /// Current offset of outgoing cryptographic handshake stream
+    crypto_offset: u64,
 
     //
     // Loss Detection
@@ -172,19 +176,7 @@ impl Connection {
                 stream::Recv::new(u64::from(ctx.config.stream_receive_window)).into(),
             );
         }
-        streams.insert(
-            StreamId(0),
-            Stream::new_bi(u64::from(ctx.config.stream_receive_window)),
-        );
-        let max_remote_bi_streams = ctx.config.max_remote_bi_streams as u64 + match side {
-            Side::Server => 1,
-            _ => 0,
-        };
-        for i in match side {
-            Side::Server => 1,
-            _ => 0,
-        }..max_remote_bi_streams
-        {
+        for i in 0..ctx.config.max_remote_bi_streams {
             streams.insert(
                 StreamId::new(!side, Directionality::Bi, i as u64),
                 Stream::new_bi(ctx.config.stream_receive_window as u64),
@@ -216,6 +208,8 @@ impl Connection {
             data_recvd: 0,
             local_max_data: ctx.config.receive_window as u64,
             client_config,
+            crypto_stream: stream::Assembler::new(),
+            crypto_offset: 0,
 
             handshake_count: 0,
             tlp_count: 0,
@@ -234,7 +228,7 @@ impl Connection {
             largest_sent_before_rto: 0,
             time_of_last_sent_retransmittable_packet: 0,
             time_of_last_sent_handshake_packet: 0,
-            largest_sent_packet: 0,
+            largest_sent_packet: !0, // Will wrap around to 0 on first transmit
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
 
@@ -257,14 +251,11 @@ impl Connection {
             streams: Streams {
                 streams,
                 next_uni: 0,
-                next_bi: match side {
-                    Side::Client => 1,
-                    Side::Server => 0,
-                },
+                next_bi: 0,
                 max_uni: 0,
                 max_bi: 0,
                 max_remote_uni: ctx.config.max_remote_uni_streams as u64,
-                max_remote_bi: max_remote_bi_streams,
+                max_remote_bi: ctx.config.max_remote_bi_streams as u64,
                 finished: Vec::new(),
             },
         };
@@ -313,7 +304,7 @@ impl Connection {
     }
 
     fn get_tx_number(&mut self) -> u64 {
-        self.largest_sent_packet = self.largest_sent_packet.overflowing_add(1).0;
+        self.largest_sent_packet = self.largest_sent_packet.wrapping_add(1);
         // TODO: Handle packet number overflow gracefully
         assert!(self.largest_sent_packet < 2u64.pow(62));
         self.largest_sent_packet
@@ -326,7 +317,6 @@ impl Connection {
         packet_number: u64,
         packet: SentPacket,
     ) {
-        self.largest_sent_packet = packet_number;
         let bytes = packet.bytes;
         let handshake = packet.handshake;
         if handshake {
@@ -663,16 +653,9 @@ impl Connection {
     }
 
     fn transmit_handshake(&mut self, messages: &[u8]) {
-        let offset = {
-            let ss = self.streams.get_send_mut(&StreamId(0)).unwrap();
-            let x = ss.offset;
-            ss.offset += messages.len() as u64;
-            ss.bytes_in_flight += messages.len() as u64;
-            x
-        };
-        self.handshake_pending.stream.push_back(frame::Stream {
-            id: StreamId(0),
-            fin: false,
+        let offset = self.crypto_offset;
+        self.crypto_offset += messages.len() as u64;
+        self.handshake_pending.crypto.push_back(frame::Crypto {
             offset,
             data: messages.into(),
         });
@@ -685,9 +668,7 @@ impl Connection {
         let offset = ss.offset;
         ss.offset += data.len() as u64;
         ss.bytes_in_flight += data.len() as u64;
-        if stream != StreamId(0) {
-            self.data_sent += data.len() as u64;
-        }
+        self.data_sent += data.len() as u64;
         self.pending.stream.push_back(frame::Stream {
             offset,
             fin: false,
@@ -805,20 +786,16 @@ impl Connection {
         Ok(())
     }
 
-    fn read_tls(&mut self, frame: &frame::Stream) {
+    fn read_tls(&mut self, crypto: &frame::Crypto) {
+        self.crypto_stream.insert(crypto.offset, &crypto.data);
         let mut buf = [0; 8192];
-        let n = {
-            let rs = self
-                .streams
-                .get_recv_stream(self.side, StreamId(0))
-                .unwrap()
-                .unwrap()
-                .recv_mut()
-                .unwrap();
-            rs.assembler.insert(frame.offset, &frame.data);
-            rs.assembler.read(&mut buf)
-        };
-        self.tls.read_tls(&mut io::Cursor::new(&buf[..n])).unwrap();
+        loop {
+            let n = self.crypto_stream.read(&mut buf);
+            if n == 0 {
+                break;
+            }
+            self.tls.read_tls(&mut &buf[..n]).unwrap();
+        }
     }
 
     pub fn handle_decode(
@@ -1017,8 +994,6 @@ impl Connection {
                             );
                             mem::replace(self, new);
                             self.transmit_handshake(&outgoing);
-                            // Prepare to receive Handshake packets that start stream 0
-                            // from offset 0
                             Ok(State::Handshake(state::Handshake {
                                 clienthello_packet: state.clienthello_packet,
                                 rem_cid_set: state.rem_cid_set,
@@ -1041,13 +1016,11 @@ impl Connection {
                             }
                             match frame {
                                 Frame::Padding => {}
-                                Frame::Stream(
-                                    frame @ frame::Stream {
-                                        id: StreamId(0), ..
-                                    },
-                                ) => self.read_tls(&frame),
+                                Frame::Crypto(frame) => {
+                                    self.read_tls(&frame);
+                                }
                                 Frame::Stream(frame::Stream { .. }) => {
-                                    debug!(self.log, "non-stream-0 stream frame in handshake");
+                                    debug!(self.log, "stream frame in handshake");
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 Frame::Ack(ack) => {
@@ -1101,10 +1074,9 @@ impl Connection {
                                 self.handshake_cleanup(&ctx.config);
                                 let mut msgs = Vec::new();
                                 self.tls.write_tls(&mut msgs).unwrap();
-                                if self.side == Side::Client {
-                                    self.transmit_handshake(&msgs);
-                                } else {
-                                    self.transmit(StreamId(0), msgs.into());
+                                self.transmit_handshake(&msgs);
+                                if self.side == Side::Server {
+                                    self.awaiting_handshake = false;
                                 }
                                 match self.side {
                                     Side::Client => {
@@ -1290,6 +1262,17 @@ impl Connection {
                 }
             }
             match frame {
+                Frame::Invalid(ty) => {
+                    debug!(self.log, "received malformed {type} frame", type=ty);
+                    return Err(TransportError::FRAME_ENCODING_ERROR);
+                }
+                Frame::Illegal(ty) => {
+                    debug!(self.log, "received illegal {type} frame", type=ty);
+                    return Err(TransportError::PROTOCOL_VIOLATION);
+                }
+                Frame::Crypto(frame) => {
+                    self.read_tls(&frame);
+                }
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.data_recvd;
@@ -1331,10 +1314,6 @@ impl Connection {
                             }
                         }
                         rs.recvd.insert(frame.offset..end);
-                        if frame.id == StreamId(0) && frame.fin {
-                            debug!(self.log, "got fin on stream 0");
-                            return Err(TransportError::PROTOCOL_VIOLATION);
-                        }
                         rs.buffer(frame.data, frame.offset);
                         if let stream::RecvState::Recv { size: Some(size) } = rs.state {
                             if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
@@ -1342,26 +1321,10 @@ impl Connection {
                             }
                         }
 
-                        if frame.id == StreamId(0) {
-                            let mut buf = vec![0; 8192];
-                            loop {
-                                let new_bytes = rs.assembler.read(&mut buf);
-                                self.tls
-                                    .read_tls(&mut io::Cursor::new(&buf[..new_bytes]))
-                                    .unwrap();
-                                rs.max_data += new_bytes as u64;
-                                self.pending.max_stream_data.insert(StreamId(0));
-                                if new_bytes < 8192 {
-                                    break;
-                                }
-                            }
-                        }
                         new_bytes
                     };
-                    if frame.id != StreamId(0) {
-                        self.readable_streams.insert(frame.id);
-                        ctx.readable_conns.insert(self.handle);
-                    }
+                    self.readable_streams.insert(frame.id);
+                    ctx.readable_conns.insert(self.handle);
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
@@ -1389,10 +1352,6 @@ impl Connection {
                         },
                     ));
                     return Ok(true);
-                }
-                Frame::Invalid(ty) => {
-                    debug!(self.log, "received malformed frame"; "type" => %ty);
-                    return Err(TransportError::FRAME_ENCODING_ERROR);
                 }
                 Frame::PathChallenge(x) => {
                     self.pending.path_challenge(number, x);
@@ -1452,10 +1411,6 @@ impl Connection {
                     error_code,
                     final_offset,
                 }) => {
-                    if id == StreamId(0) {
-                        debug!(self.log, "got RST_STREAM on stream 0");
-                        return Err(TransportError::PROTOCOL_VIOLATION);
-                    }
                     let offset = match self.streams.get_recv_stream(self.side, id) {
                         Err(e) => {
                             debug!(self.log, "received illegal RST_STREAM");
@@ -1547,7 +1502,7 @@ impl Connection {
                 trace!(log, "sending handshake packet"; "pn" => number);
                 let header = if self.side == Side::Client && self
                     .handshake_pending
-                    .stream
+                    .crypto
                     .front()
                     .map_or(false, |x| x.offset == 0)
                 {
@@ -1650,6 +1605,33 @@ impl Connection {
                     trace!(log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
                     buf.write(frame::Type::PATH_RESPONSE);
                     buf.write(x);
+                }
+            }
+
+            // CRYPTO
+            while buf.len() + 16 < max_size {
+                let mut frame = if let Some(x) = pending.crypto.pop_front() {
+                    x
+                } else {
+                    break;
+                };
+                let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 16);
+                let data = frame.data.split_to(len);
+                let truncated = frame::Crypto {
+                    offset: frame.offset,
+                    data,
+                };
+                trace!(
+                    log,
+                    "CRYPTO: off {offset} len {length}",
+                    offset = truncated.offset,
+                    length = truncated.data.len()
+                );
+                truncated.encode(&mut buf);
+                sent.crypto.push_back(truncated);
+                if !frame.data.is_empty() {
+                    frame.offset += len as u64;
+                    pending.crypto.push_front(frame);
                 }
             }
 
@@ -1761,7 +1743,7 @@ impl Connection {
                 } else {
                     break;
                 };
-                if stream.id != StreamId(0) && self
+                if self
                     .streams
                     .streams
                     .get(&stream.id)
@@ -1782,10 +1764,7 @@ impl Connection {
                 frame.encode(true, &mut buf);
                 sent.stream.push_back(frame);
                 if !stream.data.is_empty() {
-                    let stream = frame::Stream {
-                        offset: stream.offset + len as u64,
-                        ..stream
-                    };
+                    stream.offset += len as u64;
                     pending.stream.push_front(stream);
                 }
             }
@@ -1940,9 +1919,6 @@ impl Connection {
 
     fn set_params(&mut self, params: TransportParameters) {
         self.streams.max_bi = params.initial_max_bidi_streams as u64;
-        if self.side == Side::Client {
-            self.streams.max_bi += 1;
-        } // Account for TLS stream
         self.streams.max_uni = params.initial_max_uni_streams as u64;
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.streams.max_remote_bi {
@@ -2055,7 +2031,6 @@ impl Connection {
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_recv_mut(&id).unwrap();
         let (buf, len) = rs.read_unordered()?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
@@ -2070,7 +2045,6 @@ impl Connection {
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        assert_ne!(id, StreamId(0), "cannot read an internal stream");
         let rs = self.streams.get_recv_mut(&id).unwrap();
         let len = rs.read(buf)?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
@@ -2222,25 +2196,20 @@ enum CryptoLevel {
     OneRtt,
 }
 
-/// Extract stream 0 data from an Initial or Retry packet payload
-fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Stream>, ()> {
+/// Extract crypto data from the first Initial packet
+fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Crypto>, ()> {
     let mut result = None;
     for frame in frame::Iter::new(payload) {
         match frame {
             Frame::Padding => {}
             Frame::Ack(_) => {}
-            Frame::Stream(
-                frame @ frame::Stream {
-                    id: StreamId(0),
-                    fin: false,
-                    ..
-                },
-            ) => {
-                if frame.offset != 0 {
-                    debug!(log, "frame offset in initial stream 0 frame"; "offset" => frame.offset);
+            Frame::ConnectionClose(_) => {}
+            Frame::Crypto(x) => {
+                if x.offset != 0 {
+                    debug!(log, "nonzero offset in first crypto frame"; "offset" => x.offset);
                     return Err(());
                 }
-                result = Some(frame);
+                result = Some(x);
             }
             x => {
                 debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
@@ -2348,6 +2317,7 @@ pub struct Retransmits {
     pub rst_stream: Vec<(StreamId, u16)>,
     pub stop_sending: Vec<(StreamId, u16)>,
     pub max_stream_data: FnvHashSet<StreamId>,
+    crypto: VecDeque<frame::Crypto>,
 }
 
 impl Retransmits {
@@ -2362,6 +2332,7 @@ impl Retransmits {
             && self.rst_stream.is_empty()
             && self.stop_sending.is_empty()
             && self.max_stream_data.is_empty()
+            && self.crypto.is_empty()
     }
 
     pub fn path_challenge(&mut self, packet: u64, token: u64) {
@@ -2390,6 +2361,7 @@ impl Default for Retransmits {
             rst_stream: Vec::new(),
             stop_sending: Vec::new(),
             max_stream_data: FnvHashSet::default(),
+            crypto: VecDeque::new(),
         }
     }
 }
