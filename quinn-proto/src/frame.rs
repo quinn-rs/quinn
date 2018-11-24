@@ -10,23 +10,12 @@ use {
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Type(u8);
-
-impl From<u8> for Type {
-    fn from(x: u8) -> Self {
-        Type(x)
-    }
-}
-impl From<Type> for u8 {
-    fn from(x: Type) -> Self {
-        x.0
-    }
-}
+pub struct Type(u64);
 
 impl Type {
     fn stream(self) -> Option<StreamInfo> {
         if self.0 >= 0x10 && self.0 <= 0x17 {
-            Some(StreamInfo(self.0))
+            Some(StreamInfo(self.0 as u8))
         } else {
             None
         }
@@ -35,10 +24,10 @@ impl Type {
 
 impl coding::Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Type(buf.get()?))
+        Ok(Type(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        self.0.encode(buf);
+        buf.write_var(self.0);
     }
 }
 
@@ -372,8 +361,13 @@ impl Iter {
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
+        let ty_start = self.bytes.position();
         let ty = self.bytes.get::<Type>()?;
         self.last_ty = Some(ty);
+        let ty_len = (self.bytes.position() - ty_start) as usize;
+        if varint::size(ty.0).unwrap() != ty_len {
+            return Err(IterErr::Malformed);
+        }
         Ok(match ty {
             Type::PADDING => Frame::Padding,
             Type::RST_STREAM => Frame::RstStream(RstStream {
