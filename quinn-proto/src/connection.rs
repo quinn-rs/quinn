@@ -15,7 +15,7 @@ use packet::{
     AEAD_TAG_SIZE,
 };
 use range_set::RangeSet;
-use stream::{self, ReadError, Stream};
+use stream::{self, ReadError, Stream, WriteError};
 use transport_parameters::{self, TransportParameters};
 use {
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
@@ -2219,57 +2219,30 @@ impl Connection {
             return Err(WriteError::Blocked);
         }
 
-        let r = self.write_inner(&ctx.config, stream, data);
-        match r {
-            Ok(n) => {
-                ctx.dirty_conns.insert(self.handle);
-                trace!(self.log, "write"; "stream" => stream.0, "len" => n)
-            }
-            Err(WriteError::Blocked) => {
-                trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
-            }
-            _ => {}
-        }
-        r
-    }
-
-    fn write_inner(
-        &mut self,
-        config: &Config,
-        stream: StreamId,
-        data: &[u8],
-    ) -> Result<usize, WriteError> {
-        let (stop_reason, stream_budget) = {
-            let ss = self
-                .streams
+        let budget_res = {
+            self.streams
                 .get_send_mut(&stream)
-                .expect("stream already closed");
-            (
-                match ss.state {
-                    stream::SendState::ResetSent {
-                        ref mut stop_reason,
-                    }
-                    | stream::SendState::ResetRecvd {
-                        ref mut stop_reason,
-                    } => stop_reason.take(),
-                    _ => None,
-                },
-                ss.max_data - ss.offset,
-            )
+                .expect("stream already closed")
+                .write_budget()
         };
 
-        if let Some(error_code) = stop_reason {
-            self.maybe_cleanup(config, stream);
-            return Err(WriteError::Stopped { error_code });
-        }
-
-        if stream_budget == 0 {
-            return Err(WriteError::Blocked);
-        }
+        let stream_budget = match budget_res {
+            Ok(budget) => budget,
+            Err(e @ WriteError::Stopped { .. }) => {
+                self.maybe_cleanup(&ctx.config, stream);
+                return Err(e);
+            }
+            Err(e @ WriteError::Blocked) => {
+                trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
+                return Err(e);
+            }
+        };
 
         let conn_budget = self.max_data - self.data_sent;
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.transmit(stream, (&data[0..n]).into());
+        ctx.dirty_conns.insert(self.handle);
+        trace!(self.log, "write"; "stream" => stream.0, "len" => n);
         Ok(n)
     }
 
@@ -2565,16 +2538,6 @@ impl From<transport_parameters::Error> for ConnectionError {
     fn from(e: transport_parameters::Error) -> Self {
         TransportError::from(e).into()
     }
-}
-
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum WriteError {
-    /// The peer is not able to accept additional data, or the connection is congested.
-    #[fail(display = "unable to accept further writes")]
-    Blocked,
-    /// The peer is no longer accepting data on this stream.
-    #[fail(display = "stopped by peer: error {}", error_code)]
-    Stopped { error_code: u16 },
 }
 
 pub enum State {

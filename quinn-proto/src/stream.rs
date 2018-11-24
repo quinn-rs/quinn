@@ -84,6 +84,30 @@ impl Send {
         }
     }
 
+    pub fn write_budget(&mut self) -> Result<u64, WriteError> {
+        match self.state {
+            SendState::ResetSent {
+                ref mut stop_reason,
+            }
+            | SendState::ResetRecvd {
+                ref mut stop_reason,
+            } => match stop_reason.take() {
+                Some(error_code) => {
+                    return Err(WriteError::Stopped { error_code });
+                }
+                None => {}
+            },
+            _ => {}
+        };
+
+        let budget = self.max_data - self.offset;
+        if budget == 0 {
+            Err(WriteError::Blocked)
+        } else {
+            Ok(budget)
+        }
+    }
+
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
     pub fn is_closed(&self) -> bool {
         use self::SendState::*;
@@ -92,6 +116,16 @@ impl Send {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum WriteError {
+    /// The peer is not able to accept additional data, or the connection is congested.
+    #[fail(display = "unable to accept further writes")]
+    Blocked,
+    /// The peer is no longer accepting data on this stream.
+    #[fail(display = "stopped by peer: error {}", error_code)]
+    Stopped { error_code: u16 },
 }
 
 #[derive(Debug)]
