@@ -31,6 +31,17 @@ impl coding::Codec for Type {
     }
 }
 
+impl slog::Value for Type {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
 macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
         impl Type {
@@ -90,6 +101,7 @@ frame_types!{
     ACK = 0x0d,
     PATH_CHALLENGE = 0x0e,
     PATH_RESPONSE = 0x0f,
+    CRYPTO = 0x18,
 }
 
 #[derive(Debug)]
@@ -128,7 +140,9 @@ pub enum Frame {
         id: ConnectionId,
         reset_token: [u8; 16],
     },
+    Crypto(Crypto),
     Invalid(Type),
+    Illegal(Type),
 }
 
 impl Frame {
@@ -161,7 +175,9 @@ impl Frame {
             PathChallenge(_) => Type::PATH_CHALLENGE,
             PathResponse(_) => Type::PATH_RESPONSE,
             NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
+            Crypto(_) => Type::CRYPTO,
             Invalid(ty) => ty,
+            Illegal(ty) => ty,
         }
     }
 }
@@ -327,6 +343,21 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Crypto {
+    pub offset: u64,
+    pub data: Bytes,
+}
+
+impl Crypto {
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(Type::CRYPTO);
+        out.write_var(self.offset);
+        out.write_var(self.data.len() as u64);
+        out.put_slice(&self.data);
+    }
+}
+
 pub struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
@@ -337,6 +368,7 @@ enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
     Malformed,
+    Illegal,
 }
 
 impl From<UnexpectedEnd> for IterErr {
@@ -369,7 +401,7 @@ impl Iter {
         self.last_ty = Some(ty);
         let ty_len = (self.bytes.position() - ty_start) as usize;
         if varint::size(ty.0).unwrap() != ty_len {
-            return Err(IterErr::Malformed);
+            return Err(IterErr::Illegal);
         }
         Ok(match ty {
             Type::PADDING => Frame::Padding,
@@ -454,6 +486,10 @@ impl Iter {
                     reset_token,
                 }
             }
+            Type::CRYPTO => Frame::Crypto(Crypto {
+                offset: self.bytes.get_var()?,
+                data: self.take_len()?,
+            }),
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
                     id: self.bytes.get()?,
@@ -484,10 +520,13 @@ impl Iterator for Iter {
         }
         match self.try_next() {
             Ok(x) => Some(x),
-            Err(_) => {
+            Err(e) => {
                 // Corrupt frame, skip it and everything that follows
                 self.bytes = io::Cursor::new(Bytes::new());
-                Some(Frame::Invalid(self.last_ty.unwrap()))
+                Some(match e {
+                    IterErr::Illegal => Frame::Illegal(self.last_ty.unwrap()),
+                    _ => Frame::Invalid(self.last_ty.unwrap()),
+                })
             }
         }
     }
