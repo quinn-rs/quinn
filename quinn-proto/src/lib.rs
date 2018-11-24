@@ -35,7 +35,7 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use connection::{ConnectionError, ConnectionHandle, WriteError};
+pub use connection::{ConnectionError, ConnectionHandle};
 
 mod crypto;
 pub use crypto::{ClientConfig, ConnectError};
@@ -51,7 +51,7 @@ mod packet;
 pub use packet::ConnectionId;
 
 mod stream;
-pub use stream::ReadError;
+pub use stream::{ReadError, WriteError};
 
 mod transport_error;
 pub use transport_error::Error as TransportError;
