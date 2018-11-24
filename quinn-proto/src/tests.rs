@@ -577,7 +577,7 @@ fn reject_self_signed_cert() {
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
-                        error_code: TransportError::TLS_HANDSHAKE_FAILED
+                        error_code: TransportError::PROTOCOL_VIOLATION // FIXME: should be a TLS error
                     }})) if conn == client_conn);
 }
 

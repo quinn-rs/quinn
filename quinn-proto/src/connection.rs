@@ -8,7 +8,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{self, reset_token_for, Crypto, TLSError, TlsSession, ACK_DELAY_EXPONENT};
+use crypto::{self, reset_token_for, Crypto, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
@@ -766,15 +766,12 @@ impl Connection {
         }
         */
 
-        if let Err(e) = self.tls.process_new_packets() {
-            debug!(self.log, "TLS error {}", e);
-            Err(if let TLSError::AlertReceived(_) = e {
-                TransportError::TLS_FATAL_ALERT_RECEIVED
-            } else {
-                TransportError::PROTOCOL_VIOLATION
-            })
-        } else {
-            Ok(())
+        match self.tls.process_new_packets() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                debug!(self.log, "TLS error {}", e);
+                Err(TransportError::PROTOCOL_VIOLATION)
+            }
         }
     }
 
@@ -793,8 +790,9 @@ impl Connection {
 
         trace!(self.log, "got initial");
         self.read_tls(&frame);
-        if self.tls.process_new_packets().is_err() {
-            return Err(TransportError::TLS_HANDSHAKE_FAILED);
+        if let Err(e) = self.tls.process_new_packets() {
+            debug!(self.log, "TLS error: {}", e);
+            return Err(TransportError::PROTOCOL_VIOLATION);
         }
         let params = TransportParameters::read(
             Side::Server,
@@ -992,7 +990,6 @@ impl Connection {
                         &self.loc_cid,
                         n as u8,
                         state.reason.clone(),
-                        state.alert.as_ref().map(|x| &x[..]),
                     ),
                 });
                 self.reset_idle_timeout(&ctx.config, now);
@@ -1128,7 +1125,7 @@ impl Connection {
                                     .get_quic_transport_parameters()
                                     .ok_or_else(|| {
                                         debug!(self.log, "remote didn't send transport params");
-                                        ConnectionError::from(TransportError::TLS_HANDSHAKE_FAILED)
+                                        ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
                                     }).and_then(|x| {
                                         TransportParameters::read(
                                             self.side,
@@ -1181,7 +1178,7 @@ impl Connection {
                             }
                             Err(e) => {
                                 debug!(self.log, "handshake failed"; "reason" => %e);
-                                Err(TransportError::TLS_HANDSHAKE_FAILED.into())
+                                Err(TransportError::PROTOCOL_VIOLATION.into())
                             }
                         }
                     }
@@ -1443,14 +1440,14 @@ impl Connection {
                 }
                 Frame::Invalid(ty) => {
                     debug!(self.log, "received malformed frame"; "type" => %ty);
-                    return Err(TransportError::frame(ty));
+                    return Err(TransportError::FRAME_ENCODING_ERROR);
                 }
                 Frame::PathChallenge(x) => {
                     self.pending.path_challenge(number, x);
                 }
                 Frame::PathResponse(_) => {
                     debug!(self.log, "unsolicited PATH_RESPONSE");
-                    return Err(TransportError::UNSOLICITED_PATH_RESPONSE);
+                    return Err(TransportError::PROTOCOL_VIOLATION);
                 }
                 Frame::MaxData(bytes) => {
                     let was_blocked = self.blocked();
@@ -2301,7 +2298,6 @@ pub fn handshake_close<R>(
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
-    tls_alert: Option<&[u8]>,
 ) -> Box<[u8]>
 where
     R: Into<state::CloseReason>,
@@ -2321,16 +2317,6 @@ where
     match reason.into() {
         state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
-    }
-    if let Some(data) = tls_alert {
-        if !data.is_empty() {
-            frame::Stream {
-                id: StreamId(0),
-                fin: false,
-                offset: 0,
-                data,
-            }.encode(false, &mut buf);
-        }
     }
     set_payload_length(&mut buf, header_len, number.len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
@@ -2375,7 +2361,7 @@ impl Streams {
                 Directionality::Uni => self.max_remote_uni,
             };
             if id.index() >= limit {
-                return Err(TransportError::STREAM_ID_ERROR);
+                return Err(TransportError::STREAM_LIMIT_ERROR);
             }
         }
         Ok(self.streams.get_mut(&id))
