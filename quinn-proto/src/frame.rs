@@ -169,6 +169,7 @@ impl Frame {
 #[derive(Debug, Clone)]
 pub struct ConnectionClose<T = Bytes> {
     pub error_code: TransportError,
+    pub frame_type: Option<Type>,
     pub reason: T,
 }
 
@@ -190,6 +191,7 @@ impl From<TransportError> for ConnectionClose {
     fn from(x: TransportError) -> Self {
         ConnectionClose {
             error_code: x,
+            frame_type: None,
             reason: Bytes::new(),
         }
     }
@@ -202,6 +204,7 @@ where
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.write(Type::CONNECTION_CLOSE);
         out.write(self.error_code);
+        out.write_var(self.frame_type.map_or(0, |x| x.0));
         let max_len =
             max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
@@ -377,6 +380,14 @@ impl Iter {
             }),
             Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
                 error_code: self.bytes.get()?,
+                frame_type: {
+                    let x = self.bytes.get_var()?;
+                    if x == 0 {
+                        None
+                    } else {
+                        Some(Type(x))
+                    }
+                },
                 reason: self.take_len()?,
             }),
             Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
