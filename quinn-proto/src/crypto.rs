@@ -446,21 +446,8 @@ const INITIAL_SALT: [u8; 20] = [
 #[cfg(test)]
 mod test {
     use super::*;
-    use packet::PacketNumber;
     use rand;
     use MAX_CID_SIZE;
-
-    #[test]
-    fn packet_number() {
-        for prev in 0..1024 {
-            for x in 0..256 {
-                let found = PacketNumber::U8(x as u8).expand(prev);
-                assert!(found as i64 - (prev + 1) as i64 <= 128 || prev < 128);
-            }
-        }
-        // Order of operations regression test
-        assert_eq!(PacketNumber::U32(0xa0bd197c).expand(0xa0bd197a), 0xa0bd197c);
-    }
 
     #[test]
     fn handshake_crypto_roundtrip() {

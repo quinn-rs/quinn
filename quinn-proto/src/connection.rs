@@ -36,7 +36,9 @@ pub struct Connection {
     pub side: Side,
     pub handle: ConnectionHandle,
     pub mtu: u16,
+    /// Highest received packet number
     pub rx_packet: u64,
+    /// Time at which the above was received
     pub rx_packet_time: u64,
     pub crypto: Option<Crypto>,
     pub prev_crypto: Option<(u64, Crypto)>,
@@ -2127,7 +2129,7 @@ impl Connection {
                 return Err(None);
             }
         };
-        let number = number.expand(self.rx_packet);
+        let number = number.expand(self.rx_packet + 1);
         if key_phase != self.key_phase {
             if number <= self.rx_packet {
                 // Illegal key update
