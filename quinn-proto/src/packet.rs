@@ -528,12 +528,12 @@ pub enum PacketNumber {
 
 impl PacketNumber {
     pub fn new(n: u64, largest_acked: u64) -> Self {
-        let range = (n - largest_acked) / 2;
-        if range < 1 << 8 {
+        let range = (n - largest_acked) * 2;
+        if range < 1 << 7 {
             PacketNumber::U8(n as u8)
-        } else if range < 1 << 16 {
+        } else if range < 1 << 14 {
             PacketNumber::U16(n as u16)
-        } else if range < 1 << 32 {
+        } else if range < 1 << 30 {
             PacketNumber::U32(n as u32)
         } else {
             panic!("packet number too large to encode")
@@ -557,12 +557,10 @@ impl PacketNumber {
                 w.write(x)
             }
             U16(x) => {
-                debug_assert!(x >= 128);
                 debug_assert!(x < 16384);
                 w.write(x | 0x8000)
             }
             U32(x) => {
-                debug_assert!(x >= 16384);
                 debug_assert!(x < 1073741824);
                 w.write(x | 0xc0000000)
             }
@@ -600,20 +598,37 @@ impl PacketNumber {
         }
     }
 
-    pub fn expand(self, prev: u64) -> u64 {
+    pub fn expand(self, expected: u64) -> u64 {
+        // From Appendix A
         use self::PacketNumber::*;
-        let t = prev + 1;
-        // Compute missing bits that minimize the difference from expected
-        let d = 1 << (8 * self.len());
-        let x = match self {
+        let truncated = match self {
             U8(x) => x as u64,
             U16(x) => x as u64,
             U32(x) => x as u64,
         };
-        if t > d / 2 {
-            x + d * ((t + d / 2 - x) / d)
+        let nbits = match self {
+            U8(_) => 7,
+            U16(_) => 14,
+            U32(_) => 30,
+        };
+        let win = 1 << nbits;
+        let hwin = win / 2;
+        let mask = win - 1;
+        // The incoming packet number should be greater than expected - hwin and less than or equal
+        // to expected + hwin
+        //
+        // This means we can't just strip the trailing bits from expected and add the truncated
+        // because that might yield a value outside the window.
+        //
+        // The following code calculates a candidate value and makes sure it's within the packet
+        // number window.
+        let candidate = (expected & !mask) | truncated;
+        if expected.checked_sub(hwin).map_or(false, |x| candidate <= x) {
+            candidate + win
+        } else if candidate > expected + hwin && candidate > win {
+            candidate - win
         } else {
-            x % d
+            candidate
         }
     }
 }
@@ -806,7 +821,7 @@ mod tests {
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {
         let mut buf = Vec::new();
         typed.encode(&mut buf);
-        assert_eq!(&buf[..encoded.len()], encoded);
+        assert_eq!(&buf[..], encoded);
         let decoded = PacketNumber::decode(&mut io::Cursor::new(&buf)).unwrap();
         assert_eq!(typed, decoded);
     }
@@ -818,6 +833,23 @@ mod tests {
         check_pn(PacketNumber::U16(16383), &[0xbf, 0xff]);
         check_pn(PacketNumber::U32(16384), &[0xc0, 0x00, 0x40, 0x00]);
         check_pn(PacketNumber::U32(1073741823), &[0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn pn_encode() {
+        check_pn(PacketNumber::new(63, 0), &[0x3f]);
+        check_pn(PacketNumber::new(64, 0), &[0x80, 0x40]);
+        check_pn(PacketNumber::new(8191, 0), &[0x9f, 0xff]);
+        check_pn(PacketNumber::new(8192, 0), &[0xc0, 0x00, 0x20, 0x00]);
+    }
+
+    #[test]
+    fn pn_expand_roundtrip() {
+        for expected in 0..1024 {
+            for actual in expected..1024 {
+                assert_eq!(actual, PacketNumber::new(actual, expected).expand(expected));
+            }
+        }
     }
 
     // https://github.com/quicwg/base-drafts/wiki/Test-vector-for-AES-packet-number-encryption
