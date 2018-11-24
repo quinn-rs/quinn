@@ -1790,10 +1790,7 @@ impl Connection {
 
             if let Header::Initial { .. } = header {
                 if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                    buf.resize(
-                        MIN_INITIAL_SIZE - AEAD_TAG_SIZE,
-                        frame::Type::PADDING.into(),
-                    );
+                    buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
                 }
             }
             if crypto_level != CryptoLevel::OneRtt {
@@ -1840,7 +1837,7 @@ impl Connection {
         };
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len() as u16;
-        buf.push(frame::Type::PING.into());
+        buf.write(frame::Type::PING);
         {
             let crypto = self.crypto.as_ref().unwrap();
             crypto.encrypt(number, &mut buf, header_len as usize);
