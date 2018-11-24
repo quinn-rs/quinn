@@ -1283,26 +1283,13 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                let closed = match self.process_payload(ctx, now, number, packet.payload.into()) {
-                    Ok(closed) => closed,
-                    Err(e) => {
-                        ctx.events
-                            .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
-                        return Err(e.into());
-                    }
-                };
-
-                if let Err(e) = self.drive_tls() {
-                    ctx.events
-                        .push_back((self.handle, Event::ConnectionLost { reason: e.into() }));
-                    Err(e.into())
+                let closed = self.process_payload(ctx, now, number, packet.payload.into())?;
+                self.drive_tls()?;
+                Ok(if closed {
+                    State::Draining
                 } else {
-                    Ok(if closed {
-                        State::Draining
-                    } else {
-                        State::Established
-                    })
-                }
+                    State::Established
+                })
             }
             State::HandshakeFailed(state) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
