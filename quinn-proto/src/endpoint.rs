@@ -13,14 +13,15 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    handshake_close, make_tls, ClientConfig, Connection, ConnectionError, ConnectionHandle,
-    ReadError, State, WriteError,
+    handshake_close, make_tls, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
+    WriteError,
 };
 use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
 use packet::{
     ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
 };
+use stream::ReadError;
 use {
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,

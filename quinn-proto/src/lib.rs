@@ -29,14 +29,13 @@ use std::fmt;
 
 mod coding;
 mod range_set;
-mod stream;
 #[cfg(test)]
 mod tests;
 mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use connection::{ConnectionError, ConnectionHandle, ReadError, WriteError};
+pub use connection::{ConnectionError, ConnectionHandle, WriteError};
 
 mod crypto;
 pub use crypto::{ClientConfig, ConnectError};
@@ -50,6 +49,9 @@ pub use endpoint::{Config, Endpoint, EndpointError, Event, Io, ListenKeys, Timer
 
 mod packet;
 pub use packet::ConnectionId;
+
+mod stream;
+pub use stream::ReadError;
 
 mod transport_error;
 pub use transport_error::Error as TransportError;
