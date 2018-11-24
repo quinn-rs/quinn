@@ -2223,6 +2223,22 @@ impl Connection {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
+        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
+        if self.state.as_ref().unwrap().is_closed() {
+            trace!(self.log, "write blocked; connection draining"; "stream" => stream.0);
+            return Err(WriteError::Blocked);
+        }
+
+        if self.blocked() {
+            if self.congestion_blocked() {
+                trace!(self.log, "write blocked by congestion"; "stream" => stream.0);
+            } else {
+                trace!(self.log, "write blocked by connection-level flow control"; "stream" => stream.0);
+            }
+            self.blocked_streams.insert(stream);
+            return Err(WriteError::Blocked);
+        }
+
         let r = self.write_inner(&ctx.config, stream, data);
         match r {
             Ok(n) => {
@@ -2230,11 +2246,7 @@ impl Connection {
                 trace!(self.log, "write"; "stream" => stream.0, "len" => n)
             }
             Err(WriteError::Blocked) => {
-                if self.congestion_blocked() {
-                    trace!(self.log, "write blocked by congestion");
-                } else {
-                    trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
-                }
+                trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
             }
             _ => {}
         }
@@ -2247,14 +2259,6 @@ impl Connection {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        if self.state.as_ref().unwrap().is_closed() {
-            return Err(WriteError::Blocked);
-        }
-        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
-        if self.blocked() {
-            self.blocked_streams.insert(stream);
-            return Err(WriteError::Blocked);
-        }
         let (stop_reason, stream_budget) = {
             let ss = self
                 .streams
