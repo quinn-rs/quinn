@@ -150,7 +150,6 @@ impl Crypto {
             local,
             remote,
             digest,
-            cipher,
         })
     }
 
@@ -181,7 +180,6 @@ impl Crypto {
             local,
             remote,
             digest,
-            cipher,
         })
     }
 
@@ -242,7 +240,7 @@ impl Crypto {
         let (cipher, state, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.sealing_key),
             Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.cipher, &crypto.local, &crypto.sealing_key)
+                (crypto.sealing_key.algorithm(), &crypto.local, &crypto.sealing_key)
             }
         };
 
@@ -264,7 +262,7 @@ impl Crypto {
         let (cipher, state, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.opening_key),
             Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.cipher, &crypto.remote, &crypto.opening_key)
+                (crypto.opening_key.algorithm(), &crypto.remote, &crypto.opening_key)
             }
         };
 
@@ -281,15 +279,15 @@ impl Crypto {
     pub fn update(&self, side: Side) -> Crypto {
         match *self {
             Crypto::OneRtt(ref crypto) => {
-                let local = crypto.local.update(crypto.digest, crypto.cipher, side);
-                let remote = crypto.local.update(crypto.digest, crypto.cipher, !side);
+                let cipher = crypto.sealing_key.algorithm();
+                let local = crypto.local.update(crypto.digest, &cipher, side);
+                let remote = crypto.local.update(crypto.digest, &cipher, !side);
                 Crypto::OneRtt(CryptoContext {
-                    sealing_key: aead::SealingKey::new(crypto.cipher, &local.key).unwrap(),
-                    opening_key: aead::OpeningKey::new(crypto.cipher, &remote.key).unwrap(),
+                    sealing_key: aead::SealingKey::new(&cipher, &local.key).unwrap(),
+                    opening_key: aead::OpeningKey::new(&cipher, &remote.key).unwrap(),
                     local,
                     remote,
                     digest: crypto.digest,
-                    cipher: crypto.cipher,
                 })
             }
             _ => unreachable!(),
@@ -400,22 +398,21 @@ pub struct ZeroRttCrypto {
 
 pub struct CryptoContext {
     local: CryptoState,
-    remote: CryptoState,
-    digest: &'static digest::Algorithm,
-    cipher: &'static aead::Algorithm,
     sealing_key: aead::SealingKey,
+    remote: CryptoState,
     opening_key: aead::OpeningKey,
+    digest: &'static digest::Algorithm,
 }
 
 impl Clone for CryptoContext {
     fn clone(&self) -> CryptoContext {
+        let cipher = self.sealing_key.algorithm();
         Self {
-            sealing_key: aead::SealingKey::new(self.cipher, &self.local.key.clone()).unwrap(),
-            opening_key: aead::OpeningKey::new(self.cipher, &self.remote.key).unwrap(),
             local: self.local.clone(),
+            sealing_key: aead::SealingKey::new(cipher, &self.local.key.clone()).unwrap(),
             remote: self.remote.clone(),
+            opening_key: aead::OpeningKey::new(cipher, &self.remote.key).unwrap(),
             digest: self.digest,
-            cipher: self.cipher,
         }
     }
 }
