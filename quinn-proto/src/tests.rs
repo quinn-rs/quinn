@@ -11,6 +11,7 @@ use bytes::Bytes;
 use rand::RngCore;
 use ring::digest;
 use ring::hmac::SigningKey;
+use rustls::internal::msgs::enums::AlertDescription;
 use rustls::{internal::pemfile, KeyLogFile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
@@ -577,8 +578,8 @@ fn reject_self_signed_cert() {
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
-                        error_code: TransportError::PROTOCOL_VIOLATION // FIXME: should be a TLS error
-                    }})) if conn == client_conn);
+                        error_code
+                    }})) if conn == client_conn && error_code == TransportError::crypto(AlertDescription::BadCertificate));
 }
 
 #[test]
