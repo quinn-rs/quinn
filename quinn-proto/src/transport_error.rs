@@ -1,6 +1,7 @@
 use std::fmt;
 
 use bytes::{Buf, BufMut};
+use slog;
 
 use coding::{self, BufExt, BufMutExt};
 use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
@@ -55,6 +56,17 @@ macro_rules! errors {
                 f.write_str(x)
             }
         }
+    }
+}
+
+impl slog::Value for Error {
+    fn serialize(
+        &self,
+        _: &slog::Record,
+        key: slog::Key,
+        serializer: &mut slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 
