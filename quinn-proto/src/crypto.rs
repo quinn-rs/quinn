@@ -99,7 +99,6 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
     result
 }
 
-#[derive(Clone)]
 pub enum Crypto {
     // ZeroRtt(ZeroRttCrypto),
     Initial(CryptoContext),
@@ -239,9 +238,11 @@ impl Crypto {
         // FIXME: retain crypter
         let (cipher, state, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.sealing_key),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.sealing_key.algorithm(), &crypto.local, &crypto.sealing_key)
-            }
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+                crypto.sealing_key.algorithm(),
+                &crypto.local,
+                &crypto.sealing_key,
+            ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
@@ -261,9 +262,11 @@ impl Crypto {
 
         let (cipher, state, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.opening_key),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => {
-                (crypto.opening_key.algorithm(), &crypto.remote, &crypto.opening_key)
-            }
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+                crypto.opening_key.algorithm(),
+                &crypto.remote,
+                &crypto.opening_key,
+            ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
@@ -342,7 +345,6 @@ pub struct ConnectionInfo {
     pub(crate) remote: SocketAddrV6,
 }
 
-#[derive(Clone)]
 pub struct CryptoState {
     secret: Vec<u8>,
     key: Vec<u8>,
@@ -390,7 +392,6 @@ impl CryptoState {
     }
 }
 
-#[derive(Clone)]
 pub struct ZeroRttCrypto {
     state: CryptoState,
     cipher: &'static aead::Algorithm,
@@ -402,19 +403,6 @@ pub struct CryptoContext {
     remote: CryptoState,
     opening_key: aead::OpeningKey,
     digest: &'static digest::Algorithm,
-}
-
-impl Clone for CryptoContext {
-    fn clone(&self) -> CryptoContext {
-        let cipher = self.sealing_key.algorithm();
-        Self {
-            local: self.local.clone(),
-            sealing_key: aead::SealingKey::new(cipher, &self.local.key.clone()).unwrap(),
-            remote: self.remote.clone(),
-            opening_key: aead::OpeningKey::new(cipher, &self.remote.key).unwrap(),
-            digest: self.digest,
-        }
-    }
 }
 
 #[derive(Debug, Fail)]
