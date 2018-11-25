@@ -271,7 +271,7 @@ impl Connection {
     /// Initiate a connection
     fn connect(&mut self) {
         let mut outgoing = Vec::new();
-        self.tls.write_tls(&mut outgoing).unwrap();
+        self.tls.write_hs(&mut outgoing);
         self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
             clienthello_packet: None,
@@ -291,7 +291,7 @@ impl Connection {
         //self.zero_rtt_crypto = zero_rtt_crypto;
         self.on_packet_authenticated(ctx, now, packet_number);
         let mut outgoing = Vec::new();
-        self.tls.write_tls(&mut outgoing).unwrap();
+        self.tls.write_hs(&mut outgoing);
         self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
             clienthello_packet: None,
@@ -707,58 +707,6 @@ impl Connection {
         ctx.dirty_conns.insert(self.handle);
     }
 
-    fn drive_tls(&mut self) -> Result<(), TransportError> {
-        trace!(self.log, "processed stream 0 bytes");
-        /* Process any new session tickets that might have been delivered
-        {
-            let mut buffer = ctx.session_ticket_buffer.lock().unwrap();
-            for session in buffer.drain(..) {
-                if let Ok(session) = session {
-                    trace!(
-                        self.log,
-                        "{connection} got session ticket",
-                        connection = self.loc_cid.clone()
-                    );
-
-                    let params = &self.params;
-                    let session = session
-                        .to_der()
-                        .expect("failed to serialize session ticket");
-
-                    let mut buf = Vec::new();
-                    buf.put_u16_be(session.len() as u16);
-                    buf.extend_from_slice(&session);
-                    params.write(Side::Server, &mut buf);
-
-                    ctx.events
-                        .push_back((conn, Event::NewSessionTicket { ticket: buf.into() }));
-                } else {
-                    debug!(
-                        self.log,
-                        "{connection} got malformed session ticket",
-                        connection = self.loc_cid.clone()
-                    );
-                    ctx.events.push_back((
-                        conn,
-                        Event::ConnectionLost {
-                            reason: TransportError::PROTOCOL_VIOLATION.into(),
-                        },
-                    ));
-                    return Err(TransportError::PROTOCOL_VIOLATION.into());
-                }
-            }
-        }
-        */
-
-        match self.tls.process_new_packets() {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                debug!(self.log, "TLS error {}", e);
-                Err(TransportError::PROTOCOL_VIOLATION)
-            }
-        }
-    }
-
     pub fn handle_initial(
         &mut self,
         ctx: &mut Context,
@@ -773,11 +721,7 @@ impl Connection {
         }; // TODO: Send close?
 
         trace!(self.log, "got initial");
-        self.read_tls(&frame);
-        if let Err(e) = self.tls.process_new_packets() {
-            debug!(self.log, "TLS error: {}", e);
-            return Err(TransportError::PROTOCOL_VIOLATION);
-        }
+        self.read_tls(&frame)?;
         let params = TransportParameters::read(
             Side::Server,
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
@@ -786,15 +730,22 @@ impl Connection {
         Ok(())
     }
 
-    fn read_tls(&mut self, crypto: &frame::Crypto) {
+    fn read_tls(&mut self, crypto: &frame::Crypto) -> Result<(), TransportError> {
         self.crypto_stream.insert(crypto.offset, &crypto.data);
         let mut buf = [0; 8192];
         loop {
             let n = self.crypto_stream.read(&mut buf);
             if n == 0 {
-                break;
+                return Ok(());
             }
-            self.tls.read_tls(&mut &buf[..n]).unwrap();
+            if let Err(e) = self.tls.read_hs(&mut &buf[..n]) {
+                debug!(self.log, "TLS error: {}", e);
+                return Err(if let Some(alert) = self.tls.take_alert() {
+                    TransportError::crypto(alert)
+                } else {
+                    TransportError::PROTOCOL_VIOLATION
+                });
+            }
         }
     }
 
@@ -977,7 +928,7 @@ impl Connection {
                             trace!(self.log, "resending ClientHello"; "rem_cid" => %rem_cid);
                             // Send updated ClientHello
                             let mut outgoing = Vec::new();
-                            self.tls.write_tls(&mut outgoing).unwrap();
+                            self.tls.write_hs(&mut outgoing);
                             let tls = make_tls(&ctx, &self.loc_cid, self.client_config.as_ref());
 
                             // Discard transport state
@@ -1017,7 +968,7 @@ impl Connection {
                             match frame {
                                 Frame::Padding => {}
                                 Frame::Crypto(frame) => {
-                                    self.read_tls(&frame);
+                                    self.read_tls(&frame)?;
                                 }
                                 Frame::Stream(frame::Stream { .. }) => {
                                     debug!(self.log, "stream frame in handshake");
@@ -1027,6 +978,11 @@ impl Connection {
                                     self.on_ack_received(ctx, now, ack);
                                 }
                                 Frame::ConnectionClose(reason) => {
+                                    trace!(
+                                        self.log,
+                                        "peer aborted the handshake: {error}",
+                                        error = reason.error_code
+                                    );
                                     ctx.events.push_back((
                                         self.handle,
                                         Event::ConnectionLost {
@@ -1054,69 +1010,57 @@ impl Connection {
                             }
                         }
 
-                        match self.tls.process_new_packets() {
-                            Ok(()) if !self.tls.is_handshaking() => {
-                                trace!(self.log, "no longer handshaking");
-                                let params = self
-                                    .tls
-                                    .get_quic_transport_parameters()
-                                    .ok_or_else(|| {
-                                        debug!(self.log, "remote didn't send transport params");
-                                        ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
-                                    }).and_then(|x| {
-                                        TransportParameters::read(
-                                            self.side,
-                                            &mut io::Cursor::new(x),
-                                        ).map_err(Into::into)
-                                    })?;
-                                self.set_params(params);
-                                trace!(self.log, "{connection} established", connection = id);
-                                self.handshake_cleanup(&ctx.config);
-                                let mut msgs = Vec::new();
-                                self.tls.write_tls(&mut msgs).unwrap();
-                                self.transmit_handshake(&msgs);
-                                if self.side == Side::Server {
-                                    self.awaiting_handshake = false;
-                                }
-                                match self.side {
-                                    Side::Client => {
-                                        ctx.events.push_back((
-                                            self.handle,
-                                            Event::Connected {
-                                                protocol: self
-                                                    .tls
-                                                    .get_alpn_protocol()
-                                                    .map(|x| x.into()),
-                                            },
-                                        ));
-                                    }
-                                    Side::Server => {
-                                        ctx.incoming_handshakes -= 1;
-                                        ctx.incoming.push_back(self.handle);
-                                    }
-                                }
-                                self.crypto = Some(Crypto::new_1rtt(&self.tls, self.side));
-                                Ok(State::Established)
+                        if self.tls.is_handshaking() {
+                            trace!(self.log, "handshake ongoing");
+                            self.handshake_cleanup(&ctx.config);
+                            let mut response = Vec::new();
+                            self.tls.write_hs(&mut response);
+                            if !response.is_empty() {
+                                self.transmit_handshake(&response);
                             }
-                            Ok(()) => {
-                                trace!(self.log, "handshake ongoing");
-                                self.handshake_cleanup(&ctx.config);
-                                let mut response = Vec::new();
-                                self.tls.write_tls(&mut response).unwrap();
-                                if !response.is_empty() {
-                                    self.transmit_handshake(&response);
-                                }
-                                Ok(State::Handshake(state::Handshake {
-                                    clienthello_packet: state.clienthello_packet,
-                                    rem_cid_set: state.rem_cid_set,
-                                    token: None,
-                                }))
+                            return Ok(State::Handshake(state::Handshake {
+                                clienthello_packet: state.clienthello_packet,
+                                rem_cid_set: state.rem_cid_set,
+                                token: None,
+                            }));
+                        }
+
+                        trace!(self.log, "handshake complete");
+                        let params = self
+                            .tls
+                            .get_quic_transport_parameters()
+                            .ok_or_else(|| {
+                                debug!(self.log, "remote didn't send transport params");
+                                ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
+                            }).and_then(|x| {
+                                TransportParameters::read(self.side, &mut io::Cursor::new(x))
+                                    .map_err(Into::into)
+                            })?;
+                        self.set_params(params);
+                        trace!(self.log, "{connection} established", connection = id);
+                        self.handshake_cleanup(&ctx.config);
+                        let mut msgs = Vec::new();
+                        self.tls.write_hs(&mut msgs);
+                        self.transmit_handshake(&msgs);
+                        if self.side == Side::Server {
+                            self.awaiting_handshake = false;
+                        }
+                        match self.side {
+                            Side::Client => {
+                                ctx.events.push_back((
+                                    self.handle,
+                                    Event::Connected {
+                                        protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
+                                    },
+                                ));
                             }
-                            Err(e) => {
-                                debug!(self.log, "handshake failed"; "reason" => %e);
-                                Err(TransportError::PROTOCOL_VIOLATION.into())
+                            Side::Server => {
+                                ctx.incoming_handshakes -= 1;
+                                ctx.incoming.push_back(self.handle);
                             }
                         }
+                        self.crypto = Some(Crypto::new_1rtt(&self.tls, self.side));
+                        Ok(State::Established)
                     }
                     Header::Initial { .. } => {
                         if self.side == Side::Server {
@@ -1217,7 +1161,6 @@ impl Connection {
                     self.handshake_cleanup(&ctx.config);
                 }
                 let closed = self.process_payload(ctx, now, number, packet.payload.into())?;
-                self.drive_tls()?;
                 Ok(if closed {
                     State::Draining
                 } else {
@@ -1271,7 +1214,7 @@ impl Connection {
                     return Err(TransportError::PROTOCOL_VIOLATION);
                 }
                 Frame::Crypto(frame) => {
-                    self.read_tls(&frame);
+                    self.read_tls(&frame)?;
                 }
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);

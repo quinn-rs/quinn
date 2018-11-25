@@ -29,7 +29,7 @@ lazy_static = "1"
 orion = "0.9"
 rand = "0.6"
 ring = "0.13"
-rustls = { version = "0.14", features = ["quic"] }
+rustls = { git = "https://github.com/Ralith/rustls.git", rev = "a57c60b7d9ed1b5aa805ab4e38a4156491768821", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
 webpki = "0.18"
