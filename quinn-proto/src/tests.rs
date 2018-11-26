@@ -440,19 +440,18 @@ fn lifecycle() {
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionDrained)) if conn == client_conn);
 }
 
-/*
 #[test]
 fn stateless_retry() {
     let mut pair = Pair::new(
         Config {
             use_stateless_retry: true,
-            ..Config::default()
+            ..server_config()
         },
         Config::default(),
+        ListenKeys::new(&mut rand::thread_rng()),
     );
     pair.connect();
 }
-*/
 
 #[test]
 fn stateless_reset() {
@@ -460,15 +459,19 @@ fn stateless_reset() {
     server_config.max_remote_uni_streams = 32;
     server_config.max_remote_bi_streams = 32;
 
+    let mut token_value = [0; 64];
     let mut reset_value = [0; 64];
     let mut rng = rand::thread_rng();
+    rng.fill_bytes(&mut token_value);
     rng.fill_bytes(&mut reset_value);
 
-    let mut listen_key = ListenKeys::new(&mut rand::thread_rng());
-    listen_key.reset = SigningKey::new(&digest::SHA512_256, &reset_value);
+    let listen_key = ListenKeys {
+        token: TokenKey::new(&token_value),
+        reset: SigningKey::new(&digest::SHA512_256, &reset_value),
+    };
 
     let pair_listen_keys = ListenKeys {
-        cookie: listen_key.cookie.clone(),
+        token: TokenKey::new(&token_value),
         reset: SigningKey::new(&digest::SHA512_256, &reset_value),
     };
 

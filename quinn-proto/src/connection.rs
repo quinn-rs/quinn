@@ -8,7 +8,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use slog::Logger;
 
 use coding::{BufExt, BufMutExt};
-use crypto::{self, reset_token_for, Crypto, TlsSession, ACK_DELAY_EXPONENT};
+use crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
 use endpoint::{Config, Context, Event, Io, Timer};
 use packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
@@ -61,6 +61,8 @@ pub struct Connection {
     crypto_stream: stream::Assembler,
     /// Current offset of outgoing cryptographic handshake stream
     crypto_offset: u64,
+    /// ConnectionId sent by this client on the first Initial, if a Retry was received.
+    orig_rem_cid: Option<ConnectionId>,
 
     //
     // Loss Detection
@@ -210,6 +212,7 @@ impl Connection {
             client_config,
             crypto_stream: stream::Assembler::new(),
             crypto_offset: 0,
+            orig_rem_cid: None,
 
             handshake_count: 0,
             tlp_count: 0,
@@ -274,7 +277,6 @@ impl Connection {
         self.tls.write_hs(&mut outgoing);
         self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
-            clienthello_packet: None,
             rem_cid_set: false,
             token: None,
         }));
@@ -283,22 +285,19 @@ impl Connection {
     pub fn handshake_complete(
         &mut self,
         ctx: &mut Context,
-        params: TransportParameters,
         //zero_rtt_crypto: Option<Crypto>,
         now: u64,
         packet_number: u64,
     ) {
         //self.zero_rtt_crypto = zero_rtt_crypto;
-        self.on_packet_authenticated(ctx, now, packet_number);
+        self.on_packet_authenticated(ctx, now, Some(packet_number));
         let mut outgoing = Vec::new();
         self.tls.write_hs(&mut outgoing);
         self.transmit_handshake(&outgoing);
         self.state = Some(State::Handshake(state::Handshake {
-            clienthello_packet: None,
             rem_cid_set: true,
             token: None,
         }));
-        self.set_params(params);
         ctx.dirty_conns.insert(self.handle);
         ctx.incoming_handshakes += 1;
     }
@@ -610,9 +609,14 @@ impl Connection {
         cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: u64) {
-        trace!(self.log, "packet authenticated"; "pn" => packet);
+    fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: Option<u64>) {
         self.reset_idle_timeout(&ctx.config, now);
+        let packet = if let Some(x) = packet {
+            x
+        } else {
+            return;
+        };
+        trace!(self.log, "packet authenticated"; "pn" => packet);
         self.pending_acks.insert_one(packet);
         if self.pending_acks.len() > MAX_ACK_BLOCKS {
             self.pending_acks.pop_min();
@@ -726,7 +730,8 @@ impl Connection {
             Side::Server,
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
-        self.handshake_complete(ctx, params, now, packet_number);
+        self.set_params(params)?;
+        self.handshake_complete(ctx, now, packet_number);
         Ok(())
     }
 
@@ -813,26 +818,8 @@ impl Connection {
         }
 
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
-        let (prev_state, was_handshake) = match self.state.take().unwrap() {
-            State::Handshake(mut state) => {
-                if !state.rem_cid_set {
-                    match packet.header {
-                        Header::Long {
-                            ty: LongType::Handshake,
-                            src_cid: rem_cid,
-                            ..
-                        } => {
-                            trace!(self.log, "got remote connection id"; "rem_cid" => %rem_cid);
-                            self.rem_cid = rem_cid;
-                            state.rem_cid_set = true;
-                        }
-                        _ => {}
-                    }
-                }
-                (State::Handshake(state), true)
-            }
-            state => (state, false),
-        };
+        let prev_state = self.state.take().unwrap();
+        let was_handshake = prev_state.is_handshake();
         let was_closed = prev_state.is_closed();
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
@@ -840,7 +827,7 @@ impl Connection {
                 if !was_closed {
                     self.on_packet_authenticated(ctx, now, number);
                 }
-                self.handle_connected_inner(ctx, now, remote, number, packet, prev_state)
+                self.handle_connected_inner(ctx, now, number, packet, prev_state)
             }
             Err(Some(e)) => {
                 warn!(self.log, "got illegal packet"; "reason" => %e);
@@ -903,60 +890,60 @@ impl Connection {
         &mut self,
         ctx: &mut Context,
         now: u64,
-        remote: SocketAddrV6,
-        number: u64,
+        number: Option<u64>,
         packet: Packet,
         state: State,
     ) -> Result<State, ConnectionError> {
         match state {
-            State::Handshake(state) => {
+            State::Handshake(mut state) => {
                 match packet.header {
                     Header::Retry {
-                        src_cid: rem_cid, ..
+                        src_cid: rem_cid,
+                        orig_dst_cid,
+                        ..
                     } => {
-                        // FIXME: the below guards fail to handle repeated retries resulting from
-                        // retransmitted initials
-                        if state.clienthello_packet.is_none() {
-                            // Received Retry as a server
-                            debug!(self.log, "received retry from client");
-                            Err(TransportError::PROTOCOL_VIOLATION.into())
-                        } else if state.clienthello_packet.unwrap() > number {
-                            // Retry corresponds to an outdated Initial; must be a duplicate, so
-                            // ignore it
-                            Ok(State::Handshake(state))
-                        } else {
-                            trace!(self.log, "resending ClientHello"; "rem_cid" => %rem_cid);
-                            // Send updated ClientHello
-                            let mut outgoing = Vec::new();
-                            self.tls.write_hs(&mut outgoing);
-                            let tls = make_tls(&ctx, &self.loc_cid, self.client_config.as_ref());
-
-                            // Discard transport state
-                            let mut new = Connection::new(
-                                self.log.clone(),
-                                rem_cid,
-                                self.loc_cid,
-                                rem_cid,
-                                remote,
-                                self.client_config.clone(),
-                                tls,
-                                ctx,
-                                self.handle,
-                            );
-                            mem::replace(self, new);
-                            self.transmit_handshake(&outgoing);
-                            Ok(State::Handshake(state::Handshake {
-                                clienthello_packet: state.clienthello_packet,
-                                rem_cid_set: state.rem_cid_set,
-                                token: Some(packet.payload),
-                            }))
+                        if self.orig_rem_cid.is_some() || orig_dst_cid != self.rem_cid {
+                            // A client MUST accept and process at most one Retry packet for each
+                            // connection attempt, and clients MUST discard Retry packets that
+                            // contain an Original Destination Connection ID field that does not
+                            // match the Destination Connection ID from its Initial packet.
+                            return Ok(State::Handshake(state));
                         }
+                        trace!(self.log, "retrying");
+                        self.orig_rem_cid = Some(self.rem_cid);
+                        self.rem_cid = rem_cid;
+                        self.on_packet_acked(&ctx.config, 0);
+
+                        // Reset to initial state
+                        {
+                            let client_config = self.client_config.as_ref().unwrap();
+                            self.tls = TlsSession::new_client(
+                                &client_config.tls_config,
+                                &client_config.server_name,
+                                &TransportParameters::new(&ctx.config),
+                            ).unwrap();
+                            self.crypto_offset = 0;
+                            self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
+                        }
+                        let mut outgoing = Vec::new();
+                        self.tls.write_hs(&mut outgoing);
+                        self.transmit_handshake(&outgoing);
+
+                        Ok(State::Handshake(state::Handshake {
+                            token: Some(packet.payload.into()),
+                            rem_cid_set: true,
+                        }))
                     }
                     Header::Long {
                         ty: LongType::Handshake,
                         dst_cid: id,
+                        src_cid: rem_cid,
                         ..
                     } => {
+                        if !state.rem_cid_set {
+                            self.rem_cid = rem_cid;
+                            state.rem_cid_set = true;
+                        }
                         // Complete handshake (and ultimately send Finished)
                         for frame in frame::Iter::new(packet.payload.into()) {
                             match frame {
@@ -1001,7 +988,8 @@ impl Connection {
                                     return Ok(State::Draining);
                                 }
                                 Frame::PathChallenge(value) => {
-                                    self.handshake_pending.path_challenge(number as u64, value);
+                                    self.handshake_pending
+                                        .path_challenge(number.unwrap(), value);
                                 }
                                 _ => {
                                     debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
@@ -1019,9 +1007,8 @@ impl Connection {
                                 self.transmit_handshake(&response);
                             }
                             return Ok(State::Handshake(state::Handshake {
-                                clienthello_packet: state.clienthello_packet,
-                                rem_cid_set: state.rem_cid_set,
                                 token: None,
+                                ..state
                             }));
                         }
 
@@ -1036,7 +1023,7 @@ impl Connection {
                                 TransportParameters::read(self.side, &mut io::Cursor::new(x))
                                     .map_err(Into::into)
                             })?;
-                        self.set_params(params);
+                        self.set_params(params)?;
                         trace!(self.log, "{connection} established", connection = id);
                         self.handshake_cleanup(&ctx.config);
                         let mut msgs = Vec::new();
@@ -1160,7 +1147,8 @@ impl Connection {
                     // Forget about unacknowledged handshake packets
                     self.handshake_cleanup(&ctx.config);
                 }
-                let closed = self.process_payload(ctx, now, number, packet.payload.into())?;
+                let closed =
+                    self.process_payload(ctx, now, number.unwrap(), packet.payload.into())?;
                 Ok(if closed {
                     State::Draining
                 } else {
@@ -1442,25 +1430,26 @@ impl Connection {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 let number = self.get_tx_number();
-                trace!(log, "sending handshake packet"; "pn" => number);
                 let header = if self.side == Side::Client && self
                     .handshake_pending
                     .crypto
                     .front()
                     .map_or(false, |x| x.offset == 0)
                 {
-                    if let State::Handshake(ref mut state) = self.state.as_mut().unwrap() {
-                        if state.clienthello_packet.is_none() {
-                            state.clienthello_packet = Some(number);
-                        }
-                    }
+                    trace!(log, "sending initial packet"; "pn" => number);
                     Header::Initial {
                         src_cid: self.loc_cid,
                         dst_cid: self.rem_cid,
-                        token: vec![], // TODO: determine what's needed here
+                        token: match *self.state.as_ref().unwrap() {
+                            State::Handshake(ref state) => {
+                                state.token.clone().unwrap_or_else(Bytes::new)
+                            }
+                            _ => unreachable!("initial only sent in handshake state"),
+                        },
                         number: PacketNumber::new(number, self.largest_acked_packet),
                     }
                 } else {
+                    trace!(log, "sending handshake packet"; "pn" => number);
                     Header::Long {
                         ty: LongType::Handshake,
                         src_cid: self.loc_cid,
@@ -1860,7 +1849,21 @@ impl Connection {
         });
     }
 
-    fn set_params(&mut self, params: TransportParameters) {
+    fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
+        // Validate
+        if self.side == Side::Client {
+            if self.orig_rem_cid != params.original_connection_id {
+                debug!(
+                    self.log,
+                    "original connection ID mismatch: expected {expected:x?}, actual {actual:x?}",
+                    expected = self.orig_rem_cid,
+                    actual = params.original_connection_id
+                );
+                return Err(TransportError::TRANSPORT_PARAMETER_ERROR);
+            }
+        }
+
+        // Apply
         self.streams.max_bi = params.initial_max_bidi_streams as u64;
         self.streams.max_uni = params.initial_max_uni_streams as u64;
         self.max_data = params.initial_max_data as u64;
@@ -1870,6 +1873,7 @@ impl Connection {
                 params.initial_max_stream_data_bidi_local as u64;
         }
         self.params = params;
+        Ok(())
     }
 
     pub fn open(&mut self, config: &Config, direction: Directionality) -> Option<StreamId> {
@@ -2030,7 +2034,11 @@ impl Connection {
         &mut self,
         handshake: bool,
         packet: &mut Packet,
-    ) -> Result<u64, Option<TransportError>> {
+    ) -> Result<Option<u64>, Option<TransportError>> {
+        if packet.header.is_retry() {
+            // Retry packets are not encrypted and have no packet number
+            return Ok(None);
+        }
         let (key_phase, number) = match packet.header {
             Header::Short {
                 key_phase, number, ..
@@ -2059,7 +2067,7 @@ impl Connection {
             let old = mem::replace(self.crypto.as_mut().unwrap(), new);
             self.prev_crypto = Some((number, old));
             self.key_phase = !self.key_phase;
-            Ok(number)
+            Ok(Some(number))
         } else {
             let crypto = match (handshake, &self.prev_crypto) {
                 (true, _) => &self.handshake_crypto,
@@ -2069,7 +2077,7 @@ impl Connection {
             crypto
                 .decrypt(number, &packet.header_data, &mut packet.payload)
                 .map_err(|()| None)?;
-            Ok(number)
+            Ok(Some(number))
         }
     }
 
@@ -2425,6 +2433,13 @@ impl State {
         })
     }
 
+    pub fn is_handshake(&self) -> bool {
+        match *self {
+            State::Handshake(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match *self {
             State::Closed(_) => true,
@@ -2447,11 +2462,8 @@ pub mod state {
     use super::*;
 
     pub struct Handshake {
-        /// The number of the packet that first contained the latest version of the TLS
-        /// ClientHello. Present iff we're the client.
-        pub clienthello_packet: Option<u64>,
         pub rem_cid_set: bool,
-        pub token: Option<BytesMut>,
+        pub token: Option<Bytes>,
     }
 
     #[derive(Clone)]
@@ -2483,33 +2495,6 @@ pub mod state {
 
     pub struct Closed {
         pub reason: CloseReason,
-    }
-}
-
-pub fn make_tls(
-    ctx: &Context,
-    local_id: &ConnectionId,
-    config: Option<&ClientConfig>,
-) -> TlsSession {
-    match config {
-        Some(&ClientConfig {
-            ref tls_config,
-            ref server_name,
-        }) => TlsSession::new_client(
-            tls_config,
-            server_name,
-            &TransportParameters::new(&ctx.config),
-        ).unwrap(),
-        None => {
-            let server_params = TransportParameters {
-                stateless_reset_token: Some(reset_token_for(
-                    &ctx.listen_keys.as_ref().unwrap().reset,
-                    &local_id,
-                )),
-                ..TransportParameters::new(&ctx.config)
-            };
-            TlsSession::new_server(&ctx.config.tls_server_config, &server_params)
-        }
     }
 }
 

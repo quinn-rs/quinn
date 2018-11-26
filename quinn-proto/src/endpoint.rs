@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use std::{cmp, io};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng, RngCore};
 use ring::digest;
@@ -13,14 +14,15 @@ use slog::{self, Logger};
 
 use coding::BufMutExt;
 use connection::{
-    handshake_close, make_tls, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
+    handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
 };
-use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
+use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig, TlsSession, TokenKey};
 use packet::{
     ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
 };
 use stream::{ReadError, WriteError};
+use transport_parameters::TransportParameters;
 use {
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
@@ -93,6 +95,13 @@ pub struct Config {
     /// connections the endpoint can maintain. The API user is responsible for making sure that
     /// the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
+
+    /// Whether to require clients to prove ownership of an address before committing resources.
+    ///
+    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
+    pub use_stateless_retry: bool,
+    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    pub retry_token_lifetime: u64,
 }
 
 impl Default for Config {
@@ -127,6 +136,9 @@ impl Default for Config {
             tls_server_config: Arc::new(crypto::build_server_config()),
 
             local_cid_len: 8,
+
+            use_stateless_retry: false,
+            retry_token_lifetime: 15_000_000,
         }
     }
 }
@@ -143,6 +155,7 @@ pub struct Endpoint {
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
+    listen_keys: Option<ListenKeys>,
 }
 
 pub struct Context {
@@ -155,7 +168,6 @@ pub struct Context {
     pub incoming_handshakes: usize,
     pub dirty_conns: FnvHashSet<ConnectionHandle>,
     pub readable_conns: FnvHashSet<ConnectionHandle>,
-    pub listen_keys: Option<ListenKeys>,
 }
 
 /// Information that should be preserved between restarts for server endpoints.
@@ -163,14 +175,10 @@ pub struct Context {
 /// Keeping this around allows better behavior by clients that communicated with a previous
 /// instance of the same endpoint.
 pub struct ListenKeys {
-    /// Cryptographic key used to ensure integrity of data included in handshake cookies.
-    ///
-    /// Initialize with random bytes.
-    pub cookie: [u8; 64],
-    /// Cryptographic key used to send authenticated connection resets to clients who were
-    /// communicating with a previous instance of tihs endpoint.
-    ///
-    /// Initialize with random bytes.
+    /// Cryptographic key used to authenticate data included in handshake tokens.
+    pub token: TokenKey,
+    /// Cryptographic key used to send authenticated connection resets to clients who were communicating with a previous
+    /// instance of this endpoint.
     pub reset: SigningKey,
 }
 
@@ -178,13 +186,14 @@ impl ListenKeys {
     /// Generate new keys.
     ///
     /// Be careful to use a cryptography-grade RNG.
-    pub fn new<R: Rng>(rng: &mut R) -> Self {
-        let mut cookie = [0; 64];
+    pub fn new<R: Rng + ?Sized>(rng: &mut R) -> Self {
+        let mut token_value = [0; 64];
         let mut reset_value = [0; 64];
-        rng.fill_bytes(&mut cookie);
+        rng.fill_bytes(&mut token_value);
         rng.fill_bytes(&mut reset_value);
+        let token = TokenKey::new(&token_value);
         let reset = SigningKey::new(&digest::SHA512_256, &reset_value);
-        Self { cookie, reset }
+        Self { token, reset }
     }
 }
 
@@ -196,8 +205,6 @@ pub enum EndpointError {
     Keylog(io::Error),
     #[fail(display = "protocol ID longer than 255 bytes")]
     ProtocolTooLong(Box<[u8]>),
-    #[fail(display = "invalid DNS name: {}", _0)]
-    InvalidDnsName(String),
 }
 
 impl From<crypto::TLSError> for EndpointError {
@@ -210,7 +217,7 @@ impl Endpoint {
     pub fn new(
         log: Logger,
         config: Config,
-        listen: Option<ListenKeys>,
+        listen_keys: Option<ListenKeys>,
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
@@ -229,18 +236,18 @@ impl Endpoint {
                 readable_conns: FnvHashSet::default(),
                 incoming: VecDeque::new(),
                 incoming_handshakes: 0,
-                listen_keys: listen,
             },
             log,
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
+            listen_keys,
         })
     }
 
     fn listen(&self) -> bool {
-        self.ctx.listen_keys.is_some()
+        self.listen_keys.is_some()
     }
 
     /// Get an application-facing event
@@ -424,7 +431,7 @@ impl Endpoint {
                 self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
-                &self.ctx.listen_keys.as_ref().unwrap().reset,
+                &self.listen_keys.as_ref().unwrap().reset,
                 &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {
@@ -452,11 +459,11 @@ impl Endpoint {
             local_id,
             remote_id,
             remote,
-            Some(ClientConfig {
+            ConnectionOpts::Client(ClientConfig {
                 tls_config: config.clone(),
                 server_name: server_name.into(),
             }),
-        );
+        )?;
         self.ctx.dirty_conns.insert(conn);
         Ok(conn)
     }
@@ -477,13 +484,37 @@ impl Endpoint {
         local_id: ConnectionId,
         remote_id: ConnectionId,
         remote: SocketAddrV6,
-        client_config: Option<ClientConfig>,
-    ) -> ConnectionHandle {
+        opts: ConnectionOpts,
+    ) -> Result<ConnectionHandle, ConnectError> {
         debug_assert!(!local_id.is_empty());
         let conn = {
+            let (tls, client_config) = match opts {
+                ConnectionOpts::Client(config) => (
+                    TlsSession::new_client(
+                        &config.tls_config,
+                        &config.server_name,
+                        &TransportParameters::new(&self.ctx.config),
+                    )?,
+                    Some(config),
+                ),
+                ConnectionOpts::Server { orig_dst_cid } => {
+                    let server_params = TransportParameters {
+                        stateless_reset_token: Some(reset_token_for(
+                            &self.listen_keys.as_ref().unwrap().reset,
+                            &local_id,
+                        )),
+                        original_connection_id: orig_dst_cid,
+                        ..TransportParameters::new(&self.ctx.config)
+                    };
+                    (
+                        TlsSession::new_server(&self.ctx.config.tls_server_config, &server_params),
+                        None,
+                    )
+                }
+            };
+
             let entry = self.connections.vacant_entry();
             let conn = ConnectionHandle(entry.key());
-            let tls = make_tls(&self.ctx, &local_id, client_config.as_ref());
 
             entry.insert(Connection::new(
                 self.log.new(o!("connection" => local_id)),
@@ -502,7 +533,7 @@ impl Endpoint {
             self.connection_ids.insert(local_id, conn);
         }
         self.connection_remotes.insert(remote, conn);
-        conn
+        Ok(conn)
     }
 
     fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: Crypto) {
@@ -511,13 +542,13 @@ impl Endpoint {
             header_data,
             mut payload,
         } = packet;
-        let (src_cid, dst_cid, packet_number) = match header {
+        let (src_cid, dst_cid, token, packet_number) = match header {
             Header::Initial {
                 src_cid,
                 dst_cid,
+                token,
                 number,
-                ..
-            } => (src_cid, dst_cid, number),
+            } => (src_cid, dst_cid, token, number),
             _ => panic!("non-initial packet in handle_initial()"),
         };
         let packet_number = packet_number.expand(0);
@@ -548,7 +579,60 @@ impl Endpoint {
             return;
         }
 
-        let conn = self.add_connection(dst_cid, loc_cid, src_cid, remote, None);
+        let mut retry_cid = None;
+        if self.ctx.config.use_stateless_retry {
+            if let Some((token_dst_cid, token_issued)) = self
+                .listen_keys
+                .as_ref()
+                .unwrap()
+                .token
+                .check(&remote, &token)
+            {
+                let expires =
+                    token_issued + Duration::from_micros(self.ctx.config.retry_token_lifetime);
+                if expires > SystemTime::now() {
+                    retry_cid = Some(token_dst_cid);
+                } else {
+                    trace!(self.log, "sending stateless retry due to expired token");
+                }
+            } else {
+                trace!(self.log, "sending stateless retry due to invalid token");
+            }
+            if retry_cid.is_none() {
+                let token = self.listen_keys.as_ref().unwrap().token.generate(
+                    &remote,
+                    &dst_cid,
+                    SystemTime::now(),
+                );
+                let mut buf = Vec::new();
+                let header = Header::Retry {
+                    src_cid: loc_cid,
+                    dst_cid: src_cid,
+                    orig_dst_cid: dst_cid,
+                };
+                let encode = header.encode(&mut buf);
+                let header_len = buf.len();
+                encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
+                buf.put_slice(&token);
+
+                self.ctx.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: buf.into(),
+                });
+                return;
+            }
+        }
+
+        let conn = self
+            .add_connection(
+                dst_cid,
+                loc_cid,
+                src_cid,
+                remote,
+                ConnectionOpts::Server {
+                    orig_dst_cid: retry_cid,
+                },
+            ).unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,
@@ -909,4 +993,9 @@ impl slog::Value for Timer {
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
+}
+
+enum ConnectionOpts {
+    Client(ClientConfig),
+    Server { orig_dst_cid: Option<ConnectionId> },
 }
