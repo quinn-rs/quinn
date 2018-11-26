@@ -27,7 +27,7 @@ failure = "0.1"
 fnv = "1.0.6"
 futures = "0.1.21"
 quinn-proto = { path = "../quinn-proto", version = "0.1.0" }
-rand = "0.5"
+rand = "0.6"
 rustls = { version = "0.14", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
