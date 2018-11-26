@@ -38,7 +38,7 @@ mod connection;
 pub use connection::{ConnectionError, ConnectionHandle};
 
 mod crypto;
-pub use crypto::{ClientConfig, ConnectError};
+pub use crypto::{ClientConfig, ConnectError, TokenKey};
 
 mod frame;
 use frame::Frame;

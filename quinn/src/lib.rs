@@ -107,9 +107,6 @@ pub enum Error {
     /// A supplied protocol identifier was too long
     #[fail(display = "protocol ID longer than 255 bytes")]
     ProtocolTooLong(Box<[u8]>),
-    /// The DNS name was invalid for use in TLS
-    #[fail(display = "invalid DNS name: {}", _0)]
-    InvalidDnsName(String),
     /// Errors relating to web PKI infrastructure
     #[fail(display = "webpki failed: {:?}", _0)]
     WebPki(webpki::Error),
@@ -122,7 +119,6 @@ impl From<quinn::EndpointError> for Error {
             Tls(x) => Error::Tls(x),
             Keylog(x) => Error::Keylog(x),
             ProtocolTooLong(x) => Error::ProtocolTooLong(x),
-            InvalidDnsName(x) => Error::InvalidDnsName(x),
         }
     }
 }

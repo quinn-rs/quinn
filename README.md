@@ -37,7 +37,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
-- [ ] Stateless retry
+- [x] Stateless retry
 - [ ] Migration
 - [ ] 0-RTT data
 - [ ] Session resumption

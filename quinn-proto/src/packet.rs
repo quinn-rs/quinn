@@ -62,6 +62,7 @@ impl PartialDecode {
                 ..
             } => match PacketType::from_byte(first).unwrap() {
                 PacketType::Initial => true,
+                PacketType::Retry => true,
                 PacketType::Long(LongType::Handshake) => true,
                 _ => false,
             },
@@ -141,8 +142,11 @@ impl PartialDecode {
                 }
                 PacketType::Initial => {
                     let token_length = buf.get_var()? as usize;
-                    let mut token = vec![0; token_length];
-                    buf.copy_to_slice(&mut token);
+                    // Could we avoid this alloc/copy somehow?
+                    let mut token = BytesMut::with_capacity(token_length);
+                    token.extend_from_slice(&buf.bytes()[..token_length]);
+                    let token = token.freeze();
+                    buf.advance(token_length);
 
                     let len = buf.get_var()?;
                     let sample_offset = 10
@@ -255,7 +259,7 @@ pub enum Header {
     Initial {
         src_cid: ConnectionId,
         dst_cid: ConnectionId,
-        token: Vec<u8>,
+        token: Bytes,
         number: PacketNumber,
     },
     Long {
@@ -381,6 +385,13 @@ impl Header {
         w.write(dcil << 4 | scil);
         w.put_slice(dst_cid);
         w.put_slice(src_cid);
+    }
+
+    pub fn is_retry(&self) -> bool {
+        match *self {
+            Header::Retry { .. } => true,
+            _ => false,
+        }
     }
 }
 
