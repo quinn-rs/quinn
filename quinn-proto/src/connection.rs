@@ -273,9 +273,7 @@ impl Connection {
 
     /// Initiate a connection
     fn connect(&mut self) {
-        let mut outgoing = Vec::new();
-        self.tls.write_hs(&mut outgoing);
-        self.transmit_handshake(&outgoing);
+        self.write_tls();
         self.state = Some(State::Handshake(state::Handshake {
             rem_cid_set: false,
             token: None,
@@ -291,9 +289,7 @@ impl Connection {
     ) {
         //self.zero_rtt_crypto = zero_rtt_crypto;
         self.on_packet_authenticated(ctx, now, Some(packet_number));
-        let mut outgoing = Vec::new();
-        self.tls.write_hs(&mut outgoing);
-        self.transmit_handshake(&outgoing);
+        self.write_tls();
         self.state = Some(State::Handshake(state::Handshake {
             rem_cid_set: true,
             token: None,
@@ -656,16 +652,6 @@ impl Connection {
         self.set_loss_detection_alarm(config);
     }
 
-    fn transmit_handshake(&mut self, messages: &[u8]) {
-        let offset = self.crypto_offset;
-        self.crypto_offset += messages.len() as u64;
-        self.handshake_pending.crypto.push_back(frame::Crypto {
-            offset,
-            data: messages.into(),
-        });
-        self.awaiting_handshake = true;
-    }
-
     fn transmit(&mut self, stream: StreamId, data: Bytes) {
         let ss = self.streams.get_send_mut(&stream).unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
@@ -752,6 +738,18 @@ impl Connection {
                 });
             }
         }
+    }
+
+    fn write_tls(&mut self) {
+        let mut outgoing = Vec::new();
+        self.tls.write_hs(&mut outgoing);
+        let offset = self.crypto_offset;
+        self.crypto_offset += outgoing.len() as u64;
+        self.handshake_pending.crypto.push_back(frame::Crypto {
+            offset,
+            data: outgoing.into(),
+        });
+        self.awaiting_handshake = true;
     }
 
     pub fn handle_decode(
@@ -925,9 +923,7 @@ impl Connection {
                             self.crypto_offset = 0;
                             self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
                         }
-                        let mut outgoing = Vec::new();
-                        self.tls.write_hs(&mut outgoing);
-                        self.transmit_handshake(&outgoing);
+                        self.write_tls();
 
                         Ok(State::Handshake(state::Handshake {
                             token: Some(packet.payload.into()),
@@ -1001,11 +997,7 @@ impl Connection {
                         if self.tls.is_handshaking() {
                             trace!(self.log, "handshake ongoing");
                             self.handshake_cleanup(&ctx.config);
-                            let mut response = Vec::new();
-                            self.tls.write_hs(&mut response);
-                            if !response.is_empty() {
-                                self.transmit_handshake(&response);
-                            }
+                            self.write_tls();
                             return Ok(State::Handshake(state::Handshake {
                                 token: None,
                                 ..state
@@ -1026,9 +1018,7 @@ impl Connection {
                         self.set_params(params)?;
                         trace!(self.log, "{connection} established", connection = id);
                         self.handshake_cleanup(&ctx.config);
-                        let mut msgs = Vec::new();
-                        self.tls.write_hs(&mut msgs);
-                        self.transmit_handshake(&msgs);
+                        self.write_tls();
                         if self.side == Side::Server {
                             self.awaiting_handshake = false;
                         }
