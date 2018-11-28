@@ -99,13 +99,7 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
     result
 }
 
-enum CryptoLevel {
-    Initial,
-    OneRtt,
-}
-
 pub struct Crypto {
-    crypto_level: CryptoLevel,
     local_secret: Vec<u8>,
     local_iv: Vec<u8>,
     local_pn_key: PacketNumberKey,
@@ -134,7 +128,6 @@ impl Crypto {
         let (remote_key, remote_iv, remote_pn_key) = Self::get_keys(digest, cipher, &remote_secret);
 
         Self {
-            crypto_level: CryptoLevel::Initial,
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
             local_pn_key,
@@ -168,20 +161,6 @@ impl Crypto {
             .unwrap();
 
         Self::generate_1rtt(digest, cipher, local_secret, remote_secret)
-    }
-
-    pub fn is_initial(&self) -> bool {
-        match self.crypto_level {
-            CryptoLevel::Initial => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_1rtt(&self) -> bool {
-        match self.crypto_level {
-            CryptoLevel::OneRtt => true,
-            _ => false,
-        }
     }
 
     pub fn write_nonce(&self, iv: &[u8], number: u64, out: &mut [u8]) {
@@ -280,7 +259,6 @@ impl Crypto {
         let (remote_key, remote_iv, remote_pn_key) = Self::get_keys(digest, cipher, &remote_secret);
 
         Crypto {
-            crypto_level: CryptoLevel::OneRtt,
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
             local_pn_key,
