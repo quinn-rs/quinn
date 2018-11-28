@@ -106,31 +106,11 @@ pub struct OneRttCrypto {
 }
 
 pub enum Crypto {
-    // ZeroRtt(ZeroRttCrypto),
     Initial(CryptoContext),
     OneRtt(OneRttCrypto),
 }
 
 impl Crypto {
-    /*
-    pub fn new_0rtt(tls: &TlsSide) -> Self {
-        let suite = tls.get_negotiated_ciphersuite().unwrap();
-        let tls_cipher = tls.current_cipher().unwrap();
-        let digest = tls_cipher.handshake_digest().unwrap();
-        let cipher = Cipher::from_nid(tls_cipher.cipher_nid().unwrap()).unwrap();
-
-        const LABEL: &str = "EXPORTER-QUIC 0rtt";
-
-        let mut secret = vec![0; digest.size()];
-        tls.export_keying_material_early(&mut secret, &LABEL, b"")
-            .unwrap();
-        Crypto::ZeroRtt(ZeroRttCrypto {
-            state: CryptoState::new(digest, cipher, secret.into()),
-            cipher,
-        })
-    }
-    */
-
     fn get_keys(
         digest: &'static digest::Algorithm,
         cipher: &'static aead::Algorithm,
@@ -224,15 +204,6 @@ impl Crypto {
         Self::generate_1rtt(digest, cipher, local_secret, remote_secret)
     }
 
-    /*
-    pub fn is_0rtt(&self) -> bool {
-        match *self {
-            Crypto::ZeroRtt(_) => true,
-            _ => false,
-        }
-    }
-    */
-
     pub fn is_initial(&self) -> bool {
         match *self {
             Crypto::Initial(_) => true,
@@ -278,9 +249,7 @@ impl Crypto {
     }
 
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
-        // FIXME: retain crypter
         let (cipher, iv, key) = match *self {
-            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.sealing_key),
             Crypto::Initial(ref context) => (
                 context.sealing_key.algorithm(),
                 &context.local_iv,
@@ -309,7 +278,6 @@ impl Crypto {
         }
 
         let (cipher, iv, key) = match *self {
-            //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.opening_key),
             Crypto::Initial(ref context) => (
                 context.opening_key.algorithm(),
                 &context.remote_iv,
@@ -364,6 +332,7 @@ impl Crypto {
         }
     }
 }
+
 /*
 pub struct CookieFactory {
     mac_key: [u8; 64],
@@ -410,13 +379,6 @@ pub struct ConnectionInfo {
     pub(crate) id: ConnectionId,
     pub(crate) remote: SocketAddrV6,
 }
-
-/*
-pub struct ZeroRttCrypto {
-    state: CryptoState,
-    cipher: &'static aead::Algorithm,
-}
-*/
 
 pub struct CryptoContext {
     local_iv: Vec<u8>,
@@ -637,5 +599,3 @@ mod test {
         );
     }
 }
-
-//pub type SessionTicketBuffer = Arc<Mutex<Vec<Result<SslSession, ()>>>>;
