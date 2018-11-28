@@ -99,8 +99,8 @@ pub struct Connection {
     pub time_of_last_sent_retransmittable_packet: u64,
     /// The time the most recently sent handshake packet was sent.
     pub time_of_last_sent_handshake_packet: u64,
-    /// The packet number of the most recently sent packet.
-    pub largest_sent_packet: u64,
+    /// The packet number of the next packet that will be sent, if any.
+    pub next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
     pub largest_acked_packet: u64,
     /// Transmitted but not acked
@@ -231,7 +231,7 @@ impl Connection {
             largest_sent_before_rto: 0,
             time_of_last_sent_retransmittable_packet: 0,
             time_of_last_sent_handshake_packet: 0,
-            largest_sent_packet: !0, // Will wrap around to 0 on first transmit
+            next_packet_number: 0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
 
@@ -271,6 +271,14 @@ impl Connection {
         this
     }
 
+    fn largest_sent_packet(&self) -> u64 {
+        debug_assert_ne!(
+            self.next_packet_number, 0,
+            "calls here are only expected after a packet has been sent"
+        );
+        self.next_packet_number - 1
+    }
+
     /// Initiate a connection
     fn connect(&mut self) {
         self.write_tls();
@@ -299,10 +307,11 @@ impl Connection {
     }
 
     fn get_tx_number(&mut self) -> u64 {
-        self.largest_sent_packet = self.largest_sent_packet.wrapping_add(1);
         // TODO: Handle packet number overflow gracefully
-        assert!(self.largest_sent_packet < 2u64.pow(62));
-        self.largest_sent_packet
+        assert!(self.next_packet_number < 2u64.pow(62));
+        let x = self.next_packet_number;
+        self.next_packet_number += 1;
+        x
     }
 
     fn on_packet_sent(
@@ -470,7 +479,7 @@ impl Connection {
         } else if self.tlp_count < ctx.config.max_tlps {
             trace!(self.log, "sending TLP {number} in {pn}",
                            number=self.tlp_count,
-                           pn=self.largest_sent_packet + 1;
+                           pn=self.next_packet_number;
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // Tail Loss Probe.
@@ -481,12 +490,12 @@ impl Connection {
             self.reset_idle_timeout(&ctx.config, now);
             self.tlp_count += 1;
         } else {
-            trace!(self.log, "RTO fired, retransmitting"; "pn" => self.largest_sent_packet + 1,
+            trace!(self.log, "RTO fired, retransmitting"; "pn" => self.next_packet_number,
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // RTO
             if self.rto_count == 0 {
-                self.largest_sent_before_rto = self.largest_sent_packet;
+                self.largest_sent_before_rto = self.largest_sent_packet();
             }
             for _ in 0..2 {
                 ctx.io.push_back(Io::Transmit {
@@ -509,7 +518,7 @@ impl Connection {
         if config.using_time_loss_detection {
             // factor * (1 + fraction)
             delay_until_lost = (rtt + (rtt * config.time_reordering_fraction as u64)) >> 16;
-        } else if largest_acked == self.largest_sent_packet {
+        } else if largest_acked == self.largest_sent_packet() {
             // Early retransmit alarm.
             delay_until_lost = (5 * rtt) / 4;
         } else {
@@ -543,7 +552,7 @@ impl Connection {
             // Start a new recovery epoch if the lost packet is larger than the end of the
             // previous recovery epoch.
             if lost_nonack && !self.in_recovery(largest_lost) {
-                self.end_of_recovery = self.largest_sent_packet;
+                self.end_of_recovery = self.largest_sent_packet();
                 // *= factor
                 self.congestion_window =
                     (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
