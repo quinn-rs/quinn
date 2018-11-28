@@ -102,7 +102,7 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
 pub enum Crypto {
     // ZeroRtt(ZeroRttCrypto),
     Initial(CryptoContext),
-    OneRtt(CryptoContext),
+    OneRtt(CryptoContext, Vec<u8>, Vec<u8>),
 }
 
 impl Crypto {
@@ -125,6 +125,22 @@ impl Crypto {
     }
     */
 
+    fn get_keys(
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        secret: &[u8],
+    ) -> (Vec<u8>, Vec<u8>, PacketNumberKey) {
+        let secret_key = SigningKey::new(digest, &secret);
+
+        let mut key = vec![0; cipher.key_len()];
+        qhkdf_expand(&secret_key, b"key", &mut key);
+
+        let mut iv = vec![0; cipher.nonce_len()];
+        qhkdf_expand(&secret_key, b"iv", &mut iv);
+
+        (key, iv, PacketNumberKey::from_aead(cipher, &secret_key))
+    }
+
     pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
         let (local_label, remote_label) = if side == Side::Client {
@@ -133,23 +149,50 @@ impl Crypto {
             (b"server in", b"client in")
         };
         let hs_secret = initial_secret(id);
-        let local = CryptoState::new(
+        let (local_key, local_iv, local_pn_key) = Self::get_keys(
             digest,
             cipher,
-            expanded_initial_secret(&hs_secret, local_label),
+            &expanded_initial_secret(&hs_secret, local_label),
         );
-        let remote = CryptoState::new(
+        let (remote_key, remote_iv, remote_pn_key) = Self::get_keys(
             digest,
             cipher,
-            expanded_initial_secret(&hs_secret, remote_label),
+            &expanded_initial_secret(&hs_secret, remote_label),
         );
+
         Crypto::Initial(CryptoContext {
-            sealing_key: aead::SealingKey::new(cipher, &local.key).unwrap(),
-            opening_key: aead::OpeningKey::new(cipher, &remote.key).unwrap(),
-            local,
-            remote,
+            sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
+            local_pn_key,
+            local_iv,
+            opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
+            remote_pn_key,
+            remote_iv,
             digest,
         })
+    }
+
+    fn generate_1rtt(
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        local_secret: Vec<u8>,
+        remote_secret: Vec<u8>,
+    ) -> Crypto {
+        let (local_key, local_iv, local_pn_key) = Self::get_keys(digest, cipher, &local_secret);
+        let (remote_key, remote_iv, remote_pn_key) = Self::get_keys(digest, cipher, &remote_secret);
+
+        Crypto::OneRtt(
+            CryptoContext {
+                sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
+                local_pn_key,
+                local_iv,
+                opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
+                remote_pn_key,
+                remote_iv,
+                digest,
+            },
+            local_secret,
+            remote_secret,
+        )
     }
 
     pub fn new_1rtt(tls: &TlsSession, side: Side) -> Self {
@@ -164,22 +207,15 @@ impl Crypto {
         } else {
             (SERVER_LABEL, CLIENT_LABEL)
         };
+
         let mut local_secret = vec![0; digest.output_len];
         tls.export_keying_material(&mut local_secret, local_label, None)
             .unwrap();
-        let local = CryptoState::new(digest, cipher, local_secret);
-
         let mut remote_secret = vec![0; digest.output_len];
         tls.export_keying_material(&mut remote_secret, remote_label, None)
             .unwrap();
-        let remote = CryptoState::new(digest, cipher, remote_secret);
-        Crypto::OneRtt(CryptoContext {
-            sealing_key: aead::SealingKey::new(cipher, &local.key).unwrap(),
-            opening_key: aead::OpeningKey::new(cipher, &remote.key).unwrap(),
-            local,
-            remote,
-            digest,
-        })
+
+        Self::generate_1rtt(digest, cipher, local_secret, remote_secret)
     }
 
     /*
@@ -200,12 +236,12 @@ impl Crypto {
 
     pub fn is_1rtt(&self) -> bool {
         match *self {
-            Crypto::OneRtt(_) => true,
+            Crypto::OneRtt(_, _, _) => true,
             _ => false,
         }
     }
 
-    pub fn write_nonce(&self, state: &CryptoState, number: u64, out: &mut [u8]) {
+    pub fn write_nonce(&self, iv: &[u8], number: u64, out: &mut [u8]) {
         let out = {
             let mut write = io::Cursor::new(out);
             write.put_u32_be(0);
@@ -213,41 +249,41 @@ impl Crypto {
             debug_assert_eq!(write.remaining(), 0);
             write.into_inner()
         };
-        debug_assert_eq!(out.len(), state.iv.len());
-        for (out, inp) in out.iter_mut().zip(state.iv.iter()) {
+        debug_assert_eq!(out.len(), iv.len());
+        for (out, inp) in out.iter_mut().zip(iv.iter()) {
             *out ^= inp;
         }
     }
 
     pub fn pn_decrypt_key(&self) -> &PacketNumberKey {
-        &self.ctx().remote.pn_key
+        &self.ctx().remote_pn_key
     }
 
     pub fn pn_encrypt_key(&self) -> &PacketNumberKey {
-        &self.ctx().local.pn_key
+        &self.ctx().local_pn_key
     }
 
     fn ctx(&self) -> &CryptoContext {
         use self::Crypto::*;
         match self {
-            Initial(ctx) | OneRtt(ctx) => ctx,
+            Initial(ctx) | OneRtt(ctx, _, _) => ctx,
         }
     }
 
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
         // FIXME: retain crypter
-        let (cipher, state, key) = match *self {
+        let (cipher, iv, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.sealing_key),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto, _, _) => (
                 crypto.sealing_key.algorithm(),
-                &crypto.local,
+                &crypto.local_iv,
                 &crypto.sealing_key,
             ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
         let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(&state, packet, nonce);
+        self.write_nonce(&iv, packet, nonce);
         let tag = vec![0; cipher.tag_len()];
         buf.extend(tag);
 
@@ -260,18 +296,18 @@ impl Crypto {
             return Err(());
         }
 
-        let (cipher, state, key) = match *self {
+        let (cipher, iv, key) = match *self {
             //Crypto::ZeroRtt(ref crypto) => (crypto.cipher, &crypto.state, &crypto.opening_key),
-            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto) => (
+            Crypto::Initial(ref crypto) | Crypto::OneRtt(ref crypto, _, _) => (
                 crypto.opening_key.algorithm(),
-                &crypto.remote,
+                &crypto.remote_iv,
                 &crypto.opening_key,
             ),
         };
 
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
         let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(&state, packet, nonce);
+        self.write_nonce(&iv, packet, nonce);
         let payload_len = payload.len();
 
         aead::open_in_place(&key, &*nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
@@ -281,17 +317,30 @@ impl Crypto {
 
     pub fn update(&self, side: Side) -> Crypto {
         match *self {
-            Crypto::OneRtt(ref crypto) => {
-                let cipher = crypto.sealing_key.algorithm();
-                let local = crypto.local.update(crypto.digest, &cipher, side);
-                let remote = crypto.local.update(crypto.digest, &cipher, !side);
-                Crypto::OneRtt(CryptoContext {
-                    sealing_key: aead::SealingKey::new(&cipher, &local.key).unwrap(),
-                    opening_key: aead::OpeningKey::new(&cipher, &remote.key).unwrap(),
-                    local,
-                    remote,
-                    digest: crypto.digest,
-                })
+            Crypto::OneRtt(ref crypto, ref local_secret, ref remote_secret) => {
+                const SERVER_LABEL: &[u8] = b"server 1rtt";
+                const CLIENT_LABEL: &[u8] = b"client 1rtt";
+
+                let (local_label, remote_label) = if side == Side::Client {
+                    (CLIENT_LABEL, SERVER_LABEL)
+                } else {
+                    (SERVER_LABEL, CLIENT_LABEL)
+                };
+
+                let local_secret_key = SigningKey::new(crypto.digest, local_secret);
+                let mut new_local_secret = vec![0; crypto.digest.output_len];
+                qhkdf_expand(&local_secret_key, &local_label, &mut new_local_secret);
+
+                let remote_secret_key = SigningKey::new(crypto.digest, remote_secret);
+                let mut new_remote_secret = vec![0; crypto.digest.output_len];
+                qhkdf_expand(&remote_secret_key, &remote_label, &mut new_remote_secret);
+
+                Self::generate_1rtt(
+                    crypto.digest,
+                    crypto.opening_key.algorithm(),
+                    new_local_secret,
+                    new_remote_secret,
+                )
             }
             _ => unreachable!(),
         }
@@ -398,9 +447,11 @@ pub struct ZeroRttCrypto {
 }
 
 pub struct CryptoContext {
-    local: CryptoState,
+    local_iv: Vec<u8>,
+    local_pn_key: PacketNumberKey,
     sealing_key: aead::SealingKey,
-    remote: CryptoState,
+    remote_iv: Vec<u8>,
+    remote_pn_key: PacketNumberKey,
     opening_key: aead::OpeningKey,
     digest: &'static digest::Algorithm,
 }
