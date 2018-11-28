@@ -1607,7 +1607,8 @@ impl Connection {
         let mut sent = Retransmits::default();
 
         let (number, acks, ack_only, handshake) = {
-            let (number, header, crypto, pending) = if (!established || self.awaiting_handshake)
+            let (number, header, crypto, pending, crypto_level) = if (!established
+                || self.awaiting_handshake)
                 && (!self.handshake_pending.is_empty()
                     || (!self.pending_acks.is_empty() && self.permit_ack_only))
             {
@@ -1645,6 +1646,7 @@ impl Connection {
                     header,
                     &self.handshake_crypto,
                     &mut self.handshake_pending,
+                    CryptoLevel::Initial,
                 )
             } else if established {
                 //|| (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
@@ -1679,6 +1681,7 @@ impl Connection {
                     header,
                     self.crypto.as_ref().unwrap(),
                     &mut self.pending,
+                    CryptoLevel::OneRtt,
                 )
             } else {
                 return None;
@@ -1866,7 +1869,7 @@ impl Connection {
                     );
                 }
             }
-            if !crypto.is_1rtt() {
+            if crypto_level != CryptoLevel::OneRtt {
                 let pn_len = match header {
                     Header::Initial { number, .. } | Header::Long { number, .. } => number.len(),
                     _ => panic!("invalid header for packet payload length"),
@@ -1875,7 +1878,7 @@ impl Connection {
             }
             crypto.encrypt(number, &mut buf, header_len as usize);
             partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
-            (number, acks, ack_only, crypto.is_initial())
+            (number, acks, ack_only, crypto_level == CryptoLevel::Initial)
         };
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
@@ -2344,6 +2347,12 @@ impl Connection {
         }
         None
     }
+}
+
+#[derive(Eq, PartialEq)]
+enum CryptoLevel {
+    Initial,
+    OneRtt,
 }
 
 /// Extract stream 0 data from an Initial or Retry packet payload
