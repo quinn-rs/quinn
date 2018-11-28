@@ -100,7 +100,6 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
 }
 
 pub enum Crypto {
-    // ZeroRtt(ZeroRttCrypto),
     Initial(CryptoContext),
     OneRtt(CryptoContext),
 }
@@ -157,15 +156,6 @@ impl Crypto {
         Self::generate_1rtt(digest, cipher, local_secret, remote_secret)
     }
 
-    /*
-    pub fn is_0rtt(&self) -> bool {
-        match *self {
-            Crypto::ZeroRtt(_) => true,
-            _ => false,
-        }
-    }
-    */
-
     pub fn is_initial(&self) -> bool {
         match *self {
             Crypto::Initial(_) => true,
@@ -210,7 +200,6 @@ impl Crypto {
     }
 
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
-        // FIXME: retain crypter
         let (cipher, iv, key) = match *self {
             Crypto::Initial(ref crypto) => (
                 crypto.sealing_key.algorithm(),
@@ -331,6 +320,7 @@ impl Crypto {
         (key, iv, PacketNumberKey::from_aead(cipher, &secret_key))
     }
 }
+
 /*
 pub struct CookieFactory {
     mac_key: [u8; 64],
@@ -599,5 +589,3 @@ mod test {
         );
     }
 }
-
-//pub type SessionTicketBuffer = Arc<Mutex<Vec<Result<SslSession, ()>>>>;
