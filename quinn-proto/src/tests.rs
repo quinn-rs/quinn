@@ -70,18 +70,14 @@ struct Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        let mut server_config = server_config();
-        server_config.max_remote_uni_streams = 32;
-        server_config.max_remote_bi_streams = 32;
-        Pair::new(
-            server_config,
-            Default::default(),
-            ListenKeys::new(&mut rand::thread_rng()),
-        )
+        let mut server = Config::default();
+        server.max_remote_uni_streams = 32;
+        server.max_remote_bi_streams = 32;
+        Pair::new(server, Default::default(), server_config())
     }
 }
 
-fn server_config() -> Config {
+fn server_config() -> ServerConfig {
     let certs = {
         let f =
             fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
@@ -95,13 +91,11 @@ fn server_config() -> Config {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let mut tls_server_config = crypto::build_server_config();
-    tls_server_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    tls_server_config
-        .set_single_cert(certs, keys[0].clone())
-        .unwrap();
-    Config {
-        tls_server_config: Arc::new(tls_server_config),
+    let mut tls_config = crypto::build_server_config();
+    tls_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    tls_config.set_single_cert(certs, keys[0].clone()).unwrap();
+    ServerConfig {
+        tls_config: Arc::new(tls_config),
         ..Default::default()
     }
 }
@@ -125,7 +119,7 @@ fn client_config() -> Arc<ClientConfig> {
 }
 
 impl Pair {
-    fn new(server_config: Config, client_config: Config, listen_keys: ListenKeys) -> Self {
+    fn new(server_config: Config, client_config: Config, listen_keys: ServerConfig) -> Self {
         let log = logger();
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
@@ -391,11 +385,10 @@ impl ::std::ops::DerefMut for TestEndpoint {
 fn version_negotiate() {
     let log = logger();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let config = server_config();
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
-        config,
-        Some(ListenKeys::new(&mut rand::thread_rng())),
+        Config::default(),
+        Some(server_config()),
     ).unwrap();
     server.handle(
         0,
@@ -443,21 +436,21 @@ fn lifecycle() {
 #[test]
 fn stateless_retry() {
     let mut pair = Pair::new(
-        Config {
+        Config::default(),
+        Config::default(),
+        ServerConfig {
             use_stateless_retry: true,
             ..server_config()
         },
-        Config::default(),
-        ListenKeys::new(&mut rand::thread_rng()),
     );
     pair.connect();
 }
 
 #[test]
 fn stateless_reset() {
-    let mut server_config = server_config();
-    server_config.max_remote_uni_streams = 32;
-    server_config.max_remote_bi_streams = 32;
+    let mut server = Config::default();
+    server.max_remote_uni_streams = 32;
+    server.max_remote_bi_streams = 32;
 
     let mut token_value = [0; 64];
     let mut reset_value = [0; 64];
@@ -465,17 +458,19 @@ fn stateless_reset() {
     rng.fill_bytes(&mut token_value);
     rng.fill_bytes(&mut reset_value);
 
-    let listen_key = ListenKeys {
-        token: TokenKey::new(&token_value),
-        reset: SigningKey::new(&digest::SHA512_256, &reset_value),
+    let listen_key = ServerConfig {
+        token_key: TokenKey::new(&token_value),
+        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+        ..server_config()
     };
 
-    let pair_listen_keys = ListenKeys {
-        token: TokenKey::new(&token_value),
-        reset: SigningKey::new(&digest::SHA512_256, &reset_value),
+    let pair_listen_keys = ServerConfig {
+        token_key: TokenKey::new(&token_value),
+        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+        ..server_config()
     };
 
-    let mut pair = Pair::new(server_config, Default::default(), listen_key);
+    let mut pair = Pair::new(server, Default::default(), listen_key);
     let (client_conn, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
@@ -677,15 +672,11 @@ fn close_during_handshake() {
 
 #[test]
 fn stream_id_backpressure() {
-    let server_config = Config {
+    let server = Config {
         max_remote_uni_streams: 1,
-        ..server_config()
+        ..Config::default()
     };
-    let mut pair = Pair::new(
-        server_config,
-        Default::default(),
-        ListenKeys::new(&mut rand::thread_rng()),
-    );
+    let mut pair = Pair::new(server, Default::default(), server_config());
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair

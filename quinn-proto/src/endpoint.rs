@@ -16,7 +16,7 @@ use coding::BufMutExt;
 use connection::{
     handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
 };
-use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig, TlsSession, TokenKey};
+use crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use packet::{
     ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
@@ -54,11 +54,6 @@ pub struct Config {
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
     pub receive_window: u32,
-    /// Maximum number of incoming connections to buffer.
-    ///
-    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
-    /// be large.
-    pub accept_buffer: u32,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -88,20 +83,11 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    pub tls_server_config: Arc<ServerConfig>,
-
     /// Length of connection IDs for the endpoint. This must be either 0 or between 4 and 18
     /// inclusive. The length of the local connection IDs constrains the amount of simultaneous
     /// connections the endpoint can maintain. The API user is responsible for making sure that
     /// the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
-
-    /// Whether to require clients to prove ownership of an address before committing resources.
-    ///
-    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub use_stateless_retry: bool,
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub retry_token_lifetime: u64,
 }
 
 impl Default for Config {
@@ -117,7 +103,6 @@ impl Default for Config {
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
-            accept_buffer: 1024,
 
             max_tlps: 2,
             reordering_threshold: 3,
@@ -133,12 +118,7 @@ impl Default for Config {
             minimum_window: 2 * 1460,
             loss_reduction_factor: 0x8000, // 1/2
 
-            tls_server_config: Arc::new(crypto::build_server_config()),
-
             local_cid_len: 8,
-
-            use_stateless_retry: false,
-            retry_token_lifetime: 15_000_000,
         }
     }
 }
@@ -155,7 +135,7 @@ pub struct Endpoint {
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
-    listen_keys: Option<ListenKeys>,
+    server_config: Option<ServerConfig>,
 }
 
 pub struct Context {
@@ -170,30 +150,53 @@ pub struct Context {
     pub readable_conns: FnvHashSet<ConnectionHandle>,
 }
 
-/// Information that should be preserved between restarts for server endpoints.
-///
-/// Keeping this around allows better behavior by clients that communicated with a previous
-/// instance of the same endpoint.
-pub struct ListenKeys {
-    /// Cryptographic key used to authenticate data included in handshake tokens.
-    pub token: TokenKey,
-    /// Cryptographic key used to send authenticated connection resets to clients who were communicating with a previous
-    /// instance of this endpoint.
-    pub reset: SigningKey,
+/// Parameters governing incoming connections.
+pub struct ServerConfig {
+    /// TLS configuration used for incoming connections.
+    ///
+    /// Must be set to use TLS 1.3 only.
+    pub tls_config: Arc<crypto::ServerConfig>,
+
+    /// Private key used to authenticate data included in handshake tokens.
+    pub token_key: TokenKey,
+    /// Whether to require clients to prove ownership of an address before committing resources.
+    ///
+    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
+    pub use_stateless_retry: bool,
+    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    pub retry_token_lifetime: u64,
+
+    /// Private key used to send authenticated connection resets to clients who were communicating
+    /// with a previous instance of this endpoint.
+    ///
+    /// Must be persisted across restarts to be useful.
+    pub reset_key: SigningKey,
+    /// Maximum number of incoming connections to buffer.
+    ///
+    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
+    /// be large.
+    pub accept_buffer: u32,
 }
 
-impl ListenKeys {
-    /// Generate new keys.
-    ///
-    /// Be careful to use a cryptography-grade RNG.
-    pub fn new<R: Rng + ?Sized>(rng: &mut R) -> Self {
+impl Default for ServerConfig {
+    fn default() -> Self {
+        let rng = &mut rand::thread_rng();
+
         let mut token_value = [0; 64];
         let mut reset_value = [0; 64];
         rng.fill_bytes(&mut token_value);
         rng.fill_bytes(&mut reset_value);
-        let token = TokenKey::new(&token_value);
-        let reset = SigningKey::new(&digest::SHA512_256, &reset_value);
-        Self { token, reset }
+
+        Self {
+            tls_config: Arc::new(crypto::build_server_config()),
+
+            token_key: TokenKey::new(&token_value),
+            use_stateless_retry: false,
+            retry_token_lifetime: 15_000_000,
+
+            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+            accept_buffer: 1024,
+        }
     }
 }
 
@@ -217,7 +220,7 @@ impl Endpoint {
     pub fn new(
         log: Logger,
         config: Config,
-        listen_keys: Option<ListenKeys>,
+        server_config: Option<ServerConfig>,
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
@@ -242,12 +245,12 @@ impl Endpoint {
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
-            listen_keys,
+            server_config,
         })
     }
 
-    fn listen(&self) -> bool {
-        self.listen_keys.is_some()
+    fn is_server(&self) -> bool {
+        self.server_config.is_some()
     }
 
     /// Get an application-facing event
@@ -296,7 +299,7 @@ impl Endpoint {
                     source,
                     destination,
                 }) => {
-                    if !self.listen() {
+                    if !self.is_server() {
                         debug!(self.log, "dropping packet with unsupported version");
                         return;
                     }
@@ -359,10 +362,10 @@ impl Endpoint {
         // Potentially create a new connection
         //
 
-        if !self.listen() {
+        if !self.is_server() {
             debug!(
                 self.log,
-                "dropping packet on unrecognized connection {connection} because listening is disabled",
+                "dropping packet on unrecognized connection {connection} because this endpoint is not a server",
                 connection = dst_cid
             );
             return None;
@@ -431,7 +434,7 @@ impl Endpoint {
                 self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
             buf.extend(&reset_token_for(
-                &self.listen_keys.as_ref().unwrap().reset,
+                &self.server_config.as_ref().unwrap().reset_key,
                 &dst_cid,
             ));
             self.ctx.io.push_back(Io::Transmit {
@@ -500,14 +503,17 @@ impl Endpoint {
                 ConnectionOpts::Server { orig_dst_cid } => {
                     let server_params = TransportParameters {
                         stateless_reset_token: Some(reset_token_for(
-                            &self.listen_keys.as_ref().unwrap().reset,
+                            &self.server_config.as_ref().unwrap().reset_key,
                             &local_id,
                         )),
                         original_connection_id: orig_dst_cid,
                         ..TransportParameters::new(&self.ctx.config)
                     };
                     (
-                        TlsSession::new_server(&self.ctx.config.tls_server_config, &server_params),
+                        TlsSession::new_server(
+                            &self.server_config.as_ref().unwrap().tls_config,
+                            &server_params,
+                        ),
                         None,
                     )
                 }
@@ -563,7 +569,7 @@ impl Endpoint {
         let loc_cid = self.new_cid();
 
         if self.ctx.incoming.len() + self.ctx.incoming_handshakes
-            == self.ctx.config.accept_buffer as usize
+            == self.server_config.as_ref().unwrap().accept_buffer as usize
         {
             debug!(self.log, "rejecting connection due to full accept buffer");
             self.ctx.io.push_back(Io::Transmit {
@@ -580,16 +586,17 @@ impl Endpoint {
         }
 
         let mut retry_cid = None;
-        if self.ctx.config.use_stateless_retry {
+        if self.server_config.as_ref().unwrap().use_stateless_retry {
             if let Some((token_dst_cid, token_issued)) = self
-                .listen_keys
+                .server_config
                 .as_ref()
                 .unwrap()
-                .token
+                .token_key
                 .check(&remote, &token)
             {
-                let expires =
-                    token_issued + Duration::from_micros(self.ctx.config.retry_token_lifetime);
+                let expires = token_issued + Duration::from_micros(
+                    self.server_config.as_ref().unwrap().retry_token_lifetime,
+                );
                 if expires > SystemTime::now() {
                     retry_cid = Some(token_dst_cid);
                 } else {
@@ -599,7 +606,7 @@ impl Endpoint {
                 trace!(self.log, "sending stateless retry due to invalid token");
             }
             if retry_cid.is_none() {
-                let token = self.listen_keys.as_ref().unwrap().token.generate(
+                let token = self.server_config.as_ref().unwrap().token_key.generate(
                     &remote,
                     &dst_cid,
                     SystemTime::now(),

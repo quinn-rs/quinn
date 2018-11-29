@@ -90,7 +90,7 @@ use tokio_udp::UdpSocket;
 
 use quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ListenKeys, ALPN_QUIC_HTTP};
+pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -241,13 +241,21 @@ pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
 pub struct EndpointBuilder<'a> {
     reactor: Option<&'a tokio_reactor::Handle>,
     logger: Logger,
-    listen: Option<ListenKeys>,
+    server_config: Option<ServerConfig>,
     config: Config,
     client_config: ClientConfig,
 }
 
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
+    /// Start a builder with a specific initial low-level configuration.
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
+    }
+
     pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
         self.reactor = Some(handle);
         self
@@ -257,62 +265,9 @@ impl<'a> EndpointBuilder<'a> {
         self
     }
 
-    /// Start a builder with a specific initial low-level configuration.
-    pub fn from_config(config: Config) -> Self {
-        Self {
-            config,
-            ..Self::default()
-        }
-    }
-
-    /// Prefer `listen_with_keys`.
-    pub fn listen(&mut self) -> &mut Self {
-        self.listen = Some(ListenKeys::new(&mut rand::thread_rng()));
-        self
-    }
-
-    /// Use with persistent `keys` instead of `listen` to allow graceful reset of clients when the server restarts.
-    pub fn listen_with_keys(&mut self, keys: ListenKeys) -> &mut Self {
-        self.listen = Some(keys);
-        self
-    }
-
-    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
-    ///
-    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
-    pub fn enable_keylog(&mut self) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            tls_server_config.key_log = Arc::new(KeyLogFile::new());
-        }
-        self
-    }
-
-    pub fn set_certificate(
-        &mut self,
-        cert_chain: Vec<Certificate>,
-        key: PrivateKey,
-    ) -> Result<&mut Self, TLSError> {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            tls_server_config.set_single_cert(cert_chain, key)?;
-        }
-        Ok(self)
-    }
-
-    /// Set the application-layer protocols to accept.
-    ///
-    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
-    // TODO: Cite IANA registery for ALPN IDs
-    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            let protocols_strings = protocols
-                .iter()
-                .map(|p| str::from_utf8(p).unwrap().into())
-                .collect::<Vec<_>>();
-            tls_server_config.set_protocols(&protocols_strings);
-        }
+    /// Accept incoming connections.
+    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
+        self.server_config = Some(config);
         self
     }
 
@@ -338,7 +293,7 @@ impl<'a> EndpointBuilder<'a> {
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
-            inner: quinn::Endpoint::new(self.logger, self.config, self.listen)?,
+            inner: quinn::Endpoint::new(self.logger, self.config, self.server_config)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -367,11 +322,69 @@ impl<'a> Default for EndpointBuilder<'a> {
         Self {
             reactor: None,
             logger: Logger::root(slog::Discard, o!()),
-            listen: None,
+            server_config: None,
             config: Config::default(),
             client_config: ClientConfig::default(),
         }
     }
+}
+
+/// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
+/// incoming connections.
+pub struct ServerConfigBuilder {
+    config: ServerConfig,
+}
+
+impl ServerConfigBuilder {
+    /// Construct a builder using `config` as the initial state.
+    pub fn new(config: ServerConfig) -> Self { Self { config } }
+
+    /// Construct the complete `ServerConfig`.
+    pub fn build(self) -> ServerConfig { self.config }
+
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
+    pub fn enable_keylog(&mut self) -> &mut Self {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            tls_server_config.key_log = Arc::new(KeyLogFile::new());
+        }
+        self
+    }
+
+    /// Set the certificate chain that will be presented to clients.
+    pub fn set_certificate(
+        &mut self,
+        cert_chain: Vec<Certificate>,
+        key: PrivateKey,
+    ) -> Result<&mut Self, TLSError> {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            tls_server_config.set_single_cert(cert_chain, key)?;
+        }
+        Ok(self)
+    }
+
+    /// Set the application-layer protocols to accept.
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    // TODO: Cite IANA registery for ALPN IDs
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            let protocols_strings = protocols
+                .iter()
+                .map(|p| str::from_utf8(p).unwrap().into())
+                .collect::<Vec<_>>();
+            tls_server_config.set_protocols(&protocols_strings);
+        }
+        self
+    }
+}
+
+impl Default for ServerConfigBuilder {
+    fn default() -> Self { Self { config: ServerConfig::default() } }
 }
 
 /// Helper for creating new outgoing connections.
