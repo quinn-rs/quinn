@@ -90,7 +90,9 @@ use tokio_udp::UdpSocket;
 
 use quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP};
+pub use quinn::{
+    Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
+};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -256,29 +258,13 @@ impl<'a> EndpointBuilder<'a> {
         }
     }
 
-    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
-        self.reactor = Some(handle);
-        self
-    }
-    pub fn logger(&mut self, logger: Logger) -> &mut Self {
-        self.logger = logger;
-        self
+    /// Build an endpoint bound to `addr`.
+    pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
+        let socket = std::net::UdpSocket::bind(addr).map_err(Error::Socket)?;
+        self.from_socket(socket)
     }
 
-    /// Accept incoming connections.
-    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
-        self.server_config = Some(config);
-        self
-    }
-
-    /// Set the default configuration used for outgoing connections.
-    ///
-    /// The default can be overriden by using `Endpoint:;connect_with`.
-    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
-        self.client_config = config;
-        self
-    }
-
+    /// Build an endpoint around a pre-configured socket.
     pub fn from_socket(
         self,
         socket: std::net::UdpSocket,
@@ -311,9 +297,27 @@ impl<'a> EndpointBuilder<'a> {
         ))
     }
 
-    pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
-        let socket = std::net::UdpSocket::bind(addr).map_err(Error::Socket)?;
-        self.from_socket(socket)
+    /// Accept incoming connections.
+    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
+        self.server_config = Some(config);
+        self
+    }
+
+    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
+        self.reactor = Some(handle);
+        self
+    }
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.logger = logger;
+        self
+    }
+
+    /// Set the default configuration used for outgoing connections.
+    ///
+    /// The default can be overriden by using `Endpoint::connect_with`.
+    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
+        self.client_config = config;
+        self
     }
 }
 
@@ -337,10 +341,14 @@ pub struct ServerConfigBuilder {
 
 impl ServerConfigBuilder {
     /// Construct a builder using `config` as the initial state.
-    pub fn new(config: ServerConfig) -> Self { Self { config } }
+    pub fn new(config: ServerConfig) -> Self {
+        Self { config }
+    }
 
     /// Construct the complete `ServerConfig`.
-    pub fn build(self) -> ServerConfig { self.config }
+    pub fn build(self) -> ServerConfig {
+        self.config
+    }
 
     /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
     ///
@@ -384,7 +392,11 @@ impl ServerConfigBuilder {
 }
 
 impl Default for ServerConfigBuilder {
-    fn default() -> Self { Self { config: ServerConfig::default() } }
+    fn default() -> Self {
+        Self {
+            config: ServerConfig::default(),
+        }
+    }
 }
 
 /// Helper for creating new outgoing connections.

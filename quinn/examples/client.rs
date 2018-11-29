@@ -94,10 +94,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     */
 
-    let mut builder = quinn::Endpoint::new();
+    let mut endpoint = quinn::Endpoint::new();
     let mut client_config = quinn::ClientConfigBuilder::new();
     client_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
-    builder.logger(log.clone());
+    endpoint.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();
     }
@@ -111,9 +111,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         }
     }
 
-    let client_config = client_config.build();
+    endpoint.default_client_config(client_config.build());
 
-    let (endpoint, driver, _) = builder.bind("[::]:0")?;
+    let (endpoint, driver, _) = endpoint.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -121,8 +121,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let start = Instant::now();
     runtime.block_on(
         endpoint
-            .connect_with(
-                &client_config,
+            .connect(
                 &remote,
                 url.host_str().ok_or(format_err!("URL missing host"))?,
             )?.map_err(|e| format_err!("failed to connect: {}", e))
