@@ -300,8 +300,6 @@ pub struct ConnectionInfo {
 
 #[derive(Debug, Fail)]
 pub enum ConnectError {
-    #[fail(display = "session ticket was malformed")]
-    MalformedSession,
     #[fail(display = "invalid DNS name: {}", _0)]
     InvalidDnsName(String),
     #[fail(display = "TLS error: {}", _0)]

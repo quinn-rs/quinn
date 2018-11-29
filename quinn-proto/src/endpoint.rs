@@ -1,8 +1,8 @@
+use std::cmp;
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use std::{cmp, io};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
@@ -204,10 +204,6 @@ impl Default for ServerConfig {
 pub enum EndpointError {
     #[fail(display = "failed to configure TLS: {}", _0)]
     Tls(crypto::TLSError),
-    #[fail(display = "failed open keylog file: {}", _0)]
-    Keylog(io::Error),
-    #[fail(display = "protocol ID longer than 255 bytes")]
-    ProtocolTooLong(Box<[u8]>),
 }
 
 impl From<crypto::TLSError> for EndpointError {
