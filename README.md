@@ -50,9 +50,13 @@ Example certificates are included in the repository for test purposes.
 
 ```sh
 $ cd quinn
-$ cargo run --example server -- --cert ../certs/server.chain --key ../certs/server.rsa .
-$ cargo run --example client -- --ca ../certs/ca.der https://localhost:4433/Cargo.toml
+$ cargo run --example server -- --cert ./certs/server.chain --key ./certs/server.rsa ./
+$ cargo run --example client -- --ca ./certs/ca.der https://localhost:4433/Cargo.toml
 ```
+
+The above example will work on localhost and serve the "Cargo.toml" file to the client.  If
+you wish to run across a network you need to update the `certs/openssl.cnf` file and change 
+the `DNS.3` entry to suit the DNS name of the server.
 
 ## Development
 
