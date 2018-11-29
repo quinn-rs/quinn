@@ -91,12 +91,11 @@ impl Send {
             }
             | SendState::ResetRecvd {
                 ref mut stop_reason,
-            } => match stop_reason.take() {
-                Some(error_code) => {
+            } => {
+                if let Some(error_code) = stop_reason.take() {
                     return Err(WriteError::Stopped { error_code });
                 }
-                None => {}
-            },
+            }
             _ => {}
         };
 
