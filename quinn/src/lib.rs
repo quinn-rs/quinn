@@ -103,12 +103,6 @@ pub enum Error {
     /// An error configuring TLS.
     #[fail(display = "failed to set up TLS: {}", _0)]
     Tls(TLSError),
-    /// An error opening a file for logging TLS keys.
-    #[fail(display = "failed open keylog file: {}", _0)]
-    Keylog(io::Error),
-    /// A supplied protocol identifier was too long
-    #[fail(display = "protocol ID longer than 255 bytes")]
-    ProtocolTooLong(Box<[u8]>),
     /// Errors relating to web PKI infrastructure
     #[fail(display = "webpki failed: {:?}", _0)]
     WebPki(webpki::Error),
@@ -119,8 +113,6 @@ impl From<quinn::EndpointError> for Error {
         use quinn::EndpointError::*;
         match x {
             Tls(x) => Error::Tls(x),
-            Keylog(x) => Error::Keylog(x),
-            ProtocolTooLong(x) => Error::ProtocolTooLong(x),
         }
     }
 }
