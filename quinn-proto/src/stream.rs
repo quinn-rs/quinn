@@ -408,12 +408,12 @@ mod test {
     fn assemble_ordered() {
         let mut x = Assembler::new();
         assert_matches!(x.next(), None);
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        x.insert(3, (&b"456"[..]).into());
+        x.insert(3, &b"456"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
-        x.insert(6, (&b"789"[..]).into());
-        x.insert(9, (&b"10"[..]).into());
+        x.insert(6, &b"789"[..]);
+        x.insert(9, &b"10"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"78910");
         assert_matches!(x.next(), None);
     }
@@ -421,9 +421,9 @@ mod test {
     #[test]
     fn assemble_unordered() {
         let mut x = Assembler::new();
-        x.insert(3, (&b"456"[..]).into());
+        x.insert(3, &b"456"[..]);
         assert_matches!(x.next(), None);
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
     }
@@ -431,8 +431,8 @@ mod test {
     #[test]
     fn assemble_duplicate() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"123"[..]).into());
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
         assert_matches!(x.next(), None);
     }
@@ -440,8 +440,8 @@ mod test {
     #[test]
     fn assemble_contained() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"12345"[..]).into());
-        x.insert(1, (&b"234"[..]).into());
+        x.insert(0, &b"12345"[..]);
+        x.insert(1, &b"234"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
         assert_matches!(x.next(), None);
     }
@@ -449,8 +449,8 @@ mod test {
     #[test]
     fn assemble_contains() {
         let mut x = Assembler::new();
-        x.insert(1, (&b"234"[..]).into());
-        x.insert(0, (&b"12345"[..]).into());
+        x.insert(1, &b"234"[..]);
+        x.insert(0, &b"12345"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
         assert_matches!(x.next(), None);
     }
@@ -458,8 +458,8 @@ mod test {
     #[test]
     fn assemble_overlapping() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"123"[..]).into());
-        x.insert(1, (&b"234"[..]).into());
+        x.insert(0, &b"123"[..]);
+        x.insert(1, &b"234"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
         assert_matches!(x.next(), None);
     }
@@ -467,10 +467,10 @@ mod test {
     #[test]
     fn assemble_complex() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"1"[..]).into());
-        x.insert(2, (&b"3"[..]).into());
-        x.insert(4, (&b"5"[..]).into());
-        x.insert(0, (&b"123456"[..]).into());
+        x.insert(0, &b"1"[..]);
+        x.insert(2, &b"3"[..]);
+        x.insert(4, &b"5"[..]);
+        x.insert(0, &b"123456"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
     }
