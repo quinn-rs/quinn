@@ -104,17 +104,17 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+    let mut builder = quinn::EndpointBuilder::new(quinn::Config {
         max_remote_bi_streams: 64,
         ..Default::default()
     });
-    builder
-        .set_protocols(&[quinn::ALPN_QUIC_HTTP])
-        .logger(log.clone())
-        .listen();
+    builder.logger(log.clone());
+
+    let mut server_config = quinn::ServerConfigBuilder::default();
+    server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
 
     if options.keylog {
-        builder.enable_keylog();
+        server_config.enable_keylog();
     }
 
     let keys = {
@@ -128,7 +128,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         );
         pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
     };
-    builder.set_certificate(cert_chain, keys[0].clone())?;
+    server_config.set_certificate(cert_chain, keys[0].clone())?;
+
+    builder.listen(server_config.build());
 
     let (_, driver, incoming) = builder.bind(options.listen)?;
     runtime.spawn(incoming.for_each(move |conn| {

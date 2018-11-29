@@ -45,7 +45,7 @@ use frame::Frame;
 pub use frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Config, Endpoint, EndpointError, Event, Io, ListenKeys, Timer};
+pub use endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
 
 mod packet;
 pub use packet::ConnectionId;
