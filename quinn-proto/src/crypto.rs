@@ -392,11 +392,6 @@ impl CryptoState {
     }
 }
 
-pub struct ZeroRttCrypto {
-    state: CryptoState,
-    cipher: &'static aead::Algorithm,
-}
-
 pub struct CryptoContext {
     local: CryptoState,
     sealing_key: aead::SealingKey,
