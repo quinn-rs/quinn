@@ -104,11 +104,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quinn::EndpointBuilder::new(quinn::Config {
+    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
         max_remote_bi_streams: 64,
         ..Default::default()
     });
-    builder.logger(log.clone());
+    endpoint.logger(log.clone());
 
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
@@ -130,9 +130,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
     server_config.set_certificate(cert_chain, keys[0].clone())?;
 
-    builder.listen(server_config.build());
+    endpoint.listen(server_config.build());
 
-    let (_, driver, incoming) = builder.bind(options.listen)?;
+    let (_, driver, incoming) = endpoint.bind(options.listen)?;
     runtime.spawn(incoming.for_each(move |conn| {
         handle_connection(&root, &log, conn);
         Ok(())
