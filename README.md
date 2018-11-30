@@ -49,14 +49,14 @@ The example client [currently always verifies][insecure] the server's certificat
 Example certificates are included in the repository for test purposes.
 
 ```sh
-$ cd quinn
 $ cargo run --example server -- --cert ./certs/server.chain --key ./certs/server.rsa ./
 $ cargo run --example client -- --ca ./certs/ca.der https://localhost:4433/Cargo.toml
 ```
 
-The above example will work on localhost and serve the "Cargo.toml" file to the client.  If
-you wish to run across a network you need to update the `certs/openssl.cnf` file and change 
-the `DNS.3` entry to suit the DNS name of the server.
+In the above example, the server will run on localhost and serve the "." folder to the client.
+The client will request the "Cargo.toml" file.  If you wish to run across a network you need 
+to update the `certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name of 
+the server, and then regenerate the certificates using the `certs/generate.sh` script.
 
 ## Development
 
