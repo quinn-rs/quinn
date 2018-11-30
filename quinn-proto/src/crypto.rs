@@ -227,23 +227,16 @@ impl Crypto {
         Ok(())
     }
 
-    pub fn update(&self, side: Side) -> Crypto {
-        const SERVER_LABEL: &[u8] = b"server 1rtt";
-        const CLIENT_LABEL: &[u8] = b"client 1rtt";
-
-        let (local_label, remote_label) = if side.is_client() {
-            (CLIENT_LABEL, SERVER_LABEL)
-        } else {
-            (SERVER_LABEL, CLIENT_LABEL)
-        };
+    pub fn update(&self) -> Crypto {
+        const UPDATE_LABEL: &[u8] = b"traffic upd";
 
         let local_secret_key = SigningKey::new(self.digest, &self.local_secret);
         let mut new_local_secret = vec![0; self.digest.output_len];
-        qhkdf_expand(&local_secret_key, &local_label, &mut new_local_secret);
+        qhkdf_expand(&local_secret_key, UPDATE_LABEL, &mut new_local_secret);
 
         let remote_secret_key = SigningKey::new(self.digest, &self.remote_secret);
         let mut new_remote_secret = vec![0; self.digest.output_len];
-        qhkdf_expand(&remote_secret_key, &remote_label, &mut new_remote_secret);
+        qhkdf_expand(&remote_secret_key, UPDATE_LABEL, &mut new_remote_secret);
 
         Self::generate_1rtt(
             self.digest,
@@ -576,5 +569,79 @@ mod test {
         let (dst_cid2, issued2) = key.check(&addr, &token).expect("token didn't validate");
         assert_eq!(dst_cid, dst_cid2);
         assert_eq!(issued, issued2);
+    }
+
+    const ONERTT_LOCAL_SECRET: &[u8] = &[
+        0xaa, 0xcd, 0x3, 0xe2, 0x94, 0xc4, 0x14, 0x69, 0x1f, 0x92, 0x40, 0x32, 0xfc, 0xbc, 0x71,
+        0x74, 0xfe, 0xdb, 0xfe, 0xe6, 0xa7, 0xb4, 0xe4, 0x6d, 0x9c, 0x66, 0x92, 0xc0, 0x33, 0xa1,
+        0x91, 0x18,
+    ];
+
+    const ONERTT_REMOTE_SECRET: &[u8] = &[
+        0x2a, 0x67, 0xbb, 0x75, 0xf7, 0xd7, 0xe3, 0x7b, 0x0, 0x23, 0x22, 0x1a, 0xb2, 0xb8, 0x54,
+        0xf8, 0xcf, 0x66, 0xe2, 0xef, 0xd, 0xdb, 0x2e, 0x7, 0x7c, 0xd, 0x8d, 0x6d, 0xb2, 0xa6,
+        0xf6, 0xd6,
+    ];
+
+    #[test]
+    fn key_derivation_1rtt() {
+        let digest = &digest::SHA256;
+        let cipher = &aead::AES_128_GCM;
+        let onertt = Crypto::generate_1rtt(
+            digest,
+            cipher,
+            ONERTT_LOCAL_SECRET.to_vec(),
+            ONERTT_REMOTE_SECRET.to_vec(),
+        );
+
+        assert_eq!(
+            &onertt.local_iv[..],
+            [0x1f, 0x32, 0xc8, 0xe5, 0xd4, 0x8e, 0x66, 0x6, 0x5c, 0x8b, 0x2b, 0xef]
+        );
+        assert_eq!(
+            onertt.local_pn_key,
+            PacketNumberKey::AesCtr128([
+                0x5a, 0xcc, 0x9c, 0x34, 0xf, 0xdf, 0xe6, 0xbd, 0x40, 0x6, 0x5f, 0xd1, 0xcd, 0xf,
+                0xc8, 0xb1
+            ])
+        );
+
+        assert_eq!(
+            &onertt.remote_iv[..],
+            [0xdc, 0xc2, 0x54, 0x52, 0x5e, 0xc8, 0x3d, 0xd4, 0xd2, 0xea, 0x32, 0x48]
+        );
+        assert_eq!(
+            onertt.remote_pn_key,
+            PacketNumberKey::AesCtr128([
+                0xeb, 0xf8, 0x8d, 0x94, 0xa5, 0x29, 0x75, 0xd2, 0x6a, 0x42, 0x7f, 0x31, 0x5f, 0xf0,
+                0xe, 0xe2
+            ])
+        );
+
+        let updated_onertt = onertt.update();
+
+        assert_eq!(
+            &updated_onertt.local_iv[..],
+            [0x18, 0xb2, 0x3c, 0x71, 0x7c, 0xd8, 0xde, 0xdb, 0x39, 0x36, 0xe, 0xca]
+        );
+        assert_eq!(
+            updated_onertt.local_pn_key,
+            PacketNumberKey::AesCtr128([
+                0x22, 0x68, 0x4a, 0x70, 0x8f, 0xa3, 0xc7, 0xb9, 0x18, 0xde, 0x9e, 0x83, 0x5a, 0xc7,
+                0x4d, 0x43
+            ])
+        );
+
+        assert_eq!(
+            &updated_onertt.remote_iv[..],
+            [0x35, 0x70, 0xa, 0xbe, 0x5b, 0xaf, 0xfb, 0xe4, 0x2c, 0x56, 0x72, 0x37]
+        );
+        assert_eq!(
+            updated_onertt.remote_pn_key,
+            PacketNumberKey::AesCtr128([
+                0xf5, 0x6c, 0xa5, 0xe8, 0xa2, 0x65, 0x3e, 0xa1, 0x4c, 0x74, 0xb6, 0x93, 0x30, 0xc2,
+                0xb7, 0xa2
+            ])
+        );
     }
 }

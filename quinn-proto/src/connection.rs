@@ -1986,7 +1986,7 @@ impl Connection {
                 // Illegal key update
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
-            let new = self.crypto.as_mut().unwrap().update(self.side);
+            let new = self.crypto.as_mut().unwrap().update();
             new.decrypt(number, &packet.header_data, &mut packet.payload)
                 .map_err(|()| None)?;
 
