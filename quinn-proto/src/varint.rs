@@ -22,6 +22,52 @@ const FOUR_OCTETS_MAX: u64 = 1_073_741_823;
 const EIGHT_OCTETS_MIN: u64 = FOUR_OCTETS_MAX + 1;
 const EIGHT_OCTETS_MAX: u64 = 4_611_686_018_427_387_903;
 
+const TAG_MASK: u8 = 0b1100_0000;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tag {
+    One = 0b0000_0000,
+    Two = 0b0100_0000,
+    Four = 0b1000_0000,
+    Eight = 0b1100_0000,
+}
+
+impl From<Tag> for u8 {
+    fn from(tag: Tag) -> Self {
+        tag as Self
+    }
+}
+
+impl From<Tag> for u16 {
+    fn from(tag: Tag) -> Self {
+        (tag as Self) << 8
+    }
+}
+
+impl From<Tag> for u32 {
+    fn from(tag: Tag) -> Self {
+        (tag as Self) << 24
+    }
+}
+
+impl From<Tag> for u64 {
+    fn from(tag: Tag) -> Self {
+        (tag as Self) << 56
+    }
+}
+
+impl From<u8> for Tag {
+    fn from(raw: u8) -> Self {
+        match raw & TAG_MASK {
+            0b0000_0000 => Tag::One,
+            0b0100_0000 => Tag::Two,
+            0b1000_0000 => Tag::Four,
+            0b1100_0000 => Tag::Eight,
+            _ => unreachable!(),
+        }
+    }
+}
+
 pub fn size(x: u64) -> Option<usize> {
     match x {
         0...ONE_OCTET_MAX => Some(1),
