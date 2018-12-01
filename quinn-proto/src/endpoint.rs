@@ -702,7 +702,7 @@ impl Endpoint {
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
-        if self.connections[conn.0].side == Side::Server {
+        if self.connections[conn.0].side.is_server() {
             self.connection_ids_initial
                 .remove(&self.connections[conn.0].init_cid);
         }

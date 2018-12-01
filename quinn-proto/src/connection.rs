@@ -262,7 +262,7 @@ impl Connection {
                 finished: Vec::new(),
             },
         };
-        if side == Side::Client {
+        if side.is_client() {
             this.connect();
         }
         this
@@ -877,7 +877,7 @@ impl Connection {
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(ref state) = state {
-            if was_handshake && self.side == Side::Server {
+            if was_handshake && self.side.is_server() {
                 ctx.incoming_handshakes -= 1;
             }
             ctx.io.push_back(Io::Transmit {
@@ -1025,7 +1025,7 @@ impl Connection {
                         trace!(self.log, "{connection} established", connection = id);
                         self.handshake_cleanup(&ctx.config);
                         self.write_tls();
-                        if self.side == Side::Server {
+                        if self.side.is_server() {
                             self.awaiting_handshake = false;
                         }
                         match self.side {
@@ -1046,7 +1046,7 @@ impl Connection {
                         Ok(State::Established)
                     }
                     Header::Initial { .. } => {
-                        if self.side == Side::Server {
+                        if self.side.is_server() {
                             trace!(self.log, "dropping duplicate Initial");
                         } else {
                             trace!(self.log, "dropping Initial for initiated connection");
@@ -1058,7 +1058,7 @@ impl Connection {
                         number,
                         dst_cid: ref id,
                         ..
-                    } if self.side == Side::Server =>
+                    } if self.side.is_server() =>
                     {
                         if let Some(ref crypto) = self.zero_rtt_crypto {
                             if crypto
@@ -1426,7 +1426,7 @@ impl Connection {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 let number = self.get_tx_number();
-                let header = if self.side == Side::Client && self
+                let header = if self.side.is_client() && self
                     .handshake_pending
                     .crypto
                     .front()
@@ -1461,7 +1461,7 @@ impl Connection {
                     CryptoLevel::Initial,
                 )
             } else if established {
-                //|| (self.zero_rtt_crypto.is_some() && self.side == Side::Client) {
+                //|| (self.zero_rtt_crypto.is_some() && self.side.is_client()) {
                 // Send 0RTT or 1RTT data
                 if self.congestion_blocked()
                     || self.pending.is_empty()
@@ -1847,7 +1847,7 @@ impl Connection {
 
     fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
         // Validate
-        if self.side == Side::Client {
+        if self.side.is_client() {
             if self.orig_rem_cid != params.original_connection_id {
                 debug!(
                     self.log,

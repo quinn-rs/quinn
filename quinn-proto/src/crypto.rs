@@ -118,7 +118,7 @@ pub struct Crypto {
 impl Crypto {
     pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (b"client in", b"server in")
         } else {
             (b"server in", b"client in")
@@ -151,7 +151,7 @@ impl Crypto {
         const SERVER_LABEL: &[u8] = b"EXPORTER-QUIC server 1rtt";
         const CLIENT_LABEL: &[u8] = b"EXPORTER-QUIC client 1rtt";
 
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (CLIENT_LABEL, SERVER_LABEL)
         } else {
             (SERVER_LABEL, CLIENT_LABEL)
@@ -231,7 +231,7 @@ impl Crypto {
         const SERVER_LABEL: &[u8] = b"server 1rtt";
         const CLIENT_LABEL: &[u8] = b"client 1rtt";
 
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (CLIENT_LABEL, SERVER_LABEL)
         } else {
             (SERVER_LABEL, CLIENT_LABEL)

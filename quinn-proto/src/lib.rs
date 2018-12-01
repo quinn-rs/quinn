@@ -72,6 +72,18 @@ pub enum Side {
     Server = 1,
 }
 
+impl Side {
+    #[inline]
+    fn is_client(self) -> bool {
+        self == Side::Client
+    }
+
+    #[inline]
+    fn is_server(self) -> bool {
+        self == Side::Server
+    }
+}
+
 impl ops::Not for Side {
     type Output = Side;
     fn not(self) -> Side {
