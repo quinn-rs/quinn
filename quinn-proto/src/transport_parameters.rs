@@ -189,7 +189,7 @@ impl From<Error> for TransportError {
 
 impl TransportParameters {
     pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
-        if side == Side::Server {
+        if side.is_server() {
             w.write::<u32>(VERSION); // Negotiated version
             w.write::<u8>(8); // Bytes of supported versions
             w.write::<u32>(0x0a1a_2a3a); // Reserved version
@@ -241,7 +241,7 @@ impl TransportParameters {
     }
 
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
-        if side == Side::Server {
+        if side.is_server() {
             if r.remaining() < 26 {
                 return Err(Error::Malformed);
             }
@@ -353,7 +353,7 @@ impl TransportParameters {
         }
 
         if params.ack_delay_exponent > 20
-            || (side == Side::Server
+            || (side.is_server()
                 && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
             return Err(Error::IllegalValue);
