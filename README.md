@@ -59,7 +59,7 @@ The client will request the "Cargo.toml" file.
 If you wish to run the client/server across a network for testing only (not production) you 
 need to update the `certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name 
 of the server, and then regenerate the certificates using the `certs/generate.sh` script.  This
-method of generating certificates is very limiting. The preferred method when running quinn 
+method of generating certificates is very limiting. The preferred method when running a 
 server on a network would be to use real certs from an actual certificate authority, like 
 Let's Encrypt.
 
