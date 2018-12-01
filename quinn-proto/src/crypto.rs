@@ -460,7 +460,7 @@ impl TokenKey {
         {
             return None;
         }
-        let dst_cid = ConnectionId::new(&data[1..1 + dst_cid_len]);
+        let dst_cid = ConnectionId::new(&data[1..=dst_cid_len]);
         reader.advance(dst_cid_len);
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().ok()?, 0);
         let signature_start = reader.position() as usize;
