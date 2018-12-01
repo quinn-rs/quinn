@@ -1847,16 +1847,14 @@ impl Connection {
 
     fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
         // Validate
-        if self.side.is_client() {
-            if self.orig_rem_cid != params.original_connection_id {
-                debug!(
-                    self.log,
-                    "original connection ID mismatch: expected {expected:x?}, actual {actual:x?}",
-                    expected = self.orig_rem_cid,
-                    actual = params.original_connection_id
-                );
-                return Err(TransportError::TRANSPORT_PARAMETER_ERROR);
-            }
+        if self.side.is_client() && self.orig_rem_cid != params.original_connection_id {
+            debug!(
+                self.log,
+                "original connection ID mismatch: expected {expected:x?}, actual {actual:x?}",
+                expected = self.orig_rem_cid,
+                actual = params.original_connection_id
+            );
+            return Err(TransportError::TRANSPORT_PARAMETER_ERROR);
         }
 
         // Apply
