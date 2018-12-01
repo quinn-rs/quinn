@@ -85,3 +85,28 @@ pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::u64;
+
+    #[test]
+    fn sizes() {
+        assert_eq!(size(0), Some(1));
+        assert_eq!(size(63), Some(1));
+
+        assert_eq!(size(64), Some(2));
+        assert_eq!(size(16383), Some(2));
+
+        assert_eq!(size(16384), Some(4));
+        assert_eq!(size(1_073_741_823), Some(4));
+
+        assert_eq!(size(1_073_741_824), Some(8));
+        assert_eq!(size(4_611_686_018_427_387_903), Some(8));
+
+        assert_eq!(size(4_611_686_018_427_387_904), None);
+        assert_eq!(size(u64::MAX), None);
+    }
+}
