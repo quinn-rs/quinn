@@ -100,29 +100,19 @@ pub enum WriteError {
 }
 
 pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
-    if x < 2u64.pow(6) {
-        if w.remaining_mut() < 1 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u8(x as u8);
-    } else if x < 2u64.pow(14) {
-        if w.remaining_mut() < 2 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u16_be(0b01 << 14 | x as u16);
-    } else if x < 2u64.pow(30) {
-        if w.remaining_mut() < 4 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u32_be(0b10 << 30 | x as u32);
-    } else if x < 2u64.pow(62) {
-        if w.remaining_mut() < 8 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u64_be(0b11 << 62 | x);
-    } else {
-        return Err(WriteError::OversizedValue);
+    let required = size(x).ok_or(WriteError::OversizedValue)?;
+    if w.remaining_mut() < required {
+        return Err(WriteError::InsufficientSpace);
     }
+
+    match x {
+        x @ 0...ONE_OCTET_MAX => w.put_u8(x as u8),
+        x @ TWO_OCTETS_MIN...TWO_OCTETS_MAX => w.put_u16_be(u16::from(Tag::Two) | x as u16),
+        x @ FOUR_OCTETS_MIN...FOUR_OCTETS_MAX => w.put_u32_be(u32::from(Tag::Four) | x as u32),
+        x @ EIGHT_OCTETS_MIN...EIGHT_OCTETS_MAX => w.put_u64_be(u64::from(Tag::Eight) | x),
+        _ => unreachable!(),
+    }
+
     Ok(())
 }
 
