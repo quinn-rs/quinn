@@ -2,17 +2,33 @@ use bytes::{Buf, BufMut};
 
 use byteorder::{BigEndian, ByteOrder};
 
+//  +------+--------+-------------+-----------------------+
+//  | 2Bit | Length | Usable Bits | Range                 |
+//  +------+--------+-------------+-----------------------+
+//  | 00   | 1      | 6           | 0-63                  |
+//  |      |        |             |                       |
+//  | 01   | 2      | 14          | 0-16383               |
+//  |      |        |             |                       |
+//  | 10   | 4      | 30          | 0-1073741823          |
+//  |      |        |             |                       |
+//  | 11   | 8      | 62          | 0-4611686018427387903 |
+//  +------+--------+-------------+-----------------------+
+
+const ONE_OCTET_MAX: u64 = 63;
+const TWO_OCTETS_MIN: u64 = ONE_OCTET_MAX + 1;
+const TWO_OCTETS_MAX: u64 = 16383;
+const FOUR_OCTETS_MIN: u64 = TWO_OCTETS_MAX + 1;
+const FOUR_OCTETS_MAX: u64 = 1_073_741_823;
+const EIGHT_OCTETS_MIN: u64 = FOUR_OCTETS_MAX + 1;
+const EIGHT_OCTETS_MAX: u64 = 4_611_686_018_427_387_903;
+
 pub fn size(x: u64) -> Option<usize> {
-    if x < 2u64.pow(6) {
-        Some(1)
-    } else if x < 2u64.pow(14) {
-        Some(2)
-    } else if x < 2u64.pow(30) {
-        Some(4)
-    } else if x < 2u64.pow(62) {
-        Some(8)
-    } else {
-        None
+    match x {
+        0...ONE_OCTET_MAX => Some(1),
+        TWO_OCTETS_MIN...TWO_OCTETS_MAX => Some(2),
+        FOUR_OCTETS_MIN...FOUR_OCTETS_MAX => Some(4),
+        EIGHT_OCTETS_MIN...EIGHT_OCTETS_MAX => Some(8),
+        _ => None,
     }
 }
 
