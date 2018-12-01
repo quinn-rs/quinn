@@ -90,6 +90,7 @@ pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
 mod tests {
     use super::*;
 
+    use std::io;
     use std::u64;
 
     #[test]
@@ -108,5 +109,109 @@ mod tests {
 
         assert_eq!(size(4_611_686_018_427_387_904), None);
         assert_eq!(size(u64::MAX), None);
+    }
+
+    /// Encodes the `$num` argument into a big-endian byte slice and verifies it reads correctly.
+    macro_rules! assert_read_good {
+        ($num:expr, $tag:expr) => {
+            let mut buf = $num.to_be_bytes();
+            buf[0] |= $tag;
+            let mut buf = io::Cursor::new(buf);
+            assert_eq!(read(&mut buf), Some(u64::from($num)));
+        };
+        ($num:expr => one octet) => {
+            assert_read_good!(u8::from($num), 0b0000_0000)
+        };
+        ($num:expr => two octets) => {
+            assert_read_good!(u16::from($num), 0b0100_0000)
+        };
+        ($num:expr => four octets) => {
+            assert_read_good!(u32::from($num), 0b1000_0000)
+        };
+        ($num:expr => eight octets) => {
+            assert_read_good!(u64::from($num), 0b1100_0000)
+        };
+    }
+
+    /// Encodes the `$num` argument into a big-endian byte slice and verifies it doesn't read
+    /// correctly from a partial byte slice.
+    macro_rules! assert_read_bad {
+        ($num:expr, $tag:expr, $range:expr) => {
+            let mut buf = $num.to_be_bytes();
+            buf[0] |= $tag;
+            let mut buf = io::Cursor::new(&buf[$range]);
+            assert_eq!(read(&mut buf), None);
+        };
+        ($num:expr => two octets) => {
+            assert_read_bad!(u16::from($num), 0b0100_0000, ..1)
+        };
+        ($num:expr => four octets) => {
+            assert_read_bad!(u32::from($num), 0b1000_0000, ..3)
+        };
+        ($num:expr => eight octets) => {
+            assert_read_bad!(u64::from($num), 0b1100_0000, ..7)
+        };
+    }
+
+    macro_rules! assert_read {
+        ($num:expr => one octet) => {
+            assert_read_good!($num => one octet);
+        };
+        ($num:expr => two octets) => {
+            assert_read_good!($num => two octets);
+            assert_read_bad!($num => two octets);
+        };
+        ($num:expr => four octets) => {
+            assert_read_good!($num => four octets);
+            assert_read_bad!($num => four octets);
+        };
+        ($num:expr => eight octets) => {
+            assert_read_good!($num => eight octets);
+            assert_read_bad!($num => eight octets);
+        };
+    }
+
+    #[test]
+    #[allow(clippy::cyclomatic_complexity)]
+    fn reads() {
+        assert_read!(0_u8 => one octet);
+        assert_read!(1_u8 => one octet);
+        assert_read!(63_u8 => one octet);
+
+        assert_read!(0_u8 => two octets);
+        assert_read!(1_u8 => two octets);
+        assert_read!(63_u8 => two octets);
+        assert_read!(64_u8 => two octets);
+        assert_read!(255_u8 => two octets);
+        assert_read!(256_u16 => two octets);
+        assert_read!(16383_u16 => two octets);
+
+        assert_read!(0_u8 => four octets);
+        assert_read!(1_u8 => four octets);
+        assert_read!(63_u8 => four octets);
+        assert_read!(64_u8 => four octets);
+        assert_read!(255_u8 => four octets);
+        assert_read!(256_u16 => four octets);
+        assert_read!(16383_u16 => four octets);
+        assert_read!(16384_u16 => four octets);
+        assert_read!(65535_u16 => four octets);
+        assert_read!(65536_u32 => four octets);
+        assert_read!(1_073_741_823_u32 => four octets);
+
+        assert_read!(0_u8 => eight octets);
+        assert_read!(1_u8 => eight octets);
+        assert_read!(63_u8 => eight octets);
+        assert_read!(64_u8 => eight octets);
+        assert_read!(255_u8 => eight octets);
+        assert_read!(256_u16 => eight octets);
+        assert_read!(16383_u16 => eight octets);
+        assert_read!(16384_u16 => eight octets);
+        assert_read!(65535_u16 => eight octets);
+        assert_read!(65536_u32 => eight octets);
+        assert_read!(1_073_741_823_u32 => eight octets);
+        assert_read!(1_073_741_824_u32 => eight octets);
+        assert_read!(0xFFFF_FFFF_u32 => eight octets);
+        assert_read!(0x1_0000_0000_u64 => eight octets);
+        assert_read!(0x3FFF_FFFF_FFFF_FFFF_u64 => eight octets);
     }
 }
