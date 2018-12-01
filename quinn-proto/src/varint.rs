@@ -1,7 +1,5 @@
 use bytes::{Buf, BufMut};
 
-use byteorder::{BigEndian, ByteOrder};
-
 //  +------+--------+-------------+-----------------------+
 //  | 2Bit | Length | Usable Bits | Range                 |
 //  +------+--------+-------------+-----------------------+
@@ -82,35 +80,15 @@ pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
     if !r.has_remaining() {
         return None;
     }
-    let mut buf = [0; 8];
-    buf[0] = r.get_u8();
-    let tag = buf[0] >> 6;
-    buf[0] &= 0b0011_1111;
-    Some(match tag {
-        0b00 => buf[0] as u64,
-        0b01 => {
-            if r.remaining() < 1 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..2]);
-            BigEndian::read_u16(&buf) as u64
-        }
-        0b10 => {
-            if r.remaining() < 3 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..4]);
-            BigEndian::read_u32(&buf) as u64
-        }
-        0b11 => {
-            if r.remaining() < 7 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..8]);
-            BigEndian::read_u64(&buf) as u64
-        }
-        _ => unreachable!(),
-    })
+
+    let tag = r.bytes()[0].into();
+    match tag {
+        Tag::One => Some(r.get_u8() as u64),
+        Tag::Two if r.remaining() >= 2 => Some((r.get_u16_be() as u64) & TWO_OCTETS_MAX),
+        Tag::Four if r.remaining() >= 4 => Some((r.get_u32_be() as u64) & FOUR_OCTETS_MAX),
+        Tag::Eight if r.remaining() >= 8 => Some(r.get_u64_be() & EIGHT_OCTETS_MAX),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Fail)]
