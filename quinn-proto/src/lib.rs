@@ -26,6 +26,7 @@ extern crate untrusted;
 extern crate webpki;
 
 use std::fmt;
+use std::ops;
 
 mod coding;
 mod range_set;
@@ -71,7 +72,7 @@ pub enum Side {
     Server = 1,
 }
 
-impl ::std::ops::Not for Side {
+impl ops::Not for Side {
     type Output = Side;
     fn not(self) -> Side {
         match self {
