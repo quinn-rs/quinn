@@ -214,4 +214,47 @@ mod tests {
         assert_read!(0x1_0000_0000_u64 => eight octets);
         assert_read!(0x3FFF_FFFF_FFFF_FFFF_u64 => eight octets);
     }
+
+    macro_rules! assert_write {
+        ($num:expr) => {
+            let mut buf = [0_u8; 8];
+            let mut buf = io::Cursor::new(&mut buf);
+            write($num, &mut buf).expect("Successful write");
+            buf.set_position(0);
+            assert_eq!(read(&mut buf), Some($num));
+        };
+    }
+
+    #[test]
+    fn writes() {
+        assert_write!(0);
+        assert_write!(1);
+        assert_write!(63);
+        assert_write!(64);
+        assert_write!(255);
+        assert_write!(256);
+        assert_write!(16383);
+        assert_write!(16384);
+        assert_write!(65535);
+        assert_write!(65536);
+        assert_write!(1_073_741_823);
+        assert_write!(1_073_741_824);
+        assert_write!(0xFFFF_FFFF);
+        assert_write!(0x1_0000_0000);
+        assert_write!(0x3FFF_FFFF_FFFF_FFFF);
+    }
+
+    #[test]
+    fn insufficient_space() {
+        let mut buf = io::Cursor::new([0_u8; 1]);
+        let err = write(100, &mut buf).unwrap_err();
+        assert_eq!(err, WriteError::InsufficientSpace);
+    }
+
+    #[test]
+    fn oversized_value() {
+        let mut buf = io::Cursor::new([0_u8; 8]);
+        let err = write(0x4000_0000_0000_0000, &mut buf).unwrap_err();
+        assert_eq!(err, WriteError::OversizedValue);
+    }
 }
