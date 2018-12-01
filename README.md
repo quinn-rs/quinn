@@ -56,7 +56,7 @@ $ cargo run --example client -- --ca ./certs/ca.der https://localhost:4433/Cargo
 In the above example, the server will run on localhost and serve the "." folder to the client.
 The client will request the "Cargo.toml" file.  
 
-If you wish to run the client/server across a network for testing only (not production) you 
+To run the example client/server across a network you 
 need to update the `certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name 
 of the server, and then regenerate the certificates using the `certs/generate.sh` script.  This
 method of generating certificates is very limiting. The preferred method when running a 
