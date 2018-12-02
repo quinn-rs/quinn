@@ -719,3 +719,37 @@ fn stream_id_backpressure() {
         Err(ReadError::Finished)
     );
 }
+
+#[test]
+fn key_update() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Bi)
+        .expect("couldn't open first stream");
+
+    const MSG1: &[u8] = b"hello1";
+    pair.client.write(client_conn, s, MSG1).unwrap();
+    pair.drive();
+
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Ok((ref data, 0)) if data == MSG1
+    );
+
+    pair.client.connections[client_conn.0].update_keys();
+
+    const MSG2: &[u8] = b"hello2";
+    pair.client.write(client_conn, s, MSG2).unwrap();
+    pair.drive();
+
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Ok((ref data, 6)) if data == MSG2
+    );
+}
