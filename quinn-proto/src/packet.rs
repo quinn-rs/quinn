@@ -75,6 +75,13 @@ impl PartialDecode {
         self.invariant_header.dst_cid()
     }
 
+    pub fn key_phase(&self) -> bool {
+        match self.invariant_header {
+            InvariantHeader::Short { first, .. } => (first & KEY_PHASE_BIT) != 0,
+            _ => false,
+        }
+    }
+
     pub fn finish(
         self,
         pn_key: &PacketNumberKey,
