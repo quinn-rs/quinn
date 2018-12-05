@@ -404,7 +404,7 @@ fn version_negotiate() {
     let io = server.poll_io(0);
     assert_matches!(io, Some(Io::Transmit { .. }));
     if let Some(Io::Transmit { packet, .. }) = io {
-        assert!(packet[0] | 0x80 != 0);
+        assert_ne!(packet[0] & 0x80, 0);
         assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
         assert!(
             packet[14..]
