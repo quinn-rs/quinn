@@ -1,14 +1,7 @@
-extern crate quinn;
-extern crate tokio;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate futures;
-extern crate rustls;
-extern crate slog_term;
-extern crate structopt;
-extern crate url;
 
 use std::fs;
 use std::io::{self, Write};
@@ -16,13 +9,12 @@ use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use failure::Error;
 use futures::Future;
+use slog::{Drain, Logger};
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
-
-use failure::Error;
-use slog::{Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 

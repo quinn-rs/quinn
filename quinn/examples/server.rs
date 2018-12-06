@@ -1,14 +1,7 @@
-extern crate quinn;
-extern crate tokio;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate futures;
-extern crate rustls;
-extern crate slog_term;
-extern crate structopt;
-extern crate tokio_current_thread;
 
 use std::ascii;
 use std::fmt;
@@ -18,22 +11,20 @@ use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
 use std::{io, str};
 
-use failure::{err_msg, Fail, ResultExt};
+use failure::{err_msg, Error, Fail, ResultExt};
 use futures::{Future, Stream};
 use rustls::internal::pemfile;
-use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
-
-use failure::Error;
 use slog::{Drain, Logger};
+use structopt::{self, StructOpt};
+use tokio::runtime::current_thread::Runtime;
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub struct PrettyErr<'a>(&'a Fail);
+pub struct PrettyErr<'a>(&'a dyn Fail);
 impl<'a> fmt::Display for PrettyErr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)?;
-        let mut x: &Fail = self.0;
+        let mut x: &dyn Fail = self.0;
         while let Some(cause) = x.cause() {
             f.write_str(": ")?;
             fmt::Display::fmt(&cause, f)?;
@@ -44,11 +35,11 @@ impl<'a> fmt::Display for PrettyErr<'a> {
 }
 
 pub trait ErrorExt {
-    fn pretty(&self) -> PrettyErr;
+    fn pretty(&self) -> PrettyErr<'_>;
 }
 
 impl ErrorExt for Error {
-    fn pretty(&self) -> PrettyErr {
+    fn pretty(&self) -> PrettyErr<'_> {
         PrettyErr(self.as_fail())
     }
 }

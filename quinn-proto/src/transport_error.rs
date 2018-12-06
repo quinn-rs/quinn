@@ -37,7 +37,7 @@ macro_rules! errors {
         }
 
         impl fmt::Debug for Error {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x100 && x < 0x200 => write!(f, "Error::crypto({:?})", AlertDescription::read_bytes(&[self.0 as u8]).unwrap()),
@@ -47,7 +47,7 @@ macro_rules! errors {
         }
 
         impl fmt::Display for Error {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let x = match self.0 {
                     $($val => $desc,)*
                     _ if self.0 >= 0x100 && self.0 < 0x200 => "the cryptographic handshake failed", // FIXME: Describe specific alert
@@ -62,9 +62,9 @@ macro_rules! errors {
 impl slog::Value for Error {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }

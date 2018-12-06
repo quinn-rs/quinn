@@ -34,9 +34,9 @@ impl coding::Codec for Type {
 impl slog::Value for Type {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -49,7 +49,7 @@ macro_rules! frame_types {
         }
 
         impl fmt::Debug for Type {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     _ => write!(f, "Type({:02x})", self.0)
@@ -58,7 +58,7 @@ macro_rules! frame_types {
         }
 
         impl fmt::Display for Type {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x10 && x <= 0x17 => f.write_str("STREAM"),
@@ -193,7 +193,7 @@ impl<T> fmt::Display for ConnectionClose<T>
 where
     T: AsRef<[u8]>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error_code.fmt(f)?;
         if !self.reason.as_ref().is_empty() {
             f.write_str(": ")?;
@@ -239,7 +239,7 @@ impl<T> fmt::Display for ApplicationClose<T>
 where
     T: AsRef<[u8]>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.reason.as_ref().is_empty() {
             f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
             f.write_str(" (code ")?;
@@ -303,7 +303,7 @@ impl Ack {
         }
     }
 
-    pub fn iter(&self) -> AckIter {
+    pub fn iter(&self) -> AckIter<'_> {
         self.into_iter()
     }
 }

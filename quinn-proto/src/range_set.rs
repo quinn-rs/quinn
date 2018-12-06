@@ -156,10 +156,10 @@ impl RangeSet {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         Iter(self.0.iter())
     }
-    pub fn elts(&self) -> EltIter {
+    pub fn elts(&self) -> EltIter<'_> {
         EltIter {
             inner: self.0.iter(),
             next: 0,

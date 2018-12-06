@@ -47,23 +47,10 @@
 //! can be used to provide encryption alone.
 #![warn(missing_docs)]
 
-extern crate bytes;
 #[macro_use]
 extern crate failure;
-extern crate fnv;
-extern crate futures;
-extern crate quinn_proto as quinn;
-extern crate rand;
-extern crate rustls;
 #[macro_use]
 extern crate slog;
-extern crate tokio_io;
-extern crate tokio_reactor;
-extern crate tokio_timer;
-extern crate tokio_udp;
-extern crate untrusted;
-extern crate webpki;
-extern crate webpki_roots;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -82,13 +69,12 @@ use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll, Sink};
+use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId};
 use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use tokio_udp::UdpSocket;
-
-use crate::quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
 pub use crate::quinn::{
     Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
