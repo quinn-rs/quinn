@@ -23,7 +23,7 @@ struct TestDrain;
 impl Drain for TestDrain {
     type Ok = ();
     type Err = io::Error;
-    fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<(), io::Error> {
+    fn log(&self, record: &slog::Record<'_>, values: &slog::OwnedKVList) -> Result<(), io::Error> {
         let mut vals = Vec::new();
         values.serialize(&record, &mut TestSerializer(&mut vals))?;
         record
@@ -39,12 +39,12 @@ impl Drain for TestDrain {
     }
 }
 
-struct TestSerializer<'a, W: 'a>(&'a mut W);
+struct TestSerializer<'a, W>(&'a mut W);
 impl<'a, W> slog::Serializer for TestSerializer<'a, W>
 where
     W: Write + 'a,
 {
-    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments) -> slog::Result {
+    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments<'_>) -> slog::Result {
         write!(self.0, ", {}: {}", key, val).unwrap();
         Ok(())
     }

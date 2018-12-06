@@ -1,29 +1,16 @@
-extern crate aes_ctr;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
-extern crate byteorder;
-extern crate bytes;
-extern crate constant_time_eq;
 #[macro_use]
 extern crate failure;
-extern crate fnv;
 #[cfg(test)]
 #[macro_use]
 extern crate hex_literal;
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
-extern crate orion;
-extern crate rand;
-extern crate ring;
-extern crate rustls;
-extern crate slab;
 #[macro_use]
 extern crate slog;
-#[cfg(test)]
-extern crate untrusted;
-extern crate webpki;
 
 use std::fmt;
 use std::ops;
@@ -97,9 +84,9 @@ impl ops::Not for Side {
 impl slog::Value for Side {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -119,7 +106,7 @@ pub enum Directionality {
 pub struct StreamId(pub(crate) u64);
 
 impl fmt::Display for StreamId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let initiator = match self.initiator() {
             Side::Client => "client",
             Side::Server => "server",
@@ -141,9 +128,9 @@ impl fmt::Display for StreamId {
 impl slog::Value for StreamId {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }

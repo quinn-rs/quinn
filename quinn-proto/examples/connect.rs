@@ -1,20 +1,15 @@
-extern crate quinn_proto as quinn;
-extern crate rand;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate rustls;
-extern crate slog_term;
-extern crate webpki_roots;
 
 use std::io::{self, Write};
 use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::quinn::{Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
 use failure::Error;
+use quinn_proto::{self as quinn, Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
 use rustls::ProtocolVersion;
 use slog::{Drain, Logger};
 

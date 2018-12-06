@@ -286,7 +286,7 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode {
+    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode<'_> {
         use self::Header::*;
         match *self {
             Initial {
@@ -690,9 +690,9 @@ impl From<PacketType> for u8 {
 impl slog::Value for PacketType {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -707,9 +707,9 @@ pub enum LongType {
 impl slog::Value for LongType {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -783,13 +783,13 @@ impl ::std::ops::DerefMut for ConnectionId {
 }
 
 impl fmt::Debug for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.bytes[0..self.len as usize].fmt(f)
     }
 }
 
 impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.iter() {
             write!(f, "{:02x}", byte)?;
         }
@@ -800,9 +800,9 @@ impl fmt::Display for ConnectionId {
 impl slog::Value for ConnectionId {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{}", self))
     }
