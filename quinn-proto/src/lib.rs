@@ -36,26 +36,26 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use connection::{ConnectionError, ConnectionHandle};
+pub use crate::connection::{ConnectionError, ConnectionHandle};
 
 mod crypto;
-pub use crypto::{ClientConfig, ConnectError, TokenKey};
+pub use crate::crypto::{ClientConfig, ConnectError, TokenKey};
 
 mod frame;
-use frame::Frame;
-pub use frame::{ApplicationClose, ConnectionClose};
+use crate::frame::Frame;
+pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
+pub use crate::endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
 
 mod packet;
-pub use packet::ConnectionId;
+pub use crate::packet::ConnectionId;
 
 mod stream;
-pub use stream::{ReadError, WriteError};
+pub use crate::stream::{ReadError, WriteError};
 
 mod transport_error;
-pub use transport_error::Error as TransportError;
+pub use crate::transport_error::Error as TransportError;
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_000f;

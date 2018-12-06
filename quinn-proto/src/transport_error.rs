@@ -3,7 +3,7 @@ use std::fmt;
 use bytes::{Buf, BufMut};
 use slog;
 
-use coding::{self, BufExt, BufMutExt};
+use crate::coding::{self, BufExt, BufMutExt};
 use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
 
 #[derive(Copy, Clone, Eq, PartialEq)]

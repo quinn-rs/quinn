@@ -9,6 +9,7 @@ readme = "../README.md"
 keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
+edition = "2018"
 
 [package.metadata.docs.rs]
 all-features = true

@@ -7,21 +7,21 @@ use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use slog::Logger;
 
-use coding::{BufExt, BufMutExt};
-use crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
-use endpoint::{Config, Context, Event, Io, Timer};
-use packet::{
+use crate::coding::{BufExt, BufMutExt};
+use crate::crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
+use crate::endpoint::{Config, Context, Event, Io, Timer};
+use crate::packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
     AEAD_TAG_SIZE,
 };
-use range_set::RangeSet;
-use rustls::internal::msgs::enums::AlertDescription;
-use stream::{self, ReadError, Stream, WriteError};
-use transport_parameters::{self, TransportParameters};
-use {
+use crate::range_set::RangeSet;
+use crate::stream::{self, ReadError, Stream, WriteError};
+use crate::transport_parameters::{self, TransportParameters};
+use crate::{
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
     VERSION,
 };
+use rustls::internal::msgs::enums::AlertDescription;
 
 pub struct Connection {
     log: Logger,
@@ -464,7 +464,7 @@ impl Connection {
                 .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
                 .collect::<Vec<_>>();
             for number in packets {
-                let mut info = self.sent_packets.remove(&number).unwrap();
+                let info = self.sent_packets.remove(&number).unwrap();
                 self.handshake_pending += info.retransmits;
                 self.bytes_in_flight -= info.bytes as u64;
             }
@@ -536,7 +536,7 @@ impl Connection {
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.bytes_in_flight;
             for packet in lost_packets {
-                let mut info = self.sent_packets.remove(&packet).unwrap();
+                let info = self.sent_packets.remove(&packet).unwrap();
                 if info.handshake {
                     self.handshake_pending += info.retransmits;
                 } else {

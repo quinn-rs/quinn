@@ -4,10 +4,10 @@ use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
 use slog;
 
-use coding::{self, BufExt, BufMutExt, Codec};
-use crypto::PacketNumberKey;
-use varint;
-use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::coding::{self, BufExt, BufMutExt, Codec};
+use crate::crypto::PacketNumberKey;
+use crate::varint;
+use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -92,7 +92,7 @@ impl PartialDecode {
                     ));
                 }
 
-                let mut sample_offset = 1 + dst_cid.len() + 4;
+                let sample_offset = 1 + dst_cid.len() + 4;
                 let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
                 (
                     buf.remaining(),
@@ -406,7 +406,7 @@ impl<'a> PartialEncode<'a> {
         let payload_len = (buf.len() - header_len) as u64;
         let (mut sample_offset, pn_pos, pn_len) = match header {
             Header::Short { dst_cid, .. } => {
-                let mut sample_offset = 1 + dst_cid.len() + 4;
+                let sample_offset = 1 + dst_cid.len() + 4;
                 let (pn_pos, pn_len) = pn.unwrap();
                 (sample_offset, pn_pos, pn_len)
             }

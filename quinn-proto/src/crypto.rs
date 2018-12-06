@@ -19,10 +19,10 @@ pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
 use webpki::DNSNameRef;
 
-use coding::{BufExt, BufMutExt};
-use packet::{ConnectionId, AEAD_TAG_SIZE};
-use transport_parameters::TransportParameters;
-use {Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::coding::{BufExt, BufMutExt};
+use crate::packet::{ConnectionId, AEAD_TAG_SIZE};
+use crate::transport_parameters::TransportParameters;
+use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
     Client(ClientSession),

@@ -12,18 +12,18 @@ use ring::hmac::SigningKey;
 use slab::Slab;
 use slog::{self, Logger};
 
-use coding::BufMutExt;
-use connection::{
+use crate::coding::BufMutExt;
+use crate::connection::{
     handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
 };
-use crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
-use packet::{
+use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
+use crate::packet::{
     ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
 };
-use stream::{ReadError, WriteError};
-use transport_parameters::TransportParameters;
-use {
+use crate::stream::{ReadError, WriteError};
+use crate::transport_parameters::TransportParameters;
+use crate::{
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };

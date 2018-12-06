@@ -5,10 +5,10 @@ use std::{
 
 use bytes::{Buf, BufMut};
 
-use coding::{BufExt, BufMutExt};
-use endpoint::Config;
-use packet::ConnectionId;
-use {Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::coding::{BufExt, BufMutExt};
+use crate::endpoint::Config;
+use crate::packet::ConnectionId;
+use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Apply a given macro to a list of all the transport parameters having simple integer types, along with their codes and
 // default values. Using this helps us avoid error-prone duplication of the contained information across decoding,
