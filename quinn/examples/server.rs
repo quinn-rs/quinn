@@ -201,7 +201,8 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
             .and_then(|(stream, _)| {
                 tokio::io::shutdown(stream)
                     .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-            }).map(move |_| info!(log3, "request complete"))
+            })
+            .map(move |_| info!(log3, "request complete"))
             .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty())),
     )
 }

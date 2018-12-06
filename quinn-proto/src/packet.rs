@@ -676,11 +676,13 @@ impl From<PacketType> for u8 {
             Long(Handshake) => LONG_HEADER_FORM | 0x7d,
             Long(ZeroRtt) => LONG_HEADER_FORM | 0x7c,
             Retry => LONG_HEADER_FORM | 0x7e,
-            Short { key_phase } => if key_phase {
-                KEY_PHASE_BIT
-            } else {
-                0
-            },
+            Short { key_phase } => {
+                if key_phase {
+                    KEY_PHASE_BIT
+                } else {
+                    0
+                }
+            }
         }
     }
 }
@@ -899,7 +901,8 @@ mod tests {
         PartialEncode {
             header: &header,
             pn: Some((1, 2)),
-        }.finish(&mut sending, &key, 3);
+        }
+        .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0x80, 0x6d]);
     }
 
@@ -939,7 +942,8 @@ mod tests {
         PartialEncode {
             header: &header,
             pn: Some((1, 2)),
-        }.finish(&mut sending, &key, 3);
+        }
+        .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0xa9, 0x0e]);
     }
 }

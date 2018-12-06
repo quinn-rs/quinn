@@ -435,7 +435,8 @@ impl ClientConfigBuilder {
                 str::from_utf8(p)
                     .expect("non-UTF8 protocols unsupported")
                     .into()
-            }).collect();
+            })
+            .collect();
         self
     }
 
@@ -1027,7 +1028,8 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .get_remote_address(self.0.conn)).into()
+            .get_remote_address(self.0.conn))
+        .into()
     }
 
     /// The `ConnectionId` used for `conn` locally.
