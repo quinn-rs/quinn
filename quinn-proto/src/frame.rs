@@ -3,9 +3,9 @@ use std::{fmt, io, mem};
 
 use bytes::{Buf, BufMut, Bytes};
 
-use coding::{self, BufExt, BufMutExt, UnexpectedEnd};
-use range_set::RangeSet;
-use {
+use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
+use crate::range_set::RangeSet;
+use crate::{
     varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
 };
 

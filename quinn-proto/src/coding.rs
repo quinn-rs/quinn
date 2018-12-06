@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut};
 
-use varint;
+use crate::varint;
 
 #[derive(Fail, Debug, Copy, Clone, Eq, PartialEq)]
 #[fail(display = "unexpected end of buffer")]

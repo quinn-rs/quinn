@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 
-use range_set::RangeSet;
+use crate::range_set::RangeSet;
 
 #[derive(Debug)]
 pub enum Stream {

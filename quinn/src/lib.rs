@@ -88,9 +88,9 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use tokio_udp::UdpSocket;
 
-use quinn::{ConnectionHandle, Directionality, Side, StreamId};
+use crate::quinn::{ConnectionHandle, Directionality, Side, StreamId};
 
-pub use quinn::{
+pub use crate::quinn::{
     Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
 };
 
@@ -110,7 +110,7 @@ pub enum Error {
 
 impl From<quinn::EndpointError> for Error {
     fn from(x: quinn::EndpointError) -> Self {
-        use quinn::EndpointError::*;
+        use crate::quinn::EndpointError::*;
         match x {
             Tls(x) => Error::Tls(x),
         }
@@ -679,7 +679,7 @@ impl Future for Driver {
                 }
             }
             while let Some((connection, event)) = endpoint.inner.poll() {
-                use quinn::Event::*;
+                use crate::quinn::Event::*;
                 match event {
                     Connected { .. } => {
                         let _ = endpoint
@@ -789,7 +789,7 @@ impl Future for Driver {
                 endpoint.outgoing.pop_front();
             }
             while let Some(io) = endpoint.inner.poll_io(now) {
-                use quinn::Io::*;
+                use crate::quinn::Io::*;
                 match io {
                     Transmit {
                         destination,
@@ -836,8 +836,8 @@ impl Future for Driver {
                             .pending
                             .entry(connection)
                             .or_insert_with(|| Pending::new(None));
-                        use quinn::Timer::*;
-                        let mut cancel = match timer {
+                        use crate::quinn::Timer::*;
+                        let cancel = match timer {
                             LossDetection => &mut pending.cancel_loss_detect,
                             Idle => &mut pending.cancel_idle,
                             Close => unreachable!(),
@@ -860,7 +860,7 @@ impl Future for Driver {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
-                            use quinn::Timer::*;
+                            use crate::quinn::Timer::*;
                             match timer {
                                 LossDetection => {
                                     if let Some(x) = pending.cancel_loss_detect.take() {
@@ -1169,7 +1169,7 @@ impl BiStream {
 impl Write for BiStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.conn.endpoint.borrow_mut();
-        use quinn::WriteError::*;
+        use crate::quinn::WriteError::*;
         let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
@@ -1225,7 +1225,7 @@ impl Write for BiStream {
 impl Read for BiStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
-        use quinn::ReadError::*;
+        use crate::quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
@@ -1249,7 +1249,7 @@ impl Read for BiStream {
 
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
-        use quinn::ReadError::*;
+        use crate::quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
@@ -1347,7 +1347,7 @@ pub enum WriteError {
 
 impl io::Read for BiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use ReadError::*;
+        use crate::ReadError::*;
         match Read::poll_read(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Err(Finished) => Ok(0),
