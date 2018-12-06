@@ -70,7 +70,7 @@ impl slog::Value for Error {
     }
 }
 
-errors!{
+errors! {
     NO_ERROR(0x0) "the connection is being closed abruptly in the absence of any error";
     INTERNAL_ERROR(0x1) "the endpoint encountered an internal error and cannot continue with the connection";
     SERVER_BUSY(0x2) "the server is currently busy and does not accept any new connections";

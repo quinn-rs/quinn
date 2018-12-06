@@ -925,7 +925,8 @@ impl Connection {
                                 &client_config.tls_config,
                                 &client_config.server_name,
                                 &TransportParameters::new(&ctx.config),
-                            ).unwrap();
+                            )
+                            .unwrap();
                             self.crypto_offset = 0;
                             self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
                         }
@@ -1017,7 +1018,8 @@ impl Connection {
                             .ok_or_else(|| {
                                 debug!(self.log, "remote didn't send transport params");
                                 ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
-                            }).and_then(|x| {
+                            })
+                            .and_then(|x| {
                                 TransportParameters::read(self.side, &mut io::Cursor::new(x))
                                     .map_err(Into::into)
                             })?;
@@ -1426,11 +1428,12 @@ impl Connection {
                 // (re)transmit handshake data in long-header packets
                 buf.reserve_exact(self.mtu as usize);
                 let number = self.get_tx_number();
-                let header = if self.side.is_client() && self
-                    .handshake_pending
-                    .crypto
-                    .front()
-                    .map_or(false, |x| x.offset == 0)
+                let header = if self.side.is_client()
+                    && self
+                        .handshake_pending
+                        .crypto
+                        .front()
+                        .map_or(false, |x| x.offset == 0)
                 {
                     trace!(log, "sending initial packet"; "pn" => number);
                     Header::Initial {
@@ -1581,7 +1584,8 @@ impl Connection {
                     id,
                     error_code,
                     final_offset: stream.send().unwrap().offset,
-                }.encode(&mut buf);
+                }
+                .encode(&mut buf);
             }
 
             // STOP_SENDING
@@ -2035,11 +2039,7 @@ impl Connection {
         let (key_phase, number) = match packet.header {
             Header::Short {
                 key_phase, number, ..
-            }
-                if !handshake =>
-            {
-                (key_phase, number)
-            }
+            } if !handshake => (key_phase, number),
             Header::Initial { number, .. } | Header::Long { number, .. } if handshake => {
                 (false, number)
             }

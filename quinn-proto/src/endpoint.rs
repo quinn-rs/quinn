@@ -306,7 +306,8 @@ impl Endpoint {
                         random: self.ctx.rng.gen(),
                         src_cid: destination,
                         dst_cid: source,
-                    }.encode(&mut buf);
+                    }
+                    .encode(&mut buf);
                     buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
                     self.ctx.io.push_back(Io::Transmit {
@@ -415,7 +416,8 @@ impl Endpoint {
                 cmp::max(
                     RESET_TOKEN_SIZE + 8,
                     datagram_len.saturating_sub(header_len),
-                ).saturating_sub(RESET_TOKEN_SIZE),
+                )
+                .saturating_sub(RESET_TOKEN_SIZE),
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
             let number = self.ctx.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
@@ -423,7 +425,8 @@ impl Endpoint {
                 dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE),
                 number: PacketNumber::U32(number),
                 key_phase: false,
-            }.encode(&mut buf);
+            }
+            .encode(&mut buf);
             {
                 let start = buf.len();
                 buf.resize(start + padding, 0);
@@ -590,9 +593,10 @@ impl Endpoint {
                 .token_key
                 .check(&remote, &token)
             {
-                let expires = token_issued + Duration::from_micros(
-                    self.server_config.as_ref().unwrap().retry_token_lifetime,
-                );
+                let expires = token_issued
+                    + Duration::from_micros(
+                        self.server_config.as_ref().unwrap().retry_token_lifetime,
+                    );
                 if expires > SystemTime::now() {
                     retry_cid = Some(token_dst_cid);
                 } else {
@@ -635,7 +639,8 @@ impl Endpoint {
                 ConnectionOpts::Server {
                     orig_dst_cid: retry_cid,
                 },
-            ).unwrap();
+            )
+            .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
         match self.connections[conn.0].handle_initial(
             &mut self.ctx,

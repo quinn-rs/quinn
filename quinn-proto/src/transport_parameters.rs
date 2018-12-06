@@ -16,7 +16,7 @@ use {Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 // of cases by writing a macro that takes a list of arguments in this form, then passing it to this macro.
 macro_rules! apply_params {
     ($macro:ident) => {
-        $macro!{
+        $macro! {
             // name (id): type = default,
             initial_max_stream_data_bidi_local(0x0000): u32 = 0,
             initial_max_stream_data_bidi_remote(0x000a): u32 = 0,

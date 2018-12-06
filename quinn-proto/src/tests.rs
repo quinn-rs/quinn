@@ -125,7 +125,8 @@ impl Pair {
             log.new(o!("side" => "Server")),
             server_config,
             Some(listen_keys),
-        ).unwrap();
+        )
+        .unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
         let localhost = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
@@ -389,7 +390,8 @@ fn version_negotiate() {
         log.new(o!("peer" => "server")),
         Config::default(),
         Some(server_config()),
-    ).unwrap();
+    )
+    .unwrap();
     server.handle(
         0,
         client_addr,
@@ -406,11 +408,9 @@ fn version_negotiate() {
     if let Some(Io::Transmit { packet, .. }) = io {
         assert_ne!(packet[0] & 0x80, 0);
         assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
-        assert!(
-            packet[14..]
-                .chunks(4)
-                .any(|x| BigEndian::read_u32(x) == VERSION)
-        );
+        assert!(packet[14..]
+            .chunks(4)
+            .any(|x| BigEndian::read_u32(x) == VERSION));
     }
     assert_matches!(server.poll_io(0), None);
     assert_matches!(server.poll(), None);
@@ -476,7 +476,8 @@ fn stateless_reset() {
         pair.log.new(o!("peer" => "server")),
         Config::default(),
         Some(pair_listen_keys),
-    ).unwrap();
+    )
+    .unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
