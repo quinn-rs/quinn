@@ -427,15 +427,17 @@ impl Endpoint {
                 key_phase: false,
             }
             .encode(&mut buf);
-            {
-                let start = buf.len();
-                buf.resize(start + padding, 0);
-                self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
-            }
+
+            let padding_start = buf.len();
+            buf.resize(padding_start + padding, 0);
+            self.ctx
+                .rng
+                .fill_bytes(&mut buf[padding_start..padding_start + padding]);
             buf.extend(&reset_token_for(
                 &self.server_config.as_ref().unwrap().reset_key,
                 &dst_cid,
             ));
+
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: buf.into(),
@@ -489,51 +491,49 @@ impl Endpoint {
         opts: ConnectionOpts,
     ) -> Result<ConnectionHandle, ConnectError> {
         debug_assert!(!local_id.is_empty());
-        let conn = {
-            let (tls, client_config) = match opts {
-                ConnectionOpts::Client(config) => (
-                    TlsSession::new_client(
-                        &config.tls_config,
-                        &config.server_name,
-                        &TransportParameters::new(&self.ctx.config),
-                    )?,
-                    Some(config),
-                ),
-                ConnectionOpts::Server { orig_dst_cid } => {
-                    let server_params = TransportParameters {
-                        stateless_reset_token: Some(reset_token_for(
-                            &self.server_config.as_ref().unwrap().reset_key,
-                            &local_id,
-                        )),
-                        original_connection_id: orig_dst_cid,
-                        ..TransportParameters::new(&self.ctx.config)
-                    };
-                    (
-                        TlsSession::new_server(
-                            &self.server_config.as_ref().unwrap().tls_config,
-                            &server_params,
-                        ),
-                        None,
-                    )
-                }
-            };
-
-            let entry = self.connections.vacant_entry();
-            let conn = ConnectionHandle(entry.key());
-
-            entry.insert(Connection::new(
-                self.log.new(o!("connection" => local_id)),
-                initial_id,
-                local_id,
-                remote_id,
-                remote,
-                client_config,
-                tls,
-                &mut self.ctx,
-                conn,
-            ));
-            conn
+        let (tls, client_config) = match opts {
+            ConnectionOpts::Client(config) => (
+                TlsSession::new_client(
+                    &config.tls_config,
+                    &config.server_name,
+                    &TransportParameters::new(&self.ctx.config),
+                )?,
+                Some(config),
+            ),
+            ConnectionOpts::Server { orig_dst_cid } => {
+                let server_params = TransportParameters {
+                    stateless_reset_token: Some(reset_token_for(
+                        &self.server_config.as_ref().unwrap().reset_key,
+                        &local_id,
+                    )),
+                    original_connection_id: orig_dst_cid,
+                    ..TransportParameters::new(&self.ctx.config)
+                };
+                (
+                    TlsSession::new_server(
+                        &self.server_config.as_ref().unwrap().tls_config,
+                        &server_params,
+                    ),
+                    None,
+                )
+            }
         };
+
+        let entry = self.connections.vacant_entry();
+        let conn = ConnectionHandle(entry.key());
+
+        entry.insert(Connection::new(
+            self.log.new(o!("connection" => local_id)),
+            initial_id,
+            local_id,
+            remote_id,
+            remote,
+            client_config,
+            tls,
+            &mut self.ctx,
+            conn,
+        ));
+
         if self.ctx.config.local_cid_len > 0 {
             self.connection_ids.insert(local_id, conn);
         }
@@ -673,35 +673,34 @@ impl Endpoint {
         if sent {
             self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
         }
-        {
-            let c = &mut self.connections[conn.0];
-            if let Some(setting) = c.set_idle.take() {
-                if let Some(time) = setting {
-                    self.ctx.io.push_back(Io::TimerStart {
-                        connection: conn,
-                        timer: Timer::Idle,
-                        time,
-                    });
-                } else {
-                    self.ctx.io.push_back(Io::TimerStop {
-                        connection: conn,
-                        timer: Timer::Idle,
-                    });
-                }
+
+        let c = &mut self.connections[conn.0];
+        if let Some(setting) = c.set_idle.take() {
+            if let Some(time) = setting {
+                self.ctx.io.push_back(Io::TimerStart {
+                    connection: conn,
+                    timer: Timer::Idle,
+                    time,
+                });
+            } else {
+                self.ctx.io.push_back(Io::TimerStop {
+                    connection: conn,
+                    timer: Timer::Idle,
+                });
             }
-            if let Some(setting) = c.set_loss_detection.take() {
-                if let Some(time) = setting {
-                    self.ctx.io.push_back(Io::TimerStart {
-                        connection: conn,
-                        timer: Timer::LossDetection,
-                        time,
-                    });
-                } else {
-                    self.ctx.io.push_back(Io::TimerStop {
-                        connection: conn,
-                        timer: Timer::LossDetection,
-                    });
-                }
+        }
+        if let Some(setting) = c.set_loss_detection.take() {
+            if let Some(time) = setting {
+                self.ctx.io.push_back(Io::TimerStart {
+                    connection: conn,
+                    timer: Timer::LossDetection,
+                    time,
+                });
+            } else {
+                self.ctx.io.push_back(Io::TimerStop {
+                    connection: conn,
+                    timer: Timer::LossDetection,
+                });
             }
         }
     }

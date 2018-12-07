@@ -677,29 +677,29 @@ impl Connection {
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, ctx: &mut Context, stream: StreamId, error_code: u16) {
+    pub fn reset(&mut self, ctx: &mut Context, stream_id: StreamId, error_code: u16) {
         assert!(
-            stream.directionality() == Directionality::Bi || stream.initiator() == self.side,
+            stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
         );
-        {
-            // reset is a noop on a closed stream
-            let stream = if let Some(x) = self.streams.get_send_mut(&stream) {
-                x
-            } else {
+
+        // reset is a noop on a closed stream
+        let stream = if let Some(x) = self.streams.get_send_mut(&stream_id) {
+            x
+        } else {
+            return;
+        };
+        match stream.state {
+            stream::SendState::DataRecvd
+            | stream::SendState::ResetSent { .. }
+            | stream::SendState::ResetRecvd { .. } => {
                 return;
-            };
-            match stream.state {
-                stream::SendState::DataRecvd
-                | stream::SendState::ResetSent { .. }
-                | stream::SendState::ResetRecvd { .. } => {
-                    return;
-                } // Nothing to do
-                _ => {}
-            }
-            stream.state = stream::SendState::ResetSent { stop_reason: None };
+            } // Nothing to do
+            _ => {}
         }
-        self.pending.rst_stream.push((stream, error_code));
+        stream.state = stream::SendState::ResetSent { stop_reason: None };
+
+        self.pending.rst_stream.push((stream_id, error_code));
         ctx.dirty_conns.insert(self.handle);
     }
 
@@ -765,14 +765,12 @@ impl Connection {
         remote: SocketAddrV6,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
-        let result = {
-            let crypto = if partial_decode.is_handshake() {
-                &self.handshake_crypto
-            } else {
-                &self.crypto.as_ref().unwrap()
-            };
-            partial_decode.finish(crypto.pn_decrypt_key())
+        let crypto = if partial_decode.is_handshake() {
+            &self.handshake_crypto
+        } else {
+            &self.crypto.as_ref().unwrap()
         };
+        let result = partial_decode.finish(crypto.pn_decrypt_key());
 
         match result {
             Ok((packet, rest)) => {
@@ -919,17 +917,15 @@ impl Connection {
                         self.on_packet_acked(&ctx.config, 0);
 
                         // Reset to initial state
-                        {
-                            let client_config = self.client_config.as_ref().unwrap();
-                            self.tls = TlsSession::new_client(
-                                &client_config.tls_config,
-                                &client_config.server_name,
-                                &TransportParameters::new(&ctx.config),
-                            )
-                            .unwrap();
-                            self.crypto_offset = 0;
-                            self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
-                        }
+                        let client_config = self.client_config.as_ref().unwrap();
+                        self.tls = TlsSession::new_client(
+                            &client_config.tls_config,
+                            &client_config.server_name,
+                            &TransportParameters::new(&ctx.config),
+                        )
+                        .unwrap();
+                        self.crypto_offset = 0;
+                        self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
                         self.write_tls();
 
                         Ok(State::Handshake(state::Handshake {
@@ -1206,52 +1202,47 @@ impl Connection {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.data_recvd;
                     let max_data = self.local_max_data;
-                    let rs = {
-                        match self.streams.get_recv_stream(self.side, frame.id) {
-                            Err(e) => {
-                                debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
-                                return Err(e);
-                            }
-                            Ok(None) => {
-                                trace!(self.log, "dropping frame for closed stream");
-                                continue;
-                            }
-                            _ => {}
+                    match self.streams.get_recv_stream(self.side, frame.id) {
+                        Err(e) => {
+                            debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
+                            return Err(e);
                         }
-                        self.streams.get_recv_mut(&frame.id).unwrap()
-                    };
+                        Ok(None) => {
+                            trace!(self.log, "dropping frame for closed stream");
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    let rs = self.streams.get_recv_mut(&frame.id).unwrap();
 
-                    let new_bytes = {
-                        let end = frame.offset + frame.data.len() as u64;
-                        if let Some(final_offset) = rs.final_offset() {
-                            if end > final_offset || (frame.fin && end != final_offset) {
-                                debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                                return Err(TransportError::FINAL_OFFSET_ERROR);
-                            }
+                    let end = frame.offset + frame.data.len() as u64;
+                    if let Some(final_offset) = rs.final_offset() {
+                        if end > final_offset || (frame.fin && end != final_offset) {
+                            debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                            return Err(TransportError::FINAL_OFFSET_ERROR);
                         }
-                        let prev_end = rs.limit();
-                        let new_bytes = end.saturating_sub(prev_end);
-                        if end > rs.max_data || data_recvd + new_bytes > max_data {
-                            debug!(self.log, "flow control error";
+                    }
+                    let prev_end = rs.limit();
+                    let new_bytes = end.saturating_sub(prev_end);
+                    if end > rs.max_data || data_recvd + new_bytes > max_data {
+                        debug!(self.log, "flow control error";
                                    "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
                                    "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
-                            return Err(TransportError::FLOW_CONTROL_ERROR);
+                        return Err(TransportError::FLOW_CONTROL_ERROR);
+                    }
+                    if frame.fin {
+                        if let stream::RecvState::Recv { ref mut size } = rs.state {
+                            *size = Some(end);
                         }
-                        if frame.fin {
-                            if let stream::RecvState::Recv { ref mut size } = rs.state {
-                                *size = Some(end);
-                            }
+                    }
+                    rs.recvd.insert(frame.offset..end);
+                    rs.buffer(frame.data, frame.offset);
+                    if let stream::RecvState::Recv { size: Some(size) } = rs.state {
+                        if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
+                            rs.state = stream::RecvState::DataRecvd { size };
                         }
-                        rs.recvd.insert(frame.offset..end);
-                        rs.buffer(frame.data, frame.offset);
-                        if let stream::RecvState::Recv { size: Some(size) } = rs.state {
-                            if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
-                                rs.state = stream::RecvState::DataRecvd { size };
-                            }
-                        }
+                    }
 
-                        new_bytes
-                    };
                     self.readable_streams.insert(frame.id);
                     ctx.readable_conns.insert(self.handle);
                     self.data_recvd += new_bytes;
@@ -1419,304 +1410,301 @@ impl Connection {
         let mut buf = Vec::new();
         let mut sent = Retransmits::default();
 
-        let (number, acks, ack_only, handshake) = {
-            let (number, header, crypto, pending, crypto_level) = if (!established
-                || self.awaiting_handshake)
-                && (!self.handshake_pending.is_empty()
-                    || (!self.pending_acks.is_empty() && self.permit_ack_only))
+        let (number, header, crypto, pending, crypto_level) = if (!established
+            || self.awaiting_handshake)
+            && (!self.handshake_pending.is_empty()
+                || (!self.pending_acks.is_empty() && self.permit_ack_only))
+        {
+            // (re)transmit handshake data in long-header packets
+            buf.reserve_exact(self.mtu as usize);
+            let number = self.get_tx_number();
+            let header = if self.side.is_client()
+                && self
+                    .handshake_pending
+                    .crypto
+                    .front()
+                    .map_or(false, |x| x.offset == 0)
             {
-                // (re)transmit handshake data in long-header packets
-                buf.reserve_exact(self.mtu as usize);
-                let number = self.get_tx_number();
-                let header = if self.side.is_client()
-                    && self
-                        .handshake_pending
-                        .crypto
-                        .front()
-                        .map_or(false, |x| x.offset == 0)
-                {
-                    trace!(log, "sending initial packet"; "pn" => number);
-                    Header::Initial {
-                        src_cid: self.loc_cid,
-                        dst_cid: self.rem_cid,
-                        token: match *self.state.as_ref().unwrap() {
-                            State::Handshake(ref state) => {
-                                state.token.clone().unwrap_or_else(Bytes::new)
-                            }
-                            _ => unreachable!("initial only sent in handshake state"),
-                        },
-                        number: PacketNumber::new(number, self.largest_acked_packet),
-                    }
-                } else {
-                    trace!(log, "sending handshake packet"; "pn" => number);
-                    Header::Long {
-                        ty: LongType::Handshake,
-                        src_cid: self.loc_cid,
-                        dst_cid: self.rem_cid,
-                        number: PacketNumber::new(number, self.largest_acked_packet),
-                    }
-                };
-                (
-                    number,
-                    header,
-                    &self.handshake_crypto,
-                    &mut self.handshake_pending,
-                    CryptoLevel::Initial,
-                )
-            } else if established {
-                //|| (self.zero_rtt_crypto.is_some() && self.side.is_client()) {
-                // Send 0RTT or 1RTT data
-                if self.congestion_blocked()
-                    || self.pending.is_empty()
-                        && (!self.permit_ack_only || self.pending_acks.is_empty())
-                {
-                    return None;
+                trace!(log, "sending initial packet"; "pn" => number);
+                Header::Initial {
+                    src_cid: self.loc_cid,
+                    dst_cid: self.rem_cid,
+                    token: match *self.state.as_ref().unwrap() {
+                        State::Handshake(ref state) => {
+                            state.token.clone().unwrap_or_else(Bytes::new)
+                        }
+                        _ => unreachable!("initial only sent in handshake state"),
+                    },
+                    number: PacketNumber::new(number, self.largest_acked_packet),
                 }
-                let number = self.get_tx_number();
-                buf.reserve_exact(self.mtu as usize);
-                trace!(log, "sending protected packet"; "pn" => number);
-
-                /*if !established {
-                    crypto = self.zero_rtt_crypto.as_ref().unwrap();
-                    Header::Long {
-                        ty: types::ZERO_RTT,
-                        number: number as u32,
-                        src_cid: self.loc_cid.clone(),
-                        dst_cid: self.init_cid.clone(),
-                    }.encode(&mut buf);
-                } else {*/
-                let header = Header::Short {
+            } else {
+                trace!(log, "sending handshake packet"; "pn" => number);
+                Header::Long {
+                    ty: LongType::Handshake,
+                    src_cid: self.loc_cid,
                     dst_cid: self.rem_cid,
                     number: PacketNumber::new(number, self.largest_acked_packet),
-                    key_phase: self.key_phase,
-                };
-                //}
-                (
-                    number,
-                    header,
-                    self.crypto.as_ref().unwrap(),
-                    &mut self.pending,
-                    CryptoLevel::OneRtt,
-                )
-            } else {
+                }
+            };
+            (
+                number,
+                header,
+                &self.handshake_crypto,
+                &mut self.handshake_pending,
+                CryptoLevel::Initial,
+            )
+        } else if established {
+            //|| (self.zero_rtt_crypto.is_some() && self.side.is_client()) {
+            // Send 0RTT or 1RTT data
+            if self.congestion_blocked()
+                || self.pending.is_empty()
+                    && (!self.permit_ack_only || self.pending_acks.is_empty())
+            {
                 return None;
+            }
+            let number = self.get_tx_number();
+            buf.reserve_exact(self.mtu as usize);
+            trace!(log, "sending protected packet"; "pn" => number);
+
+            /*if !established {
+                crypto = self.zero_rtt_crypto.as_ref().unwrap();
+                Header::Long {
+                    ty: types::ZERO_RTT,
+                    number: number as u32,
+                    src_cid: self.loc_cid.clone(),
+                    dst_cid: self.init_cid.clone(),
+                }.encode(&mut buf);
+            } else {*/
+            let header = Header::Short {
+                dst_cid: self.rem_cid,
+                number: PacketNumber::new(number, self.largest_acked_packet),
+                key_phase: self.key_phase,
             };
-
-            let partial_encode = header.encode(&mut buf);
-            let ack_only = pending.is_empty();
-            let header_len = buf.len() as u16;
-            let max_size = self.mtu as usize - AEAD_TAG_SIZE;
-
-            // PING
-            if pending.ping {
-                trace!(log, "ping");
-                pending.ping = false;
-                sent.ping = true;
-                buf.write(frame::Type::PING);
-            }
-
-            // ACK
-            // We will never ack protected packets in handshake packets because handshake_cleanup
-            // ensures we never send handshake packets after receiving protected packets.
-            // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-            let acks = if !self.pending_acks.is_empty() {
-                //&& !crypto.is_0rtt() {
-                let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
-                trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
-                frame::Ack::encode(delay, &self.pending_acks, &mut buf);
-                self.pending_acks.clone()
-            } else {
-                RangeSet::new()
-            };
-
-            // PATH_RESPONSE
-            if buf.len() + 9 < max_size {
-                // No need to retransmit these, so we don't save the value after encoding it.
-                if let Some((_, x)) = pending.path_response.take() {
-                    trace!(log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
-                    buf.write(frame::Type::PATH_RESPONSE);
-                    buf.write(x);
-                }
-            }
-
-            // CRYPTO
-            while buf.len() + 16 < max_size {
-                let mut frame = if let Some(x) = pending.crypto.pop_front() {
-                    x
-                } else {
-                    break;
-                };
-                let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 16);
-                let data = frame.data.split_to(len);
-                let truncated = frame::Crypto {
-                    offset: frame.offset,
-                    data,
-                };
-                trace!(
-                    log,
-                    "CRYPTO: off {offset} len {length}",
-                    offset = truncated.offset,
-                    length = truncated.data.len()
-                );
-                truncated.encode(&mut buf);
-                sent.crypto.push_back(truncated);
-                if !frame.data.is_empty() {
-                    frame.offset += len as u64;
-                    pending.crypto.push_front(frame);
-                }
-            }
-
-            // RST_STREAM
-            while buf.len() + 19 < max_size {
-                let (id, error_code) = if let Some(x) = pending.rst_stream.pop() {
-                    x
-                } else {
-                    break;
-                };
-                let stream = if let Some(x) = self.streams.streams.get(&id) {
-                    x
-                } else {
-                    continue;
-                };
-                trace!(log, "RST_STREAM"; "stream" => id.0);
-                sent.rst_stream.push((id, error_code));
-                frame::RstStream {
-                    id,
-                    error_code,
-                    final_offset: stream.send().unwrap().offset,
-                }
-                .encode(&mut buf);
-            }
-
-            // STOP_SENDING
-            while buf.len() + 11 < max_size {
-                let (id, error_code) = if let Some(x) = pending.stop_sending.pop() {
-                    x
-                } else {
-                    break;
-                };
-                let stream = if let Some(x) = self.streams.streams.get(&id) {
-                    x.recv().unwrap()
-                } else {
-                    continue;
-                };
-                if stream.is_finished() {
-                    continue;
-                }
-                trace!(log, "STOP_SENDING"; "stream" => id.0);
-                sent.stop_sending.push((id, error_code));
-                buf.write(frame::Type::STOP_SENDING);
-                buf.write(id);
-                buf.write(error_code);
-            }
-
-            // MAX_DATA
-            if pending.max_data && buf.len() + 9 < max_size {
-                trace!(log, "MAX_DATA"; "value" => self.local_max_data);
-                pending.max_data = false;
-                sent.max_data = true;
-                buf.write(frame::Type::MAX_DATA);
-                buf.write_var(self.local_max_data);
-            }
-
-            // MAX_STREAM_DATA
-            while buf.len() + 17 < max_size {
-                let id = if let Some(x) = pending.max_stream_data.iter().next() {
-                    *x
-                } else {
-                    break;
-                };
-                pending.max_stream_data.remove(&id);
-                let rs = if let Some(x) = self.streams.streams.get(&id) {
-                    x.recv().unwrap()
-                } else {
-                    continue;
-                };
-                if rs.is_finished() {
-                    continue;
-                }
-                sent.max_stream_data.insert(id);
-                trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
-                buf.write(frame::Type::MAX_STREAM_DATA);
-                buf.write(id);
-                buf.write_var(rs.max_data);
-            }
-
-            // MAX_STREAM_ID uni
-            if pending.max_uni_stream_id && buf.len() + 9 < max_size {
-                pending.max_uni_stream_id = false;
-                sent.max_uni_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
-                buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(
-                    !self.side,
-                    Directionality::Uni,
-                    self.streams.max_remote_uni - 1,
-                ));
-            }
-
-            // MAX_STREAM_ID bi
-            if pending.max_bi_stream_id && buf.len() + 9 < max_size {
-                pending.max_bi_stream_id = false;
-                sent.max_bi_stream_id = true;
-                trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
-                buf.write(frame::Type::MAX_STREAM_ID);
-                buf.write(StreamId::new(
-                    !self.side,
-                    Directionality::Bi,
-                    self.streams.max_remote_bi - 1,
-                ));
-            }
-
-            // STREAM
-            while buf.len() + 25 < max_size {
-                let mut stream = if let Some(x) = pending.stream.pop_front() {
-                    x
-                } else {
-                    break;
-                };
-                if self
-                    .streams
-                    .streams
-                    .get(&stream.id)
-                    .map_or(true, |s| s.send().unwrap().state.was_reset())
-                {
-                    continue;
-                }
-                let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
-                let data = stream.data.split_to(len);
-                let fin = stream.fin && stream.data.is_empty();
-                trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
-                let frame = frame::Stream {
-                    id: stream.id,
-                    offset: stream.offset,
-                    fin,
-                    data,
-                };
-                frame.encode(true, &mut buf);
-                sent.stream.push_back(frame);
-                if !stream.data.is_empty() {
-                    stream.offset += len as u64;
-                    pending.stream.push_front(stream);
-                }
-            }
-
-            if let Header::Initial { .. } = header {
-                if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                    buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
-                }
-            }
-            if crypto_level != CryptoLevel::OneRtt {
-                let pn_len = match header {
-                    Header::Initial { number, .. } | Header::Long { number, .. } => number.len(),
-                    _ => panic!("invalid header for packet payload length"),
-                };
-                set_payload_length(&mut buf, header_len as usize, pn_len);
-            }
-            crypto.encrypt(number, &mut buf, header_len as usize);
-            partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
-            (number, acks, ack_only, crypto_level == CryptoLevel::Initial)
+            //}
+            (
+                number,
+                header,
+                self.crypto.as_ref().unwrap(),
+                &mut self.pending,
+                CryptoLevel::OneRtt,
+            )
+        } else {
+            return None;
         };
+
+        let partial_encode = header.encode(&mut buf);
+        let ack_only = pending.is_empty();
+        let header_len = buf.len() as u16;
+        let max_size = self.mtu as usize - AEAD_TAG_SIZE;
+
+        // PING
+        if pending.ping {
+            trace!(log, "ping");
+            pending.ping = false;
+            sent.ping = true;
+            buf.write(frame::Type::PING);
+        }
+
+        // ACK
+        // We will never ack protected packets in handshake packets because handshake_cleanup
+        // ensures we never send handshake packets after receiving protected packets.
+        // 0-RTT packets must never carry acks (which would have to be of handshake packets)
+        let acks = if !self.pending_acks.is_empty() {
+            //&& !crypto.is_0rtt() {
+            let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
+            trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
+            frame::Ack::encode(delay, &self.pending_acks, &mut buf);
+            self.pending_acks.clone()
+        } else {
+            RangeSet::new()
+        };
+
+        // PATH_RESPONSE
+        if buf.len() + 9 < max_size {
+            // No need to retransmit these, so we don't save the value after encoding it.
+            if let Some((_, x)) = pending.path_response.take() {
+                trace!(log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
+                buf.write(frame::Type::PATH_RESPONSE);
+                buf.write(x);
+            }
+        }
+
+        // CRYPTO
+        while buf.len() + 16 < max_size {
+            let mut frame = if let Some(x) = pending.crypto.pop_front() {
+                x
+            } else {
+                break;
+            };
+            let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 16);
+            let data = frame.data.split_to(len);
+            let truncated = frame::Crypto {
+                offset: frame.offset,
+                data,
+            };
+            trace!(
+                log,
+                "CRYPTO: off {offset} len {length}",
+                offset = truncated.offset,
+                length = truncated.data.len()
+            );
+            truncated.encode(&mut buf);
+            sent.crypto.push_back(truncated);
+            if !frame.data.is_empty() {
+                frame.offset += len as u64;
+                pending.crypto.push_front(frame);
+            }
+        }
+
+        // RST_STREAM
+        while buf.len() + 19 < max_size {
+            let (id, error_code) = if let Some(x) = pending.rst_stream.pop() {
+                x
+            } else {
+                break;
+            };
+            let stream = if let Some(x) = self.streams.streams.get(&id) {
+                x
+            } else {
+                continue;
+            };
+            trace!(log, "RST_STREAM"; "stream" => id.0);
+            sent.rst_stream.push((id, error_code));
+            frame::RstStream {
+                id,
+                error_code,
+                final_offset: stream.send().unwrap().offset,
+            }
+            .encode(&mut buf);
+        }
+
+        // STOP_SENDING
+        while buf.len() + 11 < max_size {
+            let (id, error_code) = if let Some(x) = pending.stop_sending.pop() {
+                x
+            } else {
+                break;
+            };
+            let stream = if let Some(x) = self.streams.streams.get(&id) {
+                x.recv().unwrap()
+            } else {
+                continue;
+            };
+            if stream.is_finished() {
+                continue;
+            }
+            trace!(log, "STOP_SENDING"; "stream" => id.0);
+            sent.stop_sending.push((id, error_code));
+            buf.write(frame::Type::STOP_SENDING);
+            buf.write(id);
+            buf.write(error_code);
+        }
+
+        // MAX_DATA
+        if pending.max_data && buf.len() + 9 < max_size {
+            trace!(log, "MAX_DATA"; "value" => self.local_max_data);
+            pending.max_data = false;
+            sent.max_data = true;
+            buf.write(frame::Type::MAX_DATA);
+            buf.write_var(self.local_max_data);
+        }
+
+        // MAX_STREAM_DATA
+        while buf.len() + 17 < max_size {
+            let id = if let Some(x) = pending.max_stream_data.iter().next() {
+                *x
+            } else {
+                break;
+            };
+            pending.max_stream_data.remove(&id);
+            let rs = if let Some(x) = self.streams.streams.get(&id) {
+                x.recv().unwrap()
+            } else {
+                continue;
+            };
+            if rs.is_finished() {
+                continue;
+            }
+            sent.max_stream_data.insert(id);
+            trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
+            buf.write(frame::Type::MAX_STREAM_DATA);
+            buf.write(id);
+            buf.write_var(rs.max_data);
+        }
+
+        // MAX_STREAM_ID uni
+        if pending.max_uni_stream_id && buf.len() + 9 < max_size {
+            pending.max_uni_stream_id = false;
+            sent.max_uni_stream_id = true;
+            trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
+            buf.write(frame::Type::MAX_STREAM_ID);
+            buf.write(StreamId::new(
+                !self.side,
+                Directionality::Uni,
+                self.streams.max_remote_uni - 1,
+            ));
+        }
+
+        // MAX_STREAM_ID bi
+        if pending.max_bi_stream_id && buf.len() + 9 < max_size {
+            pending.max_bi_stream_id = false;
+            sent.max_bi_stream_id = true;
+            trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
+            buf.write(frame::Type::MAX_STREAM_ID);
+            buf.write(StreamId::new(
+                !self.side,
+                Directionality::Bi,
+                self.streams.max_remote_bi - 1,
+            ));
+        }
+
+        // STREAM
+        while buf.len() + 25 < max_size {
+            let mut stream = if let Some(x) = pending.stream.pop_front() {
+                x
+            } else {
+                break;
+            };
+            if self
+                .streams
+                .streams
+                .get(&stream.id)
+                .map_or(true, |s| s.send().unwrap().state.was_reset())
+            {
+                continue;
+            }
+            let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
+            let data = stream.data.split_to(len);
+            let fin = stream.fin && stream.data.is_empty();
+            trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
+            let frame = frame::Stream {
+                id: stream.id,
+                offset: stream.offset,
+                fin,
+                data,
+            };
+            frame.encode(true, &mut buf);
+            sent.stream.push_back(frame);
+            if !stream.data.is_empty() {
+                stream.offset += len as u64;
+                pending.stream.push_front(stream);
+            }
+        }
+
+        if let Header::Initial { .. } = header {
+            if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+                buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
+            }
+        }
+        if crypto_level != CryptoLevel::OneRtt {
+            let pn_len = match header {
+                Header::Initial { number, .. } | Header::Long { number, .. } => number.len(),
+                _ => panic!("invalid header for packet payload length"),
+            };
+            set_payload_length(&mut buf, header_len as usize, pn_len);
+        }
+        crypto.encrypt(number, &mut buf, header_len as usize);
+        partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
@@ -1731,7 +1719,7 @@ impl Connection {
                 acks,
                 time: now,
                 bytes: if ack_only { 0 } else { buf.len() as u16 },
-                handshake,
+                handshake: crypto_level == CryptoLevel::Initial,
                 retransmits: sent,
             },
         );
@@ -1751,11 +1739,11 @@ impl Connection {
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len() as u16;
         buf.write(frame::Type::PING);
-        {
-            let crypto = self.crypto.as_ref().unwrap();
-            crypto.encrypt(number, &mut buf, header_len as usize);
-            partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
-        }
+
+        let crypto = self.crypto.as_ref().unwrap();
+        crypto.encrypt(number, &mut buf, header_len as usize);
+        partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
+
         self.on_packet_sent(
             config,
             now,
@@ -2096,12 +2084,11 @@ impl Connection {
             return Err(WriteError::Blocked);
         }
 
-        let budget_res = {
-            self.streams
-                .get_send_mut(&stream)
-                .expect("stream already closed")
-                .write_budget()
-        };
+        let budget_res = self
+            .streams
+            .get_send_mut(&stream)
+            .expect("stream already closed")
+            .write_budget();
 
         let stream_budget = match budget_res {
             Ok(budget) => budget,
