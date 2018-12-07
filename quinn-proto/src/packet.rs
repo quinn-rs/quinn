@@ -231,14 +231,9 @@ impl PartialDecode {
         }
 
         let mut first = [buf.bytes()[0]; 1];
-        let sample = {
-            let mut sample = [0; 16];
-            debug_assert!(pn_key.sample_size() <= 16);
-            sample.copy_from_slice(
-                &buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()],
-            );
-            sample
-        };
+        let mut sample = [0; 16];
+        debug_assert!(pn_key.sample_size() <= 16);
+        sample.copy_from_slice(&buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()]);
 
         pn_key.decrypt(&sample, &mut first);
         let len = PacketNumber::decode_len(first[0]);

@@ -338,18 +338,15 @@ impl Assembler {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> usize {
-        let n;
-        {
-            let (a, b) = self.data.as_slices();
-            let available = self.prefix_len();
-            let a_len = a.len().min(available);
-            let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
-            let a_n = a.len().min(buf.len());
-            buf[0..a_n].copy_from_slice(&a[0..a_n]);
-            let b_n = b.len().min(buf.len().saturating_sub(a.len()));
-            buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
-            n = a_n + b_n;
-        }
+        let (a, b) = self.data.as_slices();
+        let available = self.prefix_len();
+        let a_len = a.len().min(available);
+        let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
+        let a_n = a.len().min(buf.len());
+        buf[0..a_n].copy_from_slice(&a[0..a_n]);
+        let b_n = b.len().min(buf.len().saturating_sub(a.len()));
+        buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
+        let n = a_n + b_n;
 
         self.offset += n as u64;
         self.data.drain(0..n);
