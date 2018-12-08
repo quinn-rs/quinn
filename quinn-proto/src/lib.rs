@@ -16,6 +16,7 @@ use std::fmt;
 use std::ops;
 
 mod coding;
+mod dedup;
 mod range_set;
 #[cfg(test)]
 mod tests;
