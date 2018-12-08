@@ -1411,7 +1411,7 @@ impl Connection {
         Ok(false)
     }
 
-    pub fn next_packet(&mut self, log: &Logger, config: &Config, now: u64) -> Option<Vec<u8>> {
+    pub fn next_packet(&mut self, config: &Config, now: u64) -> Option<Vec<u8>> {
         let established = match *self.state.as_ref().unwrap() {
             State::Handshake(_) => false,
             State::Established => true,
@@ -1439,7 +1439,7 @@ impl Connection {
                     .front()
                     .map_or(false, |x| x.offset == 0)
             {
-                trace!(log, "sending initial packet"; "pn" => number);
+                trace!(self.log, "sending initial packet"; "pn" => number);
                 Header::Initial {
                     src_cid: self.loc_cid,
                     dst_cid: self.rem_cid,
@@ -1452,7 +1452,7 @@ impl Connection {
                     number: PacketNumber::new(number, self.largest_acked_packet),
                 }
             } else {
-                trace!(log, "sending handshake packet"; "pn" => number);
+                trace!(self.log, "sending handshake packet"; "pn" => number);
                 Header::Long {
                     ty: LongType::Handshake,
                     src_cid: self.loc_cid,
@@ -1478,7 +1478,7 @@ impl Connection {
             }
             let number = self.get_tx_number();
             buf.reserve_exact(self.mtu as usize);
-            trace!(log, "sending protected packet"; "pn" => number);
+            trace!(self.log, "sending protected packet"; "pn" => number);
 
             /*if !established {
                 crypto = self.zero_rtt_crypto.as_ref().unwrap();
@@ -1513,7 +1513,7 @@ impl Connection {
 
         // PING
         if pending.ping {
-            trace!(log, "ping");
+            trace!(self.log, "ping");
             pending.ping = false;
             sent.ping = true;
             buf.write(frame::Type::PING);
@@ -1526,8 +1526,8 @@ impl Connection {
         let acks = if !self.pending_acks.is_empty() {
             //&& !crypto.is_0rtt() {
             let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
-            trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             frame::Ack::encode(delay, &self.pending_acks, None, &mut buf);
+            trace!(self.log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             self.pending_acks.clone()
         } else {
             RangeSet::new()
@@ -1537,7 +1537,7 @@ impl Connection {
         if buf.len() + 9 < max_size {
             // No need to retransmit these, so we don't save the value after encoding it.
             if let Some((_, x)) = pending.path_response.take() {
-                trace!(log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
+                trace!(self.log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
                 buf.write(frame::Type::PATH_RESPONSE);
                 buf.write(x);
             }
@@ -1557,7 +1557,7 @@ impl Connection {
                 data,
             };
             trace!(
-                log,
+                self.log,
                 "CRYPTO: off {offset} len {length}",
                 offset = truncated.offset,
                 length = truncated.data.len()
@@ -1582,7 +1582,7 @@ impl Connection {
             } else {
                 continue;
             };
-            trace!(log, "RST_STREAM"; "stream" => id.0);
+            trace!(self.log, "RST_STREAM"; "stream" => id.0);
             sent.rst_stream.push((id, error_code));
             frame::RstStream {
                 id,
@@ -1607,7 +1607,7 @@ impl Connection {
             if stream.is_finished() {
                 continue;
             }
-            trace!(log, "STOP_SENDING"; "stream" => id.0);
+            trace!(self.log, "STOP_SENDING"; "stream" => id.0);
             sent.stop_sending.push((id, error_code));
             buf.write(frame::Type::STOP_SENDING);
             buf.write(id);
@@ -1616,7 +1616,7 @@ impl Connection {
 
         // MAX_DATA
         if pending.max_data && buf.len() + 9 < max_size {
-            trace!(log, "MAX_DATA"; "value" => self.local_max_data);
+            trace!(self.log, "MAX_DATA"; "value" => self.local_max_data);
             pending.max_data = false;
             sent.max_data = true;
             buf.write(frame::Type::MAX_DATA);
@@ -1640,7 +1640,7 @@ impl Connection {
                 continue;
             }
             sent.max_stream_data.insert(id);
-            trace!(log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
+            trace!(self.log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
             buf.write_var(rs.max_data);
@@ -1650,7 +1650,7 @@ impl Connection {
         if pending.max_uni_stream_id && buf.len() + 9 < max_size {
             pending.max_uni_stream_id = false;
             sent.max_uni_stream_id = true;
-            trace!(log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
+            trace!(self.log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
             buf.write(frame::Type::MAX_STREAM_ID);
             buf.write(StreamId::new(
                 !self.side,
@@ -1663,7 +1663,7 @@ impl Connection {
         if pending.max_bi_stream_id && buf.len() + 9 < max_size {
             pending.max_bi_stream_id = false;
             sent.max_bi_stream_id = true;
-            trace!(log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
+            trace!(self.log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
             buf.write(frame::Type::MAX_STREAM_ID);
             buf.write(StreamId::new(
                 !self.side,
@@ -1690,7 +1690,7 @@ impl Connection {
             let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
             let data = stream.data.split_to(len);
             let fin = stream.fin && stream.data.is_empty();
-            trace!(log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
+            trace!(self.log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
             let frame = frame::Stream {
                 id: stream.id,
                 offset: stream.offset,
@@ -2136,7 +2136,7 @@ impl Connection {
 
     pub fn flush_pending(&mut self, ctx: &mut Context, now: u64) {
         let mut sent = false;
-        while let Some(packet) = self.next_packet(&self.log.clone(), &ctx.config, now) {
+        while let Some(packet) = self.next_packet(&ctx.config, now) {
             ctx.io.push_back(Io::Transmit {
                 destination: self.remote,
                 packet: packet.into(),
