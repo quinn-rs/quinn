@@ -10,7 +10,7 @@ use slog::Logger;
 use crate::coding::{BufExt, BufMutExt};
 use crate::crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
 use crate::dedup::Dedup;
-use crate::endpoint::{Config, Context, Event, Io, Timer};
+use crate::endpoint::{Config, Event, Timer};
 use crate::packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
     AEAD_TAG_SIZE,
@@ -36,7 +36,6 @@ pub struct Connection {
     pub remote: SocketAddrV6,
     pub state: Option<State>,
     pub side: Side,
-    pub handle: ConnectionHandle,
     pub mtu: u16,
     /// Highest received packet number
     pub rx_packet: u64,
@@ -146,10 +145,6 @@ pub struct Connection {
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
     pub permit_ack_only: bool,
 
-    // Timer updates: None if no change, Some(None) to stop, Some(Some(_)) to reset
-    pub set_idle: Option<Option<u64>>,
-    pub set_loss_detection: Option<Option<u64>>,
-
     //
     // Stream states
     //
@@ -166,7 +161,6 @@ impl Connection {
         remote: SocketAddrV6,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
-        handle: ConnectionHandle,
     ) -> Self {
         let side = if client_config.is_some() {
             Side::Client
@@ -196,7 +190,6 @@ impl Connection {
             rem_cid,
             remote,
             side,
-            handle,
             state: None,
             mtu: MIN_MTU,
             rx_packet: 0,
@@ -252,9 +245,6 @@ impl Connection {
             pending_acks: RangeSet::new(),
             permit_ack_only: false,
 
-            set_idle: None,
-            set_loss_detection: None,
-
             streams: Streams {
                 streams,
                 next_uni: 0,
@@ -298,7 +288,13 @@ impl Connection {
         x
     }
 
-    fn on_packet_sent(&mut self, now: u64, packet_number: u64, packet: SentPacket) {
+    fn on_packet_sent(
+        &mut self,
+        mux: &mut impl Multiplexer,
+        now: u64,
+        packet_number: u64,
+        packet: SentPacket,
+    ) {
         let bytes = packet.bytes;
         let handshake = packet.handshake;
         if handshake {
@@ -311,11 +307,11 @@ impl Connection {
                 self.time_of_last_sent_handshake_packet = now;
             }
             self.bytes_in_flight += bytes as u64;
-            self.set_loss_detection_alarm();
+            self.set_loss_detection_alarm(mux);
         }
     }
 
-    fn on_ack_received(&mut self, ctx: &mut Context, now: u64, ack: frame::Ack) {
+    fn on_ack_received(&mut self, mux: &mut impl Multiplexer, now: u64, ack: frame::Ack) {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         // TODO: Validate
@@ -337,11 +333,10 @@ impl Connection {
             }
         }
         self.detect_lost_packets(now, ack.largest);
-        self.set_loss_detection_alarm();
+        self.set_loss_detection_alarm(mux);
         if was_blocked && !self.blocked() {
             for stream in self.blocked_streams.drain() {
-                ctx.events
-                    .push_back((self.handle, Event::StreamWritable { stream }));
+                mux.emit(Event::StreamWritable { stream });
             }
         }
     }
@@ -436,7 +431,7 @@ impl Connection {
         self.pending_acks.subtract(&info.acks);
     }
 
-    pub fn check_packet_loss(&mut self, ctx: &mut Context, now: u64) {
+    pub fn check_packet_loss(&mut self, mux: &mut impl Multiplexer, now: u64) {
         if self.awaiting_handshake {
             trace!(self.log, "retransmitting handshake packets");
             let packets = self
@@ -461,8 +456,8 @@ impl Connection {
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // Tail Loss Probe.
-            self.force_transmit(ctx, now);
-            self.reset_idle_timeout(now);
+            self.force_transmit(mux, now);
+            self.reset_idle_timeout(mux, now);
             self.tlp_count += 1;
         } else {
             trace!(self.log, "RTO fired, retransmitting"; "pn" => self.next_packet_number,
@@ -473,12 +468,11 @@ impl Connection {
                 self.largest_sent_before_rto = self.largest_sent_packet();
             }
             for _ in 0..2 {
-                self.force_transmit(ctx, now);
+                self.force_transmit(mux, now);
             }
             self.rto_count += 1;
         }
-        self.set_loss_detection_alarm();
-        ctx.dirty_conns.insert(self.handle);
+        self.set_loss_detection_alarm(mux);
     }
 
     fn detect_lost_packets(&mut self, now: u64, largest_acked: u64) {
@@ -538,9 +532,9 @@ impl Connection {
         packet <= self.end_of_recovery
     }
 
-    fn set_loss_detection_alarm(&mut self) {
+    fn set_loss_detection_alarm(&mut self, mux: &mut impl Multiplexer) {
         if self.bytes_in_flight == 0 {
-            self.set_loss_detection = Some(None);
+            mux.timer_stop(Timer::LossDetection);
             return;
         }
 
@@ -557,9 +551,10 @@ impl Connection {
                 self.config.min_tlp_timeout,
             );
             alarm_duration *= 2u64.pow(self.handshake_count);
-            self.set_loss_detection = Some(Some(
+            mux.timer_start(
+                Timer::LossDetection,
                 self.time_of_last_sent_handshake_packet + alarm_duration,
-            ));
+            );
             return;
         }
 
@@ -578,9 +573,10 @@ impl Connection {
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
         }
-        self.set_loss_detection = Some(Some(
+        mux.timer_start(
+            Timer::LossDetection,
             self.time_of_last_sent_retransmittable_packet + alarm_duration,
-        ));
+        );
     }
 
     /// Retransmit time-out
@@ -589,8 +585,13 @@ impl Connection {
         cmp::max(computed, self.config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
-    fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: Option<u64>) {
-        self.reset_idle_timeout(now);
+    fn on_packet_authenticated(
+        &mut self,
+        mux: &mut impl Multiplexer,
+        now: u64,
+        packet: Option<u64>,
+    ) {
+        self.reset_idle_timeout(mux, now);
         let packet = if let Some(x) = packet {
             x
         } else {
@@ -607,18 +608,18 @@ impl Connection {
         }
     }
 
-    pub fn reset_idle_timeout(&mut self, now: u64) {
+    pub fn reset_idle_timeout(&mut self, mux: &mut impl Multiplexer, now: u64) {
         let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
             cmp::max(self.config.idle_timeout, self.params.idle_timeout)
         } else {
             cmp::min(self.config.idle_timeout, self.params.idle_timeout)
         };
-        self.set_idle = Some(Some(now + dt as u64 * 1_000_000));
+        mux.timer_start(Timer::Idle, now + dt as u64 * 1_000_000);
     }
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we
     /// receive a new handshake packet.
-    fn handshake_cleanup(&mut self) {
+    fn handshake_cleanup(&mut self, mux: &mut impl Multiplexer) {
         if !self.awaiting_handshake {
             return;
         }
@@ -633,7 +634,7 @@ impl Connection {
         for packet in packets {
             self.on_packet_acked(packet);
         }
-        self.set_loss_detection_alarm();
+        self.set_loss_detection_alarm(mux);
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -655,7 +656,7 @@ impl Connection {
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, ctx: &mut Context, stream_id: StreamId, error_code: u16) {
+    pub fn reset(&mut self, stream_id: StreamId, error_code: u16) {
         assert!(
             stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
@@ -678,12 +679,11 @@ impl Connection {
         stream.state = stream::SendState::ResetSent { stop_reason: None };
 
         self.pending.rst_stream.push((stream_id, error_code));
-        ctx.dirty_conns.insert(self.handle);
     }
 
     pub fn handle_initial(
         &mut self,
-        ctx: &mut Context,
+        mux: &mut impl Multiplexer,
         now: u64,
         packet_number: u64,
         payload: Bytes,
@@ -701,14 +701,12 @@ impl Connection {
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
         self.set_params(params)?;
-        self.on_packet_authenticated(ctx, now, Some(packet_number));
+        self.on_packet_authenticated(mux, now, Some(packet_number));
         self.write_tls();
         self.state = Some(State::Handshake(state::Handshake {
             rem_cid_set: true,
             token: None,
         }));
-        ctx.dirty_conns.insert(self.handle);
-        ctx.incoming_handshakes += 1;
         Ok(())
     }
 
@@ -745,7 +743,7 @@ impl Connection {
 
     pub fn handle_decode(
         &mut self,
-        ctx: &mut Context,
+        mux: &mut impl Multiplexer,
         now: u64,
         remote: SocketAddrV6,
         partial_decode: PartialDecode,
@@ -759,7 +757,7 @@ impl Connection {
 
         match result {
             Ok((packet, rest)) => {
-                self.handle_packet(ctx, now, remote, packet);
+                self.handle_packet(mux, now, remote, packet);
                 rest
             }
             Err(e) => {
@@ -771,7 +769,7 @@ impl Connection {
 
     fn handle_packet(
         &mut self,
-        ctx: &mut Context,
+        mux: &mut impl Multiplexer,
         now: u64,
         remote: SocketAddrV6,
         mut packet: Packet,
@@ -780,24 +778,12 @@ impl Connection {
             if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
                 if !self.state.as_ref().unwrap().is_drained() {
                     debug!(self.log, "got stateless reset");
-                    ctx.io.push_back(Io::TimerStop {
-                        connection: self.handle,
-                        timer: Timer::LossDetection,
+                    mux.timer_stop(Timer::LossDetection);
+                    mux.timer_stop(Timer::Close);
+                    mux.timer_stop(Timer::Idle);
+                    mux.emit(Event::ConnectionLost {
+                        reason: ConnectionError::Reset,
                     });
-                    ctx.io.push_back(Io::TimerStop {
-                        connection: self.handle,
-                        timer: Timer::Close,
-                    });
-                    ctx.io.push_back(Io::TimerStop {
-                        connection: self.handle,
-                        timer: Timer::Idle,
-                    });
-                    ctx.events.push_back((
-                        self.handle,
-                        Event::ConnectionLost {
-                            reason: ConnectionError::Reset,
-                        },
-                    ));
                     self.state = Some(State::Drained);
                 }
                 return;
@@ -830,10 +816,10 @@ impl Connection {
                     }
                 }
                 if !was_closed {
-                    self.on_packet_authenticated(ctx, now, number);
+                    self.on_packet_authenticated(mux, now, number);
                 }
                 let state = self.state.take().unwrap();
-                self.handle_connected_inner(ctx, now, number, packet, state)
+                self.handle_connected_inner(mux, now, number, packet, state)
             }
         };
 
@@ -841,12 +827,9 @@ impl Connection {
         let state = match result {
             Ok(state) => state,
             Err(conn_err) => {
-                ctx.events.push_back((
-                    self.handle,
-                    Event::ConnectionLost {
-                        reason: conn_err.clone(),
-                    },
-                ));
+                mux.emit(Event::ConnectionLost {
+                    reason: conn_err.clone(),
+                });
 
                 match conn_err {
                     ConnectionError::ApplicationClosed { reason } => State::closed(reason),
@@ -866,23 +849,19 @@ impl Connection {
         };
 
         if !was_closed && state.is_closed() {
-            self.close_common(ctx, now);
+            self.close_common(mux, now);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(ref state) = state {
-            if was_handshake && self.side.is_server() {
-                ctx.incoming_handshakes -= 1;
-            }
-            self.transmit_close(ctx, now, &state.reason);
+            self.transmit_close(mux, now, &state.reason);
         }
         self.state = Some(state);
-        ctx.dirty_conns.insert(self.handle);
     }
 
     fn handle_connected_inner(
         &mut self,
-        ctx: &mut Context,
+        mux: &mut impl Multiplexer,
         now: u64,
         number: Option<u64>,
         packet: Packet,
@@ -953,7 +932,7 @@ impl Connection {
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 Frame::Ack(ack) => {
-                                    self.on_ack_received(ctx, now, ack);
+                                    self.on_ack_received(mux, now, ack);
                                 }
                                 Frame::ConnectionClose(reason) => {
                                     trace!(
@@ -961,21 +940,15 @@ impl Connection {
                                         "peer aborted the handshake: {error}",
                                         error = reason.error_code
                                     );
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: ConnectionError::ConnectionClosed { reason },
-                                        },
-                                    ));
+                                    mux.emit(Event::ConnectionLost {
+                                        reason: ConnectionError::ConnectionClosed { reason },
+                                    });
                                     return Ok(State::Draining);
                                 }
                                 Frame::ApplicationClose(reason) => {
-                                    ctx.events.push_back((
-                                        self.handle,
-                                        Event::ConnectionLost {
-                                            reason: ConnectionError::ApplicationClosed { reason },
-                                        },
-                                    ));
+                                    mux.emit(Event::ConnectionLost {
+                                        reason: ConnectionError::ApplicationClosed { reason },
+                                    });
                                     return Ok(State::Draining);
                                 }
                                 Frame::PathChallenge(value) => {
@@ -991,7 +964,7 @@ impl Connection {
 
                         if self.tls.is_handshaking() {
                             trace!(self.log, "handshake ongoing");
-                            self.handshake_cleanup();
+                            self.handshake_cleanup(mux);
                             self.write_tls();
                             return Ok(State::Handshake(state::Handshake {
                                 token: None,
@@ -1013,26 +986,15 @@ impl Connection {
                             })?;
                         self.set_params(params)?;
                         trace!(self.log, "{connection} established", connection = id);
-                        self.handshake_cleanup();
+                        self.handshake_cleanup(mux);
                         self.write_tls();
                         if self.side.is_server() {
                             self.awaiting_handshake = false;
                         }
-                        match self.side {
-                            Side::Client => {
-                                ctx.events.push_back((
-                                    self.handle,
-                                    Event::Connected {
-                                        protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
-                                    },
-                                ));
-                            }
-                            Side::Server => {
-                                ctx.incoming_handshakes -= 1;
-                                ctx.incoming.push_back(self.handle);
-                            }
-                        }
                         self.crypto = Some(Crypto::new_1rtt(&self.tls, self.side));
+                        mux.emit(Event::Connected {
+                            protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
+                        });
                         Ok(State::Established)
                     }
                     Header::Initial { .. } => {
@@ -1131,10 +1093,10 @@ impl Connection {
                         "only the client confirms handshake completion based on a protected packet"
                     );
                     // Forget about unacknowledged handshake packets
-                    self.handshake_cleanup();
+                    self.handshake_cleanup(mux);
                 }
                 let closed =
-                    self.process_payload(ctx, now, number.unwrap(), packet.payload.into())?;
+                    self.process_payload(mux, now, number.unwrap(), packet.payload.into())?;
                 Ok(if closed {
                     State::Draining
                 } else {
@@ -1160,7 +1122,7 @@ impl Connection {
 
     fn process_payload(
         &mut self,
-        ctx: &mut Context,
+        mux: &mut impl Multiplexer,
         now: u64,
         number: u64,
         payload: Bytes,
@@ -1236,33 +1198,26 @@ impl Connection {
                     }
 
                     self.readable_streams.insert(frame.id);
-                    ctx.readable_conns.insert(self.handle);
+                    mux.readable();
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(ctx, now, ack);
+                    self.on_ack_received(mux, now, ack);
                     for stream in self.streams.finished.drain(..) {
-                        ctx.events
-                            .push_back((self.handle, Event::StreamFinished { stream }));
+                        mux.emit(Event::StreamFinished { stream });
                     }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
-                    ctx.events.push_back((
-                        self.handle,
-                        Event::ConnectionLost {
-                            reason: ConnectionError::ConnectionClosed { reason },
-                        },
-                    ));
+                    mux.emit(Event::ConnectionLost {
+                        reason: ConnectionError::ConnectionClosed { reason },
+                    });
                     return Ok(true);
                 }
                 Frame::ApplicationClose(reason) => {
-                    ctx.events.push_back((
-                        self.handle,
-                        Event::ConnectionLost {
-                            reason: ConnectionError::ApplicationClosed { reason },
-                        },
-                    ));
+                    mux.emit(Event::ConnectionLost {
+                        reason: ConnectionError::ApplicationClosed { reason },
+                    });
                     return Ok(true);
                 }
                 Frame::PathChallenge(x) => {
@@ -1277,8 +1232,7 @@ impl Connection {
                     self.max_data = cmp::max(bytes, self.max_data);
                     if was_blocked && !self.blocked() {
                         for stream in self.blocked_streams.drain() {
-                            ctx.events
-                                .push_back((self.handle, Event::StreamWritable { stream }));
+                            mux.emit(Event::StreamWritable { stream });
                         }
                     }
                 }
@@ -1292,8 +1246,7 @@ impl Connection {
                             trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
-                                ctx.events
-                                    .push_back((self.handle, Event::StreamWritable { stream: id }));
+                                mux.emit(Event::StreamWritable { stream: id });
                             }
                             ss.max_data = offset;
                         }
@@ -1310,12 +1263,9 @@ impl Connection {
                     let update = id.index() + 1;
                     if update > *limit {
                         *limit = update;
-                        ctx.events.push_back((
-                            self.handle,
-                            Event::StreamAvailable {
-                                directionality: id.directionality(),
-                            },
-                        ));
+                        mux.emit(Event::StreamAvailable {
+                            directionality: id.directionality(),
+                        });
                     }
                 }
                 Frame::RstStream(frame::RstStream {
@@ -1350,7 +1300,7 @@ impl Connection {
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
                     self.readable_streams.insert(id);
-                    ctx.readable_conns.insert(self.handle);
+                    mux.readable();
                 }
                 Frame::Blocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -1371,7 +1321,7 @@ impl Connection {
                         debug!(self.log, "got STOP_SENDING on invalid stream");
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
-                    self.reset(ctx, id, error_code);
+                    self.reset(id, error_code);
                     self.streams.get_send_mut(&id).unwrap().state = stream::SendState::ResetSent {
                         stop_reason: Some(error_code),
                     };
@@ -1403,7 +1353,7 @@ impl Connection {
         Ok(false)
     }
 
-    pub fn next_packet(&mut self, now: u64) -> Option<Vec<u8>> {
+    pub fn next_packet(&mut self, mux: &mut impl Multiplexer, now: u64) -> Option<Vec<u8>> {
         let established = match *self.state.as_ref().unwrap() {
             State::Handshake(_) => false,
             State::Established => true,
@@ -1718,6 +1668,7 @@ impl Connection {
         self.permit_ack_only &= acks.is_empty();
 
         self.on_packet_sent(
+            mux,
             now,
             number,
             SentPacket {
@@ -1733,17 +1684,13 @@ impl Connection {
     }
 
     /// Send a QUIC packet
-    fn transmit(&mut self, ctx: &mut Context, now: u64, packet: Box<[u8]>) {
-        ctx.io.push_back(Io::Transmit {
-            destination: self.remote,
-            packet,
-        });
-        self.reset_idle_timeout(now);
-        ctx.dirty_conns.insert(self.handle);
+    fn transmit(&mut self, mux: &mut impl Multiplexer, now: u64, packet: Box<[u8]>) {
+        mux.transmit(self.remote, packet);
+        self.reset_idle_timeout(mux, now);
     }
 
     // TLP/RTO transmit
-    fn force_transmit(&mut self, ctx: &mut Context, now: u64) {
+    fn force_transmit(&mut self, mux: &mut impl Multiplexer, now: u64) {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         let header = Header::Short {
@@ -1760,6 +1707,7 @@ impl Connection {
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
 
         self.on_packet_sent(
+            mux,
             now,
             number,
             SentPacket {
@@ -1770,10 +1718,15 @@ impl Connection {
                 retransmits: Retransmits::default(),
             },
         );
-        self.transmit(ctx, now, buf.into());
+        self.transmit(mux, now, buf.into());
     }
 
-    fn transmit_close(&mut self, ctx: &mut Context, now: u64, reason: &state::CloseReason) {
+    fn transmit_close(
+        &mut self,
+        mux: &mut impl Multiplexer,
+        now: u64,
+        reason: &state::CloseReason,
+    ) {
         let full_number = self.get_tx_number();
         let number = PacketNumber::new(full_number, self.largest_acked_packet);
         let mut buf = Vec::new();
@@ -1810,20 +1763,20 @@ impl Connection {
             .unwrap_or_else(|| &self.handshake_crypto);
         crypto.encrypt(full_number, &mut buf, header_len as usize);
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
-        self.transmit(ctx, now, buf.into());
+        self.transmit(mux, now, buf.into());
     }
 
     /// Close a connection immediately
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, ctx: &mut Context, now: u64, error_code: u16, reason: Bytes) {
+    pub fn close(&mut self, mux: &mut impl Multiplexer, now: u64, error_code: u16, reason: Bytes) {
         let was_closed = self.state.as_ref().unwrap().is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
-            self.close_common(ctx, now);
-            self.transmit_close(ctx, now, &reason);
+            self.close_common(mux, now);
+            self.transmit_close(mux, now, &reason);
         }
 
         self.app_closed = true;
@@ -1836,14 +1789,10 @@ impl Connection {
         });
     }
 
-    pub fn close_common(&mut self, ctx: &mut Context, now: u64) {
+    pub fn close_common(&mut self, mux: &mut impl Multiplexer, now: u64) {
         trace!(self.log, "connection closed");
-        self.set_loss_detection = Some(None);
-        ctx.io.push_back(Io::TimerStart {
-            connection: self.handle,
-            timer: Timer::Close,
-            time: now + 3 * self.rto(),
-        });
+        mux.timer_stop(Timer::LossDetection);
+        mux.timer_start(Timer::Close, now + 3 * self.rto());
     }
 
     fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
@@ -2071,12 +2020,7 @@ impl Connection {
         }
     }
 
-    pub fn write(
-        &mut self,
-        ctx: &mut Context,
-        stream: StreamId,
-        data: &[u8],
-    ) -> Result<usize, WriteError> {
+    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
         if self.state.as_ref().unwrap().is_closed() {
             trace!(self.log, "write blocked; connection draining"; "stream" => stream.0);
@@ -2114,7 +2058,6 @@ impl Connection {
         let conn_budget = self.max_data - self.data_sent;
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.queue_stream_data(stream, (&data[0..n]).into());
-        ctx.dirty_conns.insert(self.handle);
         trace!(self.log, "write"; "stream" => stream.0, "len" => n);
         Ok(n)
     }
@@ -2129,46 +2072,14 @@ impl Connection {
         None
     }
 
-    pub fn flush_pending(&mut self, ctx: &mut Context, now: u64) {
+    pub fn flush_pending(&mut self, mux: &mut impl Multiplexer, now: u64) {
         let mut sent = false;
-        while let Some(packet) = self.next_packet(now) {
-            ctx.io.push_back(Io::Transmit {
-                destination: self.remote,
-                packet: packet.into(),
-            });
+        while let Some(packet) = self.next_packet(mux, now) {
+            mux.transmit(self.remote, packet.into());
             sent = true;
         }
         if sent {
-            self.reset_idle_timeout(now);
-        }
-
-        if let Some(setting) = self.set_idle.take() {
-            if let Some(time) = setting {
-                ctx.io.push_back(Io::TimerStart {
-                    connection: self.handle,
-                    timer: Timer::Idle,
-                    time,
-                });
-            } else {
-                ctx.io.push_back(Io::TimerStop {
-                    connection: self.handle,
-                    timer: Timer::Idle,
-                });
-            }
-        }
-        if let Some(setting) = self.set_loss_detection.take() {
-            if let Some(time) = setting {
-                ctx.io.push_back(Io::TimerStart {
-                    connection: self.handle,
-                    timer: Timer::LossDetection,
-                    time,
-                });
-            } else {
-                ctx.io.push_back(Io::TimerStop {
-                    connection: self.handle,
-                    timer: Timer::LossDetection,
-                });
-            }
+            self.reset_idle_timeout(mux, now);
         }
     }
 }
@@ -2564,3 +2475,16 @@ impl From<ConnectionHandle> for usize {
 
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
+
+pub trait Multiplexer {
+    /// Transmit a UDP packet.
+    fn transmit(&mut self, destination: SocketAddrV6, packet: Box<[u8]>);
+    /// Start or reset a timer associated with this connection.
+    fn timer_start(&mut self, timer: Timer, time: u64);
+    /// Start one of the timers associated with this connection.
+    fn timer_stop(&mut self, timer: Timer);
+    /// Emit an application-facing event.
+    fn emit(&mut self, event: Event);
+    /// Mark this connection as readable by the application.
+    fn readable(&mut self);
+}
