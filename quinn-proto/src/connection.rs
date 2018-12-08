@@ -833,7 +833,7 @@ impl Connection {
             }
             Err(None) => {
                 debug!(self.log, "failed to authenticate packet");
-                Ok(State::Established)
+                return;
             }
         };
 
