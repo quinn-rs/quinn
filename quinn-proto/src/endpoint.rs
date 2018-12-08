@@ -132,24 +132,23 @@ impl Default for Config {
 /// `handle` and `timeout`.
 pub struct Endpoint {
     log: Logger,
-    pub(crate) ctx: Context,
+    rng: OsRng,
+    ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
     config: Arc<Config>,
     server_config: Option<ServerConfig>,
+    dirty_conns: FnvHashSet<ConnectionHandle>,
+    incoming_handshakes: usize,
 }
 
-pub struct Context {
-    pub rng: OsRng,
-    pub io: VecDeque<Io>,
-    // pub session_ticket_buffer: SessionTicketBuffer,
-    pub events: VecDeque<(ConnectionHandle, Event)>,
-    pub incoming: VecDeque<ConnectionHandle>,
-    pub incoming_handshakes: usize,
-    pub dirty_conns: FnvHashSet<ConnectionHandle>,
-    pub readable_conns: FnvHashSet<ConnectionHandle>,
+struct Context {
+    io: VecDeque<Io>,
+    events: VecDeque<(ConnectionHandle, Event)>,
+    incoming: VecDeque<ConnectionHandle>,
+    readable_conns: FnvHashSet<ConnectionHandle>,
 }
 
 /// Parameters governing incoming connections.
@@ -228,20 +227,20 @@ impl Endpoint {
         );
         Ok(Self {
             ctx: Context {
-                rng,
                 io: VecDeque::new(),
                 // session_ticket_buffer,
                 events: VecDeque::new(),
-                dirty_conns: FnvHashSet::default(),
                 readable_conns: FnvHashSet::default(),
                 incoming: VecDeque::new(),
-                incoming_handshakes: 0,
             },
             log,
+            rng,
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
+            dirty_conns: FnvHashSet::default(),
+            incoming_handshakes: 0,
             config,
             server_config,
         })
@@ -271,10 +270,11 @@ impl Endpoint {
             if let Some(x) = self.ctx.io.pop_front() {
                 return Some(x);
             }
-            let &conn = self.ctx.dirty_conns.iter().next()?;
+            let &conn = self.dirty_conns.iter().next()?;
             // TODO: Only determine a single operation; only remove from dirty set if that fails
-            self.flush_pending(now, conn);
-            self.ctx.dirty_conns.remove(&conn);
+            let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+            self.connections[conn.0].flush_pending(&mut mux, now);
+            self.dirty_conns.remove(&conn);
         }
     }
 
@@ -305,7 +305,7 @@ impl Endpoint {
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
-                        random: self.ctx.rng.gen(),
+                        random: self.rng.gen(),
                         src_cid: destination,
                         dst_cid: source,
                     }
@@ -348,13 +348,19 @@ impl Endpoint {
                 .or_else(|| self.connection_remotes.get(&remote))
                 .cloned()
         };
-        if let Some(conn) = conn {
-            return self.connections[conn.0].handle_decode(
-                &mut self.ctx,
-                now,
-                remote,
-                partial_decode,
-            );
+        if let Some(conn_id) = conn {
+            let conn = &mut self.connections[conn_id.0];
+            let was_handshake = conn.state.as_ref().unwrap().is_handshake();
+            let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side);
+            let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
+            if was_handshake
+                && !conn.state.as_ref().unwrap().is_handshake()
+                && conn.side.is_server()
+            {
+                self.incoming_handshakes -= 1;
+            }
+            self.dirty_conns.insert(conn_id);
+            return remaining;
         }
 
         //
@@ -413,7 +419,7 @@ impl Endpoint {
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification
             // attacks
             let header_len = 1 + MAX_CID_SIZE + 1;
-            let padding = self.ctx.rng.gen_range(
+            let padding = self.rng.gen_range(
                 0,
                 cmp::max(
                     RESET_TOKEN_SIZE + 8,
@@ -422,9 +428,9 @@ impl Endpoint {
                 .saturating_sub(RESET_TOKEN_SIZE),
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
-            let number = self.ctx.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
+            let number = self.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
             Header::Short {
-                dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE),
+                dst_cid: ConnectionId::random(&mut self.rng, MAX_CID_SIZE),
                 number: PacketNumber::U32(number),
                 key_phase: false,
             }
@@ -432,8 +438,7 @@ impl Endpoint {
 
             let padding_start = buf.len();
             buf.resize(padding_start + padding, 0);
-            self.ctx
-                .rng
+            self.rng
                 .fill_bytes(&mut buf[padding_start..padding_start + padding]);
             buf.extend(&reset_token_for(
                 &self.server_config.as_ref().unwrap().reset_key,
@@ -458,7 +463,7 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = self.new_cid();
-        let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE);
+        let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id,
@@ -470,13 +475,13 @@ impl Endpoint {
                 server_name: server_name.into(),
             }),
         )?;
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
         Ok(conn)
     }
 
     fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let cid = ConnectionId::random(&mut self.ctx.rng, self.config.local_cid_len);
+            let cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
             if !self.connection_ids.contains_key(&cid) {
                 break cid;
             }
@@ -521,10 +526,7 @@ impl Endpoint {
             }
         };
 
-        let entry = self.connections.vacant_entry();
-        let conn = ConnectionHandle(entry.key());
-
-        entry.insert(Connection::new(
+        let conn = self.connections.insert(Connection::new(
             self.log.new(o!("connection" => local_id)),
             Arc::clone(&self.config),
             initial_id,
@@ -533,8 +535,8 @@ impl Endpoint {
             remote,
             client_config,
             tls,
-            conn,
         ));
+        let conn = ConnectionHandle(conn);
 
         if self.config.local_cid_len > 0 {
             self.connection_ids.insert(local_id, conn);
@@ -569,7 +571,7 @@ impl Endpoint {
         };
         let loc_cid = self.new_cid();
 
-        if self.ctx.incoming.len() + self.ctx.incoming_handshakes
+        if self.ctx.incoming.len() + self.incoming_handshakes
             == self.server_config.as_ref().unwrap().accept_buffer as usize
         {
             debug!(self.log, "rejecting connection due to full accept buffer");
@@ -644,13 +646,17 @@ impl Endpoint {
             )
             .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
         match self.connections[conn.0].handle_initial(
-            &mut self.ctx,
+            &mut mux,
             now,
             packet_number as u64,
             payload.freeze(),
         ) {
-            Ok(()) => {}
+            Ok(()) => {
+                self.incoming_handshakes += 1;
+                self.dirty_conns.insert(conn);
+            }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
                 self.ctx.io.push_back(Io::Transmit {
@@ -659,10 +665,6 @@ impl Endpoint {
                 });
             }
         }
-    }
-
-    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
-        self.connections[conn.0].flush_pending(&mut self.ctx, now);
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
@@ -676,7 +678,7 @@ impl Endpoint {
         }
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
-        self.ctx.dirty_conns.remove(&conn);
+        self.dirty_conns.remove(&conn);
         self.ctx.readable_conns.remove(&conn);
         self.connections.remove(conn.0);
     }
@@ -697,7 +699,8 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                self.connections[conn.0].close_common(&mut self.ctx, now);
+                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                self.connections[conn.0].close_common(&mut mux, now);
                 self.connections[conn.0].state = Some(State::Draining);
                 self.ctx.events.push_back((
                     conn,
@@ -705,11 +708,12 @@ impl Endpoint {
                         reason: ConnectionError::TimedOut,
                     },
                 ));
-                self.ctx.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
-                                                   // goes through
+                self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
+                                               // goes through
             }
             Timer::LossDetection => {
-                self.connections[conn.0].check_packet_loss(&mut self.ctx, now);
+                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                self.connections[conn.0].check_packet_loss(&mut mux, now);
             }
         }
     }
@@ -726,7 +730,9 @@ impl Endpoint {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        self.connections[conn.0].write(&mut self.ctx, stream, data)
+        let result = self.connections[conn.0].write(stream, data);
+        self.dirty_conns.insert(conn);
+        result
     }
 
     /// Indicate that no more data will be sent on a stream
@@ -738,7 +744,7 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn finish(&mut self, conn: ConnectionHandle, stream: StreamId) {
         self.connections[conn.0].finish(stream);
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Read data from a stream
@@ -754,7 +760,7 @@ impl Endpoint {
         stream: StreamId,
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
-        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -781,7 +787,7 @@ impl Endpoint {
         conn: ConnectionHandle,
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
-        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[conn.0].maybe_cleanup(stream);
@@ -796,7 +802,8 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[conn.0].reset(&mut self.ctx, stream, error_code)
+        self.connections[conn.0].reset(stream, error_code);
+        self.dirty_conns.insert(conn);
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
@@ -805,7 +812,7 @@ impl Endpoint {
     /// - when applied to a stream that has not begin receiving data
     pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[conn.0].stop_sending(stream, error_code);
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Create a new stream
@@ -821,7 +828,7 @@ impl Endpoint {
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self, conn: ConnectionHandle) {
         self.connections[conn.0].pending.ping = true;
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Close a connection immediately
@@ -833,7 +840,8 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-        self.connections[conn.0].close(&mut self.ctx, now, error_code, reason);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+        self.connections[conn.0].close(&mut mux, now, error_code, reason);
     }
 
     /// Look up whether we're the client or server of `conn`.
@@ -965,4 +973,48 @@ impl slog::Value for Timer {
 enum ConnectionOpts {
     Client(ClientConfig),
     Server { orig_dst_cid: Option<ConnectionId> },
+}
+
+pub struct EndpointMux<'a> {
+    handle: ConnectionHandle,
+    side: Side,
+    ctx: &'a mut Context,
+}
+
+impl<'a> EndpointMux<'a> {
+    fn new(ctx: &'a mut Context, handle: ConnectionHandle, side: Side) -> Self {
+        Self { handle, side, ctx }
+    }
+}
+
+impl Multiplexer for EndpointMux<'_> {
+    fn transmit(&mut self, destination: SocketAddrV6, packet: Box<[u8]>) {
+        self.ctx.io.push_back(Io::Transmit {
+            destination,
+            packet,
+        });
+    }
+    fn timer_start(&mut self, timer: Timer, time: u64) {
+        self.ctx.io.push_back(Io::TimerStart {
+            connection: self.handle,
+            timer,
+            time,
+        });
+    }
+    fn timer_stop(&mut self, timer: Timer) {
+        self.ctx.io.push_back(Io::TimerStop {
+            connection: self.handle,
+            timer,
+        });
+    }
+    fn emit(&mut self, event: Event) {
+        if let (Side::Server, &Event::Connected { .. }) = (self.side, &event) {
+            self.ctx.incoming.push_back(self.handle);
+        } else {
+            self.ctx.events.push_back((self.handle, event));
+        }
+    }
+    fn readable(&mut self) {
+        self.ctx.readable_conns.insert(self.handle);
+    }
 }
