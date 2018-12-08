@@ -14,7 +14,8 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
+    handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, Multiplexer,
+    State,
 };
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
@@ -136,12 +137,12 @@ pub struct Endpoint {
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
+    config: Arc<Config>,
     server_config: Option<ServerConfig>,
 }
 
 pub struct Context {
     pub rng: OsRng,
-    pub config: Arc<Config>,
     pub io: VecDeque<Io>,
     // pub session_ticket_buffer: SessionTicketBuffer,
     pub events: VecDeque<(ConnectionHandle, Event)>,
@@ -228,7 +229,6 @@ impl Endpoint {
         Ok(Self {
             ctx: Context {
                 rng,
-                config,
                 io: VecDeque::new(),
                 // session_ticket_buffer,
                 events: VecDeque::new(),
@@ -242,6 +242,7 @@ impl Endpoint {
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
+            config,
             server_config,
         })
     }
@@ -281,7 +282,7 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            match PartialDecode::new(data, self.ctx.config.local_cid_len) {
+            match PartialDecode::new(data, self.config.local_cid_len) {
                 Ok(partial_decode) => {
                     match self.handle_decode(now, remote, partial_decode, datagram_len) {
                         Some(rest) => {
@@ -338,7 +339,7 @@ impl Endpoint {
 
         let dst_cid = partial_decode.dst_cid();
         let conn = {
-            let conn = if self.ctx.config.local_cid_len > 0 {
+            let conn = if self.config.local_cid_len > 0 {
                 self.connection_ids.get(&dst_cid)
             } else {
                 None
@@ -475,11 +476,11 @@ impl Endpoint {
 
     fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let cid = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
+            let cid = ConnectionId::random(&mut self.ctx.rng, self.config.local_cid_len);
             if !self.connection_ids.contains_key(&cid) {
                 break cid;
             }
-            assert!(self.ctx.config.local_cid_len > 0);
+            assert!(self.config.local_cid_len > 0);
         }
     }
 
@@ -497,7 +498,7 @@ impl Endpoint {
                 TlsSession::new_client(
                     &config.tls_config,
                     &config.server_name,
-                    &TransportParameters::new(&self.ctx.config),
+                    &TransportParameters::new(&self.config),
                 )?,
                 Some(config),
             ),
@@ -508,7 +509,7 @@ impl Endpoint {
                         &local_id,
                     )),
                     original_connection_id: orig_dst_cid,
-                    ..TransportParameters::new(&self.ctx.config)
+                    ..TransportParameters::new(&self.config)
                 };
                 (
                     TlsSession::new_server(
@@ -525,17 +526,17 @@ impl Endpoint {
 
         entry.insert(Connection::new(
             self.log.new(o!("connection" => local_id)),
+            Arc::clone(&self.config),
             initial_id,
             local_id,
             remote_id,
             remote,
             client_config,
             tls,
-            &mut self.ctx,
             conn,
         ));
 
-        if self.ctx.config.local_cid_len > 0 {
+        if self.config.local_cid_len > 0 {
             self.connection_ids.insert(local_id, conn);
         }
         self.connection_remotes.insert(remote, conn);
@@ -669,7 +670,7 @@ impl Endpoint {
             self.connection_ids_initial
                 .remove(&self.connections[conn.0].init_cid);
         }
-        if self.ctx.config.local_cid_len > 0 {
+        if self.config.local_cid_len > 0 {
             self.connection_ids
                 .remove(&self.connections[conn.0].loc_cid);
         }
@@ -756,7 +757,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
+                self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -783,7 +784,7 @@ impl Endpoint {
         self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
+                self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -812,7 +813,7 @@ impl Endpoint {
     /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint
     /// are already open.
     pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[conn.0].open(&self.ctx.config, direction)
+        self.connections[conn.0].open(direction)
     }
 
     /// Ping the remote endpoint

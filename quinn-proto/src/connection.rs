@@ -26,6 +26,7 @@ use rustls::internal::msgs::enums::AlertDescription;
 
 pub struct Connection {
     log: Logger,
+    config: Arc<Config>,
     pub tls: TlsSession,
     pub app_closed: bool,
     /// DCID of Initial packet
@@ -158,13 +159,13 @@ pub struct Connection {
 impl Connection {
     pub fn new(
         log: Logger,
+        config: Arc<Config>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddrV6,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
-        ctx: &mut Context,
         handle: ConnectionHandle,
     ) -> Self {
         let side = if client_config.is_some() {
@@ -174,16 +175,16 @@ impl Connection {
         };
         let handshake_crypto = Crypto::new_initial(&init_cid, side);
         let mut streams = FnvHashMap::default();
-        for i in 0..ctx.config.max_remote_uni_streams {
+        for i in 0..config.max_remote_uni_streams {
             streams.insert(
                 StreamId::new(!side, Directionality::Uni, u64::from(i)),
-                stream::Recv::new(u64::from(ctx.config.stream_receive_window)).into(),
+                stream::Recv::new(u64::from(config.stream_receive_window)).into(),
             );
         }
-        for i in 0..ctx.config.max_remote_bi_streams {
+        for i in 0..config.max_remote_bi_streams {
             streams.insert(
                 StreamId::new(!side, Directionality::Bi, i as u64),
-                Stream::new_bi(ctx.config.stream_receive_window as u64),
+                Stream::new_bi(config.stream_receive_window as u64),
             );
         }
         let mut this = Self {
@@ -204,13 +205,13 @@ impl Connection {
             prev_crypto: None,
             //zero_rtt_crypto: None,
             key_phase: false,
-            params: TransportParameters::new(&ctx.config),
+            params: TransportParameters::new(&config),
             readable_streams: FnvHashSet::default(),
             blocked_streams: FnvHashSet::default(),
             max_data: 0,
             data_sent: 0,
             data_recvd: 0,
-            local_max_data: ctx.config.receive_window as u64,
+            local_max_data: config.receive_window as u64,
             client_config,
             crypto_stream: stream::Assembler::new(),
             crypto_offset: 0,
@@ -220,10 +221,10 @@ impl Connection {
             handshake_count: 0,
             tlp_count: 0,
             rto_count: 0,
-            reordering_threshold: if ctx.config.using_time_loss_detection {
+            reordering_threshold: if config.using_time_loss_detection {
                 u32::max_value()
             } else {
-                ctx.config.reordering_threshold
+                config.reordering_threshold
             },
             loss_time: 0,
             latest_rtt: 0,
@@ -239,7 +240,7 @@ impl Connection {
             sent_packets: BTreeMap::new(),
 
             bytes_in_flight: 0,
-            congestion_window: ctx.config.initial_window,
+            congestion_window: config.initial_window,
             end_of_recovery: 0,
             ssthresh: u64::max_value(),
 
@@ -260,10 +261,11 @@ impl Connection {
                 next_bi: 0,
                 max_uni: 0,
                 max_bi: 0,
-                max_remote_uni: ctx.config.max_remote_uni_streams as u64,
-                max_remote_bi: ctx.config.max_remote_bi_streams as u64,
+                max_remote_uni: config.max_remote_uni_streams as u64,
+                max_remote_bi: config.max_remote_bi_streams as u64,
                 finished: Vec::new(),
             },
+            config,
         };
         if side.is_client() {
             this.connect();
@@ -296,13 +298,7 @@ impl Connection {
         x
     }
 
-    fn on_packet_sent(
-        &mut self,
-        config: &Config,
-        now: u64,
-        packet_number: u64,
-        packet: SentPacket,
-    ) {
+    fn on_packet_sent(&mut self, now: u64, packet_number: u64, packet: SentPacket) {
         let bytes = packet.bytes;
         let handshake = packet.handshake;
         if handshake {
@@ -315,7 +311,7 @@ impl Connection {
                 self.time_of_last_sent_handshake_packet = now;
             }
             self.bytes_in_flight += bytes as u64;
-            self.set_loss_detection_alarm(config);
+            self.set_loss_detection_alarm();
         }
     }
 
@@ -337,11 +333,11 @@ impl Connection {
                 .map(|(&n, _)| n)
                 .collect::<Vec<_>>();
             for packet in packets {
-                self.on_packet_acked(&ctx.config, packet);
+                self.on_packet_acked(packet);
             }
         }
-        self.detect_lost_packets(&ctx.config, now, ack.largest);
-        self.set_loss_detection_alarm(&ctx.config);
+        self.detect_lost_packets(now, ack.largest);
+        self.set_loss_detection_alarm();
         if was_blocked && !self.blocked() {
             for stream in self.blocked_streams.drain() {
                 ctx.events
@@ -370,7 +366,7 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, config: &Config, packet: u64) {
+    fn on_packet_acked(&mut self, packet: u64) {
         let info = if let Some(x) = self.sent_packets.remove(&packet) {
             x
         } else {
@@ -387,7 +383,7 @@ impl Connection {
                 } else {
                     // Congestion avoidance.
                     self.congestion_window +=
-                        config.default_mss * info.bytes as u64 / self.congestion_window;
+                        self.config.default_mss * info.bytes as u64 / self.congestion_window;
                 }
             }
         }
@@ -398,7 +394,7 @@ impl Connection {
         // congestion control.
         if self.rto_count > 0 && packet > self.largest_sent_before_rto {
             // Retransmission timeout verified
-            self.congestion_window = config.minimum_window;
+            self.congestion_window = self.config.minimum_window;
         }
 
         self.handshake_count = 0;
@@ -413,7 +409,7 @@ impl Connection {
                 self.streams.get_send_mut(&id).unwrap().state =
                     stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
-                    self.maybe_cleanup(config, id);
+                    self.maybe_cleanup(id);
                 }
             }
         }
@@ -433,7 +429,7 @@ impl Connection {
                 }
             };
             if recvd {
-                self.maybe_cleanup(config, frame.id);
+                self.maybe_cleanup(frame.id);
                 self.streams.finished.push(frame.id);
             }
         }
@@ -457,8 +453,8 @@ impl Connection {
         } else if self.loss_time != 0 {
             // Early retransmit or Time Loss Detection
             let largest = self.largest_acked_packet;
-            self.detect_lost_packets(&ctx.config, now, largest);
-        } else if self.tlp_count < ctx.config.max_tlps {
+            self.detect_lost_packets(now, largest);
+        } else if self.tlp_count < self.config.max_tlps {
             trace!(self.log, "sending TLP {number} in {pn}",
                            number=self.tlp_count,
                            pn=self.next_packet_number;
@@ -466,7 +462,7 @@ impl Connection {
                            "in flight" => self.bytes_in_flight);
             // Tail Loss Probe.
             self.force_transmit(ctx, now);
-            self.reset_idle_timeout(&ctx.config, now);
+            self.reset_idle_timeout(now);
             self.tlp_count += 1;
         } else {
             trace!(self.log, "RTO fired, retransmitting"; "pn" => self.next_packet_number,
@@ -481,18 +477,18 @@ impl Connection {
             }
             self.rto_count += 1;
         }
-        self.set_loss_detection_alarm(&ctx.config);
+        self.set_loss_detection_alarm();
         ctx.dirty_conns.insert(self.handle);
     }
 
-    fn detect_lost_packets(&mut self, config: &Config, now: u64, largest_acked: u64) {
+    fn detect_lost_packets(&mut self, now: u64, largest_acked: u64) {
         self.loss_time = 0;
         let mut lost_packets = Vec::<u64>::new();
         let delay_until_lost;
         let rtt = cmp::max(self.latest_rtt, self.smoothed_rtt);
-        if config.using_time_loss_detection {
+        if self.config.using_time_loss_detection {
             // factor * (1 + fraction)
-            delay_until_lost = (rtt + (rtt * config.time_reordering_fraction as u64)) >> 16;
+            delay_until_lost = (rtt + (rtt * self.config.time_reordering_fraction as u64)) >> 16;
         } else if largest_acked == self.largest_sent_packet() {
             // Early retransmit alarm.
             delay_until_lost = (5 * rtt) / 4;
@@ -530,8 +526,9 @@ impl Connection {
                 self.end_of_recovery = self.largest_sent_packet();
                 // *= factor
                 self.congestion_window =
-                    (self.congestion_window * config.loss_reduction_factor as u64) >> 16;
-                self.congestion_window = cmp::max(self.congestion_window, config.minimum_window);
+                    (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
+                self.congestion_window =
+                    cmp::max(self.congestion_window, self.config.minimum_window);
                 self.ssthresh = self.congestion_window;
             }
         }
@@ -541,7 +538,7 @@ impl Connection {
         packet <= self.end_of_recovery
     }
 
-    fn set_loss_detection_alarm(&mut self, config: &Config) {
+    fn set_loss_detection_alarm(&mut self) {
         if self.bytes_in_flight == 0 {
             self.set_loss_detection = Some(None);
             return;
@@ -551,11 +548,14 @@ impl Connection {
         if self.awaiting_handshake {
             // Handshake retransmission alarm.
             if self.smoothed_rtt == 0 {
-                alarm_duration = 2 * config.default_initial_rtt;
+                alarm_duration = 2 * self.config.default_initial_rtt;
             } else {
                 alarm_duration = 2 * self.smoothed_rtt;
             }
-            alarm_duration = cmp::max(alarm_duration + self.max_ack_delay, config.min_tlp_timeout);
+            alarm_duration = cmp::max(
+                alarm_duration + self.max_ack_delay,
+                self.config.min_tlp_timeout,
+            );
             alarm_duration *= 2u64.pow(self.handshake_count);
             self.set_loss_detection = Some(Some(
                 self.time_of_last_sent_handshake_packet + alarm_duration,
@@ -568,12 +568,12 @@ impl Connection {
             alarm_duration = self.loss_time - self.time_of_last_sent_retransmittable_packet;
         } else {
             // TLP or RTO alarm
-            alarm_duration = self.rto(config);
-            if self.tlp_count < config.max_tlps {
+            alarm_duration = self.rto();
+            if self.tlp_count < self.config.max_tlps {
                 // Tail Loss Probe
                 let tlp_duration = cmp::max(
                     (3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
-                    config.min_tlp_timeout,
+                    self.config.min_tlp_timeout,
                 );
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
@@ -584,13 +584,13 @@ impl Connection {
     }
 
     /// Retransmit time-out
-    fn rto(&self, config: &Config) -> u64 {
+    fn rto(&self) -> u64 {
         let computed = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay;
-        cmp::max(computed, config.min_rto_timeout) * 2u64.pow(self.rto_count)
+        cmp::max(computed, self.config.min_rto_timeout) * 2u64.pow(self.rto_count)
     }
 
     fn on_packet_authenticated(&mut self, ctx: &mut Context, now: u64, packet: Option<u64>) {
-        self.reset_idle_timeout(&ctx.config, now);
+        self.reset_idle_timeout(now);
         let packet = if let Some(x) = packet {
             x
         } else {
@@ -607,18 +607,18 @@ impl Connection {
         }
     }
 
-    pub fn reset_idle_timeout(&mut self, config: &Config, now: u64) {
-        let dt = if config.idle_timeout == 0 || self.params.idle_timeout == 0 {
-            cmp::max(config.idle_timeout, self.params.idle_timeout)
+    pub fn reset_idle_timeout(&mut self, now: u64) {
+        let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
+            cmp::max(self.config.idle_timeout, self.params.idle_timeout)
         } else {
-            cmp::min(config.idle_timeout, self.params.idle_timeout)
+            cmp::min(self.config.idle_timeout, self.params.idle_timeout)
         };
         self.set_idle = Some(Some(now + dt as u64 * 1_000_000));
     }
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we
     /// receive a new handshake packet.
-    fn handshake_cleanup(&mut self, config: &Config) {
+    fn handshake_cleanup(&mut self) {
         if !self.awaiting_handshake {
             return;
         }
@@ -631,9 +631,9 @@ impl Connection {
             }
         }
         for packet in packets {
-            self.on_packet_acked(config, packet);
+            self.on_packet_acked(packet);
         }
-        self.set_loss_detection_alarm(config);
+        self.set_loss_detection_alarm();
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -906,14 +906,14 @@ impl Connection {
                         trace!(self.log, "retrying");
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
-                        self.on_packet_acked(&ctx.config, 0);
+                        self.on_packet_acked(0);
 
                         // Reset to initial state
                         let client_config = self.client_config.as_ref().unwrap();
                         self.tls = TlsSession::new_client(
                             &client_config.tls_config,
                             &client_config.server_name,
-                            &TransportParameters::new(&ctx.config),
+                            &TransportParameters::new(&self.config),
                         )
                         .unwrap();
                         self.crypto_offset = 0;
@@ -991,7 +991,7 @@ impl Connection {
 
                         if self.tls.is_handshaking() {
                             trace!(self.log, "handshake ongoing");
-                            self.handshake_cleanup(&ctx.config);
+                            self.handshake_cleanup();
                             self.write_tls();
                             return Ok(State::Handshake(state::Handshake {
                                 token: None,
@@ -1013,7 +1013,7 @@ impl Connection {
                             })?;
                         self.set_params(params)?;
                         trace!(self.log, "{connection} established", connection = id);
-                        self.handshake_cleanup(&ctx.config);
+                        self.handshake_cleanup();
                         self.write_tls();
                         if self.side.is_server() {
                             self.awaiting_handshake = false;
@@ -1131,7 +1131,7 @@ impl Connection {
                         "only the client confirms handshake completion based on a protected packet"
                     );
                     // Forget about unacknowledged handshake packets
-                    self.handshake_cleanup(&ctx.config);
+                    self.handshake_cleanup();
                 }
                 let closed =
                     self.process_payload(ctx, now, number.unwrap(), packet.payload.into())?;
@@ -1377,7 +1377,7 @@ impl Connection {
                     };
                 }
                 Frame::RetireConnectionId { .. } => {
-                    if ctx.config.local_cid_len == 0 {
+                    if self.config.local_cid_len == 0 {
                         debug!(
                             self.log,
                             "got RETIRE_CONNECTION_ID when we're not using connection IDs"
@@ -1403,7 +1403,7 @@ impl Connection {
         Ok(false)
     }
 
-    pub fn next_packet(&mut self, config: &Config, now: u64) -> Option<Vec<u8>> {
+    pub fn next_packet(&mut self, now: u64) -> Option<Vec<u8>> {
         let established = match *self.state.as_ref().unwrap() {
             State::Handshake(_) => false,
             State::Established => true,
@@ -1718,7 +1718,6 @@ impl Connection {
         self.permit_ack_only &= acks.is_empty();
 
         self.on_packet_sent(
-            config,
             now,
             number,
             SentPacket {
@@ -1739,7 +1738,7 @@ impl Connection {
             destination: self.remote,
             packet,
         });
-        self.reset_idle_timeout(&ctx.config, now);
+        self.reset_idle_timeout(now);
         ctx.dirty_conns.insert(self.handle);
     }
 
@@ -1761,7 +1760,6 @@ impl Connection {
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
 
         self.on_packet_sent(
-            &ctx.config,
             now,
             number,
             SentPacket {
@@ -1844,7 +1842,7 @@ impl Connection {
         ctx.io.push_back(Io::TimerStart {
             connection: self.handle,
             timer: Timer::Close,
-            time: now + 3 * self.rto(&ctx.config),
+            time: now + 3 * self.rto(),
         });
     }
 
@@ -1873,7 +1871,7 @@ impl Connection {
         Ok(())
     }
 
-    pub fn open(&mut self, config: &Config, direction: Directionality) -> Option<StreamId> {
+    pub fn open(&mut self, direction: Directionality) -> Option<StreamId> {
         let (id, mut stream) = match direction {
             Directionality::Uni if self.streams.next_uni < self.streams.max_uni => {
                 self.streams.next_uni += 1;
@@ -1886,7 +1884,7 @@ impl Connection {
                 self.streams.next_bi += 1;
                 (
                     StreamId::new(self.side, direction, self.streams.next_bi - 1),
-                    Stream::new_bi(config.stream_receive_window as u64),
+                    Stream::new_bi(self.config.stream_receive_window as u64),
                 )
             }
             _ => {
@@ -1905,7 +1903,7 @@ impl Connection {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, config: &Config, id: StreamId) {
+    pub fn maybe_cleanup(&mut self, id: StreamId) {
         let new = match self.streams.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
@@ -1922,7 +1920,7 @@ impl Connection {
                                         Directionality::Uni,
                                         self.streams.max_remote_uni - 1,
                                     ),
-                                    stream::Recv::new(u64::from(config.stream_receive_window))
+                                    stream::Recv::new(u64::from(self.config.stream_receive_window))
                                         .into(),
                                 )
                             }
@@ -1935,7 +1933,7 @@ impl Connection {
                                         Directionality::Bi,
                                         self.streams.max_remote_bi - 1,
                                     ),
-                                    Stream::new_bi(config.stream_receive_window as u64),
+                                    Stream::new_bi(self.config.stream_receive_window as u64),
                                 )
                             }
                         })
@@ -2104,7 +2102,7 @@ impl Connection {
         let stream_budget = match budget_res {
             Ok(budget) => budget,
             Err(e @ WriteError::Stopped { .. }) => {
-                self.maybe_cleanup(&ctx.config, stream);
+                self.maybe_cleanup(stream);
                 return Err(e);
             }
             Err(e @ WriteError::Blocked) => {
@@ -2133,7 +2131,7 @@ impl Connection {
 
     pub fn flush_pending(&mut self, ctx: &mut Context, now: u64) {
         let mut sent = false;
-        while let Some(packet) = self.next_packet(&ctx.config, now) {
+        while let Some(packet) = self.next_packet(now) {
             ctx.io.push_back(Io::Transmit {
                 destination: self.remote,
                 packet: packet.into(),
@@ -2141,7 +2139,7 @@ impl Connection {
             sent = true;
         }
         if sent {
-            self.reset_idle_timeout(&ctx.config, now);
+            self.reset_idle_timeout(now);
         }
 
         if let Some(setting) = self.set_idle.take() {
