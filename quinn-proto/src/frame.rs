@@ -102,6 +102,7 @@ frame_types! {
     PATH_CHALLENGE = 0x0e,
     PATH_RESPONSE = 0x0f,
     CRYPTO = 0x18,
+    NEW_TOKEN = 0x19,
 }
 
 #[derive(Debug)]
@@ -141,6 +142,9 @@ pub enum Frame {
         reset_token: [u8; 16],
     },
     Crypto(Crypto),
+    NewToken {
+        token: Bytes,
+    },
     Invalid(Type),
     Illegal(Type),
 }
@@ -176,6 +180,7 @@ impl Frame {
             PathResponse(_) => Type::PATH_RESPONSE,
             NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
             Crypto(_) => Type::CRYPTO,
+            NewToken { .. } => Type::NEW_TOKEN,
             Invalid(ty) => ty,
             Illegal(ty) => ty,
         }
@@ -490,6 +495,9 @@ impl Iter {
                 offset: self.bytes.get_var()?,
                 data: self.take_len()?,
             }),
+            Type::NEW_TOKEN => Frame::NewToken {
+                token: self.take_len()?,
+            },
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
                     id: self.bytes.get()?,
