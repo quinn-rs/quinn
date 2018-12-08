@@ -9,6 +9,7 @@ use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
 use crate::crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
+use crate::dedup::Dedup;
 use crate::endpoint::{Config, Context, Event, Io, Timer};
 use crate::packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
@@ -63,6 +64,7 @@ pub struct Connection {
     crypto_offset: u64,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
+    dedup: Dedup,
 
     //
     // Loss Detection
@@ -213,6 +215,7 @@ impl Connection {
             crypto_stream: stream::Assembler::new(),
             crypto_offset: 0,
             orig_rem_cid: None,
+            dedup: Dedup::new(),
 
             handshake_count: 0,
             tlp_count: 0,
@@ -802,16 +805,27 @@ impl Connection {
         }
 
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
-        let prev_state = self.state.take().unwrap();
-        let was_handshake = prev_state.is_handshake();
-        let was_closed = prev_state.is_closed();
+        let state = self.state.as_ref().unwrap();
+        let was_handshake = state.is_handshake();
+        let was_closed = state.is_closed();
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
             Ok(number) => {
+                if let Some(number) = number {
+                    if self.dedup.insert(number) {
+                        warn!(
+                            self.log,
+                            "discarding possible duplicate packet {packet}",
+                            packet = number
+                        );
+                        return;
+                    }
+                }
                 if !was_closed {
                     self.on_packet_authenticated(ctx, now, number);
                 }
-                self.handle_connected_inner(ctx, now, number, packet, prev_state)
+                let state = self.state.take().unwrap();
+                self.handle_connected_inner(ctx, now, number, packet, state)
             }
             Err(Some(e)) => {
                 warn!(self.log, "got illegal packet"; "reason" => %e);
