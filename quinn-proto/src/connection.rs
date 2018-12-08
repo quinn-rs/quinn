@@ -1384,6 +1384,16 @@ impl Connection {
                         stop_reason: Some(error_code),
                     };
                 }
+                Frame::RetireConnectionId { .. } => {
+                    if ctx.config.local_cid_len == 0 {
+                        debug!(
+                            self.log,
+                            "got RETIRE_CONNECTION_ID when we're not using connection IDs"
+                        );
+                        return Err(TransportError::PROTOCOL_VIOLATION);
+                    }
+                    // TODO: Forget about this ID and issue a NEW_CONNECTION_ID
+                }
                 Frame::NewConnectionId { .. } => {
                     if self.rem_cid.is_empty() {
                         debug!(self.log, "got NEW_CONNECTION_ID for connection {connection} with empty remote ID",
