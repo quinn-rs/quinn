@@ -83,10 +83,11 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    /// Length of connection IDs for the endpoint. This must be either 0 or between 4 and 18
-    /// inclusive. The length of the local connection IDs constrains the amount of simultaneous
-    /// connections the endpoint can maintain. The API user is responsible for making sure that
-    /// the pool is large enough to cover the intended usage.
+    /// Length of connection IDs for the endpoint.
+    ///
+    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
+    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
+    /// responsible for making sure that the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
 }
 

@@ -98,11 +98,12 @@ frame_types! {
     STREAM_ID_BLOCKED = 0x0a,
     NEW_CONNECTION_ID = 0x0b,
     STOP_SENDING = 0x0c,
-    ACK = 0x0d,
+    RETIRE_CONNECTION_ID = 0x0d,
     PATH_CHALLENGE = 0x0e,
     PATH_RESPONSE = 0x0f,
     CRYPTO = 0x18,
     NEW_TOKEN = 0x19,
+    ACK = 0x1a,
 }
 
 #[derive(Debug)]
@@ -131,6 +132,9 @@ pub enum Frame {
     StopSending {
         id: StreamId,
         error_code: u16,
+    },
+    RetireConnectionId {
+        sequence: u64,
     },
     Ack(Ack),
     Stream(Stream),
@@ -165,6 +169,7 @@ impl Frame {
             StreamBlocked { .. } => Type::STREAM_BLOCKED,
             StreamIdBlocked { .. } => Type::STREAM_ID_BLOCKED,
             StopSending { .. } => Type::STOP_SENDING,
+            RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
@@ -451,6 +456,9 @@ impl Iter {
             Type::STOP_SENDING => Frame::StopSending {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
+            },
+            Type::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
+                sequence: self.bytes.get_var()?,
             },
             Type::ACK => {
                 let largest = self.bytes.get_var()?;
