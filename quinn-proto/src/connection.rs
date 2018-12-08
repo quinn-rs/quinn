@@ -810,6 +810,14 @@ impl Connection {
         let was_closed = state.is_closed();
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
+            Err(Some(e)) => {
+                warn!(self.log, "got illegal packet"; "reason" => %e);
+                Err(e.into())
+            }
+            Err(None) => {
+                debug!(self.log, "failed to authenticate packet");
+                return;
+            }
             Ok(number) => {
                 if let Some(number) = number {
                     if self.dedup.insert(number) {
@@ -826,14 +834,6 @@ impl Connection {
                 }
                 let state = self.state.take().unwrap();
                 self.handle_connected_inner(ctx, now, number, packet, state)
-            }
-            Err(Some(e)) => {
-                warn!(self.log, "got illegal packet"; "reason" => %e);
-                Err(e.into())
-            }
-            Err(None) => {
-                debug!(self.log, "failed to authenticate packet");
-                return;
             }
         };
 
