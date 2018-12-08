@@ -285,24 +285,6 @@ impl Connection {
         }));
     }
 
-    pub fn handshake_complete(
-        &mut self,
-        ctx: &mut Context,
-        //zero_rtt_crypto: Option<Crypto>,
-        now: u64,
-        packet_number: u64,
-    ) {
-        //self.zero_rtt_crypto = zero_rtt_crypto;
-        self.on_packet_authenticated(ctx, now, Some(packet_number));
-        self.write_tls();
-        self.state = Some(State::Handshake(state::Handshake {
-            rem_cid_set: true,
-            token: None,
-        }));
-        ctx.dirty_conns.insert(self.handle);
-        ctx.incoming_handshakes += 1;
-    }
-
     fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
@@ -723,7 +705,14 @@ impl Connection {
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
         self.set_params(params)?;
-        self.handshake_complete(ctx, now, packet_number);
+        self.on_packet_authenticated(ctx, now, Some(packet_number));
+        self.write_tls();
+        self.state = Some(State::Handshake(state::Handshake {
+            rem_cid_set: true,
+            token: None,
+        }));
+        ctx.dirty_conns.insert(self.handle);
+        ctx.incoming_handshakes += 1;
         Ok(())
     }
 
