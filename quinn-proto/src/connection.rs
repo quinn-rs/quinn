@@ -1527,7 +1527,7 @@ impl Connection {
             //&& !crypto.is_0rtt() {
             let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
             trace!(log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
-            frame::Ack::encode(delay, &self.pending_acks, &mut buf);
+            frame::Ack::encode(delay, &self.pending_acks, None, &mut buf);
             self.pending_acks.clone()
         } else {
             RangeSet::new()
