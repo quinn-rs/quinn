@@ -46,8 +46,6 @@ pub struct Connection {
     //pub zero_rtt_crypto: Option<Crypto>,
     pub key_phase: bool,
     pub params: TransportParameters,
-    /// Streams with data buffered for reading by the application
-    readable_streams: FnvHashSet<StreamId>,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
     pub blocked_streams: FnvHashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
@@ -199,7 +197,6 @@ impl Connection {
             //zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::new(&config),
-            readable_streams: FnvHashSet::default(),
             blocked_streams: FnvHashSet::default(),
             max_data: 0,
             data_sent: 0,
@@ -1197,8 +1194,11 @@ impl Connection {
                         }
                     }
 
-                    self.readable_streams.insert(frame.id);
-                    mux.readable();
+                    let fresh = mem::replace(&mut rs.fresh, false);
+                    mux.emit(Event::StreamReadable {
+                        stream: frame.id,
+                        fresh,
+                    });
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
@@ -1273,7 +1273,7 @@ impl Connection {
                     error_code,
                     final_offset,
                 }) => {
-                    let offset = match self.streams.get_recv_stream(self.side, id) {
+                    let (offset, fresh) = match self.streams.get_recv_stream(self.side, id) {
                         Err(e) => {
                             debug!(self.log, "received illegal RST_STREAM");
                             return Err(e);
@@ -1295,12 +1295,11 @@ impl Connection {
                                     error_code,
                                 };
                             }
-                            rs.limit()
+                            (rs.limit(), mem::replace(&mut rs.fresh, false))
                         }
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
-                    self.readable_streams.insert(id);
-                    mux.readable();
+                    mux.emit(Event::StreamReadable { stream: id, fresh });
                 }
                 Frame::Blocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -2062,16 +2061,6 @@ impl Connection {
         Ok(n)
     }
 
-    pub fn poll(&mut self) -> Option<Event> {
-        if let Some(&stream) = self.readable_streams.iter().next() {
-            self.readable_streams.remove(&stream);
-            let rs = self.streams.get_recv_mut(&stream).unwrap();
-            let fresh = mem::replace(&mut rs.fresh, false);
-            return Some(Event::StreamReadable { stream, fresh });
-        }
-        None
-    }
-
     pub fn flush_pending(&mut self, mux: &mut impl Multiplexer, now: u64) {
         let mut sent = false;
         while let Some(packet) = self.next_packet(mux, now) {
@@ -2485,6 +2474,4 @@ pub trait Multiplexer {
     fn timer_stop(&mut self, timer: Timer);
     /// Emit an application-facing event.
     fn emit(&mut self, event: Event);
-    /// Mark this connection as readable by the application.
-    fn readable(&mut self);
 }
