@@ -148,7 +148,6 @@ struct Context {
     io: VecDeque<Io>,
     events: VecDeque<(ConnectionHandle, Event)>,
     incoming: VecDeque<ConnectionHandle>,
-    readable_conns: FnvHashSet<ConnectionHandle>,
 }
 
 /// Parameters governing incoming connections.
@@ -230,7 +229,6 @@ impl Endpoint {
                 io: VecDeque::new(),
                 // session_ticket_buffer,
                 events: VecDeque::new(),
-                readable_conns: FnvHashSet::default(),
                 incoming: VecDeque::new(),
             },
             log,
@@ -252,16 +250,7 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        if let Some(x) = self.ctx.events.pop_front() {
-            return Some(x);
-        }
-        loop {
-            let &conn = self.ctx.readable_conns.iter().next()?;
-            if let Some(x) = self.connections[conn.0].poll() {
-                return Some((conn, x));
-            }
-            self.ctx.readable_conns.remove(&conn);
-        }
+        self.ctx.events.pop_front()
     }
 
     /// Get a pending IO operation
@@ -679,7 +668,6 @@ impl Endpoint {
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
         self.dirty_conns.remove(&conn);
-        self.ctx.readable_conns.remove(&conn);
         self.connections.remove(conn.0);
     }
 
@@ -975,6 +963,7 @@ enum ConnectionOpts {
     Server { orig_dst_cid: Option<ConnectionId> },
 }
 
+// TODO: Deduplicate events and timer signals.
 pub struct EndpointMux<'a> {
     handle: ConnectionHandle,
     side: Side,
@@ -1013,8 +1002,5 @@ impl Multiplexer for EndpointMux<'_> {
         } else {
             self.ctx.events.push_back((self.handle, event));
         }
-    }
-    fn readable(&mut self) {
-        self.ctx.readable_conns.insert(self.handle);
     }
 }

@@ -524,7 +524,7 @@ fn reset_stream() {
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -549,7 +549,7 @@ fn stop_stream() {
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
