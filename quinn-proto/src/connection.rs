@@ -462,10 +462,7 @@ impl Connection {
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // Tail Loss Probe.
-            ctx.io.push_back(Io::Transmit {
-                destination: self.remote,
-                packet: self.force_transmit(&ctx.config, now),
-            });
+            self.force_transmit(ctx, now);
             self.reset_idle_timeout(&ctx.config, now);
             self.tlp_count += 1;
         } else {
@@ -477,12 +474,8 @@ impl Connection {
                 self.largest_sent_before_rto = self.largest_sent_packet();
             }
             for _ in 0..2 {
-                ctx.io.push_back(Io::Transmit {
-                    destination: self.remote,
-                    packet: self.force_transmit(&ctx.config, now),
-                });
+                self.force_transmit(ctx, now);
             }
-            self.reset_idle_timeout(&ctx.config, now);
             self.rto_count += 1;
         }
         self.set_loss_detection_alarm(&ctx.config);
@@ -640,7 +633,7 @@ impl Connection {
         self.set_loss_detection_alarm(config);
     }
 
-    fn transmit(&mut self, stream: StreamId, data: Bytes) {
+    fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
         let ss = self.streams.get_send_mut(&stream).unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
         let offset = ss.offset;
@@ -867,11 +860,7 @@ impl Connection {
             if was_handshake && self.side.is_server() {
                 ctx.incoming_handshakes -= 1;
             }
-            ctx.io.push_back(Io::Transmit {
-                destination: remote,
-                packet: self.make_close(&state.reason),
-            });
-            self.reset_idle_timeout(&ctx.config, now);
+            self.transmit_close(ctx, now, &state.reason);
         }
         self.state = Some(state);
         ctx.dirty_conns.insert(self.handle);
@@ -1730,8 +1719,18 @@ impl Connection {
         Some(buf)
     }
 
+    /// Send a QUIC packet
+    fn transmit(&mut self, ctx: &mut Context, now: u64, packet: Box<[u8]>) {
+        ctx.io.push_back(Io::Transmit {
+            destination: self.remote,
+            packet,
+        });
+        self.reset_idle_timeout(&ctx.config, now);
+        ctx.dirty_conns.insert(self.handle);
+    }
+
     // TLP/RTO transmit
-    fn force_transmit(&mut self, config: &Config, now: u64) -> Box<[u8]> {
+    fn force_transmit(&mut self, ctx: &mut Context, now: u64) {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         let header = Header::Short {
@@ -1748,7 +1747,7 @@ impl Connection {
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
 
         self.on_packet_sent(
-            config,
+            &ctx.config,
             now,
             number,
             SentPacket {
@@ -1759,10 +1758,10 @@ impl Connection {
                 retransmits: Retransmits::default(),
             },
         );
-        buf.into()
+        self.transmit(ctx, now, buf.into());
     }
 
-    fn make_close(&mut self, reason: &state::CloseReason) -> Box<[u8]> {
+    fn transmit_close(&mut self, ctx: &mut Context, now: u64, reason: &state::CloseReason) {
         let full_number = self.get_tx_number();
         let number = PacketNumber::new(full_number, self.largest_acked_packet);
         let mut buf = Vec::new();
@@ -1799,7 +1798,7 @@ impl Connection {
             .unwrap_or_else(|| &self.handshake_crypto);
         crypto.encrypt(full_number, &mut buf, header_len as usize);
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
-        buf.into()
+        self.transmit(ctx, now, buf.into());
     }
 
     /// Close a connection immediately
@@ -1812,12 +1811,7 @@ impl Connection {
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
             self.close_common(ctx, now);
-            ctx.io.push_back(Io::Transmit {
-                destination: self.remote,
-                packet: self.make_close(&reason),
-            });
-            self.reset_idle_timeout(&ctx.config, now);
-            ctx.dirty_conns.insert(self.handle);
+            self.transmit_close(ctx, now, &reason);
         }
 
         self.app_closed = true;
@@ -2107,7 +2101,7 @@ impl Connection {
 
         let conn_budget = self.max_data - self.data_sent;
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.transmit(stream, (&data[0..n]).into());
+        self.queue_stream_data(stream, (&data[0..n]).into());
         ctx.dirty_conns.insert(self.handle);
         trace!(self.log, "write"; "stream" => stream.0, "len" => n);
         Ok(n)
