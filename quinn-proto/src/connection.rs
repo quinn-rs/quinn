@@ -2133,6 +2133,49 @@ impl Connection {
         }
         None
     }
+
+    pub fn flush_pending(&mut self, ctx: &mut Context, now: u64) {
+        let mut sent = false;
+        while let Some(packet) = self.next_packet(&self.log.clone(), &ctx.config, now) {
+            ctx.io.push_back(Io::Transmit {
+                destination: self.remote,
+                packet: packet.into(),
+            });
+            sent = true;
+        }
+        if sent {
+            self.reset_idle_timeout(&ctx.config, now);
+        }
+
+        if let Some(setting) = self.set_idle.take() {
+            if let Some(time) = setting {
+                ctx.io.push_back(Io::TimerStart {
+                    connection: self.handle,
+                    timer: Timer::Idle,
+                    time,
+                });
+            } else {
+                ctx.io.push_back(Io::TimerStop {
+                    connection: self.handle,
+                    timer: Timer::Idle,
+                });
+            }
+        }
+        if let Some(setting) = self.set_loss_detection.take() {
+            if let Some(time) = setting {
+                ctx.io.push_back(Io::TimerStart {
+                    connection: self.handle,
+                    timer: Timer::LossDetection,
+                    time,
+                });
+            } else {
+                ctx.io.push_back(Io::TimerStop {
+                    connection: self.handle,
+                    timer: Timer::LossDetection,
+                });
+            }
+        }
+    }
 }
 
 #[derive(Eq, PartialEq)]

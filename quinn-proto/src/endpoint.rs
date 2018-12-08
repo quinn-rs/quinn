@@ -661,49 +661,7 @@ impl Endpoint {
     }
 
     fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
-        let mut sent = false;
-        while let Some(packet) =
-            self.connections[conn.0].next_packet(&self.log, &self.ctx.config, now)
-        {
-            self.ctx.io.push_back(Io::Transmit {
-                destination: self.connections[conn.0].remote,
-                packet: packet.into(),
-            });
-            sent = true;
-        }
-        if sent {
-            self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-        }
-
-        let c = &mut self.connections[conn.0];
-        if let Some(setting) = c.set_idle.take() {
-            if let Some(time) = setting {
-                self.ctx.io.push_back(Io::TimerStart {
-                    connection: conn,
-                    timer: Timer::Idle,
-                    time,
-                });
-            } else {
-                self.ctx.io.push_back(Io::TimerStop {
-                    connection: conn,
-                    timer: Timer::Idle,
-                });
-            }
-        }
-        if let Some(setting) = c.set_loss_detection.take() {
-            if let Some(time) = setting {
-                self.ctx.io.push_back(Io::TimerStart {
-                    connection: conn,
-                    timer: Timer::LossDetection,
-                    time,
-                });
-            } else {
-                self.ctx.io.push_back(Io::TimerStop {
-                    connection: conn,
-                    timer: Timer::LossDetection,
-                });
-            }
-        }
+        self.connections[conn.0].flush_pending(&mut self.ctx, now);
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
