@@ -104,6 +104,7 @@ frame_types! {
     CRYPTO = 0x18,
     NEW_TOKEN = 0x19,
     ACK = 0x1a,
+    ACK_ECN = 0x1b,
 }
 
 #[derive(Debug)]
@@ -282,6 +283,7 @@ pub struct Ack {
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
+    pub ecn: Option<Ecn>,
 }
 
 impl<'a> IntoIterator for &'a Ack {
@@ -294,12 +296,16 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
-    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, buf: &mut W) {
+    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, ecn: Option<Ecn>, buf: &mut W) {
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        buf.write(Type::ACK);
+        buf.write(if ecn.is_some() {
+            Type::ACK_ECN
+        } else {
+            Type::ACK
+        });
         varint::write(largest, buf).unwrap();
         varint::write(delay, buf).unwrap();
         varint::write(ranges.len() as u64 - 1, buf).unwrap();
@@ -311,10 +317,26 @@ impl Ack {
             varint::write(size - 1, buf).unwrap();
             prev = block.start;
         }
+        ecn.map(|x| x.encode(buf));
     }
 
     pub fn iter(&self) -> AckIter<'_> {
         self.into_iter()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Ecn {
+    pub ect0_count: u64,
+    pub ect1_count: u64,
+    pub ce_count: u64,
+}
+
+impl Ecn {
+    fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write_var(self.ect0_count);
+        out.write_var(self.ect1_count);
+        out.write_var(self.ce_count);
     }
 }
 
@@ -460,7 +482,7 @@ impl Iter {
             Type::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
                 sequence: self.bytes.get_var()?,
             },
-            Type::ACK => {
+            Type::ACK | Type::ACK_ECN => {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
@@ -472,6 +494,15 @@ impl Iter {
                     delay,
                     largest,
                     additional: self.bytes.get_ref().slice(start, start + len),
+                    ecn: if ty != Type::ACK_ECN {
+                        None
+                    } else {
+                        Some(Ecn {
+                            ect0_count: self.bytes.get_var()?,
+                            ect1_count: self.bytes.get_var()?,
+                            ce_count: self.bytes.get_var()?,
+                        })
+                    },
                 })
             }
             Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
@@ -617,13 +648,20 @@ mod test {
             ranges.insert(packet..packet + 1);
         }
         let mut buf = Vec::new();
-        Ack::encode(42, &ranges, &mut buf);
+        const ECN: Ecn = Ecn {
+            ect0_count: 42,
+            ect1_count: 24,
+            ce_count: 12,
+        };
+        Ack::encode(42, &ranges, Some(ECN), &mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
                 let mut packets = ack.iter().flat_map(|x| x).collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
+                assert_eq!(ack.ecn, Some(ECN));
             }
             ref x => panic!("incorrect frame {:?}", x),
         }
