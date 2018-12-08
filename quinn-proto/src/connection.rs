@@ -1392,6 +1392,10 @@ impl Connection {
                     }
                     trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
                 }
+                Frame::NewToken { .. } => {
+                    trace!(self.log, "got new token");
+                    // TODO: Cache, or perhaps forward to user?
+                }
             }
         }
         Ok(false)
