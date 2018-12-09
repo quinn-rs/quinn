@@ -778,9 +778,7 @@ impl Connection {
                     mux.timer_stop(Timer::LossDetection);
                     mux.timer_stop(Timer::Close);
                     mux.timer_stop(Timer::Idle);
-                    mux.emit(Event::ConnectionLost {
-                        reason: ConnectionError::Reset,
-                    });
+                    mux.emit(ConnectionError::Reset.into());
                     self.state = Some(State::Drained);
                 }
                 return;
@@ -824,9 +822,7 @@ impl Connection {
         let state = match result {
             Ok(state) => state,
             Err(conn_err) => {
-                mux.emit(Event::ConnectionLost {
-                    reason: conn_err.clone(),
-                });
+                mux.emit(conn_err.clone().into());
 
                 match conn_err {
                     ConnectionError::ApplicationClosed { reason } => State::closed(reason),
@@ -937,15 +933,11 @@ impl Connection {
                                         "peer aborted the handshake: {error}",
                                         error = reason.error_code
                                     );
-                                    mux.emit(Event::ConnectionLost {
-                                        reason: ConnectionError::ConnectionClosed { reason },
-                                    });
+                                    mux.emit(ConnectionError::ConnectionClosed { reason }.into());
                                     return Ok(State::Draining);
                                 }
                                 Frame::ApplicationClose(reason) => {
-                                    mux.emit(Event::ConnectionLost {
-                                        reason: ConnectionError::ApplicationClosed { reason },
-                                    });
+                                    mux.emit(ConnectionError::ApplicationClosed { reason }.into());
                                     return Ok(State::Draining);
                                 }
                                 Frame::PathChallenge(value) => {
@@ -1209,15 +1201,11 @@ impl Connection {
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
-                    mux.emit(Event::ConnectionLost {
-                        reason: ConnectionError::ConnectionClosed { reason },
-                    });
+                    mux.emit(ConnectionError::ConnectionClosed { reason }.into());
                     return Ok(true);
                 }
                 Frame::ApplicationClose(reason) => {
-                    mux.emit(Event::ConnectionLost {
-                        reason: ConnectionError::ApplicationClosed { reason },
-                    });
+                    mux.emit(ConnectionError::ApplicationClosed { reason }.into());
                     return Ok(true);
                 }
                 Frame::PathChallenge(x) => {
