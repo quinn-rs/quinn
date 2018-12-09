@@ -91,9 +91,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         println!("read {} bytes, closing", data.len());
                         stream_data = true;
                         conn.close(0, b"done").map_err(|_| unreachable!())
-                    }).map(|()| {
+                    })
+                    .map(|()| {
                         close = true;
-                    }).and_then(|()| {
+                    })
+                    .and_then(|()| {
                         tickets
                             .into_future()
                             .map_err(|(e, _)| e.into())
@@ -186,8 +188,10 @@ fn get(stream: quinn::Stream) -> impl Future<Item = Box<[u8]>, Error = Error> {
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(stream, _)| {
             tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e))
-        }).and_then(move |stream| {
+        })
+        .and_then(move |stream| {
             quinn::read_to_end(stream, usize::max_value())
                 .map_err(|e| format_err!("failed to read response: {}", e))
-        }).map(|(_, data)| data)
+        })
+        .map(|(_, data)| data)
 }

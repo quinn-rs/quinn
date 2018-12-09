@@ -1,6 +1,7 @@
 use std::net::SocketAddrV6;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, str};
 
 use aes_ctr::stream_cipher::generic_array::GenericArray;
@@ -13,14 +14,15 @@ use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
+use rustls::ProtocolVersion;
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
 use webpki::DNSNameRef;
 
-use endpoint::EndpointError;
-use packet::{ConnectionId, AEAD_TAG_SIZE};
-use transport_parameters::TransportParameters;
-use {Side, RESET_TOKEN_SIZE};
+use crate::coding::{BufExt, BufMutExt};
+use crate::packet::{ConnectionId, AEAD_TAG_SIZE};
+use crate::transport_parameters::TransportParameters;
+use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
     Client(ClientSession),
@@ -32,9 +34,9 @@ impl TlsSession {
         config: &Arc<ClientConfig>,
         hostname: &str,
         params: &TransportParameters,
-    ) -> Result<TlsSession, EndpointError> {
+    ) -> Result<TlsSession, ConnectError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
-            .map_err(|_| EndpointError::InvalidDnsName(hostname.into()))?;
+            .map_err(|_| ConnectError::InvalidDnsName(hostname.into()))?;
         Ok(TlsSession::Client(ClientSession::new_quic(
             &config,
             pki_server_name,
@@ -77,7 +79,9 @@ impl DerefMut for TlsSession {
 }
 
 pub fn build_server_config() -> ServerConfig {
-    ServerConfig::new(NoClientAuth::new())
+    let mut cfg = ServerConfig::new(NoClientAuth::new());
+    cfg.versions = vec![ProtocolVersion::TLSv1_3];
+    cfg
 }
 
 fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
@@ -114,7 +118,7 @@ pub struct Crypto {
 impl Crypto {
     pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (b"client in", b"server in")
         } else {
             (b"server in", b"client in")
@@ -147,7 +151,7 @@ impl Crypto {
         const SERVER_LABEL: &[u8] = b"EXPORTER-QUIC server 1rtt";
         const CLIENT_LABEL: &[u8] = b"EXPORTER-QUIC client 1rtt";
 
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (CLIENT_LABEL, SERVER_LABEL)
         } else {
             (SERVER_LABEL, CLIENT_LABEL)
@@ -227,7 +231,7 @@ impl Crypto {
         const SERVER_LABEL: &[u8] = b"server 1rtt";
         const CLIENT_LABEL: &[u8] = b"client 1rtt";
 
-        let (local_label, remote_label) = if side == Side::Client {
+        let (local_label, remote_label) = if side.is_client() {
             (CLIENT_LABEL, SERVER_LABEL)
         } else {
             (SERVER_LABEL, CLIENT_LABEL)
@@ -288,47 +292,6 @@ impl Crypto {
     }
 }
 
-/*
-pub struct CookieFactory {
-    mac_key: [u8; 64],
-}
-
-const COOKIE_MAC_BYTES: usize = 64;
-
-impl CookieFactory {
-    fn new(mac_key: [u8; 64]) -> Self {
-        Self { mac_key }
-    }
-
-    fn generate(&self, conn: &ConnectionInfo, out: &mut [u8]) -> usize {
-        let mac = self.generate_mac(conn);
-        out[0..COOKIE_MAC_BYTES].copy_from_slice(&mac);
-        COOKIE_MAC_BYTES
-    }
-
-    fn generate_mac(&self, conn: &ConnectionInfo) -> [u8; COOKIE_MAC_BYTES] {
-        let mut mac = Blake2b::new_keyed(&self.mac_key, COOKIE_MAC_BYTES);
-        mac.process(&conn.remote.ip().octets());
-        {
-            let mut buf = [0; 2];
-            BigEndian::write_u16(&mut buf, conn.remote.port());
-            mac.process(&buf);
-        }
-        let mut result = [0; COOKIE_MAC_BYTES];
-        mac.variable_result(&mut result).unwrap();
-        result
-    }
-
-    fn verify(&self, conn: &ConnectionInfo, cookie_data: &[u8]) -> bool {
-        let expected = self.generate_mac(conn);
-        if !constant_time_eq(cookie_data, &expected) {
-            return false;
-        }
-        true
-    }
-}
-*/
-
 #[derive(Clone)]
 pub struct ConnectionInfo {
     pub(crate) id: ConnectionId,
@@ -337,8 +300,8 @@ pub struct ConnectionInfo {
 
 #[derive(Debug, Fail)]
 pub enum ConnectError {
-    #[fail(display = "session ticket was malformed")]
-    MalformedSession,
+    #[fail(display = "invalid DNS name: {}", _0)]
+    InvalidDnsName(String),
     #[fail(display = "TLS error: {}", _0)]
     Tls(TLSError),
 }
@@ -443,24 +406,79 @@ const INITIAL_SALT: [u8; 20] = [
     0xe0, 0x6d, 0x6c, 0x38,
 ];
 
+pub struct TokenKey {
+    // TODO: Use AEAD to hide token details from clients for better stability guarantees:
+    // - ticket consists of (random, aead-encrypted-data)
+    // - AEAD encryption key is HKDF(master-key, random)
+    // - AEAD nonce is always set to 0
+    // in other words, for each ticket, use different key derived from random using HKDF
+    inner: SigningKey,
+}
+
+impl TokenKey {
+    pub const SIZE: usize = 64;
+
+    pub fn new(key: &[u8; Self::SIZE]) -> Self {
+        let inner = SigningKey::new(&digest::SHA512_256, key);
+        Self { inner }
+    }
+
+    pub(crate) fn generate(
+        &self,
+        address: &SocketAddrV6,
+        dst_cid: &ConnectionId,
+        issued: SystemTime,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.write(dst_cid.len() as u8);
+        buf.put_slice(dst_cid);
+        buf.write::<u64>(
+            issued
+                .duration_since(UNIX_EPOCH)
+                .map(|x| x.as_secs())
+                .unwrap_or(0),
+        );
+        let signature_pos = buf.len();
+        buf.put_slice(&address.ip().octets());
+        buf.write(address.port());
+        let signature = hmac::sign(&self.inner, &buf);
+        // No reason to actually encode the IP in the token, since we always have the remote addr for an incoming packet.
+        buf.truncate(signature_pos);
+        buf.extend_from_slice(signature.as_ref());
+        buf
+    }
+
+    pub(crate) fn check(
+        &self,
+        address: &SocketAddrV6,
+        data: &[u8],
+    ) -> Option<(ConnectionId, SystemTime)> {
+        let mut reader = io::Cursor::new(data);
+        let dst_cid_len = reader.get::<u8>().ok()? as usize;
+        if dst_cid_len > reader.remaining()
+            || dst_cid_len != 0 && (dst_cid_len < MIN_CID_SIZE || dst_cid_len > MAX_CID_SIZE)
+        {
+            return None;
+        }
+        let dst_cid = ConnectionId::new(&data[1..=dst_cid_len]);
+        reader.advance(dst_cid_len);
+        let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().ok()?, 0);
+        let signature_start = reader.position() as usize;
+
+        let mut buf = Vec::new();
+        buf.put_slice(&data[0..signature_start]);
+        buf.put_slice(&address.ip().octets());
+        buf.write(address.port());
+
+        hmac::verify_with_own_key(&self.inner, &buf, &data[signature_start..]).ok()?;
+        Some((dst_cid, issued))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use packet::PacketNumber;
-    use rand;
-    use MAX_CID_SIZE;
-
-    #[test]
-    fn packet_number() {
-        for prev in 0..1024 {
-            for x in 0..256 {
-                let found = PacketNumber::U8(x as u8).expand(prev);
-                assert!(found as i64 - (prev + 1) as i64 <= 128 || prev < 128);
-            }
-        }
-        // Order of operations regression test
-        assert_eq!(PacketNumber::U32(0xa0bd197c).expand(0xa0bd197a), 0xa0bd197c);
-    }
+    use rand::{self, RngCore};
 
     #[test]
     fn handshake_crypto_roundtrip() {
@@ -542,5 +560,21 @@ mod test {
                 0x22, 0x6c
             ])
         );
+    }
+
+    #[test]
+    fn token_sanity() {
+        use std::net::Ipv6Addr;
+
+        let mut key = [0; TokenKey::SIZE];
+        rand::thread_rng().fill_bytes(&mut key);
+        let key = TokenKey::new(&key);
+        let addr = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 4433, 0, 0);
+        let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
+        let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
+        let token = key.generate(&addr, &dst_cid, issued);
+        let (dst_cid2, issued2) = key.check(&addr, &token).expect("token didn't validate");
+        assert_eq!(dst_cid, dst_cid2);
+        assert_eq!(issued, issued2);
     }
 }

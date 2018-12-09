@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 
-use range_set::RangeSet;
+use crate::range_set::RangeSet;
 
 #[derive(Debug)]
 pub enum Stream {
@@ -91,12 +91,11 @@ impl Send {
             }
             | SendState::ResetRecvd {
                 ref mut stop_reason,
-            } => match stop_reason.take() {
-                Some(error_code) => {
+            } => {
+                if let Some(error_code) = stop_reason.take() {
                     return Err(WriteError::Stopped { error_code });
                 }
-                None => {}
-            },
+            }
             _ => {}
         };
 
@@ -238,7 +237,7 @@ impl Recv {
 
     pub fn buffer(&mut self, data: Bytes, offset: u64) {
         // TODO: Dedup
-        if data.len() == 0 {
+        if data.is_empty() {
             return;
         }
         self.buffered.push_back((data, offset));
@@ -339,18 +338,15 @@ impl Assembler {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> usize {
-        let n;
-        {
-            let (a, b) = self.data.as_slices();
-            let available = self.prefix_len();
-            let a_len = a.len().min(available);
-            let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
-            let a_n = a.len().min(buf.len());
-            buf[0..a_n].copy_from_slice(&a[0..a_n]);
-            let b_n = b.len().min(buf.len().saturating_sub(a.len()));
-            buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
-            n = a_n + b_n;
-        }
+        let (a, b) = self.data.as_slices();
+        let available = self.prefix_len();
+        let a_len = a.len().min(available);
+        let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
+        let a_n = a.len().min(buf.len());
+        buf[0..a_n].copy_from_slice(&a[0..a_n]);
+        let b_n = b.len().min(buf.len().saturating_sub(a.len()));
+        buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
+        let n = a_n + b_n;
 
         self.offset += n as u64;
         self.data.drain(0..n);
@@ -408,12 +404,12 @@ mod test {
     fn assemble_ordered() {
         let mut x = Assembler::new();
         assert_matches!(x.next(), None);
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        x.insert(3, (&b"456"[..]).into());
+        x.insert(3, &b"456"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
-        x.insert(6, (&b"789"[..]).into());
-        x.insert(9, (&b"10"[..]).into());
+        x.insert(6, &b"789"[..]);
+        x.insert(9, &b"10"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"78910");
         assert_matches!(x.next(), None);
     }
@@ -421,9 +417,9 @@ mod test {
     #[test]
     fn assemble_unordered() {
         let mut x = Assembler::new();
-        x.insert(3, (&b"456"[..]).into());
+        x.insert(3, &b"456"[..]);
         assert_matches!(x.next(), None);
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
     }
@@ -431,8 +427,8 @@ mod test {
     #[test]
     fn assemble_duplicate() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"123"[..]).into());
-        x.insert(0, (&b"123"[..]).into());
+        x.insert(0, &b"123"[..]);
+        x.insert(0, &b"123"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
         assert_matches!(x.next(), None);
     }
@@ -440,8 +436,8 @@ mod test {
     #[test]
     fn assemble_contained() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"12345"[..]).into());
-        x.insert(1, (&b"234"[..]).into());
+        x.insert(0, &b"12345"[..]);
+        x.insert(1, &b"234"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
         assert_matches!(x.next(), None);
     }
@@ -449,8 +445,8 @@ mod test {
     #[test]
     fn assemble_contains() {
         let mut x = Assembler::new();
-        x.insert(1, (&b"234"[..]).into());
-        x.insert(0, (&b"12345"[..]).into());
+        x.insert(1, &b"234"[..]);
+        x.insert(0, &b"12345"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
         assert_matches!(x.next(), None);
     }
@@ -458,8 +454,8 @@ mod test {
     #[test]
     fn assemble_overlapping() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"123"[..]).into());
-        x.insert(1, (&b"234"[..]).into());
+        x.insert(0, &b"123"[..]);
+        x.insert(1, &b"234"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
         assert_matches!(x.next(), None);
     }
@@ -467,10 +463,10 @@ mod test {
     #[test]
     fn assemble_complex() {
         let mut x = Assembler::new();
-        x.insert(0, (&b"1"[..]).into());
-        x.insert(2, (&b"3"[..]).into());
-        x.insert(4, (&b"5"[..]).into());
-        x.insert(0, (&b"123456"[..]).into());
+        x.insert(0, &b"1"[..]);
+        x.insert(2, &b"3"[..]);
+        x.insert(4, &b"5"[..]);
+        x.insert(0, &b"123456"[..]);
         assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
         assert_matches!(x.next(), None);
     }

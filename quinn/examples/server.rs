@@ -1,14 +1,7 @@
-extern crate quinn;
-extern crate tokio;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate futures;
-extern crate rustls;
-extern crate slog_term;
-extern crate structopt;
-extern crate tokio_current_thread;
 
 use std::ascii;
 use std::fmt;
@@ -18,22 +11,20 @@ use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
 use std::{io, str};
 
-use failure::{err_msg, Fail, ResultExt};
+use failure::{err_msg, Error, Fail, ResultExt};
 use futures::{Future, Stream};
 use rustls::internal::pemfile;
-use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
-
-use failure::Error;
 use slog::{Drain, Logger};
+use structopt::{self, StructOpt};
+use tokio::runtime::current_thread::Runtime;
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub struct PrettyErr<'a>(&'a Fail);
+pub struct PrettyErr<'a>(&'a dyn Fail);
 impl<'a> fmt::Display for PrettyErr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)?;
-        let mut x: &Fail = self.0;
+        let mut x: &dyn Fail = self.0;
         while let Some(cause) = x.cause() {
             f.write_str(": ")?;
             fmt::Display::fmt(&cause, f)?;
@@ -44,11 +35,11 @@ impl<'a> fmt::Display for PrettyErr<'a> {
 }
 
 pub trait ErrorExt {
-    fn pretty(&self) -> PrettyErr;
+    fn pretty(&self) -> PrettyErr<'_>;
 }
 
 impl ErrorExt for Error {
-    fn pretty(&self) -> PrettyErr {
+    fn pretty(&self) -> PrettyErr<'_> {
         PrettyErr(self.as_fail())
     }
 }
@@ -104,17 +95,17 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
-    let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
         max_remote_bi_streams: 64,
         ..Default::default()
     });
-    builder
-        .set_protocols(&[quinn::ALPN_QUIC_HTTP])
-        .logger(log.clone())
-        .listen();
+    endpoint.logger(log.clone());
+
+    let mut server_config = quinn::ServerConfigBuilder::default();
+    server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
 
     if options.keylog {
-        builder.enable_keylog();
+        server_config.enable_keylog();
     }
 
     let keys = {
@@ -128,9 +119,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         );
         pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
     };
-    builder.set_certificate(cert_chain, keys[0].clone())?;
+    server_config.set_certificate(cert_chain, keys[0].clone())?;
 
-    let (_, driver, incoming) = builder.bind(options.listen)?;
+    endpoint.listen(server_config.build());
+
+    let (_, driver, incoming) = endpoint.bind(options.listen)?;
     runtime.spawn(incoming.for_each(move |conn| {
         handle_connection(&root, &log, conn);
         Ok(())
@@ -199,7 +192,8 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
             .and_then(|(stream, _)| {
                 tokio::io::shutdown(stream)
                     .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-            }).map(move |_| info!(log3, "request complete"))
+            })
+            .map(move |_| info!(log3, "request complete"))
             .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty())),
     )
 }

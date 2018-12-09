@@ -5,10 +5,10 @@ use std::{
 
 use bytes::{Buf, BufMut};
 
-use coding::{BufExt, BufMutExt};
-use endpoint::Config;
-use packet::ConnectionId;
-use {Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::coding::{BufExt, BufMutExt};
+use crate::endpoint::Config;
+use crate::packet::ConnectionId;
+use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Apply a given macro to a list of all the transport parameters having simple integer types, along with their codes and
 // default values. Using this helps us avoid error-prone duplication of the contained information across decoding,
@@ -16,7 +16,7 @@ use {Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 // of cases by writing a macro that takes a list of arguments in this form, then passing it to this macro.
 macro_rules! apply_params {
     ($macro:ident) => {
-        $macro!{
+        $macro! {
             // name (id): type = default,
             initial_max_stream_data_bidi_local(0x0000): u32 = 0,
             initial_max_stream_data_bidi_remote(0x000a): u32 = 0,
@@ -189,7 +189,7 @@ impl From<Error> for TransportError {
 
 impl TransportParameters {
     pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
-        if side == Side::Server {
+        if side.is_server() {
             w.write::<u32>(VERSION); // Negotiated version
             w.write::<u8>(8); // Bytes of supported versions
             w.write::<u32>(0x0a1a_2a3a); // Reserved version
@@ -241,7 +241,7 @@ impl TransportParameters {
     }
 
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
-        if side == Side::Server {
+        if side.is_server() {
             if r.remaining() < 26 {
                 return Err(Error::Malformed);
             }
@@ -353,7 +353,7 @@ impl TransportParameters {
         }
 
         if params.ack_delay_exponent > 20
-            || (side == Side::Server
+            || (side.is_server()
                 && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
             return Err(Error::IllegalValue);

@@ -47,23 +47,10 @@
 //! can be used to provide encryption alone.
 #![warn(missing_docs)]
 
-extern crate bytes;
 #[macro_use]
 extern crate failure;
-extern crate fnv;
-extern crate futures;
-extern crate quinn_proto as quinn;
-extern crate rand;
-extern crate rustls;
 #[macro_use]
 extern crate slog;
-extern crate tokio_io;
-extern crate tokio_reactor;
-extern crate tokio_timer;
-extern crate tokio_udp;
-extern crate untrusted;
-extern crate webpki;
-extern crate webpki_roots;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -82,15 +69,16 @@ use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll, Sink};
+use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId};
 use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 use tokio_udp::UdpSocket;
 
-use quinn::{ConnectionHandle, Directionality, Side, StreamId};
-
-pub use quinn::{Config, ConnectError, ConnectionError, ConnectionId, ListenKeys, ALPN_QUIC_HTTP};
+pub use crate::quinn::{
+    Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
+};
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -101,15 +89,6 @@ pub enum Error {
     /// An error configuring TLS.
     #[fail(display = "failed to set up TLS: {}", _0)]
     Tls(TLSError),
-    /// An error opening a file for logging TLS keys.
-    #[fail(display = "failed open keylog file: {}", _0)]
-    Keylog(io::Error),
-    /// A supplied protocol identifier was too long
-    #[fail(display = "protocol ID longer than 255 bytes")]
-    ProtocolTooLong(Box<[u8]>),
-    /// The DNS name was invalid for use in TLS
-    #[fail(display = "invalid DNS name: {}", _0)]
-    InvalidDnsName(String),
     /// Errors relating to web PKI infrastructure
     #[fail(display = "webpki failed: {:?}", _0)]
     WebPki(webpki::Error),
@@ -117,12 +96,9 @@ pub enum Error {
 
 impl From<quinn::EndpointError> for Error {
     fn from(x: quinn::EndpointError) -> Self {
-        use quinn::EndpointError::*;
+        use crate::quinn::EndpointError::*;
         match x {
             Tls(x) => Error::Tls(x),
-            Keylog(x) => Error::Keylog(x),
-            ProtocolTooLong(x) => Error::ProtocolTooLong(x),
-            InvalidDnsName(x) => Error::InvalidDnsName(x),
         }
     }
 }
@@ -245,89 +221,28 @@ pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
 pub struct EndpointBuilder<'a> {
     reactor: Option<&'a tokio_reactor::Handle>,
     logger: Logger,
-    listen: Option<ListenKeys>,
+    server_config: Option<ServerConfig>,
     config: Config,
     client_config: ClientConfig,
 }
 
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
-    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
-        self.reactor = Some(handle);
-        self
-    }
-    pub fn logger(&mut self, logger: Logger) -> &mut Self {
-        self.logger = logger;
-        self
-    }
-
     /// Start a builder with a specific initial low-level configuration.
-    pub fn from_config(config: Config) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             ..Self::default()
         }
     }
 
-    /// Prefer `listen_with_keys`.
-    pub fn listen(&mut self) -> &mut Self {
-        self.listen = Some(ListenKeys::new(&mut rand::thread_rng()));
-        self
+    /// Build an endpoint bound to `addr`.
+    pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
+        let socket = std::net::UdpSocket::bind(addr).map_err(Error::Socket)?;
+        self.from_socket(socket)
     }
 
-    /// Use with persistent `keys` instead of `listen` to allow graceful reset of clients when the server restarts.
-    pub fn listen_with_keys(&mut self, keys: ListenKeys) -> &mut Self {
-        self.listen = Some(keys);
-        self
-    }
-
-    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
-    ///
-    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
-    pub fn enable_keylog(&mut self) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            tls_server_config.key_log = Arc::new(KeyLogFile::new());
-        }
-        self
-    }
-
-    pub fn set_certificate(
-        &mut self,
-        cert_chain: Vec<Certificate>,
-        key: PrivateKey,
-    ) -> Result<&mut Self, TLSError> {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            tls_server_config.set_single_cert(cert_chain, key)?;
-        }
-        Ok(self)
-    }
-
-    /// Set the application-layer protocols to accept.
-    ///
-    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
-    // TODO: Cite IANA registery for ALPN IDs
-    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_server_config).unwrap();
-            let protocols_strings = protocols
-                .iter()
-                .map(|p| str::from_utf8(p).unwrap().into())
-                .collect::<Vec<_>>();
-            tls_server_config.set_protocols(&protocols_strings);
-        }
-        self
-    }
-
-    /// Set the default configuration used for outgoing connections.
-    ///
-    /// The default can be overriden by using `Endpoint:;connect_with`.
-    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
-        self.client_config = config;
-        self
-    }
-
+    /// Build an endpoint around a pre-configured socket.
     pub fn from_socket(
         self,
         socket: std::net::UdpSocket,
@@ -342,7 +257,7 @@ impl<'a> EndpointBuilder<'a> {
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
-            inner: quinn::Endpoint::new(self.logger, self.config, self.listen)?,
+            inner: quinn::Endpoint::new(self.logger, self.config, self.server_config)?,
             outgoing: VecDeque::new(),
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -360,9 +275,27 @@ impl<'a> EndpointBuilder<'a> {
         ))
     }
 
-    pub fn bind<T: ToSocketAddrs>(self, addr: T) -> Result<(Endpoint, Driver, Incoming), Error> {
-        let socket = std::net::UdpSocket::bind(addr).map_err(Error::Socket)?;
-        self.from_socket(socket)
+    /// Accept incoming connections.
+    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
+        self.server_config = Some(config);
+        self
+    }
+
+    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
+        self.reactor = Some(handle);
+        self
+    }
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.logger = logger;
+        self
+    }
+
+    /// Set the default configuration used for outgoing connections.
+    ///
+    /// The default can be overriden by using `Endpoint::connect_with`.
+    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
+        self.client_config = config;
+        self
     }
 }
 
@@ -371,9 +304,75 @@ impl<'a> Default for EndpointBuilder<'a> {
         Self {
             reactor: None,
             logger: Logger::root(slog::Discard, o!()),
-            listen: None,
+            server_config: None,
             config: Config::default(),
             client_config: ClientConfig::default(),
+        }
+    }
+}
+
+/// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
+/// incoming connections.
+pub struct ServerConfigBuilder {
+    config: ServerConfig,
+}
+
+impl ServerConfigBuilder {
+    /// Construct a builder using `config` as the initial state.
+    pub fn new(config: ServerConfig) -> Self {
+        Self { config }
+    }
+
+    /// Construct the complete `ServerConfig`.
+    pub fn build(self) -> ServerConfig {
+        self.config
+    }
+
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
+    pub fn enable_keylog(&mut self) -> &mut Self {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            tls_server_config.key_log = Arc::new(KeyLogFile::new());
+        }
+        self
+    }
+
+    /// Set the certificate chain that will be presented to clients.
+    pub fn set_certificate(
+        &mut self,
+        cert_chain: Vec<Certificate>,
+        key: PrivateKey,
+    ) -> Result<&mut Self, TLSError> {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            tls_server_config.set_single_cert(cert_chain, key)?;
+        }
+        Ok(self)
+    }
+
+    /// Set the application-layer protocols to accept.
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    // TODO: Cite IANA registery for ALPN IDs
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
+        {
+            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
+            let protocols_strings = protocols
+                .iter()
+                .map(|p| str::from_utf8(p).unwrap().into())
+                .collect::<Vec<_>>();
+            tls_server_config.set_protocols(&protocols_strings);
+        }
+        self
+    }
+}
+
+impl Default for ServerConfigBuilder {
+    fn default() -> Self {
+        Self {
+            config: ServerConfig::default(),
         }
     }
 }
@@ -422,7 +421,8 @@ impl ClientConfigBuilder {
                 str::from_utf8(p)
                     .expect("non-UTF8 protocols unsupported")
                     .into()
-            }).collect();
+            })
+            .collect();
         self
     }
 
@@ -665,7 +665,7 @@ impl Future for Driver {
                 }
             }
             while let Some((connection, event)) = endpoint.inner.poll() {
-                use quinn::Event::*;
+                use crate::quinn::Event::*;
                 match event {
                     Connected { .. } => {
                         let _ = endpoint
@@ -775,7 +775,7 @@ impl Future for Driver {
                 endpoint.outgoing.pop_front();
             }
             while let Some(io) = endpoint.inner.poll_io(now) {
-                use quinn::Io::*;
+                use crate::quinn::Io::*;
                 match io {
                     Transmit {
                         destination,
@@ -822,8 +822,8 @@ impl Future for Driver {
                             .pending
                             .entry(connection)
                             .or_insert_with(|| Pending::new(None));
-                        use quinn::Timer::*;
-                        let mut cancel = match timer {
+                        use crate::quinn::Timer::*;
+                        let cancel = match timer {
                             LossDetection => &mut pending.cancel_loss_detect,
                             Idle => &mut pending.cancel_idle,
                             Close => unreachable!(),
@@ -846,7 +846,7 @@ impl Future for Driver {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
-                            use quinn::Timer::*;
+                            use crate::quinn::Timer::*;
                             match timer {
                                 LossDetection => {
                                     if let Some(x) = pending.cancel_loss_detect.take() {
@@ -1014,7 +1014,8 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .get_remote_address(self.0.conn)).into()
+            .get_remote_address(self.0.conn))
+        .into()
     }
 
     /// The `ConnectionId` used for `conn` locally.
@@ -1154,7 +1155,7 @@ impl BiStream {
 impl Write for BiStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.conn.endpoint.borrow_mut();
-        use quinn::WriteError::*;
+        use crate::quinn::WriteError::*;
         let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
@@ -1210,7 +1211,7 @@ impl Write for BiStream {
 impl Read for BiStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
-        use quinn::ReadError::*;
+        use crate::quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
@@ -1234,7 +1235,7 @@ impl Read for BiStream {
 
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
-        use quinn::ReadError::*;
+        use crate::quinn::ReadError::*;
         let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
         match endpoint.inner.read(self.conn.conn, self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
@@ -1332,7 +1333,7 @@ pub enum WriteError {
 
 impl io::Read for BiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use ReadError::*;
+        use crate::ReadError::*;
         match Read::poll_read(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Err(Finished) => Ok(0),

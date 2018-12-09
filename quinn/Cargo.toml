@@ -9,6 +9,7 @@ readme = "../README.md"
 keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
+edition = "2018"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -28,7 +29,7 @@ fnv = "1.0.6"
 futures = "0.1.21"
 quinn-proto = { path = "../quinn-proto", version = "0.1.0" }
 rand = "0.6"
-rustls = { version = "0.14", features = ["quic"] }
+rustls = { git = "https://github.com/Ralith/rustls.git", rev = "a57c60b7d9ed1b5aa805ab4e38a4156491768821", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"

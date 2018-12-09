@@ -1,9 +1,10 @@
+use std::cmp;
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
-use std::{cmp, io};
+use std::time::{Duration, SystemTime};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng, RngCore};
 use ring::digest;
@@ -11,17 +12,19 @@ use ring::hmac::SigningKey;
 use slab::Slab;
 use slog::{self, Logger};
 
-use coding::BufMutExt;
-use connection::{
-    handshake_close, make_tls, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
+use crate::coding::BufMutExt;
+use crate::connection::{
+    handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, Multiplexer,
+    State,
 };
-use crypto::{self, reset_token_for, ConnectError, Crypto, ServerConfig};
-use packet::{
+use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
+use crate::packet::{
     ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
 };
-use stream::{ReadError, WriteError};
-use {
+use crate::stream::{ReadError, WriteError};
+use crate::transport_parameters::TransportParameters;
+use crate::{
     Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
@@ -52,11 +55,6 @@ pub struct Config {
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
     pub receive_window: u32,
-    /// Maximum number of incoming connections to buffer.
-    ///
-    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
-    /// be large.
-    pub accept_buffer: u32,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -86,12 +84,11 @@ pub struct Config {
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
 
-    pub tls_server_config: Arc<ServerConfig>,
-
-    /// Length of connection IDs for the endpoint. This must be either 0 or between 4 and 18
-    /// inclusive. The length of the local connection IDs constrains the amount of simultaneous
-    /// connections the endpoint can maintain. The API user is responsible for making sure that
-    /// the pool is large enough to cover the intended usage.
+    /// Length of connection IDs for the endpoint.
+    ///
+    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
+    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
+    /// responsible for making sure that the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
 }
 
@@ -108,7 +105,6 @@ impl Default for Config {
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
-            accept_buffer: 1024,
 
             max_tlps: 2,
             reordering_threshold: 3,
@@ -124,8 +120,6 @@ impl Default for Config {
             minimum_window: 2 * 1460,
             loss_reduction_factor: 0x8000, // 1/2
 
-            tls_server_config: Arc::new(crypto::build_server_config()),
-
             local_cid_len: 8,
         }
     }
@@ -138,53 +132,71 @@ impl Default for Config {
 /// `handle` and `timeout`.
 pub struct Endpoint {
     log: Logger,
-    pub(crate) ctx: Context,
+    rng: OsRng,
+    ctx: Context,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
+    config: Arc<Config>,
+    server_config: Option<ServerConfig>,
+    dirty_conns: FnvHashSet<ConnectionHandle>,
+    incoming_handshakes: usize,
 }
 
-pub struct Context {
-    pub rng: OsRng,
-    pub config: Arc<Config>,
-    pub io: VecDeque<Io>,
-    // pub session_ticket_buffer: SessionTicketBuffer,
-    pub events: VecDeque<(ConnectionHandle, Event)>,
-    pub incoming: VecDeque<ConnectionHandle>,
-    pub incoming_handshakes: usize,
-    pub dirty_conns: FnvHashSet<ConnectionHandle>,
-    pub readable_conns: FnvHashSet<ConnectionHandle>,
-    pub listen_keys: Option<ListenKeys>,
+struct Context {
+    io: VecDeque<Io>,
+    events: VecDeque<(ConnectionHandle, Event)>,
+    incoming: VecDeque<ConnectionHandle>,
 }
 
-/// Information that should be preserved between restarts for server endpoints.
-///
-/// Keeping this around allows better behavior by clients that communicated with a previous
-/// instance of the same endpoint.
-pub struct ListenKeys {
-    /// Cryptographic key used to ensure integrity of data included in handshake cookies.
+/// Parameters governing incoming connections.
+pub struct ServerConfig {
+    /// TLS configuration used for incoming connections.
     ///
-    /// Initialize with random bytes.
-    pub cookie: [u8; 64],
-    /// Cryptographic key used to send authenticated connection resets to clients who were
-    /// communicating with a previous instance of tihs endpoint.
+    /// Must be set to use TLS 1.3 only.
+    pub tls_config: Arc<crypto::ServerConfig>,
+
+    /// Private key used to authenticate data included in handshake tokens.
+    pub token_key: TokenKey,
+    /// Whether to require clients to prove ownership of an address before committing resources.
     ///
-    /// Initialize with random bytes.
-    pub reset: SigningKey,
+    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
+    pub use_stateless_retry: bool,
+    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    pub retry_token_lifetime: u64,
+
+    /// Private key used to send authenticated connection resets to clients who were communicating
+    /// with a previous instance of this endpoint.
+    ///
+    /// Must be persisted across restarts to be useful.
+    pub reset_key: SigningKey,
+    /// Maximum number of incoming connections to buffer.
+    ///
+    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
+    /// be large.
+    pub accept_buffer: u32,
 }
 
-impl ListenKeys {
-    /// Generate new keys.
-    ///
-    /// Be careful to use a cryptography-grade RNG.
-    pub fn new<R: Rng>(rng: &mut R) -> Self {
-        let mut cookie = [0; 64];
+impl Default for ServerConfig {
+    fn default() -> Self {
+        let rng = &mut rand::thread_rng();
+
+        let mut token_value = [0; 64];
         let mut reset_value = [0; 64];
-        rng.fill_bytes(&mut cookie);
+        rng.fill_bytes(&mut token_value);
         rng.fill_bytes(&mut reset_value);
-        let reset = SigningKey::new(&digest::SHA512_256, &reset_value);
-        Self { cookie, reset }
+
+        Self {
+            tls_config: Arc::new(crypto::build_server_config()),
+
+            token_key: TokenKey::new(&token_value),
+            use_stateless_retry: false,
+            retry_token_lifetime: 15_000_000,
+
+            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+            accept_buffer: 1024,
+        }
     }
 }
 
@@ -192,12 +204,6 @@ impl ListenKeys {
 pub enum EndpointError {
     #[fail(display = "failed to configure TLS: {}", _0)]
     Tls(crypto::TLSError),
-    #[fail(display = "failed open keylog file: {}", _0)]
-    Keylog(io::Error),
-    #[fail(display = "protocol ID longer than 255 bytes")]
-    ProtocolTooLong(Box<[u8]>),
-    #[fail(display = "invalid DNS name: {}", _0)]
-    InvalidDnsName(String),
 }
 
 impl From<crypto::TLSError> for EndpointError {
@@ -210,7 +216,7 @@ impl Endpoint {
     pub fn new(
         log: Logger,
         config: Config,
-        listen: Option<ListenKeys>,
+        server_config: Option<ServerConfig>,
     ) -> Result<Self, EndpointError> {
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
@@ -220,41 +226,31 @@ impl Endpoint {
         );
         Ok(Self {
             ctx: Context {
-                rng,
-                config,
                 io: VecDeque::new(),
                 // session_ticket_buffer,
                 events: VecDeque::new(),
-                dirty_conns: FnvHashSet::default(),
-                readable_conns: FnvHashSet::default(),
                 incoming: VecDeque::new(),
-                incoming_handshakes: 0,
-                listen_keys: listen,
             },
             log,
+            rng,
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
+            dirty_conns: FnvHashSet::default(),
+            incoming_handshakes: 0,
+            config,
+            server_config,
         })
     }
 
-    fn listen(&self) -> bool {
-        self.ctx.listen_keys.is_some()
+    fn is_server(&self) -> bool {
+        self.server_config.is_some()
     }
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        if let Some(x) = self.ctx.events.pop_front() {
-            return Some(x);
-        }
-        loop {
-            let &conn = self.ctx.readable_conns.iter().next()?;
-            if let Some(x) = self.connections[conn.0].poll() {
-                return Some((conn, x));
-            }
-            self.ctx.readable_conns.remove(&conn);
-        }
+        self.ctx.events.pop_front()
     }
 
     /// Get a pending IO operation
@@ -263,10 +259,11 @@ impl Endpoint {
             if let Some(x) = self.ctx.io.pop_front() {
                 return Some(x);
             }
-            let &conn = self.ctx.dirty_conns.iter().next()?;
+            let &conn = self.dirty_conns.iter().next()?;
             // TODO: Only determine a single operation; only remove from dirty set if that fails
-            self.flush_pending(now, conn);
-            self.ctx.dirty_conns.remove(&conn);
+            let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+            self.connections[conn.0].flush_pending(&mut mux, now);
+            self.dirty_conns.remove(&conn);
         }
     }
 
@@ -274,7 +271,7 @@ impl Endpoint {
     pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
         let datagram_len = data.len();
         while !data.is_empty() {
-            match PartialDecode::new(data, self.ctx.config.local_cid_len) {
+            match PartialDecode::new(data, self.config.local_cid_len) {
                 Ok(partial_decode) => {
                     match self.handle_decode(now, remote, partial_decode, datagram_len) {
                         Some(rest) => {
@@ -289,7 +286,7 @@ impl Endpoint {
                     source,
                     destination,
                 }) => {
-                    if !self.listen() {
+                    if !self.is_server() {
                         debug!(self.log, "dropping packet with unsupported version");
                         return;
                     }
@@ -297,10 +294,11 @@ impl Endpoint {
                     // Negotiate versions
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
-                        random: self.ctx.rng.gen(),
+                        random: self.rng.gen(),
                         src_cid: destination,
                         dst_cid: source,
-                    }.encode(&mut buf);
+                    }
+                    .encode(&mut buf);
                     buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
                     self.ctx.io.push_back(Io::Transmit {
@@ -330,7 +328,7 @@ impl Endpoint {
 
         let dst_cid = partial_decode.dst_cid();
         let conn = {
-            let conn = if self.ctx.config.local_cid_len > 0 {
+            let conn = if self.config.local_cid_len > 0 {
                 self.connection_ids.get(&dst_cid)
             } else {
                 None
@@ -339,23 +337,29 @@ impl Endpoint {
                 .or_else(|| self.connection_remotes.get(&remote))
                 .cloned()
         };
-        if let Some(conn) = conn {
-            return self.connections[conn.0].handle_decode(
-                &mut self.ctx,
-                now,
-                remote,
-                partial_decode,
-            );
+        if let Some(conn_id) = conn {
+            let conn = &mut self.connections[conn_id.0];
+            let was_handshake = conn.state.as_ref().unwrap().is_handshake();
+            let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side);
+            let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
+            if was_handshake
+                && !conn.state.as_ref().unwrap().is_handshake()
+                && conn.side.is_server()
+            {
+                self.incoming_handshakes -= 1;
+            }
+            self.dirty_conns.insert(conn_id);
+            return remaining;
         }
 
         //
         // Potentially create a new connection
         //
 
-        if !self.listen() {
+        if !self.is_server() {
             debug!(
                 self.log,
-                "dropping packet on unrecognized connection {connection} because listening is disabled",
+                "dropping packet on unrecognized connection {connection} because this endpoint is not a server",
                 connection = dst_cid
             );
             return None;
@@ -375,7 +379,7 @@ impl Endpoint {
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 return match partial_decode.finish(crypto.pn_decrypt_key()) {
                     Ok((packet, rest)) => {
-                        self.handle_initial(now, remote, packet, crypto);
+                        self.handle_initial(now, remote, packet, &crypto);
                         rest
                     }
                     Err(e) => {
@@ -404,29 +408,32 @@ impl Endpoint {
             // Bound padding size to at most 8 bytes larger than input to mitigate amplification
             // attacks
             let header_len = 1 + MAX_CID_SIZE + 1;
-            let padding = self.ctx.rng.gen_range(
+            let padding = self.rng.gen_range(
                 0,
                 cmp::max(
                     RESET_TOKEN_SIZE + 8,
                     datagram_len.saturating_sub(header_len),
-                ).saturating_sub(RESET_TOKEN_SIZE),
+                )
+                .saturating_sub(RESET_TOKEN_SIZE),
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
-            let number = self.ctx.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
+            let number = self.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
             Header::Short {
-                dst_cid: ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE),
+                dst_cid: ConnectionId::random(&mut self.rng, MAX_CID_SIZE),
                 number: PacketNumber::U32(number),
                 key_phase: false,
-            }.encode(&mut buf);
-            {
-                let start = buf.len();
-                buf.resize(start + padding, 0);
-                self.ctx.rng.fill_bytes(&mut buf[start..start + padding]);
             }
+            .encode(&mut buf);
+
+            let padding_start = buf.len();
+            buf.resize(padding_start + padding, 0);
+            self.rng
+                .fill_bytes(&mut buf[padding_start..padding_start + padding]);
             buf.extend(&reset_token_for(
-                &self.ctx.listen_keys.as_ref().unwrap().reset,
+                &self.server_config.as_ref().unwrap().reset_key,
                 &dst_cid,
             ));
+
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
                 packet: buf.into(),
@@ -445,29 +452,29 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = self.new_cid();
-        let remote_id = ConnectionId::random(&mut self.ctx.rng, MAX_CID_SIZE);
+        let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id,
             local_id,
             remote_id,
             remote,
-            Some(ClientConfig {
+            ConnectionOpts::Client(ClientConfig {
                 tls_config: config.clone(),
                 server_name: server_name.into(),
             }),
-        );
-        self.ctx.dirty_conns.insert(conn);
+        )?;
+        self.dirty_conns.insert(conn);
         Ok(conn)
     }
 
     fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let cid = ConnectionId::random(&mut self.ctx.rng, self.ctx.config.local_cid_len);
+            let cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
             if !self.connection_ids.contains_key(&cid) {
                 break cid;
             }
-            assert!(self.ctx.config.local_cid_len > 0);
+            assert!(self.config.local_cid_len > 0);
         }
     }
 
@@ -477,47 +484,69 @@ impl Endpoint {
         local_id: ConnectionId,
         remote_id: ConnectionId,
         remote: SocketAddrV6,
-        client_config: Option<ClientConfig>,
-    ) -> ConnectionHandle {
+        opts: ConnectionOpts,
+    ) -> Result<ConnectionHandle, ConnectError> {
         debug_assert!(!local_id.is_empty());
-        let conn = {
-            let entry = self.connections.vacant_entry();
-            let conn = ConnectionHandle(entry.key());
-            let tls = make_tls(&self.ctx, &local_id, client_config.as_ref());
-
-            entry.insert(Connection::new(
-                self.log.new(o!("connection" => local_id)),
-                initial_id,
-                local_id,
-                remote_id,
-                remote,
-                client_config,
-                tls,
-                &mut self.ctx,
-                conn,
-            ));
-            conn
+        let (tls, client_config) = match opts {
+            ConnectionOpts::Client(config) => (
+                TlsSession::new_client(
+                    &config.tls_config,
+                    &config.server_name,
+                    &TransportParameters::new(&self.config),
+                )?,
+                Some(config),
+            ),
+            ConnectionOpts::Server { orig_dst_cid } => {
+                let server_params = TransportParameters {
+                    stateless_reset_token: Some(reset_token_for(
+                        &self.server_config.as_ref().unwrap().reset_key,
+                        &local_id,
+                    )),
+                    original_connection_id: orig_dst_cid,
+                    ..TransportParameters::new(&self.config)
+                };
+                (
+                    TlsSession::new_server(
+                        &self.server_config.as_ref().unwrap().tls_config,
+                        &server_params,
+                    ),
+                    None,
+                )
+            }
         };
-        if self.ctx.config.local_cid_len > 0 {
+
+        let conn = self.connections.insert(Connection::new(
+            self.log.new(o!("connection" => local_id)),
+            Arc::clone(&self.config),
+            initial_id,
+            local_id,
+            remote_id,
+            remote,
+            client_config,
+            tls,
+        ));
+        let conn = ConnectionHandle(conn);
+
+        if self.config.local_cid_len > 0 {
             self.connection_ids.insert(local_id, conn);
         }
         self.connection_remotes.insert(remote, conn);
-        conn
+        Ok(conn)
     }
 
-    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: Crypto) {
+    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: &Crypto) {
         let Packet {
             header,
             header_data,
             mut payload,
         } = packet;
-        let (src_cid, dst_cid, packet_number) = match header {
+        let (src_cid, dst_cid, token, packet_number) = match header {
             Header::Initial {
                 src_cid,
                 dst_cid,
+                token,
                 number,
-                ..
-            } => (src_cid, dst_cid, number),
+            } => (src_cid, dst_cid, token, number),
             _ => panic!("non-initial packet in handle_initial()"),
         };
         let packet_number = packet_number.expand(0);
@@ -531,8 +560,8 @@ impl Endpoint {
         };
         let loc_cid = self.new_cid();
 
-        if self.ctx.incoming.len() + self.ctx.incoming_handshakes
-            == self.ctx.config.accept_buffer as usize
+        if self.ctx.incoming.len() + self.incoming_handshakes
+            == self.server_config.as_ref().unwrap().accept_buffer as usize
         {
             debug!(self.log, "rejecting connection due to full accept buffer");
             self.ctx.io.push_back(Io::Transmit {
@@ -543,98 +572,102 @@ impl Endpoint {
                     &loc_cid,
                     0,
                     TransportError::SERVER_BUSY,
-                    None,
                 ),
             });
             return;
         }
 
-        let conn = self.add_connection(dst_cid, loc_cid, src_cid, remote, None);
+        let mut retry_cid = None;
+        if self.server_config.as_ref().unwrap().use_stateless_retry {
+            if let Some((token_dst_cid, token_issued)) = self
+                .server_config
+                .as_ref()
+                .unwrap()
+                .token_key
+                .check(&remote, &token)
+            {
+                let expires = token_issued
+                    + Duration::from_micros(
+                        self.server_config.as_ref().unwrap().retry_token_lifetime,
+                    );
+                if expires > SystemTime::now() {
+                    retry_cid = Some(token_dst_cid);
+                } else {
+                    trace!(self.log, "sending stateless retry due to expired token");
+                }
+            } else {
+                trace!(self.log, "sending stateless retry due to invalid token");
+            }
+            if retry_cid.is_none() {
+                let token = self.server_config.as_ref().unwrap().token_key.generate(
+                    &remote,
+                    &dst_cid,
+                    SystemTime::now(),
+                );
+                let mut buf = Vec::new();
+                let header = Header::Retry {
+                    src_cid: loc_cid,
+                    dst_cid: src_cid,
+                    orig_dst_cid: dst_cid,
+                };
+                let encode = header.encode(&mut buf);
+                let header_len = buf.len();
+                encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
+                buf.put_slice(&token);
+
+                self.ctx.io.push_back(Io::Transmit {
+                    destination: remote,
+                    packet: buf.into(),
+                });
+                return;
+            }
+        }
+
+        let conn = self
+            .add_connection(
+                dst_cid,
+                loc_cid,
+                src_cid,
+                remote,
+                ConnectionOpts::Server {
+                    orig_dst_cid: retry_cid,
+                },
+            )
+            .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
         match self.connections[conn.0].handle_initial(
-            &mut self.ctx,
+            &mut mux,
             now,
             packet_number as u64,
             payload.freeze(),
         ) {
-            Ok(()) => {}
+            Ok(()) => {
+                self.incoming_handshakes += 1;
+                self.dirty_conns.insert(conn);
+            }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
-                    packet: handshake_close(
-                        &crypto,
-                        &src_cid,
-                        &loc_cid,
-                        0,
-                        TransportError::TLS_HANDSHAKE_FAILED,
-                        None,
-                    ),
+                    packet: handshake_close(&crypto, &src_cid, &loc_cid, 0, e),
                 });
             }
         }
     }
 
-    fn flush_pending(&mut self, now: u64, conn: ConnectionHandle) {
-        let mut sent = false;
-        while let Some(packet) =
-            self.connections[conn.0].next_packet(&self.log, &self.ctx.config, now)
-        {
-            self.ctx.io.push_back(Io::Transmit {
-                destination: self.connections[conn.0].remote,
-                packet: packet.into(),
-            });
-            sent = true;
-        }
-        if sent {
-            self.connections[conn.0].reset_idle_timeout(&self.ctx.config, now);
-        }
-        {
-            let c = &mut self.connections[conn.0];
-            if let Some(setting) = c.set_idle.take() {
-                if let Some(time) = setting {
-                    self.ctx.io.push_back(Io::TimerStart {
-                        connection: conn,
-                        timer: Timer::Idle,
-                        time,
-                    });
-                } else {
-                    self.ctx.io.push_back(Io::TimerStop {
-                        connection: conn,
-                        timer: Timer::Idle,
-                    });
-                }
-            }
-            if let Some(setting) = c.set_loss_detection.take() {
-                if let Some(time) = setting {
-                    self.ctx.io.push_back(Io::TimerStart {
-                        connection: conn,
-                        timer: Timer::LossDetection,
-                        time,
-                    });
-                } else {
-                    self.ctx.io.push_back(Io::TimerStop {
-                        connection: conn,
-                        timer: Timer::LossDetection,
-                    });
-                }
-            }
-        }
-    }
-
     fn forget(&mut self, conn: ConnectionHandle) {
-        if self.connections[conn.0].side == Side::Server {
+        if self.connections[conn.0].side.is_server() {
             self.connection_ids_initial
                 .remove(&self.connections[conn.0].init_cid);
         }
-        if self.ctx.config.local_cid_len > 0 {
+        if self.config.local_cid_len > 0 {
             self.connection_ids
                 .remove(&self.connections[conn.0].loc_cid);
         }
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
-        self.ctx.dirty_conns.remove(&conn);
-        self.ctx.readable_conns.remove(&conn);
+        self.dirty_conns.remove(&conn);
         self.connections.remove(conn.0);
     }
 
@@ -654,19 +687,18 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                self.connections[conn.0].close_common(&mut self.ctx, now);
+                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                self.connections[conn.0].close_common(&mut mux, now);
                 self.connections[conn.0].state = Some(State::Draining);
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: ConnectionError::TimedOut,
-                    },
-                ));
-                self.ctx.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
-                                                   // goes through
+                self.ctx
+                    .events
+                    .push_back((conn, ConnectionError::TimedOut.into()));
+                self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
+                                               // goes through
             }
             Timer::LossDetection => {
-                self.connections[conn.0].check_packet_loss(&mut self.ctx, now);
+                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                self.connections[conn.0].check_packet_loss(&mut mux, now);
             }
         }
     }
@@ -683,7 +715,9 @@ impl Endpoint {
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        self.connections[conn.0].write(&mut self.ctx, stream, data)
+        let result = self.connections[conn.0].write(stream, data);
+        self.dirty_conns.insert(conn);
+        result
     }
 
     /// Indicate that no more data will be sent on a stream
@@ -695,7 +729,7 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn finish(&mut self, conn: ConnectionHandle, stream: StreamId) {
         self.connections[conn.0].finish(stream);
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Read data from a stream
@@ -711,10 +745,10 @@ impl Endpoint {
         stream: StreamId,
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
-        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
+                self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -738,10 +772,10 @@ impl Endpoint {
         conn: ConnectionHandle,
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
-        self.ctx.dirty_conns.insert(conn); // May need to send flow control frames after reading
+        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
         match self.connections[conn.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(&self.ctx.config, stream);
+                self.connections[conn.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -753,7 +787,8 @@ impl Endpoint {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[conn.0].reset(&mut self.ctx, stream, error_code)
+        self.connections[conn.0].reset(stream, error_code);
+        self.dirty_conns.insert(conn);
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
@@ -762,7 +797,7 @@ impl Endpoint {
     /// - when applied to a stream that has not begin receiving data
     pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[conn.0].stop_sending(stream, error_code);
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Create a new stream
@@ -770,7 +805,7 @@ impl Endpoint {
     /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint
     /// are already open.
     pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[conn.0].open(&self.ctx.config, direction)
+        self.connections[conn.0].open(direction)
     }
 
     /// Ping the remote endpoint
@@ -778,7 +813,7 @@ impl Endpoint {
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self, conn: ConnectionHandle) {
         self.connections[conn.0].pending.ping = true;
-        self.ctx.dirty_conns.insert(conn);
+        self.dirty_conns.insert(conn);
     }
 
     /// Close a connection immediately
@@ -790,7 +825,8 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-        self.connections[conn.0].close(&mut self.ctx, now, error_code, reason);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+        self.connections[conn.0].close(&mut mux, now, error_code, reason);
     }
 
     /// Look up whether we're the client or server of `conn`.
@@ -881,6 +917,12 @@ pub enum Event {
     },
 }
 
+impl From<ConnectionError> for Event {
+    fn from(x: ConnectionError) -> Self {
+        Event::ConnectionLost { reason: x }
+    }
+}
+
 /// I/O operations to be immediately executed the backend.
 #[derive(Debug)]
 pub enum Io {
@@ -911,10 +953,57 @@ pub enum Timer {
 impl slog::Value for Timer {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
+enum ConnectionOpts {
+    Client(ClientConfig),
+    Server { orig_dst_cid: Option<ConnectionId> },
+}
+
+// TODO: Deduplicate events and timer signals.
+pub struct EndpointMux<'a> {
+    handle: ConnectionHandle,
+    side: Side,
+    ctx: &'a mut Context,
+}
+
+impl<'a> EndpointMux<'a> {
+    fn new(ctx: &'a mut Context, handle: ConnectionHandle, side: Side) -> Self {
+        Self { handle, side, ctx }
+    }
+}
+
+impl Multiplexer for EndpointMux<'_> {
+    fn transmit(&mut self, destination: SocketAddrV6, packet: Box<[u8]>) {
+        self.ctx.io.push_back(Io::Transmit {
+            destination,
+            packet,
+        });
+    }
+    fn timer_start(&mut self, timer: Timer, time: u64) {
+        self.ctx.io.push_back(Io::TimerStart {
+            connection: self.handle,
+            timer,
+            time,
+        });
+    }
+    fn timer_stop(&mut self, timer: Timer) {
+        self.ctx.io.push_back(Io::TimerStop {
+            connection: self.handle,
+            timer,
+        });
+    }
+    fn emit(&mut self, event: Event) {
+        if let (Side::Server, &Event::Connected { .. }) = (self.side, &event) {
+            self.ctx.incoming.push_back(self.handle);
+        } else {
+            self.ctx.events.push_back((self.handle, event));
+        }
     }
 }

@@ -11,6 +11,7 @@ use bytes::Bytes;
 use rand::RngCore;
 use ring::digest;
 use ring::hmac::SigningKey;
+use rustls::internal::msgs::enums::AlertDescription;
 use rustls::{internal::pemfile, KeyLogFile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
@@ -22,7 +23,7 @@ struct TestDrain;
 impl Drain for TestDrain {
     type Ok = ();
     type Err = io::Error;
-    fn log(&self, record: &slog::Record, values: &slog::OwnedKVList) -> Result<(), io::Error> {
+    fn log(&self, record: &slog::Record<'_>, values: &slog::OwnedKVList) -> Result<(), io::Error> {
         let mut vals = Vec::new();
         values.serialize(&record, &mut TestSerializer(&mut vals))?;
         record
@@ -38,12 +39,12 @@ impl Drain for TestDrain {
     }
 }
 
-struct TestSerializer<'a, W: 'a>(&'a mut W);
+struct TestSerializer<'a, W>(&'a mut W);
 impl<'a, W> slog::Serializer for TestSerializer<'a, W>
 where
     W: Write + 'a,
 {
-    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments) -> slog::Result {
+    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments<'_>) -> slog::Result {
         write!(self.0, ", {}: {}", key, val).unwrap();
         Ok(())
     }
@@ -69,18 +70,14 @@ struct Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        let mut server_config = server_config();
-        server_config.max_remote_uni_streams = 32;
-        server_config.max_remote_bi_streams = 32;
-        Pair::new(
-            server_config,
-            Default::default(),
-            ListenKeys::new(&mut rand::thread_rng()),
-        )
+        let mut server = Config::default();
+        server.max_remote_uni_streams = 32;
+        server.max_remote_bi_streams = 32;
+        Pair::new(server, Default::default(), server_config())
     }
 }
 
-fn server_config() -> Config {
+fn server_config() -> ServerConfig {
     let certs = {
         let f =
             fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
@@ -94,13 +91,11 @@ fn server_config() -> Config {
         pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
     };
 
-    let mut tls_server_config = crypto::build_server_config();
-    tls_server_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    tls_server_config
-        .set_single_cert(certs, keys[0].clone())
-        .unwrap();
-    Config {
-        tls_server_config: Arc::new(tls_server_config),
+    let mut tls_config = crypto::build_server_config();
+    tls_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    tls_config.set_single_cert(certs, keys[0].clone()).unwrap();
+    ServerConfig {
+        tls_config: Arc::new(tls_config),
         ..Default::default()
     }
 }
@@ -124,13 +119,14 @@ fn client_config() -> Arc<ClientConfig> {
 }
 
 impl Pair {
-    fn new(server_config: Config, client_config: Config, listen_keys: ListenKeys) -> Self {
+    fn new(server_config: Config, client_config: Config, listen_keys: ServerConfig) -> Self {
         let log = logger();
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
             server_config,
             Some(listen_keys),
-        ).unwrap();
+        )
+        .unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
         let localhost = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
@@ -390,12 +386,12 @@ impl ::std::ops::DerefMut for TestEndpoint {
 fn version_negotiate() {
     let log = logger();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let config = server_config();
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
-        config,
-        Some(ListenKeys::new(&mut rand::thread_rng())),
-    ).unwrap();
+        Config::default(),
+        Some(server_config()),
+    )
+    .unwrap();
     server.handle(
         0,
         client_addr,
@@ -410,13 +406,11 @@ fn version_negotiate() {
     let io = server.poll_io(0);
     assert_matches!(io, Some(Io::Transmit { .. }));
     if let Some(Io::Transmit { packet, .. }) = io {
-        assert!(packet[0] | 0x80 != 0);
+        assert_ne!(packet[0] & 0x80, 0);
         assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
-        assert!(
-            packet[14..]
-                .chunks(4)
-                .any(|x| BigEndian::read_u32(x) == VERSION)
-        );
+        assert!(packet[14..]
+            .chunks(4)
+            .any(|x| BigEndian::read_u32(x) == VERSION));
     }
     assert_matches!(server.poll_io(0), None);
     assert_matches!(server.poll(), None);
@@ -439,45 +433,51 @@ fn lifecycle() {
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionDrained)) if conn == client_conn);
 }
 
-/*
 #[test]
 fn stateless_retry() {
     let mut pair = Pair::new(
-        Config {
-            use_stateless_retry: true,
-            ..Config::default()
-        },
         Config::default(),
+        Config::default(),
+        ServerConfig {
+            use_stateless_retry: true,
+            ..server_config()
+        },
     );
     pair.connect();
 }
-*/
 
 #[test]
 fn stateless_reset() {
-    let mut server_config = server_config();
-    server_config.max_remote_uni_streams = 32;
-    server_config.max_remote_bi_streams = 32;
+    let mut server = Config::default();
+    server.max_remote_uni_streams = 32;
+    server.max_remote_bi_streams = 32;
 
+    let mut token_value = [0; 64];
     let mut reset_value = [0; 64];
     let mut rng = rand::thread_rng();
+    rng.fill_bytes(&mut token_value);
     rng.fill_bytes(&mut reset_value);
 
-    let mut listen_key = ListenKeys::new(&mut rand::thread_rng());
-    listen_key.reset = SigningKey::new(&digest::SHA512_256, &reset_value);
-
-    let pair_listen_keys = ListenKeys {
-        cookie: listen_key.cookie.clone(),
-        reset: SigningKey::new(&digest::SHA512_256, &reset_value),
+    let listen_key = ServerConfig {
+        token_key: TokenKey::new(&token_value),
+        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+        ..server_config()
     };
 
-    let mut pair = Pair::new(server_config, Default::default(), listen_key);
+    let pair_listen_keys = ServerConfig {
+        token_key: TokenKey::new(&token_value),
+        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+        ..server_config()
+    };
+
+    let mut pair = Pair::new(server, Default::default(), listen_key);
     let (client_conn, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("peer" => "server")),
         Config::default(),
         Some(pair_listen_keys),
-    ).unwrap();
+    )
+    .unwrap();
     pair.client.ping(client_conn);
     info!(pair.log, "resetting");
     pair.drive();
@@ -524,7 +524,7 @@ fn reset_stream() {
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -549,7 +549,7 @@ fn stop_stream() {
     pair.drive();
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), None);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -577,8 +577,8 @@ fn reject_self_signed_cert() {
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
-                        error_code: TransportError::TLS_HANDSHAKE_FAILED
-                    }})) if conn == client_conn);
+                        error_code
+                    }})) if conn == client_conn && error_code == TransportError::crypto(AlertDescription::BadCertificate));
 }
 
 #[test]
@@ -673,15 +673,11 @@ fn close_during_handshake() {
 
 #[test]
 fn stream_id_backpressure() {
-    let server_config = Config {
+    let server = Config {
         max_remote_uni_streams: 1,
-        ..server_config()
+        ..Config::default()
     };
-    let mut pair = Pair::new(
-        server_config,
-        Default::default(),
-        ListenKeys::new(&mut rand::thread_rng()),
-    );
+    let mut pair = Pair::new(server, Default::default(), server_config());
     let (client_conn, server_conn) = pair.connect();
 
     let s = pair

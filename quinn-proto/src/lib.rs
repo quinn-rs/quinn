@@ -1,33 +1,22 @@
-extern crate aes_ctr;
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
-extern crate byteorder;
-extern crate bytes;
-extern crate constant_time_eq;
 #[macro_use]
 extern crate failure;
-extern crate fnv;
 #[cfg(test)]
 #[macro_use]
 extern crate hex_literal;
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
-extern crate orion;
-extern crate rand;
-extern crate ring;
-extern crate rustls;
-extern crate slab;
 #[macro_use]
 extern crate slog;
-#[cfg(test)]
-extern crate untrusted;
-extern crate webpki;
 
 use std::fmt;
+use std::ops;
 
 mod coding;
+mod dedup;
 mod range_set;
 #[cfg(test)]
 mod tests;
@@ -35,26 +24,26 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use connection::{ConnectionError, ConnectionHandle};
+pub use crate::connection::{ConnectionError, ConnectionHandle};
 
 mod crypto;
-pub use crypto::{ClientConfig, ConnectError};
+pub use crate::crypto::{ClientConfig, ConnectError, TokenKey};
 
 mod frame;
-use frame::Frame;
-pub use frame::{ApplicationClose, ConnectionClose};
+use crate::frame::Frame;
+pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use endpoint::{Config, Endpoint, EndpointError, Event, Io, ListenKeys, Timer};
+pub use crate::endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
 
 mod packet;
-pub use packet::ConnectionId;
+pub use crate::packet::ConnectionId;
 
 mod stream;
-pub use stream::{ReadError, WriteError};
+pub use crate::stream::{ReadError, WriteError};
 
 mod transport_error;
-pub use transport_error::Error as TransportError;
+pub use crate::transport_error::Error as TransportError;
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_000f;
@@ -71,7 +60,19 @@ pub enum Side {
     Server = 1,
 }
 
-impl ::std::ops::Not for Side {
+impl Side {
+    #[inline]
+    fn is_client(self) -> bool {
+        self == Side::Client
+    }
+
+    #[inline]
+    fn is_server(self) -> bool {
+        self == Side::Server
+    }
+}
+
+impl ops::Not for Side {
     type Output = Side;
     fn not(self) -> Side {
         match self {
@@ -84,9 +85,9 @@ impl ::std::ops::Not for Side {
 impl slog::Value for Side {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -106,7 +107,7 @@ pub enum Directionality {
 pub struct StreamId(pub(crate) u64);
 
 impl fmt::Display for StreamId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let initiator = match self.initiator() {
             Side::Client => "client",
             Side::Server => "server",
@@ -128,9 +129,9 @@ impl fmt::Display for StreamId {
 impl slog::Value for StreamId {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }

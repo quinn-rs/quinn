@@ -3,30 +3,19 @@ use std::{fmt, io, mem};
 
 use bytes::{Buf, BufMut, Bytes};
 
-use coding::{self, BufExt, BufMutExt, UnexpectedEnd};
-use range_set::RangeSet;
-use {
+use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
+use crate::range_set::RangeSet;
+use crate::{
     varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Type(u8);
-
-impl From<u8> for Type {
-    fn from(x: u8) -> Self {
-        Type(x)
-    }
-}
-impl From<Type> for u8 {
-    fn from(x: Type) -> Self {
-        x.0
-    }
-}
+pub struct Type(u64);
 
 impl Type {
     fn stream(self) -> Option<StreamInfo> {
         if self.0 >= 0x10 && self.0 <= 0x17 {
-            Some(StreamInfo(self.0))
+            Some(StreamInfo(self.0 as u8))
         } else {
             None
         }
@@ -35,10 +24,21 @@ impl Type {
 
 impl coding::Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Type(buf.get()?))
+        Ok(Type(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        self.0.encode(buf);
+        buf.write_var(self.0);
+    }
+}
+
+impl slog::Value for Type {
+    fn serialize(
+        &self,
+        _: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 
@@ -49,7 +49,7 @@ macro_rules! frame_types {
         }
 
         impl fmt::Debug for Type {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     _ => write!(f, "Type({:02x})", self.0)
@@ -58,7 +58,7 @@ macro_rules! frame_types {
         }
 
         impl fmt::Display for Type {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x10 && x <= 0x17 => f.write_str("STREAM"),
@@ -84,7 +84,7 @@ impl StreamInfo {
     }
 }
 
-frame_types!{
+frame_types! {
     PADDING = 0x00,
     RST_STREAM = 0x01,
     CONNECTION_CLOSE = 0x02,
@@ -98,9 +98,13 @@ frame_types!{
     STREAM_ID_BLOCKED = 0x0a,
     NEW_CONNECTION_ID = 0x0b,
     STOP_SENDING = 0x0c,
-    ACK = 0x0d,
+    RETIRE_CONNECTION_ID = 0x0d,
     PATH_CHALLENGE = 0x0e,
     PATH_RESPONSE = 0x0f,
+    CRYPTO = 0x18,
+    NEW_TOKEN = 0x19,
+    ACK = 0x1a,
+    ACK_ECN = 0x1b,
 }
 
 #[derive(Debug)]
@@ -130,6 +134,9 @@ pub enum Frame {
         id: StreamId,
         error_code: u16,
     },
+    RetireConnectionId {
+        sequence: u64,
+    },
     Ack(Ack),
     Stream(Stream),
     PathChallenge(u64),
@@ -139,7 +146,12 @@ pub enum Frame {
         id: ConnectionId,
         reset_token: [u8; 16],
     },
+    Crypto(Crypto),
+    NewToken {
+        token: Bytes,
+    },
     Invalid(Type),
+    Illegal(Type),
 }
 
 impl Frame {
@@ -158,6 +170,7 @@ impl Frame {
             StreamBlocked { .. } => Type::STREAM_BLOCKED,
             StreamIdBlocked { .. } => Type::STREAM_ID_BLOCKED,
             StopSending { .. } => Type::STOP_SENDING,
+            RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
                 let mut ty = 0x10;
@@ -172,7 +185,10 @@ impl Frame {
             PathChallenge(_) => Type::PATH_CHALLENGE,
             PathResponse(_) => Type::PATH_RESPONSE,
             NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
+            Crypto(_) => Type::CRYPTO,
+            NewToken { .. } => Type::NEW_TOKEN,
             Invalid(ty) => ty,
+            Illegal(ty) => ty,
         }
     }
 }
@@ -180,6 +196,7 @@ impl Frame {
 #[derive(Debug, Clone)]
 pub struct ConnectionClose<T = Bytes> {
     pub error_code: TransportError,
+    pub frame_type: Option<Type>,
     pub reason: T,
 }
 
@@ -187,7 +204,7 @@ impl<T> fmt::Display for ConnectionClose<T>
 where
     T: AsRef<[u8]>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error_code.fmt(f)?;
         if !self.reason.as_ref().is_empty() {
             f.write_str(": ")?;
@@ -201,6 +218,7 @@ impl From<TransportError> for ConnectionClose {
     fn from(x: TransportError) -> Self {
         ConnectionClose {
             error_code: x,
+            frame_type: None,
             reason: Bytes::new(),
         }
     }
@@ -213,6 +231,7 @@ where
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
         out.write(Type::CONNECTION_CLOSE);
         out.write(self.error_code);
+        out.write_var(self.frame_type.map_or(0, |x| x.0));
         let max_len =
             max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
@@ -231,7 +250,7 @@ impl<T> fmt::Display for ApplicationClose<T>
 where
     T: AsRef<[u8]>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.reason.as_ref().is_empty() {
             f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
             f.write_str(" (code ")?;
@@ -264,6 +283,7 @@ pub struct Ack {
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
+    pub ecn: Option<Ecn>,
 }
 
 impl<'a> IntoIterator for &'a Ack {
@@ -276,12 +296,16 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
-    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, buf: &mut W) {
+    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, ecn: Option<Ecn>, buf: &mut W) {
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        buf.write(Type::ACK);
+        buf.write(if ecn.is_some() {
+            Type::ACK_ECN
+        } else {
+            Type::ACK
+        });
         varint::write(largest, buf).unwrap();
         varint::write(delay, buf).unwrap();
         varint::write(ranges.len() as u64 - 1, buf).unwrap();
@@ -293,10 +317,26 @@ impl Ack {
             varint::write(size - 1, buf).unwrap();
             prev = block.start;
         }
+        ecn.map(|x| x.encode(buf));
     }
 
-    pub fn iter(&self) -> AckIter {
+    pub fn iter(&self) -> AckIter<'_> {
         self.into_iter()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Ecn {
+    pub ect0_count: u64,
+    pub ect1_count: u64,
+    pub ce_count: u64,
+}
+
+impl Ecn {
+    fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write_var(self.ect0_count);
+        out.write_var(self.ect1_count);
+        out.write_var(self.ce_count);
     }
 }
 
@@ -335,6 +375,21 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Crypto {
+    pub offset: u64,
+    pub data: Bytes,
+}
+
+impl Crypto {
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(Type::CRYPTO);
+        out.write_var(self.offset);
+        out.write_var(self.data.len() as u64);
+        out.put_slice(&self.data);
+    }
+}
+
 pub struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
@@ -345,6 +400,7 @@ enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
     Malformed,
+    Illegal,
 }
 
 impl From<UnexpectedEnd> for IterErr {
@@ -372,8 +428,13 @@ impl Iter {
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
+        let ty_start = self.bytes.position();
         let ty = self.bytes.get::<Type>()?;
         self.last_ty = Some(ty);
+        let ty_len = (self.bytes.position() - ty_start) as usize;
+        if varint::size(ty.0).unwrap() != ty_len {
+            return Err(IterErr::Illegal);
+        }
         Ok(match ty {
             Type::PADDING => Frame::Padding,
             Type::RST_STREAM => Frame::RstStream(RstStream {
@@ -383,6 +444,14 @@ impl Iter {
             }),
             Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
                 error_code: self.bytes.get()?,
+                frame_type: {
+                    let x = self.bytes.get_var()?;
+                    if x == 0 {
+                        None
+                    } else {
+                        Some(Type(x))
+                    }
+                },
                 reason: self.take_len()?,
             }),
             Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
@@ -410,7 +479,10 @@ impl Iter {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
             },
-            Type::ACK => {
+            Type::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
+                sequence: self.bytes.get_var()?,
+            },
+            Type::ACK | Type::ACK_ECN => {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
@@ -422,6 +494,15 @@ impl Iter {
                     delay,
                     largest,
                     additional: self.bytes.get_ref().slice(start, start + len),
+                    ecn: if ty != Type::ACK_ECN {
+                        None
+                    } else {
+                        Some(Ecn {
+                            ect0_count: self.bytes.get_var()?,
+                            ect1_count: self.bytes.get_var()?,
+                            ce_count: self.bytes.get_var()?,
+                        })
+                    },
                 })
             }
             Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
@@ -449,6 +530,13 @@ impl Iter {
                     reset_token,
                 }
             }
+            Type::CRYPTO => Frame::Crypto(Crypto {
+                offset: self.bytes.get_var()?,
+                data: self.take_len()?,
+            }),
+            Type::NEW_TOKEN => Frame::NewToken {
+                token: self.take_len()?,
+            },
             _ => match ty.stream() {
                 Some(s) => Frame::Stream(Stream {
                     id: self.bytes.get()?,
@@ -479,10 +567,13 @@ impl Iterator for Iter {
         }
         match self.try_next() {
             Ok(x) => Some(x),
-            Err(_) => {
+            Err(e) => {
                 // Corrupt frame, skip it and everything that follows
                 self.bytes = io::Cursor::new(Bytes::new());
-                Some(Frame::Invalid(self.last_ty.unwrap()))
+                Some(match e {
+                    IterErr::Illegal => Frame::Illegal(self.last_ty.unwrap()),
+                    _ => Frame::Invalid(self.last_ty.unwrap()),
+                })
             }
         }
     }
@@ -557,13 +648,20 @@ mod test {
             ranges.insert(packet..packet + 1);
         }
         let mut buf = Vec::new();
-        Ack::encode(42, &ranges, &mut buf);
+        const ECN: Ecn = Ecn {
+            ect0_count: 42,
+            ect1_count: 24,
+            ce_count: 12,
+        };
+        Ack::encode(42, &ranges, Some(ECN), &mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
                 let mut packets = ack.iter().flat_map(|x| x).collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
+                assert_eq!(ack.ecn, Some(ECN));
             }
             ref x => panic!("incorrect frame {:?}", x),
         }

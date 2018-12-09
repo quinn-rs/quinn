@@ -37,7 +37,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
-- [ ] Stateless retry
+- [x] Stateless retry
 - [ ] Migration
 - [ ] 0-RTT data
 - [ ] Session resumption
@@ -45,8 +45,11 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 
 ## How to start
 
-The example client [currently always verifies][insecure] the server's certificate 
-chain. Example certificates are included in the repository for test purposes.
+The server [currently always requires][insecure] certificates to be supplied. 
+Example certificates are included in the repository for test purposes.
+The client must be configured to trust the test certificate authority unless the
+client is built with the `dangerous_configuration` feature and passed
+`--accept-insecure-certs`.
 
 ```sh
 $ cargo run --example server -- --cert ./certs/server.chain --key ./certs/server.rsa ./

@@ -1,14 +1,7 @@
-extern crate quinn;
-extern crate tokio;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate slog;
-extern crate futures;
-extern crate rustls;
-extern crate slog_term;
-extern crate structopt;
-extern crate url;
 
 use std::fs;
 use std::io::{self, Write};
@@ -16,13 +9,12 @@ use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use failure::Error;
 use futures::Future;
+use slog::{Drain, Logger};
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
-
-use failure::Error;
-use slog::{Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -94,10 +86,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     */
 
-    let mut builder = quinn::Endpoint::new();
+    let mut endpoint = quinn::Endpoint::new();
     let mut client_config = quinn::ClientConfigBuilder::new();
-    builder.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
-    builder.logger(log.clone());
+    client_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
+    endpoint.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();
     }
@@ -111,9 +103,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         }
     }
 
-    let client_config = client_config.build();
+    endpoint.default_client_config(client_config.build());
 
-    let (endpoint, driver, _) = builder.bind("[::]:0")?;
+    let (endpoint, driver, _) = endpoint.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -121,11 +113,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let start = Instant::now();
     runtime.block_on(
         endpoint
-            .connect_with(
-                &client_config,
+            .connect(
                 &remote,
                 url.host_str().ok_or(format_err!("URL missing host"))?,
-            )?.map_err(|e| format_err!("failed to connect: {}", e))
+            )?
+            .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));
                 let conn = conn.connection;
@@ -136,10 +128,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         eprintln!("stream opened at {}", duration_secs(&start.elapsed()));
                         tokio::io::write_all(stream, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
-                    }).and_then(|(stream, _)| {
+                    })
+                    .and_then(|(stream, _)| {
                         tokio::io::shutdown(stream)
                             .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                    }).and_then(move |stream| {
+                    })
+                    .and_then(move |stream| {
                         let response_start = Instant::now();
                         eprintln!(
                             "request sent at {}",
@@ -148,7 +142,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         quinn::read_to_end(stream, usize::max_value())
                             .map_err(|e| format_err!("failed to read response: {}", e))
                             .map(move |x| (x, response_start))
-                    }).and_then(move |((_, data), response_start)| {
+                    })
+                    .and_then(move |((_, data), response_start)| {
                         let seconds = duration_secs(&response_start.elapsed());
                         eprintln!(
                             "response received in {} - {} KiB/s",
@@ -158,7 +153,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         io::stdout().write_all(&data).unwrap();
                         io::stdout().flush().unwrap();
                         conn.close(0, b"done").map_err(|_| unreachable!())
-                    }).map(|()| eprintln!("drained"))
+                    })
+                    .map(|()| eprintln!("drained"))
             }),
     )?;
 

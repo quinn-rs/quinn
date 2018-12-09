@@ -4,10 +4,10 @@ use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
 use slog;
 
-use coding::{self, BufExt, BufMutExt, Codec};
-use crypto::PacketNumberKey;
-use varint;
-use {MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::coding::{self, BufExt, BufMutExt, Codec};
+use crate::crypto::PacketNumberKey;
+use crate::varint;
+use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -62,6 +62,7 @@ impl PartialDecode {
                 ..
             } => match PacketType::from_byte(first).unwrap() {
                 PacketType::Initial => true,
+                PacketType::Retry => true,
                 PacketType::Long(LongType::Handshake) => true,
                 _ => false,
             },
@@ -91,7 +92,7 @@ impl PartialDecode {
                     ));
                 }
 
-                let mut sample_offset = 1 + dst_cid.len() + 4;
+                let sample_offset = 1 + dst_cid.len() + 4;
                 let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
                 (
                     buf.remaining(),
@@ -141,8 +142,11 @@ impl PartialDecode {
                 }
                 PacketType::Initial => {
                     let token_length = buf.get_var()? as usize;
-                    let mut token = vec![0; token_length];
-                    buf.copy_to_slice(&mut token);
+                    // Could we avoid this alloc/copy somehow?
+                    let mut token = BytesMut::with_capacity(token_length);
+                    token.extend_from_slice(&buf.bytes()[..token_length]);
+                    let token = token.freeze();
+                    buf.advance(token_length);
 
                     let len = buf.get_var()?;
                     let sample_offset = 10
@@ -227,14 +231,9 @@ impl PartialDecode {
         }
 
         let mut first = [buf.bytes()[0]; 1];
-        let sample = {
-            let mut sample = [0; 16];
-            debug_assert!(pn_key.sample_size() <= 16);
-            sample.copy_from_slice(
-                &buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()],
-            );
-            sample
-        };
+        let mut sample = [0; 16];
+        debug_assert!(pn_key.sample_size() <= 16);
+        sample.copy_from_slice(&buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()]);
 
         pn_key.decrypt(&sample, &mut first);
         let len = PacketNumber::decode_len(first[0]);
@@ -255,7 +254,7 @@ pub enum Header {
     Initial {
         src_cid: ConnectionId,
         dst_cid: ConnectionId,
-        token: Vec<u8>,
+        token: Bytes,
         number: PacketNumber,
     },
     Long {
@@ -282,7 +281,7 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode {
+    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode<'_> {
         use self::Header::*;
         match *self {
             Initial {
@@ -382,6 +381,13 @@ impl Header {
         w.put_slice(dst_cid);
         w.put_slice(src_cid);
     }
+
+    pub fn is_retry(&self) -> bool {
+        match *self {
+            Header::Retry { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 pub struct PartialEncode<'a> {
@@ -395,7 +401,7 @@ impl<'a> PartialEncode<'a> {
         let payload_len = (buf.len() - header_len) as u64;
         let (mut sample_offset, pn_pos, pn_len) = match header {
             Header::Short { dst_cid, .. } => {
-                let mut sample_offset = 1 + dst_cid.len() + 4;
+                let sample_offset = 1 + dst_cid.len() + 4;
                 let (pn_pos, pn_len) = pn.unwrap();
                 (sample_offset, pn_pos, pn_len)
             }
@@ -528,12 +534,12 @@ pub enum PacketNumber {
 
 impl PacketNumber {
     pub fn new(n: u64, largest_acked: u64) -> Self {
-        let range = (n - largest_acked) / 2;
-        if range < 1 << 8 {
+        let range = (n - largest_acked) * 2;
+        if range < 1 << 7 {
             PacketNumber::U8(n as u8)
-        } else if range < 1 << 16 {
+        } else if range < 1 << 14 {
             PacketNumber::U16(n as u16)
-        } else if range < 1 << 32 {
+        } else if range < 1 << 30 {
             PacketNumber::U32(n as u32)
         } else {
             panic!("packet number too large to encode")
@@ -557,12 +563,10 @@ impl PacketNumber {
                 w.write(x)
             }
             U16(x) => {
-                debug_assert!(x >= 128);
                 debug_assert!(x < 16384);
                 w.write(x | 0x8000)
             }
             U32(x) => {
-                debug_assert!(x >= 16384);
                 debug_assert!(x < 1073741824);
                 w.write(x | 0xc0000000)
             }
@@ -600,20 +604,37 @@ impl PacketNumber {
         }
     }
 
-    pub fn expand(self, prev: u64) -> u64 {
+    pub fn expand(self, expected: u64) -> u64 {
+        // From Appendix A
         use self::PacketNumber::*;
-        let t = prev + 1;
-        // Compute missing bits that minimize the difference from expected
-        let d = 1 << (8 * self.len());
-        let x = match self {
+        let truncated = match self {
             U8(x) => x as u64,
             U16(x) => x as u64,
             U32(x) => x as u64,
         };
-        if t > d / 2 {
-            x + d * ((t + d / 2 - x) / d)
+        let nbits = match self {
+            U8(_) => 7,
+            U16(_) => 14,
+            U32(_) => 30,
+        };
+        let win = 1 << nbits;
+        let hwin = win / 2;
+        let mask = win - 1;
+        // The incoming packet number should be greater than expected - hwin and less than or equal
+        // to expected + hwin
+        //
+        // This means we can't just strip the trailing bits from expected and add the truncated
+        // because that might yield a value outside the window.
+        //
+        // The following code calculates a candidate value and makes sure it's within the packet
+        // number window.
+        let candidate = (expected & !mask) | truncated;
+        if expected.checked_sub(hwin).map_or(false, |x| candidate <= x) {
+            candidate + win
+        } else if candidate > expected + hwin && candidate > win {
+            candidate - win
         } else {
-            x % d
+            candidate
         }
     }
 }
@@ -650,11 +671,13 @@ impl From<PacketType> for u8 {
             Long(Handshake) => LONG_HEADER_FORM | 0x7d,
             Long(ZeroRtt) => LONG_HEADER_FORM | 0x7c,
             Retry => LONG_HEADER_FORM | 0x7e,
-            Short { key_phase } => if key_phase {
-                KEY_PHASE_BIT
-            } else {
-                0
-            },
+            Short { key_phase } => {
+                if key_phase {
+                    KEY_PHASE_BIT
+                } else {
+                    0
+                }
+            }
         }
     }
 }
@@ -662,9 +685,9 @@ impl From<PacketType> for u8 {
 impl slog::Value for PacketType {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -679,9 +702,9 @@ pub enum LongType {
 impl slog::Value for LongType {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
@@ -755,13 +778,13 @@ impl ::std::ops::DerefMut for ConnectionId {
 }
 
 impl fmt::Debug for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.bytes[0..self.len as usize].fmt(f)
     }
 }
 
 impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.iter() {
             write!(f, "{:02x}", byte)?;
         }
@@ -772,9 +795,9 @@ impl fmt::Display for ConnectionId {
 impl slog::Value for ConnectionId {
     fn serialize(
         &self,
-        _: &slog::Record,
+        _: &slog::Record<'_>,
         key: slog::Key,
-        serializer: &mut slog::Serializer,
+        serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{}", self))
     }
@@ -806,7 +829,7 @@ mod tests {
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {
         let mut buf = Vec::new();
         typed.encode(&mut buf);
-        assert_eq!(&buf[..encoded.len()], encoded);
+        assert_eq!(&buf[..], encoded);
         let decoded = PacketNumber::decode(&mut io::Cursor::new(&buf)).unwrap();
         assert_eq!(typed, decoded);
     }
@@ -818,6 +841,23 @@ mod tests {
         check_pn(PacketNumber::U16(16383), &[0xbf, 0xff]);
         check_pn(PacketNumber::U32(16384), &[0xc0, 0x00, 0x40, 0x00]);
         check_pn(PacketNumber::U32(1073741823), &[0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn pn_encode() {
+        check_pn(PacketNumber::new(63, 0), &[0x3f]);
+        check_pn(PacketNumber::new(64, 0), &[0x80, 0x40]);
+        check_pn(PacketNumber::new(8191, 0), &[0x9f, 0xff]);
+        check_pn(PacketNumber::new(8192, 0), &[0xc0, 0x00, 0x20, 0x00]);
+    }
+
+    #[test]
+    fn pn_expand_roundtrip() {
+        for expected in 0..1024 {
+            for actual in expected..1024 {
+                assert_eq!(actual, PacketNumber::new(actual, expected).expand(expected));
+            }
+        }
     }
 
     // https://github.com/quicwg/base-drafts/wiki/Test-vector-for-AES-packet-number-encryption
@@ -856,7 +896,8 @@ mod tests {
         PartialEncode {
             header: &header,
             pn: Some((1, 2)),
-        }.finish(&mut sending, &key, 3);
+        }
+        .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0x80, 0x6d]);
     }
 
@@ -896,7 +937,8 @@ mod tests {
         PartialEncode {
             header: &header,
             pn: Some((1, 2)),
-        }.finish(&mut sending, &key, 3);
+        }
+        .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0xa9, 0x0e]);
     }
 }
