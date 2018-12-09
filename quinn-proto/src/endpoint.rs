@@ -690,12 +690,9 @@ impl Endpoint {
                 let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
                 self.connections[conn.0].close_common(&mut mux, now);
                 self.connections[conn.0].state = Some(State::Draining);
-                self.ctx.events.push_back((
-                    conn,
-                    Event::ConnectionLost {
-                        reason: ConnectionError::TimedOut,
-                    },
-                ));
+                self.ctx
+                    .events
+                    .push_back((conn, ConnectionError::TimedOut.into()));
                 self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
                                                // goes through
             }
@@ -918,6 +915,12 @@ pub enum Event {
     NewSessionTicket {
         ticket: Box<[u8]>,
     },
+}
+
+impl From<ConnectionError> for Event {
+    fn from(x: ConnectionError) -> Self {
+        Event::ConnectionLost { reason: x }
+    }
 }
 
 /// I/O operations to be immediately executed the backend.
