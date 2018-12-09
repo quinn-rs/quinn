@@ -45,23 +45,22 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 
 ## How to start
 
-The example client [currently always verifies][insecure] the server's certificate chain.
-Example certificates are included in the repository for test purposes.
+The example client [currently always verifies][insecure] the server's certificate 
+chain. Example certificates are included in the repository for test purposes.
 
 ```sh
 $ cargo run --example server -- --cert ./certs/server.chain --key ./certs/server.rsa ./
 $ cargo run --example client -- --ca ./certs/ca.der https://localhost:4433/Cargo.toml
 ```
 
-In the above example, the server will run on localhost and serve the "." folder to the client.
-The client will request the "Cargo.toml" file.  
+In the above example, the server will run on localhost and serve the "." folder to
+the client. The client will request the "Cargo.toml" file.  
 
-To run the example client/server across a network you 
-need to update the `certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name 
-of the server, and then regenerate the certificates using the `certs/generate.sh` script.  This
-method of generating certificates is very limiting. The preferred method when running a 
-server on a network would be to use real certs from an actual certificate authority, like 
-Let's Encrypt.
+To run the example client/server across a network you need to update the 
+`certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name  of the 
+server, and then regenerate the certificates using the `certs/generate.sh` script.  
+For real-world use, a certificate signed by a legitimate CA is recommended when 
+possible.
 
 ## Development
 
