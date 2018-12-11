@@ -2059,6 +2059,52 @@ impl Connection {
             self.reset_idle_timeout(mux, now);
         }
     }
+
+    /// Look up whether we're the client or server of this Connection
+    pub fn side(&self) -> Side {
+        self.side
+    }
+
+    /// The `ConnectionId` used for this Connection locally
+    pub fn loc_cid(&self) -> ConnectionId {
+        self.loc_cid
+    }
+
+    /// The `ConnectionId` used for this Connection by the peer
+    pub fn rem_cid(&self) -> ConnectionId {
+        self.rem_cid
+    }
+
+    pub fn remote(&self) -> SocketAddrV6 {
+        self.remote
+    }
+
+    pub fn protocol(&self) -> Option<&[u8]> {
+        self.tls.get_alpn_protocol().map(|p| p.as_bytes())
+    }
+
+    /// The number of bytes of packets containing retransmittable frames that have not been
+    /// acknowledged or declared lost.
+    pub fn bytes_in_flight(&self) -> u64 {
+        self.bytes_in_flight
+    }
+
+    /// Number of bytes worth of non-ack-only packets that may be sent
+    pub fn congestion_state(&self) -> u64 {
+        self.congestion_window.saturating_sub(self.bytes_in_flight)
+    }
+
+    /// The name a client supplied via SNI
+    ///
+    /// `None` if no name was supplised or if this connection was locally initiated.
+    pub fn server_name(&self) -> Option<&str> {
+        self.tls.get_sni_hostname()
+    }
+
+    /// Whether a previous session was successfully resumed by this connection
+    pub fn session_resumed(&self) -> bool {
+        false // TODO: fixme?
+    }
 }
 
 #[derive(Eq, PartialEq)]

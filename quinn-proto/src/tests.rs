@@ -586,7 +586,7 @@ fn congestion() {
     let mut pair = Pair::default();
     let (client_conn, _) = pair.connect();
 
-    let initial_congestion_state = pair.client.get_congestion_state(client_conn);
+    let initial_congestion_state = pair.client.connection(client_conn).congestion_state();
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     loop {
         match pair.client.write(client_conn, s, &[42; 1024]) {
@@ -603,7 +603,7 @@ fn congestion() {
         }
     }
     pair.drive();
-    assert!(pair.client.get_congestion_state(client_conn) >= initial_congestion_state);
+    assert!(pair.client.connection(client_conn).congestion_state() >= initial_congestion_state);
     pair.client.write(client_conn, s, &[42; 1024]).unwrap();
 }
 
@@ -622,8 +622,8 @@ fn high_latency_handshake() {
         panic!("server didn't connect");
     };
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
-    assert_eq!(pair.client.get_bytes_in_flight(client_conn), 0);
-    assert_eq!(pair.server.get_bytes_in_flight(server_conn), 0);
+    assert_eq!(pair.client.connection(client_conn).bytes_in_flight(), 0);
+    assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
 }
 
 /*

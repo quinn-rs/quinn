@@ -829,54 +829,12 @@ impl Endpoint {
         self.connections[conn.0].close(&mut mux, now, error_code, reason);
     }
 
-    /// Look up whether we're the client or server of `conn`.
-    pub fn get_side(&self, conn: ConnectionHandle) -> Side {
-        self.connections[conn.0].side
-    }
-
-    /// The `ConnectionId` used for `conn` locally.
-    pub fn get_local_id(&self, conn: ConnectionHandle) -> ConnectionId {
-        self.connections[conn.0].loc_cid
-    }
-    /// The `ConnectionId` used for `conn` by the peer.
-    pub fn get_remote_id(&self, conn: ConnectionHandle) -> ConnectionId {
-        self.connections[conn.0].rem_cid
-    }
-    pub fn get_remote_address(&self, conn: ConnectionHandle) -> &SocketAddrV6 {
-        &self.connections[conn.0].remote
-    }
-    pub fn get_protocol(&self, conn: ConnectionHandle) -> Option<&[u8]> {
-        self.connections[conn.0]
-            .tls
-            .get_alpn_protocol()
-            .map(|p| p.as_bytes())
-    }
-    /// The number of bytes of packets containing retransmittable frames that have not been
-    /// acknowleded or declared lost
-    pub fn get_bytes_in_flight(&self, conn: ConnectionHandle) -> u64 {
-        self.connections[conn.0].bytes_in_flight
-    }
-
-    /// Number of bytes worth of non-ack-only packets that may be sent.
-    pub fn get_congestion_state(&self, conn: ConnectionHandle) -> u64 {
-        let c = &self.connections[conn.0];
-        c.congestion_window.saturating_sub(c.bytes_in_flight)
-    }
-
-    /// The name a client supplied via SNI.
-    ///
-    /// None if no name was supplied or if this connection was locally-initiated.
-    pub fn get_server_name(&self, conn: ConnectionHandle) -> Option<&str> {
-        self.connections[conn.0].tls.get_sni_hostname()
-    }
-
-    /// Whether a previous session was successfully resumed by `conn`.
-    pub fn get_session_resumed(&self, _: ConnectionHandle) -> bool {
-        false // TODO: fixme?
-    }
-
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
         self.ctx.incoming.pop_front()
+    }
+
+    pub fn connection(&self, handle: ConnectionHandle) -> &Connection {
+        &self.connections[handle.0]
     }
 }
 
