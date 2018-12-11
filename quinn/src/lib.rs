@@ -1009,22 +1009,32 @@ impl Connection {
 
     /// The peer's UDP address.
     pub fn remote_address(&self) -> SocketAddr {
-        (*self
-            .0
+        self.0
             .endpoint
             .borrow()
             .inner
-            .get_remote_address(self.0.conn))
-        .into()
+            .connection(self.0.conn)
+            .remote()
+            .into()
     }
 
     /// The `ConnectionId` used for `conn` locally.
     pub fn local_id(&self) -> ConnectionId {
-        self.0.endpoint.borrow().inner.get_local_id(self.0.conn)
+        self.0
+            .endpoint
+            .borrow()
+            .inner
+            .connection(self.0.conn)
+            .loc_cid()
     }
     /// The `ConnectionId` used for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0.endpoint.borrow().inner.get_remote_id(self.0.conn)
+        self.0
+            .endpoint
+            .borrow()
+            .inner
+            .connection(self.0.conn)
+            .rem_cid()
     }
 
     /// The negotiated application protocol
@@ -1033,7 +1043,8 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .get_protocol(self.0.conn)
+            .connection(self.0.conn)
+            .protocol()
             .map(|x| x.into())
     }
 
@@ -1043,7 +1054,8 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .get_session_resumed(self.0.conn)
+            .connection(self.0.conn)
+            .session_resumed()
     }
 }
 
