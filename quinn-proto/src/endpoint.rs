@@ -339,13 +339,10 @@ impl Endpoint {
         };
         if let Some(conn_id) = conn {
             let conn = &mut self.connections[conn_id.0];
-            let was_handshake = conn.state.as_ref().unwrap().is_handshake();
+            let was_handshake = conn.state.is_handshake();
             let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side());
             let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
-            if was_handshake
-                && !conn.state.as_ref().unwrap().is_handshake()
-                && conn.side().is_server()
-            {
+            if was_handshake && !conn.state.is_handshake() && conn.side().is_server() {
                 self.incoming_handshakes -= 1;
             }
             self.dirty_conns.insert(conn_id);
@@ -683,14 +680,14 @@ impl Endpoint {
                 if self.connections[conn.0].app_closed {
                     self.forget(conn);
                 } else {
-                    self.connections[conn.0].state = Some(State::Drained);
+                    self.connections[conn.0].state = State::Drained;
                 }
             }
             Timer::Idle => {
                 let mut mux =
                     EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
                 self.connections[conn.0].close_common(&mut mux, now);
-                self.connections[conn.0].state = Some(State::Draining);
+                self.connections[conn.0].state = State::Draining;
                 self.ctx
                     .events
                     .push_back((conn, ConnectionError::TimedOut.into()));
@@ -823,7 +820,7 @@ impl Endpoint {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        if let State::Drained = *self.connections[conn.0].state.as_ref().unwrap() {
+        if let State::Drained = self.connections[conn.0].state {
             self.forget(conn);
             return;
         }
