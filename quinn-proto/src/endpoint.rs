@@ -261,7 +261,7 @@ impl Endpoint {
             }
             let &conn = self.dirty_conns.iter().next()?;
             // TODO: Only determine a single operation; only remove from dirty set if that fails
-            let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+            let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
             self.connections[conn.0].flush_pending(&mut mux, now);
             self.dirty_conns.remove(&conn);
         }
@@ -340,11 +340,11 @@ impl Endpoint {
         if let Some(conn_id) = conn {
             let conn = &mut self.connections[conn_id.0];
             let was_handshake = conn.state.as_ref().unwrap().is_handshake();
-            let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side);
+            let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side());
             let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
             if was_handshake
                 && !conn.state.as_ref().unwrap().is_handshake()
-                && conn.side.is_server()
+                && conn.side().is_server()
             {
                 self.incoming_handshakes -= 1;
             }
@@ -635,7 +635,7 @@ impl Endpoint {
             )
             .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
-        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
         match self.connections[conn.0].handle_initial(
             &mut mux,
             now,
@@ -657,13 +657,13 @@ impl Endpoint {
     }
 
     fn forget(&mut self, conn: ConnectionHandle) {
-        if self.connections[conn.0].side.is_server() {
+        if self.connections[conn.0].side().is_server() {
             self.connection_ids_initial
                 .remove(&self.connections[conn.0].init_cid);
         }
         if self.config.local_cid_len > 0 {
             self.connection_ids
-                .remove(&self.connections[conn.0].loc_cid);
+                .remove(&self.connections[conn.0].loc_cid());
         }
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);
@@ -687,7 +687,8 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                let mut mux =
+                    EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
                 self.connections[conn.0].close_common(&mut mux, now);
                 self.connections[conn.0].state = Some(State::Draining);
                 self.ctx
@@ -697,7 +698,8 @@ impl Endpoint {
                                                // goes through
             }
             Timer::LossDetection => {
-                let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+                let mut mux =
+                    EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
                 self.connections[conn.0].check_packet_loss(&mut mux, now);
             }
         }
@@ -825,7 +827,7 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side);
+        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
         self.connections[conn.0].close(&mut mux, now, error_code, reason);
     }
 

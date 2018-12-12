@@ -27,34 +27,34 @@ use rustls::internal::msgs::enums::AlertDescription;
 pub struct Connection {
     log: Logger,
     config: Arc<Config>,
-    pub tls: TlsSession,
-    pub app_closed: bool,
+    tls: TlsSession,
+    pub(crate) app_closed: bool,
     /// DCID of Initial packet
-    pub init_cid: ConnectionId,
-    pub loc_cid: ConnectionId,
-    pub rem_cid: ConnectionId,
-    pub remote: SocketAddrV6,
-    pub state: Option<State>,
-    pub side: Side,
-    pub mtu: u16,
+    pub(crate) init_cid: ConnectionId,
+    loc_cid: ConnectionId,
+    rem_cid: ConnectionId,
+    pub(crate) remote: SocketAddrV6,
+    pub(crate) state: Option<State>,
+    side: Side,
+    mtu: u16,
     /// Highest received packet number
-    pub rx_packet: u64,
+    rx_packet: u64,
     /// Time at which the above was received
-    pub rx_packet_time: u64,
-    pub crypto: Option<Crypto>,
-    pub prev_crypto: Option<(u64, Crypto)>,
-    //pub zero_rtt_crypto: Option<Crypto>,
-    pub key_phase: bool,
-    pub params: TransportParameters,
+    rx_packet_time: u64,
+    crypto: Option<Crypto>,
+    prev_crypto: Option<(u64, Crypto)>,
+    //zero_rtt_crypto: Option<Crypto>,
+    key_phase: bool,
+    params: TransportParameters,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
-    pub blocked_streams: FnvHashSet<StreamId>,
+    blocked_streams: FnvHashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
-    pub max_data: u64,
-    pub data_sent: u64,
+    max_data: u64,
+    data_sent: u64,
     /// Sum of end offsets of all streams. Includes gaps, so it's an upper bound.
-    pub data_recvd: u64,
+    data_recvd: u64,
     /// Limit on incoming data
-    pub local_max_data: u64,
+    local_max_data: u64,
     client_config: Option<ClientConfig>,
     /// Incoming cryptographic handshake stream
     crypto_stream: stream::Assembler,
@@ -68,43 +68,43 @@ pub struct Connection {
     // Loss Detection
     //
     /// The number of times the handshake packets have been retransmitted without receiving an ack.
-    pub handshake_count: u32,
+    handshake_count: u32,
     /// The number of times a tail loss probe has been sent without receiving an ack.
-    pub tlp_count: u32,
+    tlp_count: u32,
     /// The number of times an rto has been sent without receiving an ack.
-    pub rto_count: u32,
+    rto_count: u32,
     /// The largest packet number gap between the largest acked retransmittable packet and an
     /// unacknowledged retransmittable packet before it is declared lost.
-    pub reordering_threshold: u32,
+    reordering_threshold: u32,
     /// The time at which the next packet will be considered lost based on early transmit or
     /// exceeding the reordering window in time.
-    pub loss_time: u64,
+    loss_time: u64,
     /// The most recent RTT measurement made when receiving an ack for a previously unacked packet.
     /// μs
-    pub latest_rtt: u64,
+    latest_rtt: u64,
     /// The smoothed RTT of the connection, computed as described in RFC6298. μs
-    pub smoothed_rtt: u64,
+    smoothed_rtt: u64,
     /// The RTT variance, computed as described in RFC6298
-    pub rttvar: u64,
+    rttvar: u64,
     /// The minimum RTT seen in the connection, ignoring ack delay.
-    pub min_rtt: u64,
+    min_rtt: u64,
     /// The maximum ack delay in an incoming ACK frame for this connection.
     ///
     /// Excludes ack delays for ack only packets and those that create an RTT sample less than
     /// min_rtt.
-    pub max_ack_delay: u64,
+    max_ack_delay: u64,
     /// The last packet number sent prior to the first retransmission timeout.
-    pub largest_sent_before_rto: u64,
+    largest_sent_before_rto: u64,
     /// The time the most recently sent retransmittable packet was sent.
-    pub time_of_last_sent_retransmittable_packet: u64,
+    time_of_last_sent_retransmittable_packet: u64,
     /// The time the most recently sent handshake packet was sent.
-    pub time_of_last_sent_handshake_packet: u64,
+    time_of_last_sent_handshake_packet: u64,
     /// The packet number of the next packet that will be sent, if any.
-    pub next_packet_number: u64,
+    next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
-    pub largest_acked_packet: u64,
+    largest_acked_packet: u64,
     /// Transmitted but not acked
-    pub sent_packets: BTreeMap<u64, SentPacket>,
+    sent_packets: BTreeMap<u64, SentPacket>,
 
     //
     // Congestion Control
@@ -115,15 +115,15 @@ pub struct Connection {
     /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
     /// count towards bytes_in_flight to ensure congestion control does not impede congestion
     /// feedback.
-    pub bytes_in_flight: u64,
+    bytes_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
-    pub congestion_window: u64,
+    congestion_window: u64,
     /// The largest packet number sent when QUIC detects a loss. When a larger packet is
     /// acknowledged, QUIC exits recovery.
-    pub end_of_recovery: u64,
+    end_of_recovery: u64,
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
-    pub ssthresh: u64,
+    ssthresh: u64,
 
     //
     // Handshake retransmit state
@@ -131,17 +131,17 @@ pub struct Connection {
     /// Whether we've sent handshake packets that have not been either explicitly acknowledged or
     /// rendered moot by handshake completion, i.e. whether we're waiting for proof that the peer
     /// has advanced their handshake state machine.
-    pub awaiting_handshake: bool,
-    pub handshake_pending: Retransmits,
-    pub handshake_crypto: Crypto,
+    awaiting_handshake: bool,
+    handshake_pending: Retransmits,
+    handshake_crypto: Crypto,
 
     //
     // Transmit queue
     //
-    pub pending: Retransmits,
-    pub pending_acks: RangeSet,
+    pub(crate) pending: Retransmits,
+    pending_acks: RangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
-    pub permit_ack_only: bool,
+    permit_ack_only: bool,
 
     //
     // Stream states
