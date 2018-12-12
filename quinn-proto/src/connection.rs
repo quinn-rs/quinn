@@ -783,7 +783,7 @@ impl Connection {
         }
 
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
-        let was_handshake = self.state.is_handshake();
+        let was_handshake = self.is_handshaking();
         let was_closed = self.state.is_closed();
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
@@ -2055,6 +2055,10 @@ impl Connection {
         }
     }
 
+    pub fn is_handshaking(&self) -> bool {
+        self.state.is_handshake()
+    }
+
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
         self.side
@@ -2395,7 +2399,7 @@ impl State {
         })
     }
 
-    pub fn is_handshake(&self) -> bool {
+    fn is_handshake(&self) -> bool {
         match *self {
             State::Handshake(_) => true,
             _ => false,
