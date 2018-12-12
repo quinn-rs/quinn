@@ -339,10 +339,10 @@ impl Endpoint {
         };
         if let Some(conn_id) = conn {
             let conn = &mut self.connections[conn_id.0];
-            let was_handshake = conn.state.is_handshake();
+            let was_handshake = conn.is_handshaking();
             let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side());
             let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
-            if was_handshake && !conn.state.is_handshake() && conn.side().is_server() {
+            if was_handshake && !conn.is_handshaking() && conn.side().is_server() {
                 self.incoming_handshakes -= 1;
             }
             self.dirty_conns.insert(conn_id);
