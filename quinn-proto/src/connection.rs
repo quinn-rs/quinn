@@ -34,7 +34,7 @@ pub struct Connection {
     loc_cid: ConnectionId,
     rem_cid: ConnectionId,
     pub(crate) remote: SocketAddrV6,
-    pub(crate) state: Option<State>,
+    pub(crate) state: State,
     side: Side,
     mtu: u16,
     /// Highest received packet number
@@ -179,6 +179,11 @@ impl Connection {
                 Stream::new_bi(config.stream_receive_window as u64),
             );
         }
+
+        let state = State::Handshake(state::Handshake {
+            rem_cid_set: side.is_server(),
+            token: None,
+        });
         let mut this = Self {
             log,
             tls,
@@ -188,7 +193,7 @@ impl Connection {
             rem_cid,
             remote,
             side,
-            state: None,
+            state,
             mtu: MIN_MTU,
             rx_packet: 0,
             rx_packet_time: 0,
@@ -271,10 +276,6 @@ impl Connection {
     /// Initiate a connection
     fn connect(&mut self) {
         self.write_tls();
-        self.state = Some(State::Handshake(state::Handshake {
-            rem_cid_set: false,
-            token: None,
-        }));
     }
 
     fn get_tx_number(&mut self) -> u64 {
@@ -700,10 +701,6 @@ impl Connection {
         self.set_params(params)?;
         self.on_packet_authenticated(mux, now, Some(packet_number));
         self.write_tls();
-        self.state = Some(State::Handshake(state::Handshake {
-            rem_cid_set: true,
-            token: None,
-        }));
         Ok(())
     }
 
@@ -773,22 +770,21 @@ impl Connection {
     ) {
         if let Some(token) = self.params.stateless_reset_token {
             if packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token {
-                if !self.state.as_ref().unwrap().is_drained() {
+                if !self.state.is_drained() {
                     debug!(self.log, "got stateless reset");
                     mux.timer_stop(Timer::LossDetection);
                     mux.timer_stop(Timer::Close);
                     mux.timer_stop(Timer::Idle);
                     mux.emit(ConnectionError::Reset.into());
-                    self.state = Some(State::Drained);
+                    self.state = State::Drained;
                 }
                 return;
             }
         }
 
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
-        let state = self.state.as_ref().unwrap();
-        let was_handshake = state.is_handshake();
-        let was_closed = state.is_closed();
+        let was_handshake = self.state.is_handshake();
+        let was_closed = self.state.is_closed();
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
             Err(Some(e)) => {
@@ -813,43 +809,37 @@ impl Connection {
                 if !was_closed {
                     self.on_packet_authenticated(mux, now, number);
                 }
-                let state = self.state.take().unwrap();
-                self.handle_connected_inner(mux, now, number, packet, state)
+                self.handle_connected_inner(mux, now, number, packet)
             }
         };
 
         // State transitions for error cases
-        let state = match result {
-            Ok(state) => state,
-            Err(conn_err) => {
-                mux.emit(conn_err.clone().into());
-
-                match conn_err {
-                    ConnectionError::ApplicationClosed { reason } => State::closed(reason),
-                    ConnectionError::ConnectionClosed { reason } => State::closed(reason),
-                    ConnectionError::Reset => {
-                        debug!(self.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
-                        panic!("unexpected connection reset error received");
-                    }
-                    ConnectionError::TimedOut => {
-                        debug!(self.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
-                        panic!("unexpected connection timed out error received");
-                    }
-                    ConnectionError::TransportError { error_code } => State::closed(error_code),
-                    ConnectionError::VersionMismatch => State::Draining,
+        if let Err(conn_err) = result {
+            mux.emit(conn_err.clone().into());
+            self.state = match conn_err {
+                ConnectionError::ApplicationClosed { reason } => State::closed(reason),
+                ConnectionError::ConnectionClosed { reason } => State::closed(reason),
+                ConnectionError::Reset => {
+                    debug!(self.log, "unexpected connection reset error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                    panic!("unexpected connection reset error received");
                 }
-            }
-        };
+                ConnectionError::TimedOut => {
+                    debug!(self.log, "unexpected connection timed out error received"; "err" => %conn_err, "initial_conn_id" => %self.init_cid);
+                    panic!("unexpected connection timed out error received");
+                }
+                ConnectionError::TransportError { error_code } => State::closed(error_code),
+                ConnectionError::VersionMismatch => State::Draining,
+            };
+        }
 
-        if !was_closed && state.is_closed() {
+        if !was_closed && self.state.is_closed() {
             self.close_common(mux, now);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
-        if let State::Closed(ref state) = state {
-            self.transmit_close(mux, now, &state.reason);
+        if let State::Closed(ref state) = self.state {
+            self.transmit_close(mux, now, &state.clone().reason);
         }
-        self.state = Some(state);
     }
 
     fn handle_connected_inner(
@@ -858,10 +848,9 @@ impl Connection {
         now: u64,
         number: Option<u64>,
         packet: Packet,
-        state: State,
-    ) -> Result<State, ConnectionError> {
-        match state {
-            State::Handshake(mut state) => {
+    ) -> Result<(), ConnectionError> {
+        match self.state {
+            State::Handshake(ref state) => {
                 match packet.header {
                     Header::Retry {
                         src_cid: rem_cid,
@@ -873,7 +862,7 @@ impl Connection {
                             // connection attempt, and clients MUST discard Retry packets that
                             // contain an Original Destination Connection ID field that does not
                             // match the Destination Connection ID from its Initial packet.
-                            return Ok(State::Handshake(state));
+                            return Ok(());
                         }
                         trace!(self.log, "retrying");
                         self.orig_rem_cid = Some(self.rem_cid);
@@ -892,10 +881,11 @@ impl Connection {
                         self.handshake_crypto = Crypto::new_initial(&rem_cid, self.side);
                         self.write_tls();
 
-                        Ok(State::Handshake(state::Handshake {
+                        self.state = State::Handshake(state::Handshake {
                             token: Some(packet.payload.into()),
                             rem_cid_set: true,
-                        }))
+                        });
+                        Ok(())
                     }
                     Header::Long {
                         ty: LongType::Handshake,
@@ -903,6 +893,7 @@ impl Connection {
                         src_cid: rem_cid,
                         ..
                     } => {
+                        let mut state = state.clone();
                         if !state.rem_cid_set {
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
@@ -934,11 +925,13 @@ impl Connection {
                                         error = reason.error_code
                                     );
                                     mux.emit(ConnectionError::ConnectionClosed { reason }.into());
-                                    return Ok(State::Draining);
+                                    self.state = State::Draining;
+                                    return Ok(());
                                 }
                                 Frame::ApplicationClose(reason) => {
                                     mux.emit(ConnectionError::ApplicationClosed { reason }.into());
-                                    return Ok(State::Draining);
+                                    self.state = State::Draining;
+                                    return Ok(());
                                 }
                                 Frame::PathChallenge(value) => {
                                     self.handshake_pending
@@ -955,10 +948,11 @@ impl Connection {
                             trace!(self.log, "handshake ongoing");
                             self.handshake_cleanup(mux);
                             self.write_tls();
-                            return Ok(State::Handshake(state::Handshake {
+                            self.state = State::Handshake(state::Handshake {
                                 token: None,
                                 ..state
-                            }));
+                            });
+                            return Ok(());
                         }
 
                         trace!(self.log, "handshake complete");
@@ -984,7 +978,8 @@ impl Connection {
                         mux.emit(Event::Connected {
                             protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
                         });
-                        Ok(State::Established)
+                        self.state = State::Established;
+                        Ok(())
                     }
                     Header::Initial { .. } => {
                         if self.side.is_server() {
@@ -992,7 +987,7 @@ impl Connection {
                         } else {
                             trace!(self.log, "dropping Initial for initiated connection");
                         }
-                        Ok(State::Handshake(state))
+                        Ok(())
                     }
                     /*Header::Long {
                         ty: types::ZERO_RTT,
@@ -1044,7 +1039,7 @@ impl Connection {
                         ..
                     } => {
                         debug!(self.log, "dropping 0-RTT packet (currently unimplemented)");
-                        Ok(State::Handshake(state))
+                        Ok(())
                     }
                     Header::VersionNegotiate { .. } => {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
@@ -1056,7 +1051,7 @@ impl Connection {
                             let version = payload.get::<u32>().unwrap();
                             if version == VERSION {
                                 // Our version is supported, so this packet is spurious
-                                return Ok(State::Handshake(state));
+                                return Ok(());
                             }
                         }
                         debug!(self.log, "remote doesn't support our version");
@@ -1065,14 +1060,14 @@ impl Connection {
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     Header::Short { .. } => {
                         trace!(self.log, "dropping short packet during handshake");
-                        Ok(State::Handshake(state))
+                        Ok(())
                     }
                 }
             }
             State::Established => {
                 if let Header::Long { .. } = packet.header {
                     trace!(self.log, "discarding unprotected packet");
-                    return Ok(State::Established);
+                    return Ok(());
                 }
 
                 if self.awaiting_handshake {
@@ -1086,26 +1081,27 @@ impl Connection {
                 }
                 let closed =
                     self.process_payload(mux, now, number.unwrap(), packet.payload.into())?;
-                Ok(if closed {
+                self.state = if closed {
                     State::Draining
                 } else {
                     State::Established
-                })
+                };
+                Ok(())
             }
-            State::Closed(state) => {
+            State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
                     match frame {
                         Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                             trace!(self.log, "draining");
-                            return Ok(State::Draining);
+                            self.state = State::Draining;
+                            return Ok(());
                         }
                         _ => {}
                     }
                 }
-                Ok(State::Closed(state))
+                Ok(())
             }
-            State::Draining => Ok(State::Draining),
-            State::Drained => Ok(State::Drained),
+            State::Draining | State::Drained => Ok(()),
         }
     }
 
@@ -1341,7 +1337,7 @@ impl Connection {
     }
 
     pub fn next_packet(&mut self, mux: &mut impl Multiplexer, now: u64) -> Option<Vec<u8>> {
-        let established = match *self.state.as_ref().unwrap() {
+        let established = match self.state {
             State::Handshake(_) => false,
             State::Established => true,
             ref e => {
@@ -1372,7 +1368,7 @@ impl Connection {
                 Header::Initial {
                     src_cid: self.loc_cid,
                     dst_cid: self.rem_cid,
-                    token: match *self.state.as_ref().unwrap() {
+                    token: match self.state {
                         State::Handshake(ref state) => {
                             state.token.clone().unwrap_or_else(Bytes::new)
                         }
@@ -1758,7 +1754,7 @@ impl Connection {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, mux: &mut impl Multiplexer, now: u64, error_code: u16, reason: Bytes) {
-        let was_closed = self.state.as_ref().unwrap().is_closed();
+        let was_closed = self.state.is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
@@ -1767,13 +1763,12 @@ impl Connection {
         }
 
         self.app_closed = true;
-        self.state = Some(match self.state.take().unwrap() {
-            State::Handshake(_) => State::Closed(state::Closed { reason }),
-            State::Established => State::Closed(state::Closed { reason }),
-            State::Closed(x) => State::Closed(x),
-            State::Draining => State::Draining,
-            State::Drained => unreachable!(),
-        });
+        match self.state {
+            State::Handshake(_) | State::Established => {
+                self.state = State::Closed(state::Closed { reason });
+            }
+            _ => {}
+        }
     }
 
     pub fn close_common(&mut self, mux: &mut impl Multiplexer, now: u64) {
@@ -2009,7 +2004,7 @@ impl Connection {
 
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
-        if self.state.as_ref().unwrap().is_closed() {
+        if self.state.is_closed() {
             trace!(self.log, "write blocked; connection draining"; "stream" => stream.0);
             return Err(WriteError::Blocked);
         }
@@ -2383,6 +2378,7 @@ impl From<transport_parameters::Error> for ConnectionError {
     }
 }
 
+#[derive(Clone)]
 pub enum State {
     Handshake(state::Handshake),
     Established,
@@ -2427,6 +2423,7 @@ impl State {
 pub mod state {
     use super::*;
 
+    #[derive(Clone)]
     pub struct Handshake {
         pub rem_cid_set: bool,
         pub token: Option<Bytes>,
@@ -2459,6 +2456,7 @@ pub mod state {
         }
     }
 
+    #[derive(Clone)]
     pub struct Closed {
         pub reason: CloseReason,
     }
