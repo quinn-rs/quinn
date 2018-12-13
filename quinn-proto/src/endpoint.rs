@@ -671,7 +671,7 @@ impl Endpoint {
     ///
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self, conn: ConnectionHandle) {
-        self.connections[conn.0].pending.ping = true;
+        self.connections[conn.0].ping();
         self.dirty_conns.insert(conn);
     }
 

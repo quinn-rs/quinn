@@ -2062,6 +2062,13 @@ impl Connection {
         Some(id)
     }
 
+    /// Ping the remote endpoint
+    ///
+    /// Useful for preventing an otherwise idle connection from timing out.
+    pub fn ping(&mut self) {
+        self.pending.ping = true;
+    }
+
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
@@ -2517,17 +2524,17 @@ impl Streams {
 
 #[derive(Debug, Clone)]
 pub struct Retransmits {
-    pub max_data: bool,
-    pub max_uni_stream_id: bool,
-    pub max_bi_stream_id: bool,
-    pub ping: bool,
-    pub new_connection_id: Option<ConnectionId>,
-    pub stream: VecDeque<frame::Stream>,
+    max_data: bool,
+    max_uni_stream_id: bool,
+    max_bi_stream_id: bool,
+    ping: bool,
+    new_connection_id: Option<ConnectionId>,
+    stream: VecDeque<frame::Stream>,
     /// packet number, token
-    pub path_response: Option<(u64, u64)>,
-    pub rst_stream: Vec<(StreamId, u16)>,
-    pub stop_sending: Vec<(StreamId, u16)>,
-    pub max_stream_data: FnvHashSet<StreamId>,
+    path_response: Option<(u64, u64)>,
+    rst_stream: Vec<(StreamId, u16)>,
+    stop_sending: Vec<(StreamId, u16)>,
+    max_stream_data: FnvHashSet<StreamId>,
     crypto: VecDeque<frame::Crypto>,
 }
 
