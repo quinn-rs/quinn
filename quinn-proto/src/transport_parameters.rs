@@ -5,8 +5,7 @@ use bytes::{Buf, BufMut};
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::endpoint::Config;
 use crate::packet::ConnectionId;
-use crate::varint;
-use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::{varint, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE, VERSION};
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
 // their codes and default values. Using this helps us avoid error-prone duplication of the
@@ -44,7 +43,7 @@ macro_rules! make_struct {
 
             // Server-only
             pub original_connection_id: Option<ConnectionId>,
-            pub stateless_reset_token: Option<[u8; 16]>,
+            pub stateless_reset_token: Option<[u8; RESET_TOKEN_SIZE]>,
             pub preferred_address: Option<PreferredAddress>,
         }
 
@@ -87,7 +86,7 @@ impl TransportParameters {
 pub struct PreferredAddress {
     address: SocketAddr,
     connection_id: ConnectionId,
-    stateless_reset_token: [u8; 16],
+    stateless_reset_token: [u8; RESET_TOKEN_SIZE],
 }
 
 impl PreferredAddress {
@@ -158,7 +157,7 @@ impl PreferredAddress {
         if r.remaining() < 16 {
             return Err(Error::Malformed);
         }
-        let mut token = [0; 16];
+        let mut token = [0; RESET_TOKEN_SIZE];
         r.copy_to_slice(&mut token);
         Ok(Self {
             address: SocketAddr::new(ip, port),
@@ -323,7 +322,7 @@ impl TransportParameters {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
                     }
-                    let mut tok = [0; 16];
+                    let mut tok = [0; RESET_TOKEN_SIZE];
                     r.copy_to_slice(&mut tok);
                     params.stateless_reset_token = Some(tok);
                 }
@@ -385,7 +384,7 @@ mod test {
             preferred_address: Some(PreferredAddress {
                 address: SocketAddr::new(IpAddr::V4([127, 0, 0, 1].into()), 42),
                 connection_id: ConnectionId::new(&[]),
-                stateless_reset_token: [0xab; 16],
+                stateless_reset_token: [0xab; RESET_TOKEN_SIZE],
             }),
             ..TransportParameters::default()
         };
