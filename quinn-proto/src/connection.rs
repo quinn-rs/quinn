@@ -2509,6 +2509,7 @@ impl From<TransportError> for ConnectionError {
     }
 }
 
+// For compatibility with API consumers
 impl From<ConnectionError> for io::Error {
     fn from(x: ConnectionError) -> io::Error {
         use self::ConnectionError::*;
