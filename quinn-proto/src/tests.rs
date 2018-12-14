@@ -488,7 +488,7 @@ fn stateless_reset() {
     let mut pair = Pair::new(server, Default::default(), listen_key);
     let (client_conn, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
-        pair.log.new(o!("peer" => "server")),
+        pair.log.new(o!("side" => "Server")),
         Config::default(),
         Some(pair_listen_keys),
     )
