@@ -1485,13 +1485,13 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + 16 < max_size {
+        while buf.len() + 17 < max_size {
             let mut frame = if let Some(x) = pending.crypto.pop_front() {
                 x
             } else {
                 break;
             };
-            let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 16);
+            let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 17);
             let data = frame.data.split_to(len);
             let truncated = frame::Crypto {
                 offset: frame.offset,
