@@ -21,7 +21,7 @@ use crate::stream::{self, ReadError, Stream, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
-    VERSION,
+    RESET_TOKEN_SIZE, VERSION,
 };
 use rustls::internal::msgs::enums::AlertDescription;
 
@@ -961,7 +961,8 @@ impl Connection {
         let was_closed = self.state.is_closed();
 
         let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
-            packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token
+            packet.payload.len() >= RESET_TOKEN_SIZE
+                && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token
         });
 
         let result = match self.decrypt_packet(was_handshake, &mut packet) {
