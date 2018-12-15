@@ -270,46 +270,55 @@ impl Endpoint {
         //
 
         if !dst_cid.is_empty() {
-            debug!(self.log, "sending stateless reset");
-            let mut buf = Vec::<u8>::new();
-            // Bound padding size to at most 8 bytes larger than input to mitigate amplification
-            // attacks
-            let header_len = 1 + MAX_CID_SIZE + 1;
-            let padding = self.rng.gen_range(
-                0,
-                cmp::max(
-                    RESET_TOKEN_SIZE + 8,
-                    datagram_len.saturating_sub(header_len),
-                )
-                .saturating_sub(RESET_TOKEN_SIZE),
-            );
-            buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
-            let number = self.rng.gen::<u32>();
-            Header::Short {
-                dst_cid: ConnectionId::random(&mut self.rng, MAX_CID_SIZE),
-                number: PacketNumber::U32(number),
-                key_phase: false,
-            }
-            .encode(&mut buf);
-
-            let padding_start = buf.len();
-            buf.resize(padding_start + padding, 0);
-            self.rng
-                .fill_bytes(&mut buf[padding_start..padding_start + padding]);
-            buf.extend(&reset_token_for(
-                &self.server_config.as_ref().unwrap().reset_key,
-                &dst_cid,
-            ));
-
-            self.io.push_back(Io::Transmit {
-                destination: remote,
-                ecn: None,
-                packet: buf.into(),
-            });
+            self.stateless_reset(datagram_len, remote, &dst_cid);
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
         }
         None
+    }
+
+    fn stateless_reset(
+        &mut self,
+        inciting_dgram_len: usize,
+        remote: SocketAddrV6,
+        dst_cid: &ConnectionId,
+    ) {
+        debug!(self.log, "sending stateless reset");
+        let mut buf = Vec::<u8>::new();
+        // Bound padding size to at most 8 bytes larger than input to mitigate amplification
+        // attacks
+        let header_len = 1 + MAX_CID_SIZE + 1;
+        let padding = self.rng.gen_range(
+            0,
+            cmp::max(
+                RESET_TOKEN_SIZE + 8,
+                inciting_dgram_len.saturating_sub(header_len),
+            )
+                .saturating_sub(RESET_TOKEN_SIZE),
+        );
+        buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
+        let number = self.rng.gen::<u32>();
+        Header::Short {
+            dst_cid: ConnectionId::random(&mut self.rng, MAX_CID_SIZE),
+            number: PacketNumber::U32(number),
+            key_phase: false,
+        }
+        .encode(&mut buf);
+
+        let padding_start = buf.len();
+        buf.resize(padding_start + padding, 0);
+        self.rng
+            .fill_bytes(&mut buf[padding_start..padding_start + padding]);
+        buf.extend(&reset_token_for(
+            &self.server_config.as_ref().unwrap().reset_key,
+            &dst_cid,
+        ));
+
+        self.io.push_back(Io::Transmit {
+            destination: remote,
+            ecn: None,
+            packet: buf.into(),
+        });
     }
 
     /// Initiate a connection
