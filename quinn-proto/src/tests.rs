@@ -4,7 +4,7 @@ use std::net::{Ipv6Addr, SocketAddrV6, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{env, fmt, fs, str};
+use std::{env, fmt, fs, mem, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
@@ -232,6 +232,7 @@ struct TestEndpoint {
     close: u64,
     conn: Option<ConnectionHandle>,
     outbound: VecDeque<Box<[u8]>>,
+    delayed: VecDeque<Box<[u8]>>,
     inbound: VecDeque<(u64, Box<[u8]>)>,
 }
 
@@ -256,6 +257,7 @@ impl TestEndpoint {
             close: u64::max_value(),
             conn: None,
             outbound: VecDeque::new(),
+            delayed: VecDeque::new(),
             inbound: VecDeque::new(),
         }
     }
@@ -366,6 +368,15 @@ impl TestEndpoint {
             .min(self.loss)
             .min(self.close)
             .min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
+    }
+
+    fn delay_outbound(&mut self) {
+        assert!(self.delayed.is_empty());
+        mem::swap(&mut self.delayed, &mut self.outbound);
+    }
+
+    fn finish_delay(&mut self) {
+        self.outbound.extend(self.delayed.drain(..));
     }
 }
 
@@ -752,4 +763,44 @@ fn key_update() {
         pair.server.read_unordered(server_conn, s),
         Ok((ref data, 6)) if data == MSG2
     );
+}
+
+#[test]
+#[should_panic] // TODO: Spec design flaw fixed in draft 17
+fn key_update_reordered() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    let s = pair
+        .client
+        .open(client_conn, Directionality::Bi)
+        .expect("couldn't open first stream");
+
+    const MSG1: &[u8] = b"one";
+    pair.client.write(client_conn, s, MSG1).unwrap();
+    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    assert!(!pair.client.outbound.is_empty());
+    pair.client.delay_outbound();
+
+    pair.client.connections[client_conn.0].update_keys();
+    info!(pair.log, "updated keys");
+
+    const MSG2: &[u8] = b"two";
+    pair.client.write(client_conn, s, MSG2).unwrap();
+    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.finish_delay();
+    pair.drive();
+
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), None);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Ok((ref data, 3)) if data == MSG2
+    );
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Ok((ref data, 0)) if data == MSG1
+    );
+
+    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
 }
