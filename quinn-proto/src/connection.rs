@@ -11,6 +11,7 @@ use crate::coding::{BufExt, BufMutExt};
 use crate::crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
 use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
+use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
     AEAD_TAG_SIZE,
@@ -1485,13 +1486,16 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + 17 < max_size {
+        while buf.len() + frame::Crypto::SIZE_BOUND < max_size {
             let mut frame = if let Some(x) = pending.crypto.pop_front() {
                 x
             } else {
                 break;
             };
-            let len = cmp::min(frame.data.len(), max_size as usize - buf.len() - 17);
+            let len = cmp::min(
+                frame.data.len(),
+                max_size as usize - buf.len() - frame::Crypto::SIZE_BOUND,
+            );
             let data = frame.data.split_to(len);
             let truncated = frame::Crypto {
                 offset: frame.offset,
@@ -1512,7 +1516,7 @@ impl Connection {
         }
 
         // RST_STREAM
-        while buf.len() + 19 < max_size {
+        while buf.len() + frame::RstStream::SIZE_BOUND < max_size {
             let (id, error_code) = if let Some(x) = pending.rst_stream.pop() {
                 x
             } else {
@@ -1614,7 +1618,7 @@ impl Connection {
         }
 
         // STREAM
-        while buf.len() + 25 < max_size {
+        while buf.len() + frame::Stream::<Bytes>::SIZE_BOUND < max_size {
             let mut stream = if let Some(x) = pending.stream.pop_front() {
                 x
             } else {
@@ -1628,7 +1632,10 @@ impl Connection {
             {
                 continue;
             }
-            let len = cmp::min(stream.data.len(), max_size as usize - buf.len() - 25);
+            let len = cmp::min(
+                stream.data.len(),
+                max_size as usize - buf.len() - frame::Stream::<Bytes>::SIZE_BOUND,
+            );
             let data = stream.data.split_to(len);
             let fin = stream.fin && stream.data.is_empty();
             trace!(self.log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);

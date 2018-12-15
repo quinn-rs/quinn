@@ -42,6 +42,11 @@ impl slog::Value for Type {
     }
 }
 
+pub trait FrameStruct {
+    /// Smallest number of bytes this type of frame is guaranteed to fit within.
+    const SIZE_BOUND: usize;
+}
+
 macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
         impl Type {
@@ -224,6 +229,10 @@ impl From<TransportError> for ConnectionClose {
     }
 }
 
+impl<T> FrameStruct for ConnectionClose<T> {
+    const SIZE_BOUND: usize = 1 + 2 + 8 + 8;
+}
+
 impl<T> ConnectionClose<T>
 where
     T: AsRef<[u8]>,
@@ -261,6 +270,10 @@ where
         }
         Ok(())
     }
+}
+
+impl<T> FrameStruct for ApplicationClose<T> {
+    const SIZE_BOUND: usize = 1 + 2 + 8;
 }
 
 impl<T> ApplicationClose<T>
@@ -348,6 +361,10 @@ pub struct Stream<T = Bytes> {
     pub data: T,
 }
 
+impl<T> FrameStruct for Stream<T> {
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 8;
+}
+
 impl<T> Stream<T>
 where
     T: AsRef<[u8]>,
@@ -382,6 +399,8 @@ pub struct Crypto {
 }
 
 impl Crypto {
+    pub const SIZE_BOUND: usize = 17;
+
     pub fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::CRYPTO);
         out.write_var(self.offset);
@@ -625,6 +644,10 @@ pub struct RstStream {
     pub id: StreamId,
     pub error_code: u16,
     pub final_offset: u64,
+}
+
+impl FrameStruct for RstStream {
+    const SIZE_BOUND: usize = 1 + 8 + 2 + 8;
 }
 
 impl RstStream {
