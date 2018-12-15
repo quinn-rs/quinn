@@ -34,6 +34,7 @@ pub struct Connection {
     pub(crate) init_cid: ConnectionId,
     loc_cids: HashMap<u64, ConnectionId>,
     rem_cid: ConnectionId,
+    rem_cid_seq: u64,
     pub(crate) remote: SocketAddrV6,
     state: State,
     side: Side,
@@ -217,6 +218,7 @@ impl Connection {
             init_cid,
             loc_cids,
             rem_cid,
+            rem_cid_seq: 0,
             remote,
             side,
             state,
@@ -1579,6 +1581,7 @@ impl Connection {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
                         debug_assert!(self.side.is_server());
+                        debug_assert_eq!(self.rem_cid_seq, 0);
                         self.update_rem_cid(frame);
                     } else {
                         trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
@@ -1600,7 +1603,9 @@ impl Connection {
             sequence = new.sequence,
             connection_id = new.id
         );
+        self.pending.retire_cids.push(self.rem_cid_seq);
         self.rem_cid = new.id;
+        self.rem_cid_seq = new.sequence;
         self.params.stateless_reset_token = Some(new.reset_token);
     }
 
@@ -1880,6 +1885,19 @@ impl Connection {
             );
             frame.encode(&mut buf);
             sent.new_cids.push(frame);
+        }
+
+        // RETIRE_CONNECTION_ID
+        while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
+            let seq = if let Some(x) = pending.retire_cids.pop() {
+                x
+            } else {
+                break;
+            };
+            trace!(self.log, "RETIRE_CONNECTION_ID {sequence}", sequence = seq);
+            buf.write(frame::Type::RETIRE_CONNECTION_ID);
+            buf.write_var(seq);
+            sent.retire_cids.push(seq);
         }
 
         // STREAM
@@ -2602,6 +2620,7 @@ pub struct Retransmits {
     max_stream_data: FnvHashSet<StreamId>,
     crypto: VecDeque<frame::Crypto>,
     new_cids: Vec<frame::NewConnectionId>,
+    retire_cids: Vec<u64>,
 }
 
 impl Retransmits {
@@ -2617,6 +2636,7 @@ impl Retransmits {
             && self.max_stream_data.is_empty()
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
+            && self.retire_cids.is_empty()
     }
 
     pub fn path_challenge(&mut self, packet: u64, token: u64) {
@@ -2646,6 +2666,7 @@ impl Default for Retransmits {
             max_stream_data: FnvHashSet::default(),
             crypto: VecDeque::new(),
             new_cids: Vec::new(),
+            retire_cids: Vec::new(),
         }
     }
 }
@@ -2665,6 +2686,7 @@ impl ::std::ops::AddAssign for Retransmits {
         self.max_stream_data.extend(&rhs.max_stream_data);
         self.crypto.extend(rhs.crypto.into_iter());
         self.new_cids.extend(&rhs.new_cids);
+        self.retire_cids.extend(rhs.retire_cids);
     }
 }
 

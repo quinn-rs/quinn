@@ -737,6 +737,9 @@ impl NewConnectionId {
     }
 }
 
+/// Smallest number of bytes this type of frame is guaranteed to fit within.
+pub const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
+
 #[cfg(test)]
 mod test {
     use super::*;
