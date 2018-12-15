@@ -121,9 +121,9 @@ pub struct Connection {
     bytes_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
     congestion_window: u64,
-    /// The largest packet number sent when QUIC detects a loss. When a larger packet is
-    /// acknowledged, QUIC exits recovery.
-    end_of_recovery: u64,
+    /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
+    /// after this time is acknowledged, QUIC exits recovery.
+    recovery_start_time: u64,
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
@@ -242,7 +242,7 @@ impl Connection {
 
             bytes_in_flight: 0,
             congestion_window: config.initial_window,
-            end_of_recovery: 0,
+            recovery_start_time: 0,
             ssthresh: u64::max_value(),
             sending_ecn: true,
 
@@ -506,6 +506,7 @@ impl Connection {
         if let Some(largest_lost) = lost_packets.last().cloned() {
             self.lost_packets += lost_packets.len() as u64;
             let old_bytes_in_flight = self.bytes_in_flight;
+            let largest_lost_time = self.sent_packets.get(&largest_lost).unwrap().time;
             for packet in lost_packets {
                 let info = self.sent_packets.remove(&packet).unwrap();
                 if info.handshake {
@@ -518,27 +519,26 @@ impl Connection {
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
             if lost_nonack {
-                self.congestion_event(largest_lost)
+                self.congestion_event(now, largest_lost_time)
             }
         }
     }
 
-    fn congestion_event(&mut self, largest_lost: u64) {
+    fn congestion_event(&mut self, now: u64, sent_time: u64) {
         // Start a new recovery epoch if the lost packet is larger than the end of the
         // previous recovery epoch.
-        if !self.in_recovery(largest_lost) {
-            self.end_of_recovery = self.largest_sent_packet();
+        if !self.in_recovery(sent_time) {
+            self.recovery_start_time = now;
             // *= factor
             self.congestion_window =
                 (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
-            self.congestion_window =
-                cmp::max(self.congestion_window, self.config.minimum_window);
+            self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
             self.ssthresh = self.congestion_window;
         }
     }
 
-    fn in_recovery(&self, packet: u64) -> bool {
-        packet <= self.end_of_recovery
+    fn in_recovery(&self, sent_time: u64) -> bool {
+        sent_time <= self.recovery_start_time
     }
 
     fn set_loss_detection_alarm(&mut self, mux: &mut impl Multiplexer) {
