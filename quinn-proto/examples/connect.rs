@@ -154,6 +154,7 @@ impl Context {
                     Io::Transmit {
                         destination,
                         packet,
+                        ..
                     } => {
                         sent += 1;
                         self.socket.send_to(&packet, destination)?;
@@ -221,7 +222,7 @@ impl Context {
                 Ok((n, addr)) => {
                     recvd += 1;
                     self.client
-                        .handle(time, normalize(addr), (&buf[0..n]).into());
+                        .handle(time, normalize(addr), None, (&buf[0..n]).into());
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     trace!(self.log, "timeout"; "type" => ?timer);

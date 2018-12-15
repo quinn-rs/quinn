@@ -826,6 +826,33 @@ pub const PACKET_NUMBER_32_MASK: u32 = 0x3fffffff;
 const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x40;
 
+/// Explicit congestion notification codepoint
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum EcnCodepoint {
+    ECT0 = 0b10,
+    ECT1 = 0b01,
+    CE = 0b11,
+}
+
+impl EcnCodepoint {
+    pub fn from_bits(x: u8) -> Option<Self> {
+        use self::EcnCodepoint::*;
+        Some(match x & 0b11 {
+            0b10 => ECT0,
+            0b01 => ECT1,
+            0b11 => CE,
+            _ => {
+                return None;
+            }
+        })
+    }
+
+    pub fn bits(self) -> u8 {
+        self as u8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
