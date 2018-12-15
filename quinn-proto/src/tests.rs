@@ -429,8 +429,10 @@ fn version_negotiate() {
 #[test]
 fn lifecycle() {
     let mut pair = Pair::default();
-    let (client_conn, _) = pair.connect();
+    let (client_conn, server_conn) = pair.connect();
     assert_matches!(pair.client.poll(), None);
+    assert!(pair.client.connection(client_conn).using_ecn());
+    assert!(pair.server.connection(server_conn).using_ecn());
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");

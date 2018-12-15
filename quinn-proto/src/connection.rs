@@ -129,6 +129,10 @@ pub struct Connection {
     ssthresh: u64,
     /// Explicit congestion notification (ECN) counters
     ecn_counters: frame::EcnCounts,
+    /// Recent ECN counters sent by the peer in ACK frames
+    ///
+    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet number.
+    ecn_feedback: frame::EcnCounts,
     /// Whether we're enabling ECN on outgoing packets
     sending_ecn: bool,
     /// Whether the most recently received packet had an ECN codepoint set
@@ -249,6 +253,7 @@ impl Connection {
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
             ecn_counters: frame::EcnCounts::ZERO,
+            ecn_feedback: frame::EcnCounts::ZERO,
             sending_ecn: true,
             receiving_ecn: false,
 
@@ -325,8 +330,10 @@ impl Connection {
     fn on_ack_received(&mut self, mux: &mut impl Multiplexer, now: u64, ack: frame::Ack) {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
-        // TODO: Validate
-        self.largest_acked_packet = cmp::max(self.largest_acked_packet, ack.largest);
+        let prev_largest = self.largest_acked_packet;
+        self.largest_acked_packet = cmp::max(ack.largest, self.largest_acked_packet);
+        let largest_sent_time = self.sent_packets.get(&ack.largest).map(|x| x.time);
+
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
             let delay = ack.delay << self.params.ack_delay_exponent;
@@ -347,6 +354,85 @@ impl Connection {
                 mux.emit(Event::StreamWritable { stream });
             }
         }
+
+        // Explicit congestion notification
+        if self.sending_ecn {
+            if let Some(ecn) = ack.ecn {
+                // We only examine ECN counters from ACKs that we are certain we received in transmit
+                // order, allowing us to compute an increase in ECN counts to compare against the number
+                // of newly acked packets that remains well-defined in the presence of arbitrary packet
+                // reordering.
+                if ack.largest > prev_largest {
+                    self.process_ecn(now, newly_acked.len() as u64, ecn, largest_sent_time);
+                }
+            } else {
+                // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
+                debug!(self.log, "ECN not acknowledged by peer");
+                self.sending_ecn = false;
+            }
+        }
+    }
+
+    /// Process a new ECN block from an in-order ACK
+    fn process_ecn(
+        &mut self,
+        now: u64,
+        newly_acked: u64,
+        ecn: frame::EcnCounts,
+        largest_sent_time: Option<u64>,
+    ) {
+        // TODO: largest_sent_time shouldn't be optional, because a new largest ack is by definition
+        // newly acked, but our remaining draft-11 handshake hacks violate that. To be fixed when
+        // the handshake procedure is updated.
+        match self.detect_ecn(newly_acked, ecn) {
+            Err(e) => {
+                debug!(
+                    self.log,
+                    "halting ECN due to verification failure: {error}",
+                    error = e
+                );
+                self.sending_ecn = false;
+            }
+            Ok(false) => {}
+            Ok(true) => {
+                if let Some(time) = largest_sent_time {
+                    self.congestion_event(now, time);
+                }
+            }
+        }
+    }
+
+    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
+    fn detect_ecn(
+        &mut self,
+        newly_acked: u64,
+        ecn: frame::EcnCounts,
+    ) -> Result<bool, &'static str> {
+        let ect0_increase = ecn
+            .ect0
+            .checked_sub(self.ecn_feedback.ect0)
+            .ok_or("peer ECT(0) count regression")?;
+        let ect1_increase = ecn
+            .ect1
+            .checked_sub(self.ecn_feedback.ect1)
+            .ok_or("peer ECT(1) count regression")?;
+        let ce_increase = ecn
+            .ce
+            .checked_sub(self.ecn_feedback.ce)
+            .ok_or("peer CE count regression")?;
+        let total_increase = ect0_increase + ect1_increase + ce_increase;
+        if total_increase < newly_acked {
+            return Err("ECN bleaching");
+        }
+        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
+            return Err("ECN corruption");
+        }
+        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
+        // the draft so that long-term drift does not occur. If =, then the only question is whether
+        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
+        // congestion check obvious.
+        self.ecn_feedback = ecn;
+        Ok(ce_increase != 0)
     }
 
     fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {
