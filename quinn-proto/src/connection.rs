@@ -323,16 +323,13 @@ impl Connection {
             let delay = ack.delay << self.params.ack_delay_exponent;
             self.update_rtt(delay, info.ack_only());
         }
-        for range in &ack {
-            // Avoid DoS from unreasonably huge ack ranges
-            let packets = self
-                .sent_packets
-                .range(range)
-                .map(|(&n, _)| n)
-                .collect::<Vec<_>>();
-            for packet in packets {
-                self.on_packet_acked(packet);
-            }
+        // Avoid DoS from unreasonably huge ack ranges
+        let newly_acked = ack
+            .iter()
+            .flat_map(|range| self.sent_packets.range(range).map(|(&n, _)| n))
+            .collect::<Vec<_>>();
+        for &packet in &newly_acked {
+            self.on_packet_acked(packet);
         }
         self.detect_lost_packets(now, ack.largest);
         self.set_loss_detection_alarm(mux);
@@ -600,7 +597,7 @@ impl Connection {
         } else {
             return;
         };
-        trace!(self.log, "packet authenticated"; "pn" => packet);
+        trace!(self.log, "packet {packet} authenticated", packet = packet);
         self.pending_acks.insert_one(packet);
         if self.pending_acks.len() > MAX_ACK_BLOCKS {
             self.pending_acks.pop_min();
@@ -1751,9 +1748,9 @@ impl Connection {
             }
         };
         let partial_encode = header.encode(&mut buf);
-        let header_len = buf.len() as u16;
+        let header_len = buf.len();
 
-        let max_len = self.mtu - header_len - AEAD_TAG_SIZE as u16;
+        let max_len = self.mtu as usize - header_len - AEAD_TAG_SIZE;
         match *reason {
             state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
             state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
@@ -2192,7 +2189,7 @@ where
     let mut buf = Vec::<u8>::new();
     let partial_encode = header.encode(&mut buf);
     let header_len = buf.len();
-    let max_len = MIN_MTU - header_len as u16 - AEAD_TAG_SIZE as u16;
+    let max_len = MIN_MTU as usize - header_len - AEAD_TAG_SIZE;
     match reason.into() {
         state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
