@@ -52,6 +52,9 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 
+mod platform;
+mod udp;
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
@@ -74,11 +77,11 @@ use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
-use tokio_udp::UdpSocket;
 
 pub use crate::quinn::{
     Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
 };
+use crate::udp::UdpSocket;
 
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
@@ -113,7 +116,7 @@ struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
     inner: quinn::Endpoint,
-    outgoing: VecDeque<(SocketAddrV6, Box<[u8]>)>,
+    outgoing: VecDeque<(SocketAddrV6, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
     epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
@@ -646,12 +649,11 @@ impl Future for Driver {
         let now = micros_from(endpoint.epoch.elapsed());
         loop {
             loop {
-                // TODO: Read ECN codepoint
-                match endpoint.socket.poll_recv_from(&mut buf) {
-                    Ok(Async::Ready((n, addr))) => {
+                match endpoint.socket.poll_recv(&mut buf) {
+                    Ok(Async::Ready((n, addr, ecn))) => {
                         endpoint
                             .inner
-                            .handle(now, normalize(addr), None, (&buf[0..n]).into());
+                            .handle(now, normalize(addr), ecn, (&buf[0..n]).into());
                     }
                     Ok(Async::NotReady) => {
                         break;
@@ -749,8 +751,11 @@ impl Future for Driver {
             let mut blocked = false;
             while !endpoint.outgoing.is_empty() {
                 {
-                    let front = endpoint.outgoing.front().unwrap();
-                    match endpoint.socket.poll_send_to(&front.1, &front.0.into()) {
+                    let (destination, ecn, packet) = endpoint.outgoing.front().unwrap();
+                    match endpoint
+                        .socket
+                        .poll_send(&(*destination).into(), *ecn, packet)
+                    {
                         Ok(Async::Ready(_)) => {}
                         Ok(Async::NotReady) => {
                             blocked = true;
@@ -773,11 +778,10 @@ impl Future for Driver {
                     Transmit {
                         destination,
                         packet,
-                        ..
+                        ecn,
                     } => {
                         if !blocked {
-                            // TODO: Set ECN codepoint
-                            match endpoint.socket.poll_send_to(&packet, &destination.into()) {
+                            match endpoint.socket.poll_send(&destination.into(), ecn, &packet) {
                                 Ok(Async::Ready(_)) => {}
                                 Ok(Async::NotReady) => {
                                     blocked = true;
@@ -791,7 +795,7 @@ impl Future for Driver {
                             }
                         }
                         if blocked {
-                            endpoint.outgoing.push_front((destination, packet));
+                            endpoint.outgoing.push_front((destination, ecn, packet));
                         }
                     }
                     TimerUpdate {
