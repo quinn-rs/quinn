@@ -1567,7 +1567,7 @@ impl Connection {
                         self.io.retired_cids.push(old);
                     }
                 }
-                Frame::NewConnectionId { .. } => {
+                Frame::NewConnectionId(frame) => {
                     if self.rem_cid.is_empty() {
                         debug!(
                             self.log,
@@ -1575,7 +1575,14 @@ impl Connection {
                         );
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
-                    trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                    if self.params.stateless_reset_token.is_none() {
+                        // We're a server using the initial remote CID for the client, so let's
+                        // switch immediately to enable clientside stateless resets.
+                        debug_assert!(self.side.is_server());
+                        self.update_rem_cid(frame);
+                    } else {
+                        trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                    }
                 }
                 Frame::NewToken { .. } => {
                     trace!(self.log, "got new token");
@@ -1584,6 +1591,17 @@ impl Connection {
             }
         }
         Ok(false)
+    }
+
+    fn update_rem_cid(&mut self, new: frame::NewConnectionId) {
+        trace!(
+            self.log,
+            "switching to remote CID {sequence}: {connection_id}",
+            sequence = new.sequence,
+            connection_id = new.id
+        );
+        self.rem_cid = new.id;
+        self.params.stateless_reset_token = Some(new.reset_token);
     }
 
     fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
