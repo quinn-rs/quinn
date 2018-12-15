@@ -341,6 +341,10 @@ impl Connection {
             }
         }
 
+        if let Some(cid) = self.io.retired_cids.pop() {
+            return Some(Io::RetireConnectionId { connection_id: cid });
+        }
+
         None
     }
 
@@ -1543,7 +1547,7 @@ impl Connection {
                         stop_reason: Some(error_code),
                     };
                 }
-                Frame::RetireConnectionId { .. } => {
+                Frame::RetireConnectionId { sequence } => {
                     if self.config.local_cid_len == 0 {
                         debug!(
                             self.log,
@@ -1551,7 +1555,17 @@ impl Connection {
                         );
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
-                    // TODO: Forget about this ID and issue a NEW_CONNECTION_ID
+                    if sequence > self.cids_issued {
+                        debug!(
+                            self.log,
+                            "got RETIRE_CONNECTION_ID for unissued cid sequence number {sequence}",
+                            sequence = sequence,
+                        );
+                        return Err(TransportError::PROTOCOL_VIOLATION);
+                    }
+                    if let Some(old) = self.loc_cids.remove(&sequence) {
+                        self.io.retired_cids.push(old);
+                    }
                 }
                 Frame::NewConnectionId { .. } => {
                     if self.rem_cid.is_empty() {
@@ -2847,7 +2861,13 @@ pub enum Io {
         packet: Box<[u8]>,
     },
     /// Stop or (re)start a timer
-    TimerUpdate { timer: Timer, update: TimerUpdate },
+    TimerUpdate {
+        timer: Timer,
+        update: TimerUpdate,
+    },
+    RetireConnectionId {
+        connection_id: ConnectionId,
+    },
 }
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
@@ -2862,6 +2882,7 @@ pub struct IoQueue {
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
     timers: [Option<TimerUpdate>; 3],
+    retired_cids: Vec<ConnectionId>,
 }
 
 impl IoQueue {
@@ -2870,6 +2891,7 @@ impl IoQueue {
             probes: 0,
             close: false,
             timers: [None; 3],
+            retired_cids: Vec::new(),
         }
     }
 

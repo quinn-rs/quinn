@@ -101,25 +101,34 @@ impl Endpoint {
         }
         loop {
             let &conn = self.dirty_conns.iter().next()?;
-            if let Some(io) = self.connections[conn.0].poll_io(now) {
-                return Some(match io {
-                    connection::Io::Transmit {
-                        destination,
-                        ecn,
-                        packet,
-                    } => Io::Transmit {
-                        destination,
-                        ecn,
-                        packet,
-                    },
-                    connection::Io::TimerUpdate { timer, update } => Io::TimerUpdate {
-                        connection: conn,
-                        timer,
-                        update,
-                    },
-                });
-            } else {
-                self.dirty_conns.remove(&conn);
+            loop {
+                if let Some(io) = self.connections[conn.0].poll_io(now) {
+                    return Some(match io {
+                        connection::Io::Transmit {
+                            destination,
+                            ecn,
+                            packet,
+                        } => Io::Transmit {
+                            destination,
+                            ecn,
+                            packet,
+                        },
+                        connection::Io::TimerUpdate { timer, update } => Io::TimerUpdate {
+                            connection: conn,
+                            timer,
+                            update,
+                        },
+                        connection::Io::RetireConnectionId { connection_id } => {
+                            self.connection_ids.remove(&connection_id);
+                            let new_cid = self.new_cid();
+                            self.connections[conn.0].issue_cid(new_cid);
+                            continue;
+                        }
+                    });
+                } else {
+                    self.dirty_conns.remove(&conn);
+                    break;
+                }
             }
         }
     }
