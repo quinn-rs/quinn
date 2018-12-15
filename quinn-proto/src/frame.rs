@@ -237,15 +237,18 @@ impl<T> ConnectionClose<T>
 where
     T: AsRef<[u8]>,
 {
-    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
-        out.write(Type::CONNECTION_CLOSE);
-        out.write(self.error_code);
-        out.write_var(self.frame_type.map_or(0, |x| x.0));
-        let max_len =
-            max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
+    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
+        out.write(Type::CONNECTION_CLOSE); // 1 byte
+        out.write(self.error_code); // 2 bytes
+        let ty = self.frame_type.map_or(0, |x| x.0);
+        out.write_var(ty); // <= 8 bytes
+        let max_len = max_len
+            - 3
+            - varint::size(ty).unwrap()
+            - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
-        varint::write(actual_len as u64, out).unwrap();
-        out.put_slice(&self.reason.as_ref()[0..actual_len]);
+        out.write_var(actual_len as u64); // <= 8 bytes
+        out.put_slice(&self.reason.as_ref()[0..actual_len]); // whatever's left
     }
 }
 
@@ -280,14 +283,14 @@ impl<T> ApplicationClose<T>
 where
     T: AsRef<[u8]>,
 {
-    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: u16) {
-        out.write(Type::APPLICATION_CLOSE);
-        out.write(self.error_code);
+    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
+        out.write(Type::APPLICATION_CLOSE); // 1 byte
+        out.write(self.error_code); // 2 bytes
         let max_len =
             max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
         let actual_len = self.reason.as_ref().len().min(max_len);
-        varint::write(actual_len as u64, out).unwrap();
-        out.put_slice(&self.reason.as_ref()[0..actual_len]);
+        out.write_var(actual_len as u64); // <= 8 bytes
+        out.put_slice(&self.reason.as_ref()[0..actual_len]); // whatever's left
     }
 }
 
@@ -319,15 +322,15 @@ impl Ack {
         } else {
             Type::ACK
         });
-        varint::write(largest, buf).unwrap();
-        varint::write(delay, buf).unwrap();
-        varint::write(ranges.len() as u64 - 1, buf).unwrap();
-        varint::write(first_size - 1, buf).unwrap();
+        buf.write_var(largest);
+        buf.write_var(delay);
+        buf.write_var(ranges.len() as u64 - 1);
+        buf.write_var(first_size - 1);
         let mut prev = first.start;
         for block in rest {
             let size = block.end - block.start;
-            varint::write(prev - block.end - 1, buf).unwrap();
-            varint::write(size - 1, buf).unwrap();
+            buf.write_var(prev - block.end - 1);
+            buf.write_var(size - 1);
             prev = block.start;
         }
         ecn.map(|x| x.encode(buf));
@@ -380,13 +383,13 @@ where
         if self.fin {
             ty |= 0x01;
         }
-        out.put_u8(ty);
-        varint::write(self.id.0, out).unwrap();
+        out.put_u8(ty); // 1 byte
+        out.write_var(self.id.0); // <=8 bytes
         if self.offset != 0 {
-            varint::write(self.offset, out).unwrap();
+            out.write_var(self.offset); // <=8 bytes
         }
         if length {
-            varint::write(self.data.as_ref().len() as u64, out).unwrap();
+            out.write_var(self.data.as_ref().len() as u64); // <=8 bytes
         }
         out.put_slice(self.data.as_ref());
     }
@@ -600,12 +603,12 @@ impl Iterator for Iter {
 
 fn scan_ack_blocks(packet: &[u8], largest: u64, n: usize) -> Option<usize> {
     let mut buf = io::Cursor::new(packet);
-    let first_block = varint::read(&mut buf)?;
+    let first_block = buf.get_var().ok()?;
     let mut smallest = largest.checked_sub(first_block)?;
     for _ in 0..n {
-        let gap = varint::read(&mut buf)?;
+        let gap = buf.get_var().ok()?;
         smallest = smallest.checked_sub(gap + 2)?;
-        let block = varint::read(&mut buf)?;
+        let block = buf.get_var().ok()?;
         smallest = smallest.checked_sub(block)?;
     }
     Some(buf.position() as usize)
@@ -630,9 +633,9 @@ impl<'a> Iterator for AckIter<'a> {
         if !self.data.has_remaining() {
             return None;
         }
-        let block = varint::read(&mut self.data).unwrap();
+        let block = self.data.get_var().unwrap();
         let largest = self.largest;
-        if let Some(gap) = varint::read(&mut self.data) {
+        if let Ok(gap) = self.data.get_var() {
             self.largest -= block + gap + 2;
         }
         Some(largest - block..largest + 1)
@@ -652,10 +655,10 @@ impl FrameStruct for RstStream {
 
 impl RstStream {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::RST_STREAM);
-        varint::write(self.id.0, out).unwrap();
-        out.write(self.error_code);
-        varint::write(self.final_offset, out).unwrap();
+        out.write(Type::RST_STREAM); // 1 byte
+        out.write_var(self.id.0); // <= 8 bytes
+        out.write(self.error_code); // 2 bytes
+        out.write_var(self.final_offset); // <= 8 bytes
     }
 }
 
