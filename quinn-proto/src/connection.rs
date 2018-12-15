@@ -63,6 +63,8 @@ pub struct Connection {
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     dedup: Dedup,
+    /// Total number of outgoing packets that have been deemed lost
+    lost_packets: u64,
 
     //
     // Loss Detection
@@ -212,6 +214,7 @@ impl Connection {
             crypto_offset: 0,
             orig_rem_cid: None,
             dedup: Dedup::new(),
+            lost_packets: 0,
 
             handshake_count: 0,
             tlp_count: 0,
@@ -500,6 +503,7 @@ impl Connection {
         }
 
         if let Some(largest_lost) = lost_packets.last().cloned() {
+            self.lost_packets += lost_packets.len() as u64;
             let old_bytes_in_flight = self.bytes_in_flight;
             for packet in lost_packets {
                 let info = self.sent_packets.remove(&packet).unwrap();
@@ -2121,6 +2125,11 @@ impl Connection {
     /// Whether a previous session was successfully resumed by this connection
     pub fn session_resumed(&self) -> bool {
         false // TODO: fixme?
+    }
+
+    /// Total number of outgoing packets that have been deemed lost
+    pub fn lost_packets(&self) -> u64 {
+        self.lost_packets
     }
 }
 
