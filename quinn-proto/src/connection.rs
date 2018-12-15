@@ -127,8 +127,12 @@ pub struct Connection {
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
+    /// Explicit congestion notification (ECN) counters
+    ecn_counters: frame::EcnCounts,
     /// Whether we're enabling ECN on outgoing packets
     sending_ecn: bool,
+    /// Whether the most recently received packet had an ECN codepoint set
+    receiving_ecn: bool,
 
     //
     // Handshake retransmit state
@@ -244,7 +248,9 @@ impl Connection {
             congestion_window: config.initial_window,
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
+            ecn_counters: frame::EcnCounts::ZERO,
             sending_ecn: true,
+            receiving_ecn: false,
 
             awaiting_handshake: false,
             handshake_pending: Retransmits::default(),
@@ -598,9 +604,15 @@ impl Connection {
         &mut self,
         mux: &mut impl Multiplexer,
         now: u64,
+        ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
     ) {
         self.reset_idle_timeout(mux, now);
+        self.receiving_ecn |= ecn.is_some();
+        if let Some(x) = ecn {
+            self.ecn_counters += x;
+        }
+
         let packet = if let Some(x) = packet {
             x
         } else {
@@ -694,7 +706,7 @@ impl Connection {
         &mut self,
         mux: &mut impl Multiplexer,
         now: u64,
-        _ecn: Option<EcnCodepoint>,
+        ecn: Option<EcnCodepoint>,
         packet_number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
@@ -711,7 +723,7 @@ impl Connection {
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
         self.set_params(params)?;
-        self.on_packet_authenticated(mux, now, Some(packet_number));
+        self.on_packet_authenticated(mux, now, ecn, Some(packet_number));
         self.write_tls();
         Ok(())
     }
@@ -752,7 +764,7 @@ impl Connection {
         mux: &mut impl Multiplexer,
         now: u64,
         remote: SocketAddrV6,
-        _ecn: Option<EcnCodepoint>,
+        ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
         let mut new_crypto = None;
@@ -775,7 +787,7 @@ impl Connection {
 
         match partial_decode.finish(crypto.pn_decrypt_key()) {
             Ok((packet, rest)) => {
-                self.handle_packet(mux, now, remote, packet, new_crypto);
+                self.handle_packet(mux, now, remote, ecn, packet, new_crypto);
                 rest
             }
             Err(e) => {
@@ -790,6 +802,7 @@ impl Connection {
         mux: &mut impl Multiplexer,
         now: u64,
         remote: SocketAddrV6,
+        ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         crypto_update: Option<Crypto>,
     ) {
@@ -832,7 +845,7 @@ impl Connection {
                     }
                 }
                 if !was_closed {
-                    self.on_packet_authenticated(mux, now, number);
+                    self.on_packet_authenticated(mux, now, ecn, number);
                 }
                 self.handle_connected_inner(mux, now, number, packet)
             }
@@ -1476,8 +1489,13 @@ impl Connection {
         let acks = if !self.pending_acks.is_empty() {
             //&& !crypto.is_0rtt() {
             let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
-            frame::Ack::encode(delay, &self.pending_acks, None, &mut buf);
             trace!(self.log, "ACK"; "ranges" => ?self.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
+            let ecn = if self.receiving_ecn {
+                Some(&self.ecn_counters)
+            } else {
+                None
+            };
+            frame::Ack::encode(delay, &self.pending_acks, ecn, &mut buf);
             self.pending_acks.clone()
         } else {
             RangeSet::new()

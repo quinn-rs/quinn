@@ -4,6 +4,7 @@ use std::{fmt, io, mem};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
+use crate::packet::EcnCodepoint;
 use crate::range_set::RangeSet;
 use crate::{
     varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
@@ -299,7 +300,7 @@ pub struct Ack {
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
-    pub ecn: Option<Ecn>,
+    pub ecn: Option<EcnCounts>,
 }
 
 impl<'a> IntoIterator for &'a Ack {
@@ -312,7 +313,7 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
-    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, ecn: Option<Ecn>, buf: &mut W) {
+    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, ecn: Option<&EcnCounts>, buf: &mut W) {
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
@@ -342,17 +343,39 @@ impl Ack {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct Ecn {
-    pub ect0_count: u64,
-    pub ect1_count: u64,
-    pub ce_count: u64,
+pub struct EcnCounts {
+    pub ect0: u64,
+    pub ect1: u64,
+    pub ce: u64,
 }
 
-impl Ecn {
-    fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write_var(self.ect0_count);
-        out.write_var(self.ect1_count);
-        out.write_var(self.ce_count);
+impl std::ops::AddAssign<EcnCodepoint> for EcnCounts {
+    fn add_assign(&mut self, rhs: EcnCodepoint) {
+        match rhs {
+            EcnCodepoint::ECT0 => {
+                self.ect0 += 1;
+            }
+            EcnCodepoint::ECT1 => {
+                self.ect1 += 1;
+            }
+            EcnCodepoint::CE => {
+                self.ce += 1;
+            }
+        }
+    }
+}
+
+impl EcnCounts {
+    pub const ZERO: Self = Self {
+        ect0: 0,
+        ect1: 0,
+        ce: 0,
+    };
+
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write_var(self.ect0);
+        out.write_var(self.ect1);
+        out.write_var(self.ce);
     }
 }
 
@@ -519,10 +542,10 @@ impl Iter {
                     ecn: if ty != Type::ACK_ECN {
                         None
                     } else {
-                        Some(Ecn {
-                            ect0_count: self.bytes.get_var()?,
-                            ect1_count: self.bytes.get_var()?,
-                            ce_count: self.bytes.get_var()?,
+                        Some(EcnCounts {
+                            ect0: self.bytes.get_var()?,
+                            ect1: self.bytes.get_var()?,
+                            ce: self.bytes.get_var()?,
                         })
                     },
                 })
@@ -674,12 +697,12 @@ mod test {
             ranges.insert(packet..packet + 1);
         }
         let mut buf = Vec::new();
-        const ECN: Ecn = Ecn {
-            ect0_count: 42,
-            ect1_count: 24,
-            ce_count: 12,
+        const ECN: EcnCounts = EcnCounts {
+            ect0: 42,
+            ect1: 24,
+            ce: 12,
         };
-        Ack::encode(42, &ranges, Some(ECN), &mut buf);
+        Ack::encode(42, &ranges, Some(&ECN), &mut buf);
         let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
         assert_eq!(frames.len(), 1);
         match frames[0] {
