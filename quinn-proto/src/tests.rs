@@ -493,7 +493,9 @@ fn stateless_reset() {
         Some(pair_listen_keys),
     )
     .unwrap();
-    pair.client.ping(client_conn);
+    // Send something big enough to allow room for a smaller stateless reset.
+    pair.client
+        .close(pair.time, client_conn, 42, (&[0xab; 128][..]).into());
     info!(pair.log, "resetting");
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_conn);
