@@ -13,8 +13,8 @@ use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
 use crate::packet::{
-    set_payload_length, ConnectionId, Header, LongType, Packet, PacketNumber, PartialDecode,
-    AEAD_TAG_SIZE,
+    set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
+    PartialDecode, AEAD_TAG_SIZE,
 };
 use crate::range_set::RangeSet;
 use crate::stream::{self, ReadError, Stream, WriteError};
@@ -127,6 +127,8 @@ pub struct Connection {
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
+    /// Whether we're enabling ECN on outgoing packets
+    sending_ecn: bool,
 
     //
     // Handshake retransmit state
@@ -242,6 +244,7 @@ impl Connection {
             congestion_window: config.initial_window,
             end_of_recovery: 0,
             ssthresh: u64::max_value(),
+            sending_ecn: true,
 
             awaiting_handshake: false,
             handshake_pending: Retransmits::default(),
@@ -685,6 +688,7 @@ impl Connection {
         &mut self,
         mux: &mut impl Multiplexer,
         now: u64,
+        _ecn: Option<EcnCodepoint>,
         packet_number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
@@ -742,6 +746,7 @@ impl Connection {
         mux: &mut impl Multiplexer,
         now: u64,
         remote: SocketAddrV6,
+        _ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
         let mut new_crypto = None;
@@ -1688,7 +1693,15 @@ impl Connection {
 
     /// Send a QUIC packet
     fn transmit(&mut self, mux: &mut impl Multiplexer, now: u64, packet: Box<[u8]>) {
-        mux.transmit(self.remote, packet);
+        mux.transmit(
+            self.remote,
+            if self.sending_ecn {
+                Some(EcnCodepoint::ECT0)
+            } else {
+                None
+            },
+            packet,
+        );
         self.reset_idle_timeout(mux, now);
     }
 
@@ -2074,7 +2087,15 @@ impl Connection {
     pub fn flush_pending(&mut self, mux: &mut impl Multiplexer, now: u64) {
         let mut sent = false;
         while let Some(packet) = self.next_packet(mux, now) {
-            mux.transmit(self.remote, packet.into());
+            mux.transmit(
+                self.remote,
+                if self.sending_ecn {
+                    Some(EcnCodepoint::ECT0)
+                } else {
+                    None
+                },
+                packet.into(),
+            );
             sent = true;
         }
         if sent {
@@ -2135,6 +2156,11 @@ impl Connection {
     /// Total number of outgoing packets that have been deemed lost
     pub fn lost_packets(&self) -> u64 {
         self.lost_packets
+    }
+
+    /// Whether explicit congestion notification is in use on outgoing packets.
+    pub fn using_ecn(&self) -> bool {
+        self.sending_ecn
     }
 }
 
@@ -2535,7 +2561,7 @@ const MAX_ACK_BLOCKS: usize = 64;
 
 pub trait Multiplexer {
     /// Transmit a UDP packet.
-    fn transmit(&mut self, destination: SocketAddrV6, packet: Box<[u8]>);
+    fn transmit(&mut self, destination: SocketAddrV6, ecn: Option<EcnCodepoint>, packet: Box<[u8]>);
     /// Start or reset a timer associated with this connection.
     fn timer_start(&mut self, timer: Timer, time: u64);
     /// Start one of the timers associated with this connection.

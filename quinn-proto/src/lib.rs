@@ -37,7 +37,7 @@ mod endpoint;
 pub use crate::endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
 
 mod packet;
-pub use crate::packet::ConnectionId;
+pub use crate::packet::{ConnectionId, EcnCodepoint};
 
 mod stream;
 pub use crate::stream::{ReadError, WriteError};

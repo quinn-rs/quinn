@@ -19,7 +19,7 @@ use crate::connection::{
 };
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
-    ConnectionId, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
+    ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
     PACKET_NUMBER_32_MASK,
 };
 use crate::stream::{ReadError, WriteError};
@@ -268,12 +268,18 @@ impl Endpoint {
     }
 
     /// Process an incoming UDP datagram
-    pub fn handle(&mut self, now: u64, remote: SocketAddrV6, mut data: BytesMut) {
+    pub fn handle(
+        &mut self,
+        now: u64,
+        remote: SocketAddrV6,
+        ecn: Option<EcnCodepoint>,
+        mut data: BytesMut,
+    ) {
         let datagram_len = data.len();
         while !data.is_empty() {
             match PartialDecode::new(data, self.config.local_cid_len) {
                 Ok(partial_decode) => {
-                    match self.handle_decode(now, remote, partial_decode, datagram_len) {
+                    match self.handle_decode(now, remote, ecn, partial_decode, datagram_len) {
                         Some(rest) => {
                             data = rest;
                         }
@@ -303,6 +309,7 @@ impl Endpoint {
                     buf.write(VERSION); // supported version
                     self.ctx.io.push_back(Io::Transmit {
                         destination: remote,
+                        ecn: None,
                         packet: buf.into(),
                     });
                     return;
@@ -319,6 +326,7 @@ impl Endpoint {
         &mut self,
         now: u64,
         remote: SocketAddrV6,
+        ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
         datagram_len: usize,
     ) -> Option<BytesMut> {
@@ -341,7 +349,7 @@ impl Endpoint {
             let conn = &mut self.connections[conn_id.0];
             let was_handshake = conn.is_handshaking();
             let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side());
-            let remaining = conn.handle_decode(&mut mux, now, remote, partial_decode);
+            let remaining = conn.handle_decode(&mut mux, now, remote, ecn, partial_decode);
             if was_handshake && !conn.is_handshaking() && conn.side().is_server() {
                 self.incoming_handshakes -= 1;
             }
@@ -376,7 +384,7 @@ impl Endpoint {
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 return match partial_decode.finish(crypto.pn_decrypt_key()) {
                     Ok((packet, rest)) => {
-                        self.handle_initial(now, remote, packet, &crypto);
+                        self.handle_initial(now, remote, ecn, packet, &crypto);
                         rest
                     }
                     Err(e) => {
@@ -433,6 +441,7 @@ impl Endpoint {
 
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
+                ecn: None,
                 packet: buf.into(),
             });
         } else {
@@ -531,7 +540,14 @@ impl Endpoint {
         Ok(conn)
     }
 
-    fn handle_initial(&mut self, now: u64, remote: SocketAddrV6, packet: Packet, crypto: &Crypto) {
+    fn handle_initial(
+        &mut self,
+        now: u64,
+        remote: SocketAddrV6,
+        ecn: Option<EcnCodepoint>,
+        packet: Packet,
+        crypto: &Crypto,
+    ) {
         let Packet {
             header,
             header_data,
@@ -563,6 +579,7 @@ impl Endpoint {
             debug!(self.log, "rejecting connection due to full accept buffer");
             self.ctx.io.push_back(Io::Transmit {
                 destination: remote,
+                ecn: None,
                 packet: handshake_close(
                     &crypto,
                     &src_cid,
@@ -614,6 +631,7 @@ impl Endpoint {
 
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
+                    ecn: None,
                     packet: buf.into(),
                 });
                 return;
@@ -636,6 +654,7 @@ impl Endpoint {
         match self.connections[conn.0].handle_initial(
             &mut mux,
             now,
+            ecn,
             packet_number as u64,
             payload.freeze(),
         ) {
@@ -647,6 +666,7 @@ impl Endpoint {
                 debug!(self.log, "handshake failed"; "reason" => %e);
                 self.ctx.io.push_back(Io::Transmit {
                     destination: remote,
+                    ecn: None,
                     packet: handshake_close(&crypto, &src_cid, &loc_cid, 0, e),
                 });
             }
@@ -885,6 +905,8 @@ impl From<ConnectionError> for Event {
 pub enum Io {
     Transmit {
         destination: SocketAddrV6,
+        /// Explicit congestion notification bits to set on the packet
+        ecn: Option<EcnCodepoint>,
         packet: Box<[u8]>,
     },
     /// Start or reset a timer
@@ -937,9 +959,15 @@ impl<'a> EndpointMux<'a> {
 }
 
 impl Multiplexer for EndpointMux<'_> {
-    fn transmit(&mut self, destination: SocketAddrV6, packet: Box<[u8]>) {
+    fn transmit(
+        &mut self,
+        destination: SocketAddrV6,
+        ecn: Option<EcnCodepoint>,
+        packet: Box<[u8]>,
+    ) {
         self.ctx.io.push_back(Io::Transmit {
             destination,
+            ecn,
             packet,
         });
     }

@@ -646,11 +646,12 @@ impl Future for Driver {
         let now = micros_from(endpoint.epoch.elapsed());
         loop {
             loop {
+                // TODO: Read ECN codepoint
                 match endpoint.socket.poll_recv_from(&mut buf) {
                     Ok(Async::Ready((n, addr))) => {
                         endpoint
                             .inner
-                            .handle(now, normalize(addr), (&buf[0..n]).into());
+                            .handle(now, normalize(addr), None, (&buf[0..n]).into());
                     }
                     Ok(Async::NotReady) => {
                         break;
@@ -780,8 +781,10 @@ impl Future for Driver {
                     Transmit {
                         destination,
                         packet,
+                        ..
                     } => {
                         if !blocked {
+                            // TODO: Set ECN codepoint
                             match endpoint.socket.poll_send_to(&packet, &destination.into()) {
                                 Ok(Async::Ready(_)) => {}
                                 Ok(Async::NotReady) => {
