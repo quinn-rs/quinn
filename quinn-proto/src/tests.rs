@@ -463,34 +463,29 @@ fn stateless_retry() {
 
 #[test]
 fn stateless_reset() {
-    let mut server = Config::default();
-    server.max_remote_streams_uni = 32;
-    server.max_remote_streams_bidi = 32;
-
-    let mut token_value = [0; 64];
     let mut reset_value = [0; 64];
     let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut token_value);
     rng.fill_bytes(&mut reset_value);
 
-    let listen_key = ServerConfig {
-        token_key: TokenKey::new(&token_value),
-        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
-        ..server_config()
+    let reset_key = SigningKey::new(&digest::SHA512_256, &reset_value);
+    let reset_key_2 = SigningKey::new(&digest::SHA512_256, &reset_value);
+
+    let server = Config {
+        reset_key,
+        max_remote_streams_bidi: 32,
+        max_remote_streams_uni: 32,
+        ..Config::default()
     };
 
-    let pair_listen_keys = ServerConfig {
-        token_key: TokenKey::new(&token_value),
-        reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
-        ..server_config()
-    };
-
-    let mut pair = Pair::new(server, Default::default(), listen_key);
+    let mut pair = Pair::new(server, Config::default(), server_config());
     let (client_conn, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("side" => "Server")),
-        Config::default(),
-        Some(pair_listen_keys),
+        Config {
+            reset_key: reset_key_2,
+            ..Config::default()
+        },
+        Some(server_config()),
     )
     .unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
