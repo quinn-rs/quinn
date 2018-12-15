@@ -222,9 +222,10 @@ impl Endpoint {
         if !self.is_server() {
             debug!(
                 self.log,
-                "dropping packet on unrecognized connection {connection} because this endpoint is not a server",
+                "got unexpected packet on unrecognized connection {connection}",
                 connection = dst_cid
             );
+            self.stateless_reset(datagram_len, remote, &dst_cid);
             return None;
         }
 
@@ -302,10 +303,7 @@ impl Endpoint {
         buf.resize(1 + padding_len, 0);
         buf[0] = 0b00110000; // Changes in draft 17
         self.rng.fill_bytes(&mut buf[1..padding_len + 1]);
-        buf.extend(&reset_token_for(
-            &self.server_config.as_ref().unwrap().reset_key,
-            dst_cid,
-        ));
+        buf.extend(&reset_token_for(&self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
@@ -370,10 +368,7 @@ impl Endpoint {
             ),
             ConnectionOpts::Server { orig_dst_cid } => {
                 let server_params = TransportParameters {
-                    stateless_reset_token: Some(reset_token_for(
-                        &self.server_config.as_ref().unwrap().reset_key,
-                        &local_id,
-                    )),
+                    stateless_reset_token: Some(reset_token_for(&self.config.reset_key, &local_id)),
                     original_connection_id: orig_dst_cid,
                     ..TransportParameters::new(&self.config)
                 };
@@ -762,6 +757,12 @@ pub struct Config {
     /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
     /// responsible for making sure that the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
+
+    /// Private key used to send authenticated connection resets to peers who were communicating
+    /// with a previous instance of this endpoint.
+    ///
+    /// Must be persisted across restarts to be useful.
+    pub reset_key: SigningKey,
 }
 
 impl Default for Config {
@@ -771,6 +772,10 @@ impl Default for Config {
                                                         // Window size needed to avoid pipeline
                                                         // stalls
         const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+
+        let mut reset_value = [0; 64];
+        rand::thread_rng().fill_bytes(&mut reset_value);
+
         Self {
             max_remote_streams_bidi: 0,
             max_remote_streams_uni: 0,
@@ -793,6 +798,7 @@ impl Default for Config {
             loss_reduction_factor: 0x8000, // 1/2
 
             local_cid_len: 8,
+            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
         }
     }
 }
@@ -813,11 +819,6 @@ pub struct ServerConfig {
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
     pub retry_token_lifetime: u64,
 
-    /// Private key used to send authenticated connection resets to clients who were communicating
-    /// with a previous instance of this endpoint.
-    ///
-    /// Must be persisted across restarts to be useful.
-    pub reset_key: SigningKey,
     /// Maximum number of incoming connections to buffer.
     ///
     /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
@@ -830,9 +831,7 @@ impl Default for ServerConfig {
         let rng = &mut rand::thread_rng();
 
         let mut token_value = [0; 64];
-        let mut reset_value = [0; 64];
         rng.fill_bytes(&mut token_value);
-        rng.fill_bytes(&mut reset_value);
 
         Self {
             tls_config: Arc::new(crypto::build_server_config()),
@@ -841,7 +840,6 @@ impl Default for ServerConfig {
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
-            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
             accept_buffer: 1024,
         }
     }
