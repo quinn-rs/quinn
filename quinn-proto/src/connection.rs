@@ -2007,6 +2007,7 @@ impl Connection {
                 warn!(self.log, "recieved an illegal key update");
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
+            trace!(self.log, "key update authenticated");
 
             let old = mem::replace(self.crypto.as_mut().unwrap(), crypto);
             self.prev_crypto = Some((number, old));
