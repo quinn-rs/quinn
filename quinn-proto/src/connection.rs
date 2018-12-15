@@ -517,17 +517,23 @@ impl Connection {
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
-            // Start a new recovery epoch if the lost packet is larger than the end of the
-            // previous recovery epoch.
-            if lost_nonack && !self.in_recovery(largest_lost) {
-                self.end_of_recovery = self.largest_sent_packet();
-                // *= factor
-                self.congestion_window =
-                    (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
-                self.congestion_window =
-                    cmp::max(self.congestion_window, self.config.minimum_window);
-                self.ssthresh = self.congestion_window;
+            if lost_nonack {
+                self.congestion_event(largest_lost)
             }
+        }
+    }
+
+    fn congestion_event(&mut self, largest_lost: u64) {
+        // Start a new recovery epoch if the lost packet is larger than the end of the
+        // previous recovery epoch.
+        if !self.in_recovery(largest_lost) {
+            self.end_of_recovery = self.largest_sent_packet();
+            // *= factor
+            self.congestion_window =
+                (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
+            self.congestion_window =
+                cmp::max(self.congestion_window, self.config.minimum_window);
+            self.ssthresh = self.congestion_window;
         }
     }
 
