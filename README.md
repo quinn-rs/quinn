@@ -38,6 +38,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
 - [x] Stateless retry
+- [x] Explicit congestion notification
 - [ ] Migration
 - [ ] 0-RTT data
 - [ ] Session resumption
