@@ -38,6 +38,8 @@ tokio-timer = "0.2.1"
 untrusted = "0.6.2"
 webpki = "0.18"
 webpki-roots = "0.15"
+libc = { git = "https://github.com/Ralith/libc/", branch = "ip-tos" }
+mio = "0.6"
 
 [dev-dependencies]
 slog-term = "2"
