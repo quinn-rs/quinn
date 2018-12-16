@@ -808,3 +808,16 @@ fn key_update_reordered() {
 
     assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
 }
+
+#[test]
+fn initial_retransmit() {
+    let mut pair = Pair::default();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.outbound.clear(); // Drop initial
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+}
