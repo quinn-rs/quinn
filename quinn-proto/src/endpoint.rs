@@ -748,6 +748,7 @@ impl Endpoint {
             }
             Timer::LossDetection => {
                 self.connections[conn.0].check_packet_loss(now);
+                self.dirty_conns.insert(conn); // Connection will want to retransmit
             }
         }
     }
