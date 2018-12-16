@@ -163,12 +163,20 @@ impl Pair {
         if client_t < server_t {
             if client_t != self.time {
                 self.time = self.time.max(client_t);
-                trace!(self.log, "advancing to {time} for client", time = self.time);
+                trace!(
+                    self.log,
+                    "advancing to {:?} for client",
+                    Duration::from_micros(self.time)
+                );
             }
         } else {
             if server_t != self.time {
                 self.time = self.time.max(server_t);
-                trace!(self.log, "advancing to {time} for server", time = self.time);
+                trace!(
+                    self.log,
+                    "advancing to {:?} for server",
+                    Duration::from_micros(self.time)
+                );
             }
         }
         true
@@ -332,10 +340,10 @@ impl TestEndpoint {
                         TimerUpdate::Start(time) => {
                             trace!(
                                 log,
-                                "{side:?} {timer:?} start: {dt}",
+                                "{side:?} {timer:?} set to expire at {:?}",
+                                Duration::from_micros(time),
                                 side = self.side,
                                 timer = timer,
-                                dt = (time - now)
                             );
                             time
                         }
