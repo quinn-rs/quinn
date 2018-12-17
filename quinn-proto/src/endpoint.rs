@@ -524,6 +524,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
+                self.forget(conn);
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
