@@ -260,10 +260,10 @@ impl Endpoint {
                 return Some(x);
             }
             let &conn = self.dirty_conns.iter().next()?;
-            // TODO: Only determine a single operation; only remove from dirty set if that fails
             let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
-            self.connections[conn.0].flush_pending(&mut mux, now);
-            self.dirty_conns.remove(&conn);
+            if !self.connections[conn.0].poll_io(&mut mux, now) {
+                self.dirty_conns.remove(&conn);
+            }
         }
     }
 
