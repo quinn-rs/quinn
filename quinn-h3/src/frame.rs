@@ -1,7 +1,6 @@
-use std::fmt;
 use std::mem::size_of;
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
 use quinn_proto::varint;
@@ -15,12 +14,14 @@ pub enum Error {
 
 #[derive(Debug, PartialEq)]
 pub enum HttpFrame {
+    Data(DataFrame),
     Settings(SettingsFrame),
 }
 
 impl HttpFrame {
     pub fn encode<T: BufMut>(&self, buf: &mut T) {
         match self {
+            HttpFrame::Data(f) => f.encode(buf),
             HttpFrame::Settings(f) => f.encode(buf),
         }
     }
@@ -28,8 +29,16 @@ impl HttpFrame {
     pub fn decode<T: Buf>(buf: &mut T) -> Result<Self, Error> {
         let len = buf.get_var()?;
         let ty = buf.get::<Type>()?;
+
+        if buf.remaining() < len as usize {
+            return Err(Error::Malformed);
+        }
+
         let mut payload = buf.take(len as usize);
         match ty {
+            Type::DATA => Ok(HttpFrame::Data(DataFrame {
+                payload: payload.collect(),
+            })),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
             _ => Err(Error::UnsupportedFrame),
         }
@@ -71,15 +80,27 @@ trait FrameHeader {
     fn len(&self) -> usize;
     const TYPE: Type;
     fn encode_header<T: BufMut>(&self, buf: &mut T) {
-        println!("len is {}", self.len());
         buf.write_var(self.len() as u64);
         buf.put_u8(Self::TYPE.0);
     }
 }
 
-impl From<UnexpectedEnd> for Error {
-    fn from(_: UnexpectedEnd) -> Self {
-        Error::Malformed
+#[derive(Debug, PartialEq)]
+pub struct DataFrame {
+    payload: Bytes,
+}
+
+impl DataFrame {
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        self.encode_header(buf);
+        buf.put(&self.payload);
+    }
+}
+
+impl FrameHeader for DataFrame {
+    const TYPE: Type = Type::DATA;
+    fn len(&self) -> usize {
+        self.payload.as_ref().len()
     }
 }
 
@@ -167,6 +188,12 @@ setting_identifiers! {
     MAX_HEADER_LIST_SIZE = 0x6,
 }
 
+impl From<UnexpectedEnd> for Error {
+    fn from(_: UnexpectedEnd) -> Self {
+        Error::Malformed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,14 +201,14 @@ mod tests {
 
     #[test]
     fn unknown_frame_type() {
-        let mut buf = Cursor::new(&[06, 0xff, 0, 255, 128, 0]);
+        let mut buf = Cursor::new(&[04, 0xff, 0, 255, 128, 0]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::UnsupportedFrame));
     }
 
     #[test]
     fn buffer_too_short() {
-        let mut buf = Cursor::new(&[06, 0x4, 0, 255, 128]);
+        let mut buf = Cursor::new(&[04, 0x4, 0, 255, 128]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Malformed));
     }
@@ -229,8 +256,23 @@ mod tests {
 
     #[test]
     fn settings_frame_ivalid_len() {
-        let mut buf = Cursor::new(&[06, 4, 0, 255, 128, 0]);
+        let mut buf = Cursor::new(&[08, 4, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Malformed));
+    }
+
+    #[test]
+    fn data_frame() {
+        let data = DataFrame {
+            payload: Bytes::from("foo bar"),
+        };
+        let frame = HttpFrame::Data(data);
+        let mut buf = Vec::new();
+        frame.encode(&mut buf);
+        assert_eq!(&buf, &[7, 0, 102, 111, 111, 32, 98, 97, 114]);
+
+        let mut read = Cursor::new(&buf);
+        let decoded = HttpFrame::decode(&mut read).unwrap();
+        assert_eq!(decoded, frame);
     }
 }
