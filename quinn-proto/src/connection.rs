@@ -294,7 +294,7 @@ impl Connection {
     /// Connections should be polled for I/O after:
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
-    /// - the loss timer expires
+    /// - any timer expires
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
         let packet = self
             .next_packet(now)
