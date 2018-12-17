@@ -29,7 +29,7 @@ pub struct Connection {
     log: Logger,
     config: Arc<Config>,
     tls: TlsSession,
-    pub(crate) app_closed: bool,
+    app_closed: bool,
     /// DCID of Initial packet
     pub(crate) init_cid: ConnectionId,
     loc_cid: ConnectionId,
@@ -580,7 +580,26 @@ impl Connection {
         self.pending_acks.subtract(&info.acks);
     }
 
-    pub fn check_packet_loss(&mut self, now: u64) {
+    pub fn timeout(&mut self, now: u64, timer: Timer) -> bool {
+        match timer {
+            Timer::Close => {
+                self.io.timer_stop(Timer::Idle);
+                self.state = State::Drained;
+                return self.app_closed;
+            }
+            Timer::Idle => {
+                self.close_common(now);
+                self.events.push_back(ConnectionError::TimedOut.into());
+                self.state = State::Draining;
+            }
+            Timer::LossDetection => {
+                self.check_packet_loss(now);
+            }
+        }
+        false
+    }
+
+    fn check_packet_loss(&mut self, now: u64) {
         if self.awaiting_handshake {
             trace!(self.log, "retransmitting handshake packets");
             let packets = self
@@ -1975,7 +1994,7 @@ impl Connection {
         }
     }
 
-    pub fn close_common(&mut self, now: u64) {
+    fn close_common(&mut self, now: u64) {
         trace!(self.log, "connection closed");
         self.io.timer_stop(Timer::LossDetection);
         self.io.timer_start(Timer::Close, now + 3 * self.rto());

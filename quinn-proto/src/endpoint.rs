@@ -149,7 +149,6 @@ pub struct Endpoint {
 
 struct Context {
     io: VecDeque<Io>,
-    events: VecDeque<(ConnectionHandle, Event)>,
     incoming: VecDeque<ConnectionHandle>,
 }
 
@@ -231,7 +230,6 @@ impl Endpoint {
             ctx: Context {
                 io: VecDeque::new(),
                 // session_ticket_buffer,
-                events: VecDeque::new(),
                 incoming: VecDeque::new(),
             },
             log,
@@ -259,9 +257,6 @@ impl Endpoint {
                 return Some((conn, e));
             }
             self.eventful_conns.remove(&conn);
-        }
-        if let Some(e) = self.ctx.events.pop_front() {
-            return Some(e);
         }
         None
     }
@@ -718,34 +713,14 @@ impl Endpoint {
 
     /// Handle a timer expiring
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
-        match timer {
-            Timer::Close => {
-                self.ctx.io.push_back(Io::TimerUpdate {
-                    connection: conn,
-                    timer: Timer::Idle,
-                    update: TimerUpdate::Stop,
-                });
-                if self.connections[conn.0].app_closed {
-                    self.forget(conn);
-                } else {
-                    self.connections[conn.0].state = State::Drained;
-                }
-            }
-            Timer::Idle => {
-                self.connections[conn.0].close_common(now);
-                self.connections[conn.0].state = State::Draining;
-                self.ctx
-                    .events
-                    .push_back((conn, ConnectionError::TimedOut.into()));
-                self.eventful_conns.insert(conn);
-                self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
-                                               // goes through
-            }
-            Timer::LossDetection => {
-                self.connections[conn.0].check_packet_loss(now);
-                self.dirty_conns.insert(conn); // Connection will want to retransmit
-            }
+        if self.connections[conn.0].timeout(now, timer) {
+            self.forget(conn);
+            return;
         }
+        if let Timer::Idle = timer {
+            self.eventful_conns.insert(conn);
+        }
+        self.dirty_conns.insert(conn);
     }
 
     /// Transmit data on a stream
