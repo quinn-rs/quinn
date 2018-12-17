@@ -14,8 +14,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, Multiplexer,
-    State,
+    self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
 };
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
@@ -140,7 +139,10 @@ pub struct Endpoint {
     pub(crate) connections: Slab<Connection>,
     config: Arc<Config>,
     server_config: Option<ServerConfig>,
+    /// Connections that might have I/O to perform
     dirty_conns: FnvHashSet<ConnectionHandle>,
+    /// Connections that might have application-facing events to report
+    eventful_conns: FnvHashSet<ConnectionHandle>,
     incoming_handshakes: usize,
 }
 
@@ -238,6 +240,7 @@ impl Endpoint {
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
             dirty_conns: FnvHashSet::default(),
+            eventful_conns: FnvHashSet::default(),
             incoming_handshakes: 0,
             config,
             server_config,
@@ -250,18 +253,58 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        self.ctx.events.pop_front()
+        loop {
+            let conn = if let Some(&x) = self.eventful_conns.iter().next() {
+                x
+            } else {
+                break;
+            };
+            if let Some(e) = self.connections[conn.0].poll() {
+                return Some((conn, e));
+            }
+            self.eventful_conns.remove(&conn);
+        }
+        if let Some(e) = self.ctx.events.pop_front() {
+            return Some(e);
+        }
+        None
     }
 
     /// Get a pending IO operation
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
+        if let Some(x) = self.ctx.io.pop_front() {
+            return Some(x);
+        }
         loop {
-            if let Some(x) = self.ctx.io.pop_front() {
-                return Some(x);
-            }
             let &conn = self.dirty_conns.iter().next()?;
-            let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
-            if !self.connections[conn.0].poll_io(&mut mux, now) {
+            if let Some(io) = self.connections[conn.0].poll_io(now) {
+                return Some(match io {
+                    connection::Io::Transmit {
+                        destination,
+                        ecn,
+                        packet,
+                    } => Io::Transmit {
+                        destination,
+                        ecn,
+                        packet,
+                    },
+                    connection::Io::TimerUpdate {
+                        timer,
+                        update: connection::TimerUpdate::Stop,
+                    } => Io::TimerStop {
+                        connection: conn,
+                        timer,
+                    },
+                    connection::Io::TimerUpdate {
+                        timer,
+                        update: connection::TimerUpdate::Start(time),
+                    } => Io::TimerStart {
+                        connection: conn,
+                        timer,
+                        time,
+                    },
+                });
+            } else {
                 self.dirty_conns.remove(&conn);
             }
         }
@@ -348,12 +391,13 @@ impl Endpoint {
         if let Some(conn_id) = conn {
             let conn = &mut self.connections[conn_id.0];
             let was_handshake = conn.is_handshaking();
-            let mut mux = EndpointMux::new(&mut self.ctx, conn_id, conn.side());
-            let remaining = conn.handle_decode(&mut mux, now, ecn, partial_decode);
+            let remaining = conn.handle_decode(now, ecn, partial_decode);
             if was_handshake && !conn.is_handshaking() && conn.side().is_server() {
                 self.incoming_handshakes -= 1;
+                self.ctx.incoming.push_back(conn_id);
             }
             self.dirty_conns.insert(conn_id);
+            self.eventful_conns.insert(conn_id);
             return remaining;
         }
 
@@ -649,9 +693,7 @@ impl Endpoint {
             )
             .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
-        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
         match self.connections[conn.0].handle_initial(
-            &mut mux,
             now,
             ecn,
             packet_number as u64,
@@ -703,20 +745,17 @@ impl Endpoint {
                 }
             }
             Timer::Idle => {
-                let mut mux =
-                    EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
-                self.connections[conn.0].close_common(&mut mux, now);
+                self.connections[conn.0].close_common(now);
                 self.connections[conn.0].state = State::Draining;
                 self.ctx
                     .events
                     .push_back((conn, ConnectionError::TimedOut.into()));
+                self.eventful_conns.insert(conn);
                 self.dirty_conns.insert(conn); // Ensure the loss detection timer cancellation
                                                // goes through
             }
             Timer::LossDetection => {
-                let mut mux =
-                    EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
-                self.connections[conn.0].check_packet_loss(&mut mux, now);
+                self.connections[conn.0].check_packet_loss(now);
             }
         }
     }
@@ -843,8 +882,8 @@ impl Endpoint {
             self.forget(conn);
             return;
         }
-        let mut mux = EndpointMux::new(&mut self.ctx, conn, self.connections[conn.0].side());
-        self.connections[conn.0].close(&mut mux, now, error_code, reason);
+        self.connections[conn.0].close(now, error_code, reason);
+        self.dirty_conns.insert(conn);
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
@@ -923,9 +962,13 @@ pub enum Io {
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Timer {
-    Close,
-    LossDetection,
-    Idle,
+    LossDetection = 0,
+    Idle = 1,
+    Close = 2,
+}
+
+impl Timer {
+    pub(crate) const VALUES: [Timer; 3] = [Timer::LossDetection, Timer::Idle, Timer::Close];
 }
 
 impl slog::Value for Timer {
@@ -942,52 +985,4 @@ impl slog::Value for Timer {
 enum ConnectionOpts {
     Client(ClientConfig),
     Server { orig_dst_cid: Option<ConnectionId> },
-}
-
-// TODO: Deduplicate events and timer signals.
-pub struct EndpointMux<'a> {
-    handle: ConnectionHandle,
-    side: Side,
-    ctx: &'a mut Context,
-}
-
-impl<'a> EndpointMux<'a> {
-    fn new(ctx: &'a mut Context, handle: ConnectionHandle, side: Side) -> Self {
-        Self { handle, side, ctx }
-    }
-}
-
-impl Multiplexer for EndpointMux<'_> {
-    fn transmit(
-        &mut self,
-        destination: SocketAddrV6,
-        ecn: Option<EcnCodepoint>,
-        packet: Box<[u8]>,
-    ) {
-        self.ctx.io.push_back(Io::Transmit {
-            destination,
-            ecn,
-            packet,
-        });
-    }
-    fn timer_start(&mut self, timer: Timer, time: u64) {
-        self.ctx.io.push_back(Io::TimerStart {
-            connection: self.handle,
-            timer,
-            time,
-        });
-    }
-    fn timer_stop(&mut self, timer: Timer) {
-        self.ctx.io.push_back(Io::TimerStop {
-            connection: self.handle,
-            timer,
-        });
-    }
-    fn emit(&mut self, event: Event) {
-        if let (Side::Server, &Event::Connected { .. }) = (self.side, &event) {
-            self.ctx.incoming.push_back(self.handle);
-        } else {
-            self.ctx.events.push_back((self.handle, event));
-        }
-    }
 }

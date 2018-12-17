@@ -65,6 +65,8 @@ pub struct Connection {
     dedup: Dedup,
     /// Total number of outgoing packets that have been deemed lost
     lost_packets: u64,
+    io: IoQueue,
+    events: VecDeque<Event>,
 
     //
     // Loss Detection
@@ -229,6 +231,8 @@ impl Connection {
             orig_rem_cid: None,
             dedup: Dedup::new(),
             lost_packets: 0,
+            io: IoQueue::new(),
+            events: VecDeque::new(),
 
             handshake_count: 0,
             tlp_count: 0,
@@ -285,6 +289,61 @@ impl Connection {
         this
     }
 
+    /// Returns I/O actions to execute immediately
+    ///
+    /// Connections should be polled for I/O after:
+    /// - the application performed some I/O on the connection
+    /// - an incoming packet is handled
+    /// - the loss timer expires
+    pub fn poll_io(&mut self, now: u64) -> Option<Io> {
+        let packet = self
+            .next_packet(now)
+            .or_else(|| {
+                if self.io.probes == 0 {
+                    return None;
+                }
+                self.io.probes -= 1;
+                Some(self.make_probe(now))
+            })
+            .or_else(|| {
+                if !self.io.close {
+                    return None;
+                }
+                self.io.close = false;
+                Some(self.make_close())
+            });
+
+        if let Some(packet) = packet {
+            self.reset_idle_timeout(now);
+            return Some(Io::Transmit {
+                destination: self.remote,
+                ecn: if self.sending_ecn {
+                    Some(EcnCodepoint::ECT0)
+                } else {
+                    None
+                },
+                packet,
+            });
+        }
+
+        for (&timer, update) in Timer::VALUES.iter().zip(self.io.timers.iter_mut()) {
+            if let Some(update) = update.take() {
+                return Some(Io::TimerUpdate { timer, update });
+            }
+        }
+
+        None
+    }
+
+    /// Returns application-facing events
+    ///
+    /// Connections should be polled for events after:
+    /// - an incoming packet is handled, or
+    /// - the idle timer expires
+    pub fn poll(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
     fn largest_sent_packet(&self) -> u64 {
         debug_assert_ne!(
             self.next_packet_number, 0,
@@ -306,13 +365,7 @@ impl Connection {
         x
     }
 
-    fn on_packet_sent(
-        &mut self,
-        mux: &mut impl Multiplexer,
-        now: u64,
-        packet_number: u64,
-        packet: SentPacket,
-    ) {
+    fn on_packet_sent(&mut self, now: u64, packet_number: u64, packet: SentPacket) {
         let bytes = packet.bytes;
         let handshake = packet.handshake;
         if handshake {
@@ -325,11 +378,11 @@ impl Connection {
                 self.time_of_last_sent_handshake_packet = now;
             }
             self.bytes_in_flight += bytes as u64;
-            self.set_loss_detection_alarm(mux);
+            self.set_loss_detection_alarm();
         }
     }
 
-    fn on_ack_received(&mut self, mux: &mut impl Multiplexer, now: u64, ack: frame::Ack) {
+    fn on_ack_received(&mut self, now: u64, ack: frame::Ack) {
         trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         let prev_largest = self.largest_acked_packet;
@@ -350,10 +403,10 @@ impl Connection {
             self.on_packet_acked(packet);
         }
         self.detect_lost_packets(now, ack.largest);
-        self.set_loss_detection_alarm(mux);
+        self.set_loss_detection_alarm();
         if was_blocked && !self.blocked() {
             for stream in self.blocked_streams.drain() {
-                mux.emit(Event::StreamWritable { stream });
+                self.events.push_back(Event::StreamWritable { stream });
             }
         }
 
@@ -527,7 +580,7 @@ impl Connection {
         self.pending_acks.subtract(&info.acks);
     }
 
-    pub fn check_packet_loss(&mut self, mux: &mut impl Multiplexer, now: u64) {
+    pub fn check_packet_loss(&mut self, now: u64) {
         if self.awaiting_handshake {
             trace!(self.log, "retransmitting handshake packets");
             let packets = self
@@ -552,8 +605,7 @@ impl Connection {
                            "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
                            "in flight" => self.bytes_in_flight);
             // Tail Loss Probe.
-            self.force_transmit(mux, now);
-            self.reset_idle_timeout(mux, now);
+            self.io.probes += 1;
             self.tlp_count += 1;
         } else {
             trace!(self.log, "RTO fired, retransmitting"; "pn" => self.next_packet_number,
@@ -563,12 +615,10 @@ impl Connection {
             if self.rto_count == 0 {
                 self.largest_sent_before_rto = self.largest_sent_packet();
             }
-            for _ in 0..2 {
-                self.force_transmit(mux, now);
-            }
+            self.io.probes += 2;
             self.rto_count += 1;
         }
-        self.set_loss_detection_alarm(mux);
+        self.set_loss_detection_alarm();
     }
 
     fn detect_lost_packets(&mut self, now: u64, largest_acked: u64) {
@@ -635,9 +685,9 @@ impl Connection {
         sent_time <= self.recovery_start_time
     }
 
-    fn set_loss_detection_alarm(&mut self, mux: &mut impl Multiplexer) {
+    fn set_loss_detection_alarm(&mut self) {
         if self.bytes_in_flight == 0 {
-            mux.timer_stop(Timer::LossDetection);
+            self.io.timer_stop(Timer::LossDetection);
             return;
         }
 
@@ -654,7 +704,7 @@ impl Connection {
                 self.config.min_tlp_timeout,
             );
             alarm_duration *= 2u64.pow(self.handshake_count);
-            mux.timer_start(
+            self.io.timer_start(
                 Timer::LossDetection,
                 self.time_of_last_sent_handshake_packet + alarm_duration,
             );
@@ -676,7 +726,7 @@ impl Connection {
                 alarm_duration = cmp::min(alarm_duration, tlp_duration);
             }
         }
-        mux.timer_start(
+        self.io.timer_start(
             Timer::LossDetection,
             self.time_of_last_sent_retransmittable_packet + alarm_duration,
         );
@@ -690,12 +740,11 @@ impl Connection {
 
     fn on_packet_authenticated(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
     ) {
-        self.reset_idle_timeout(mux, now);
+        self.reset_idle_timeout(now);
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
             self.ecn_counters += x;
@@ -717,18 +766,19 @@ impl Connection {
         }
     }
 
-    pub fn reset_idle_timeout(&mut self, mux: &mut impl Multiplexer, now: u64) {
+    pub fn reset_idle_timeout(&mut self, now: u64) {
         let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
             cmp::max(self.config.idle_timeout, self.params.idle_timeout)
         } else {
             cmp::min(self.config.idle_timeout, self.params.idle_timeout)
         };
-        mux.timer_start(Timer::Idle, now + dt as u64 * 1_000_000);
+        self.io
+            .timer_start(Timer::Idle, now + dt as u64 * 1_000_000);
     }
 
     /// Consider all previously transmitted handshake packets to be delivered. Called when we
     /// receive a new handshake packet.
-    fn handshake_cleanup(&mut self, mux: &mut impl Multiplexer) {
+    fn handshake_cleanup(&mut self) {
         if !self.awaiting_handshake {
             return;
         }
@@ -743,7 +793,7 @@ impl Connection {
         for packet in packets {
             self.on_packet_acked(packet);
         }
-        self.set_loss_detection_alarm(mux);
+        self.set_loss_detection_alarm();
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -792,7 +842,6 @@ impl Connection {
 
     pub fn handle_initial(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         ecn: Option<EcnCodepoint>,
         packet_number: u64,
@@ -811,7 +860,7 @@ impl Connection {
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
         self.set_params(params)?;
-        self.on_packet_authenticated(mux, now, ecn, Some(packet_number));
+        self.on_packet_authenticated(now, ecn, Some(packet_number));
         self.write_tls();
         Ok(())
     }
@@ -849,7 +898,6 @@ impl Connection {
 
     pub fn handle_decode(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
@@ -878,7 +926,7 @@ impl Connection {
 
         match partial_decode.finish(crypto.pn_decrypt_key()) {
             Ok((packet, rest)) => {
-                self.handle_packet(mux, now, ecn, packet, new_crypto);
+                self.handle_packet(now, ecn, packet, new_crypto);
                 rest
             }
             Err(e) => {
@@ -890,7 +938,6 @@ impl Connection {
 
     fn handle_packet(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
@@ -934,25 +981,25 @@ impl Connection {
                     }
                 } else {
                     if !was_closed {
-                        self.on_packet_authenticated(mux, now, ecn, number);
+                        self.on_packet_authenticated(now, ecn, number);
                     }
-                    self.handle_connected_inner(mux, now, number, packet)
+                    self.handle_connected_inner(now, number, packet)
                 }
             }
         };
 
         // State transitions for error cases
         if let Err(conn_err) = result {
-            mux.emit(conn_err.clone().into());
+            self.events.push_back(conn_err.clone().into());
             self.state = match conn_err {
                 ConnectionError::ApplicationClosed { reason } => State::closed(reason),
                 ConnectionError::ConnectionClosed { reason } => State::closed(reason),
                 ConnectionError::Reset => {
                     if !self.state.is_drained() {
                         debug!(self.log, "got stateless reset");
-                        mux.timer_stop(Timer::LossDetection);
-                        mux.timer_stop(Timer::Close);
-                        mux.timer_stop(Timer::Idle);
+                        self.io.timer_stop(Timer::LossDetection);
+                        self.io.timer_stop(Timer::Close);
+                        self.io.timer_stop(Timer::Idle);
                     }
                     State::Drained
                 }
@@ -966,18 +1013,17 @@ impl Connection {
         }
 
         if !was_closed && self.state.is_closed() {
-            self.close_common(mux, now);
+            self.close_common(now);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
-        if let State::Closed(ref state) = self.state {
-            self.transmit_close(mux, now, &state.clone().reason);
+        if let State::Closed(_) = self.state {
+            self.io.close = true;
         }
     }
 
     fn handle_connected_inner(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         number: Option<u64>,
         packet: Packet,
@@ -1050,7 +1096,7 @@ impl Connection {
                                     return Err(TransportError::PROTOCOL_VIOLATION.into());
                                 }
                                 Frame::Ack(ack) => {
-                                    self.on_ack_received(mux, now, ack);
+                                    self.on_ack_received(now, ack);
                                 }
                                 Frame::ConnectionClose(reason) => {
                                     trace!(
@@ -1058,12 +1104,16 @@ impl Connection {
                                         "peer aborted the handshake: {error}",
                                         error = reason.error_code
                                     );
-                                    mux.emit(ConnectionError::ConnectionClosed { reason }.into());
+                                    self.events.push_back(
+                                        ConnectionError::ConnectionClosed { reason }.into(),
+                                    );
                                     self.state = State::Draining;
                                     return Ok(());
                                 }
                                 Frame::ApplicationClose(reason) => {
-                                    mux.emit(ConnectionError::ApplicationClosed { reason }.into());
+                                    self.events.push_back(
+                                        ConnectionError::ApplicationClosed { reason }.into(),
+                                    );
                                     self.state = State::Draining;
                                     return Ok(());
                                 }
@@ -1080,7 +1130,7 @@ impl Connection {
 
                         if self.tls.is_handshaking() {
                             trace!(self.log, "handshake ongoing");
-                            self.handshake_cleanup(mux);
+                            self.handshake_cleanup();
                             self.write_tls();
                             self.state = State::Handshake(state::Handshake {
                                 token: None,
@@ -1103,7 +1153,7 @@ impl Connection {
                             })?;
                         self.set_params(params)?;
                         trace!(self.log, "{connection} established", connection = id);
-                        self.handshake_cleanup(mux);
+                        self.handshake_cleanup();
                         self.write_tls();
                         if self.side.is_server() {
                             self.awaiting_handshake = false;
@@ -1113,9 +1163,13 @@ impl Connection {
                             start: 0,
                             crypto: Crypto::new_1rtt(&self.tls, self.side),
                         });
-                        mux.emit(Event::Connected {
-                            protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
-                        });
+                        if self.side.is_client() {
+                            // Server applications don't see connections until the handshake
+                            // completes, so this would be redundant.
+                            self.events.push_back(Event::Connected {
+                                protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
+                            });
+                        }
                         self.state = State::Established;
                         Ok(())
                     }
@@ -1215,10 +1269,9 @@ impl Connection {
                         "only the client confirms handshake completion based on a protected packet"
                     );
                     // Forget about unacknowledged handshake packets
-                    self.handshake_cleanup(mux);
+                    self.handshake_cleanup();
                 }
-                let closed =
-                    self.process_payload(mux, now, number.unwrap(), packet.payload.into())?;
+                let closed = self.process_payload(now, number.unwrap(), packet.payload.into())?;
                 self.state = if closed {
                     State::Draining
                 } else {
@@ -1245,7 +1298,6 @@ impl Connection {
 
     fn process_payload(
         &mut self,
-        mux: &mut impl Multiplexer,
         now: u64,
         number: u64,
         payload: Bytes,
@@ -1321,25 +1373,27 @@ impl Connection {
                     }
 
                     let fresh = mem::replace(&mut rs.fresh, false);
-                    mux.emit(Event::StreamReadable {
+                    self.events.push_back(Event::StreamReadable {
                         stream: frame.id,
                         fresh,
                     });
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(mux, now, ack);
+                    self.on_ack_received(now, ack);
                     for stream in self.streams.finished.drain(..) {
-                        mux.emit(Event::StreamFinished { stream });
+                        self.events.push_back(Event::StreamFinished { stream });
                     }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
-                    mux.emit(ConnectionError::ConnectionClosed { reason }.into());
+                    self.events
+                        .push_back(ConnectionError::ConnectionClosed { reason }.into());
                     return Ok(true);
                 }
                 Frame::ApplicationClose(reason) => {
-                    mux.emit(ConnectionError::ApplicationClosed { reason }.into());
+                    self.events
+                        .push_back(ConnectionError::ApplicationClosed { reason }.into());
                     return Ok(true);
                 }
                 Frame::PathChallenge(x) => {
@@ -1354,7 +1408,7 @@ impl Connection {
                     self.max_data = cmp::max(bytes, self.max_data);
                     if was_blocked && !self.blocked() {
                         for stream in self.blocked_streams.drain() {
-                            mux.emit(Event::StreamWritable { stream });
+                            self.events.push_back(Event::StreamWritable { stream });
                         }
                     }
                 }
@@ -1368,7 +1422,7 @@ impl Connection {
                             trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
                             if ss.offset == ss.max_data {
-                                mux.emit(Event::StreamWritable { stream: id });
+                                self.events.push_back(Event::StreamWritable { stream: id });
                             }
                             ss.max_data = offset;
                         }
@@ -1385,7 +1439,7 @@ impl Connection {
                     let update = id.index() + 1;
                     if update > *limit {
                         *limit = update;
-                        mux.emit(Event::StreamAvailable {
+                        self.events.push_back(Event::StreamAvailable {
                             directionality: id.directionality(),
                         });
                     }
@@ -1421,7 +1475,8 @@ impl Connection {
                         }
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
-                    mux.emit(Event::StreamReadable { stream: id, fresh });
+                    self.events
+                        .push_back(Event::StreamReadable { stream: id, fresh });
                 }
                 Frame::Blocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -1474,7 +1529,7 @@ impl Connection {
         Ok(false)
     }
 
-    pub fn next_packet(&mut self, mux: &mut impl Multiplexer, now: u64) -> Option<Vec<u8>> {
+    fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
         let established = match self.state {
             State::Handshake(_) => false,
             State::Established => true,
@@ -1800,7 +1855,6 @@ impl Connection {
         self.permit_ack_only &= acks.is_empty();
 
         self.on_packet_sent(
-            mux,
             now,
             number,
             SentPacket {
@@ -1812,25 +1866,13 @@ impl Connection {
             },
         );
 
-        Some(buf)
+        Some(buf.into())
     }
 
-    /// Send a QUIC packet
-    fn transmit(&mut self, mux: &mut impl Multiplexer, now: u64, packet: Box<[u8]>) {
-        mux.transmit(
-            self.remote,
-            if self.sending_ecn {
-                Some(EcnCodepoint::ECT0)
-            } else {
-                None
-            },
-            packet,
-        );
-        self.reset_idle_timeout(mux, now);
-    }
-
-    // TLP/RTO transmit
-    fn force_transmit(&mut self, mux: &mut impl Multiplexer, now: u64) {
+    /// Construct a packet when there's nothing to transmit
+    ///
+    /// Useful for tail loss and RTO probes
+    fn make_probe(&mut self, now: u64) -> Box<[u8]> {
         let number = self.get_tx_number();
         let mut buf = Vec::new();
         let header = Header::Short {
@@ -1847,7 +1889,6 @@ impl Connection {
         partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
 
         self.on_packet_sent(
-            mux,
             now,
             number,
             SentPacket {
@@ -1858,15 +1899,11 @@ impl Connection {
                 retransmits: Retransmits::default(),
             },
         );
-        self.transmit(mux, now, buf.into());
+        buf.into()
     }
 
-    fn transmit_close(
-        &mut self,
-        mux: &mut impl Multiplexer,
-        now: u64,
-        reason: &state::CloseReason,
-    ) {
+    fn make_close(&mut self) -> Box<[u8]> {
+        trace!(self.log, "sending CONNECTION_CLOSE");
         let full_number = self.get_tx_number();
         let number = PacketNumber::new(full_number, self.largest_acked_packet);
         let mut buf = Vec::new();
@@ -1888,9 +1925,14 @@ impl Connection {
         let header_len = buf.len();
 
         let max_len = self.mtu as usize - header_len - AEAD_TAG_SIZE;
-        match *reason {
-            state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
-            state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
+        match self.state {
+            State::Closed(state::Closed {
+                reason: state::CloseReason::Application(ref x),
+            }) => x.encode(&mut buf, max_len),
+            State::Closed(state::Closed {
+                reason: state::CloseReason::Connection(ref x),
+            }) => x.encode(&mut buf, max_len),
+            _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
         }
 
         if let Header::Long { .. } = header {
@@ -1905,20 +1947,20 @@ impl Connection {
             crypto_space.crypto.pn_encrypt_key(),
             header_len as usize,
         );
-        self.transmit(mux, now, buf.into());
+        buf.into()
     }
 
     /// Close a connection immediately
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, mux: &mut impl Multiplexer, now: u64, error_code: u16, reason: Bytes) {
+    pub fn close(&mut self, now: u64, error_code: u16, reason: Bytes) {
         let was_closed = self.state.is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
-            self.close_common(mux, now);
-            self.transmit_close(mux, now, &reason);
+            self.close_common(now);
+            self.io.close = true;
         }
 
         self.app_closed = true;
@@ -1930,10 +1972,10 @@ impl Connection {
         }
     }
 
-    pub fn close_common(&mut self, mux: &mut impl Multiplexer, now: u64) {
+    pub fn close_common(&mut self, now: u64) {
         trace!(self.log, "connection closed");
-        mux.timer_stop(Timer::LossDetection);
-        mux.timer_start(Timer::Close, now + 3 * self.rto());
+        self.io.timer_stop(Timer::LossDetection);
+        self.io.timer_start(Timer::Close, now + 3 * self.rto());
     }
 
     fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
@@ -2207,22 +2249,6 @@ impl Connection {
         self.queue_stream_data(stream, (&data[0..n]).into());
         trace!(self.log, "write"; "stream" => stream.0, "len" => n);
         Ok(n)
-    }
-
-    /// Returns whether any I/O occurred.
-    pub fn poll_io(&mut self, mux: &mut impl Multiplexer, now: u64) -> bool {
-        let payload = if let Some(x) = self.next_packet(mux, now) { x } else { return false; };
-        self.reset_idle_timeout(mux, now);
-        mux.transmit(
-            self.remote,
-            if self.sending_ecn {
-                Some(EcnCodepoint::ECT0)
-            } else {
-                None
-            },
-            payload.into(),
-        );
-        true
     }
 
     fn update_keys(&mut self, crypto: Crypto, number: u64) {
@@ -2719,13 +2745,55 @@ impl From<ConnectionHandle> for usize {
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
 
-pub trait Multiplexer {
-    /// Transmit a UDP packet.
-    fn transmit(&mut self, destination: SocketAddrV6, ecn: Option<EcnCodepoint>, packet: Box<[u8]>);
+/// I/O operations to be immediately executed the backend.
+#[derive(Debug)]
+pub enum Io {
+    Transmit {
+        destination: SocketAddrV6,
+        /// Explicit congestion notification bits to set on the packet
+        ecn: Option<EcnCodepoint>,
+        packet: Box<[u8]>,
+    },
+    /// Stop or (re)start a timer
+    TimerUpdate { timer: Timer, update: TimerUpdate },
+}
+
+/// Encoding of I/O operations to emit on upcoming `poll_io` calls
+#[derive(Debug)]
+pub struct IoQueue {
+    /// Number of probe packets to transmit
+    probes: u8,
+    /// Whether to transmit a close packet
+    close: bool,
+    /// Changes to the loss detection, idle, and close timers, in that order
+    ///
+    /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
+    /// indexing.
+    timers: [Option<TimerUpdate>; 3],
+}
+
+impl IoQueue {
+    pub fn new() -> Self {
+        Self {
+            probes: 0,
+            close: false,
+            timers: [None; 3],
+        }
+    }
+
     /// Start or reset a timer associated with this connection.
-    fn timer_start(&mut self, timer: Timer, time: u64);
+    fn timer_start(&mut self, timer: Timer, time: u64) {
+        self.timers[timer as usize] = Some(TimerUpdate::Start(time));
+    }
+
     /// Start one of the timers associated with this connection.
-    fn timer_stop(&mut self, timer: Timer);
-    /// Emit an application-facing event.
-    fn emit(&mut self, event: Event);
+    fn timer_stop(&mut self, timer: Timer) {
+        self.timers[timer as usize] = Some(TimerUpdate::Stop);
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TimerUpdate {
+    Start(u64),
+    Stop,
 }
