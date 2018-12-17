@@ -2209,23 +2209,20 @@ impl Connection {
         Ok(n)
     }
 
-    pub fn flush_pending(&mut self, mux: &mut impl Multiplexer, now: u64) {
-        let mut sent = false;
-        while let Some(packet) = self.next_packet(mux, now) {
-            mux.transmit(
-                self.remote,
-                if self.sending_ecn {
-                    Some(EcnCodepoint::ECT0)
-                } else {
-                    None
-                },
-                packet.into(),
-            );
-            sent = true;
-        }
-        if sent {
-            self.reset_idle_timeout(mux, now);
-        }
+    /// Returns whether any I/O occurred.
+    pub fn poll_io(&mut self, mux: &mut impl Multiplexer, now: u64) -> bool {
+        let payload = if let Some(x) = self.next_packet(mux, now) { x } else { return false; };
+        self.reset_idle_timeout(mux, now);
+        mux.transmit(
+            self.remote,
+            if self.sending_ecn {
+                Some(EcnCodepoint::ECT0)
+            } else {
+                None
+            },
+            payload.into(),
+        );
+        true
     }
 
     fn update_keys(&mut self, crypto: Crypto, number: u64) {
