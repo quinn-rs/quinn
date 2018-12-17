@@ -313,19 +313,33 @@ impl TestEndpoint {
                 Io::Transmit { packet, ecn, .. } => {
                     self.outbound.push_back((ecn, packet));
                 }
-                Io::TimerStart {
+                Io::TimerUpdate {
                     timer,
-                    time,
+                    update,
                     connection,
                 } => {
                     self.conn = Some(connection);
-                    trace!(
-                        log,
-                        "{side:?} {timer:?} start: {dt}",
-                        side = self.side,
-                        timer = timer,
-                        dt = (time - now)
-                    );
+                    let time = match update {
+                        TimerUpdate::Stop => {
+                            trace!(
+                                log,
+                                "{side:?} {timer:?} stop",
+                                side = self.side,
+                                timer = timer
+                            );
+                            u64::max_value()
+                        }
+                        TimerUpdate::Start(time) => {
+                            trace!(
+                                log,
+                                "{side:?} {timer:?} start: {dt}",
+                                side = self.side,
+                                timer = timer,
+                                dt = (time - now)
+                            );
+                            time
+                        }
+                    };
                     match timer {
                         Timer::LossDetection => {
                             self.loss = time;
@@ -335,25 +349,6 @@ impl TestEndpoint {
                         }
                         Timer::Close => {
                             self.close = time;
-                        }
-                    }
-                }
-                Io::TimerStop { timer, .. } => {
-                    trace!(
-                        log,
-                        "{side:?} {timer:?} stop",
-                        side = self.side,
-                        timer = timer
-                    );
-                    match timer {
-                        Timer::LossDetection => {
-                            self.loss = u64::max_value();
-                        }
-                        Timer::Idle => {
-                            self.idle = u64::max_value();
-                        }
-                        Timer::Close => {
-                            self.close = u64::max_value();
                         }
                     }
                 }

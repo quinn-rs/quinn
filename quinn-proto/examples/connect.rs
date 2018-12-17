@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use failure::Error;
-use quinn_proto::{self as quinn, Config, Directionality, Endpoint, Event, Io, ReadError, Timer};
+use quinn_proto::{
+    self as quinn, Config, Directionality, Endpoint, Event, Io, ReadError, Timer, TimerUpdate,
+};
 use rustls::ProtocolVersion;
 use slog::{Drain, Logger};
 
@@ -159,41 +161,45 @@ impl Context {
                         sent += 1;
                         self.socket.send_to(&packet, destination)?;
                     }
-                    Io::TimerStart {
+                    Io::TimerUpdate {
                         timer: Timer::LossDetection,
-                        time,
+                        update: TimerUpdate::Start(time),
                         ..
                     } => {
                         self.loss_timer = Some(time);
                     }
-                    Io::TimerStart {
+                    Io::TimerUpdate {
                         timer: Timer::Close,
-                        time,
+                        update: TimerUpdate::Start(time),
                         ..
                     } => {
                         self.close_timer = Some(time);
                     }
-                    Io::TimerStart {
+                    Io::TimerUpdate {
                         timer: Timer::Idle,
-                        time,
+                        update: TimerUpdate::Start(time),
                         ..
                     } => {
                         self.idle_timer = Some(time);
                     }
-                    Io::TimerStop {
+                    Io::TimerUpdate {
                         timer: Timer::LossDetection,
+                        update: TimerUpdate::Stop,
                         ..
                     } => {
                         self.loss_timer = None;
                     }
-                    Io::TimerStop {
+                    Io::TimerUpdate {
                         timer: Timer::Close,
+                        update: TimerUpdate::Stop,
                         ..
                     } => {
                         self.close_timer = None;
                     }
-                    Io::TimerStop {
-                        timer: Timer::Idle, ..
+                    Io::TimerUpdate {
+                        timer: Timer::Idle,
+                        update: TimerUpdate::Stop,
+                        ..
                     } => unreachable!(),
                 }
             }

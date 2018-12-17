@@ -802,10 +802,10 @@ impl Future for Driver {
                             endpoint.outgoing.push_front((destination, packet));
                         }
                     }
-                    TimerStart {
+                    TimerUpdate {
                         connection,
                         timer: timer @ quinn::Timer::Close,
-                        time,
+                        update: quinn::TimerUpdate::Start(time),
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
                         endpoint.timers.push(Timer {
@@ -815,10 +815,10 @@ impl Future for Driver {
                             cancel: None,
                         });
                     }
-                    TimerStart {
+                    TimerUpdate {
                         connection,
                         timer,
-                        time,
+                        update: quinn::TimerUpdate::Start(time),
                     } => {
                         // Loss detection and idle timers start before the connection is established
                         let pending = endpoint
@@ -845,7 +845,11 @@ impl Future for Driver {
                             cancel: Some(recv),
                         });
                     }
-                    TimerStop { connection, timer } => {
+                    TimerUpdate {
+                        connection,
+                        timer,
+                        update: quinn::TimerUpdate::Stop,
+                    } => {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
                         if let Some(pending) = endpoint.pending.get_mut(&connection) {
