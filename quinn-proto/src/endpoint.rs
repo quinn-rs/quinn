@@ -15,6 +15,7 @@ use slog::{self, Logger};
 use crate::coding::BufMutExt;
 use crate::connection::{
     self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
+    TimerUpdate,
 };
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
@@ -288,20 +289,10 @@ impl Endpoint {
                         ecn,
                         packet,
                     },
-                    connection::Io::TimerUpdate {
-                        timer,
-                        update: connection::TimerUpdate::Stop,
-                    } => Io::TimerStop {
+                    connection::Io::TimerUpdate { timer, update } => Io::TimerUpdate {
                         connection: conn,
                         timer,
-                    },
-                    connection::Io::TimerUpdate {
-                        timer,
-                        update: connection::TimerUpdate::Start(time),
-                    } => Io::TimerStart {
-                        connection: conn,
-                        timer,
-                        time,
+                        update,
                     },
                 });
             } else {
@@ -733,9 +724,10 @@ impl Endpoint {
     pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
         match timer {
             Timer::Close => {
-                self.ctx.io.push_back(Io::TimerStop {
+                self.ctx.io.push_back(Io::TimerUpdate {
                     connection: conn,
                     timer: Timer::Idle,
+                    update: TimerUpdate::Stop,
                 });
                 self.ctx.events.push_back((conn, Event::ConnectionDrained));
                 if self.connections[conn.0].app_closed {
@@ -947,16 +939,11 @@ pub enum Io {
         ecn: Option<EcnCodepoint>,
         packet: Box<[u8]>,
     },
-    /// Start or reset a timer
-    TimerStart {
+    /// Start, stop, or reset a timer
+    TimerUpdate {
         connection: ConnectionHandle,
         timer: Timer,
-        /// Absolute μs
-        time: u64,
-    },
-    TimerStop {
-        connection: ConnectionHandle,
-        timer: Timer,
+        update: TimerUpdate,
     },
 }
 

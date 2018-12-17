@@ -2792,8 +2792,11 @@ impl IoQueue {
     }
 }
 
+/// Changes to a connection's timers
 #[derive(Debug, Copy, Clone)]
 pub enum TimerUpdate {
+    /// Set the timer to expire at an a certain point in time, in absolute microseconds
     Start(u64),
+    /// Cancel time timer if it's currently running
     Stop,
 }
