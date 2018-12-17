@@ -15,13 +15,13 @@ extern crate slog;
 use std::fmt;
 use std::ops;
 
-mod coding;
+pub mod coding;
 mod dedup;
 mod range_set;
 #[cfg(test)]
 mod tests;
 mod transport_parameters;
-mod varint;
+pub mod varint;
 
 mod connection;
 pub use crate::connection::{ConnectionError, ConnectionHandle, TimerUpdate};
