@@ -889,11 +889,13 @@ impl Connection {
         self.tls.write_hs(&mut outgoing);
         let offset = self.crypto_offset;
         self.crypto_offset += outgoing.len() as u64;
-        self.handshake_pending.crypto.push_back(frame::Crypto {
-            offset,
-            data: outgoing.into(),
-        });
-        self.awaiting_handshake = true;
+        if !outgoing.is_empty() {
+            self.handshake_pending.crypto.push_back(frame::Crypto {
+                offset,
+                data: outgoing.into(),
+            });
+            self.awaiting_handshake = true;
+        }
     }
 
     pub fn handle_decode(
