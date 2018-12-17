@@ -651,7 +651,7 @@ impl Connection {
         if let Some(largest_lost) = lost_packets.last().cloned() {
             self.lost_packets += lost_packets.len() as u64;
             let old_bytes_in_flight = self.bytes_in_flight;
-            let largest_lost_time = self.sent_packets.get(&largest_lost).unwrap().time;
+            let largest_lost_time = self.sent_packets[&largest_lost].time;
             for packet in lost_packets {
                 let info = self.sent_packets.remove(&packet).unwrap();
                 if info.handshake {
@@ -874,7 +874,7 @@ impl Connection {
             if n == 0 {
                 return Ok(());
             }
-            if let Err(e) = self.tls.read_hs(&mut &buf[..n]) {
+            if let Err(e) = self.tls.read_hs(&buf[..n]) {
                 debug!(self.log, "TLS error: {}", e);
                 return Err(if let Some(alert) = self.tls.take_alert() {
                     TransportError::crypto(alert)
@@ -1061,7 +1061,7 @@ impl Connection {
                         .unwrap();
                         self.crypto_offset = 0;
                         let new_crypto = Crypto::new_initial(&rem_cid, self.side);
-                        mem::replace(&mut self.cryptos.get_mut(0).unwrap().crypto, new_crypto);
+                        mem::replace(&mut self.cryptos[0].crypto, new_crypto);
                         self.write_tls();
 
                         self.state = State::Handshake(state::Handshake {
@@ -2258,14 +2258,13 @@ impl Connection {
         // Remove the penultimate crypto space if it's at the OneRtt level; do this before
         // adding the new crypto to save on allocation space for the cryptos deque.
         let len = self.cryptos.len();
-        if len > 2 {
-            if self
+        if len > 2
+            && self
                 .cryptos
                 .get(len - 2)
                 .map_or(false, |cs| cs.level == CryptoLevel::OneRtt)
-            {
-                self.cryptos.remove(len - 2);
-            }
+        {
+            self.cryptos.remove(len - 2);
         }
         self.cryptos.push_back(CryptoSpace {
             level: CryptoLevel::OneRtt,
@@ -2352,7 +2351,7 @@ struct CryptoSpace {
     crypto: Crypto,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CryptoLevel {
     Initial,
     OneRtt,

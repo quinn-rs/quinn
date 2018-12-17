@@ -570,12 +570,12 @@ impl PacketNumber {
                 w.write(x)
             }
             U16(x) => {
-                debug_assert!(x < 16384);
+                debug_assert!(x < 16_384);
                 w.write(x | 0x8000)
             }
             U32(x) => {
-                debug_assert!(x < 1073741824);
-                w.write(x | 0xc0000000)
+                debug_assert!(x < 1_073_741_824);
+                w.write(x | 0xc000_0000)
             }
         }
     }
@@ -821,7 +821,7 @@ pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
 
 pub const AEAD_TAG_SIZE: usize = 16;
 pub const PACKET_NUMBER_16_MASK: u16 = 0x3fff;
-pub const PACKET_NUMBER_32_MASK: u32 = 0x3fffffff;
+pub const PACKET_NUMBER_32_MASK: u32 = 0x3fff_ffff;
 
 const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x40;
