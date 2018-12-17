@@ -548,9 +548,9 @@ impl Connection {
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
             if let stream::SendState::ResetSent { stop_reason } =
-                self.streams.get_send_mut(&id).unwrap().state
+                self.streams.get_send_mut(id).unwrap().state
             {
-                self.streams.get_send_mut(&id).unwrap().state =
+                self.streams.get_send_mut(id).unwrap().state =
                     stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.maybe_cleanup(id);
@@ -559,7 +559,7 @@ impl Connection {
         }
         for frame in info.retransmits.stream {
             let recvd = {
-                let ss = if let Some(x) = self.streams.get_send_mut(&frame.id) {
+                let ss = if let Some(x) = self.streams.get_send_mut(frame.id) {
                     x
                 } else {
                     continue;
@@ -798,7 +798,7 @@ impl Connection {
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
-        let ss = self.streams.get_send_mut(&stream).unwrap();
+        let ss = self.streams.get_send_mut(stream).unwrap();
         assert_eq!(ss.state, stream::SendState::Ready);
         let offset = ss.offset;
         ss.offset += data.len() as u64;
@@ -823,7 +823,7 @@ impl Connection {
         );
 
         // reset is a noop on a closed stream
-        let stream = if let Some(x) = self.streams.get_send_mut(&stream_id) {
+        let stream = if let Some(x) = self.streams.get_send_mut(stream_id) {
             x
         } else {
             return;
@@ -1345,7 +1345,7 @@ impl Connection {
                         }
                         _ => {}
                     }
-                    let rs = self.streams.get_recv_mut(&frame.id).unwrap();
+                    let rs = self.streams.get_recv_mut(frame.id).unwrap();
 
                     let end = frame.offset + frame.data.len() as u64;
                     if let Some(final_offset) = rs.final_offset() {
@@ -1420,7 +1420,7 @@ impl Connection {
                         debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
-                    if let Some(ss) = self.streams.get_send_mut(&id) {
+                    if let Some(ss) = self.streams.get_send_mut(id) {
                         if offset > ss.max_data {
                             trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
@@ -1501,7 +1501,7 @@ impl Connection {
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                     self.reset(id, error_code);
-                    self.streams.get_send_mut(&id).unwrap().state = stream::SendState::ResetSent {
+                    self.streams.get_send_mut(id).unwrap().state = stream::SendState::ResetSent {
                         stop_reason: Some(error_code),
                     };
                 }
@@ -1999,7 +1999,7 @@ impl Connection {
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.streams.max_remote_bi {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
-            self.streams.get_send_mut(&id).unwrap().max_data =
+            self.streams.get_send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
         self.params = params;
@@ -2088,7 +2088,7 @@ impl Connection {
     pub fn finish(&mut self, id: StreamId) {
         let ss = self
             .streams
-            .get_send_mut(&id)
+            .get_send_mut(id)
             .expect("unknown or recv-only stream");
         assert_eq!(ss.state, stream::SendState::Ready);
         ss.state = stream::SendState::DataSent;
@@ -2107,7 +2107,7 @@ impl Connection {
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let rs = self.streams.get_recv_mut(&id).unwrap();
+        let rs = self.streams.get_recv_mut(id).unwrap();
         let (buf, len) = rs.read_unordered()?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
@@ -2121,7 +2121,7 @@ impl Connection {
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let rs = self.streams.get_recv_mut(&id).unwrap();
+        let rs = self.streams.get_recv_mut(id).unwrap();
         let len = rs.read(buf)?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
@@ -2231,7 +2231,7 @@ impl Connection {
 
         let budget_res = self
             .streams
-            .get_send_mut(&stream)
+            .get_send_mut(stream)
             .expect("stream already closed")
             .write_budget();
 
@@ -2456,11 +2456,11 @@ impl Streams {
         Ok(self.streams.get_mut(&id))
     }
 
-    fn get_recv_mut(&mut self, id: &StreamId) -> Option<&mut stream::Recv> {
+    fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut stream::Recv> {
         self.streams.get_mut(&id)?.recv_mut()
     }
 
-    fn get_send_mut(&mut self, id: &StreamId) -> Option<&mut stream::Send> {
+    fn get_send_mut(&mut self, id: StreamId) -> Option<&mut stream::Send> {
         self.streams.get_mut(&id)?.send_mut()
     }
 }
