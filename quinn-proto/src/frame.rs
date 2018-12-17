@@ -334,7 +334,9 @@ impl Ack {
             buf.write_var(size - 1);
             prev = block.start;
         }
-        ecn.map(|x| x.encode(buf));
+        if let Some(x) = ecn {
+            x.encode(buf)
+        }
     }
 
     pub fn iter(&self) -> AckIter<'_> {

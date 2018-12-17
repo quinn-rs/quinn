@@ -254,12 +254,7 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        loop {
-            let conn = if let Some(&x) = self.eventful_conns.iter().next() {
-                x
-            } else {
-                break;
-            };
+        while let Some(&conn) = self.eventful_conns.iter().next() {
             if let Some(e) = self.connections[conn.0].poll() {
                 return Some((conn, e));
             }
