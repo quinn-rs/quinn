@@ -685,14 +685,6 @@ impl Future for Driver {
                             x.fail(reason);
                         }
                     }
-                    ConnectionDrained => {
-                        if let Some(x) = endpoint.pending.get_mut(&connection).and_then(|p| {
-                            p.drained = true;
-                            p.draining.take()
-                        }) {
-                            let _ = x.send(());
-                        }
-                    }
                     StreamWritable { stream } => {
                         if let Some(writer) = endpoint
                             .pending
@@ -889,6 +881,15 @@ impl Future for Driver {
                     Ok(Async::Ready(Some(Some((conn, timer))))) => {
                         trace!(endpoint.log, "timeout"; "timer" => ?timer);
                         endpoint.inner.timeout(now, conn, timer);
+                        if timer == quinn::Timer::Close {
+                            // Connection drained
+                            if let Some(x) = endpoint.pending.get_mut(&conn).and_then(|p| {
+                                p.drained = true;
+                                p.draining.take()
+                            }) {
+                                let _ = x.send(());
+                            }
+                        }
                         fired = true;
                     }
                     Ok(Async::Ready(Some(None))) => {}
