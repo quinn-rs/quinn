@@ -724,7 +724,6 @@ impl Endpoint {
                     timer: Timer::Idle,
                     update: TimerUpdate::Stop,
                 });
-                self.ctx.events.push_back((conn, Event::ConnectionDrained));
                 if self.connections[conn.0].app_closed {
                     self.forget(conn);
                 } else {
@@ -894,8 +893,6 @@ pub enum Event {
     ConnectionLost {
         reason: ConnectionError,
     },
-    /// A closed connection was dropped.
-    ConnectionDrained,
     /// A stream has data or errors waiting to be read
     StreamReadable {
         /// The affected stream
@@ -947,6 +944,7 @@ pub enum Io {
 pub enum Timer {
     LossDetection = 0,
     Idle = 1,
+    /// When the close timer expires, the connection has been gracefully terminated.
     Close = 2,
 }
 

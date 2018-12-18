@@ -445,7 +445,7 @@ fn lifecycle() {
                     Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
                         reason: ApplicationClose { error_code: 42, ref reason }
                     }})) if reason == REASON);
-    assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionDrained)) if conn == client_conn);
+    assert_matches!(pair.client.poll(), None);
 }
 
 #[test]
