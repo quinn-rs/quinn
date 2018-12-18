@@ -16,7 +16,11 @@ pub enum Error {
 pub enum HttpFrame {
     Data(DataFrame),
     Priority(PriorityFrame),
+    CancelPush(u64),
     Settings(SettingsFrame),
+    Goaway(u64),
+    MaxPushId(u64),
+    DuplicatePush(u64),
 }
 
 impl HttpFrame {
@@ -25,6 +29,10 @@ impl HttpFrame {
             HttpFrame::Data(f) => f.encode(buf),
             HttpFrame::Priority(f) => f.encode(buf),
             HttpFrame::Settings(f) => f.encode(buf),
+            HttpFrame::CancelPush(id) => simple_frame_encode(Type::CANCEL_PUSH, *id, buf),
+            HttpFrame::Goaway(id) => simple_frame_encode(Type::GOAWAY, *id, buf),
+            HttpFrame::MaxPushId(id) => simple_frame_encode(Type::MAX_PUSH_ID, *id, buf),
+            HttpFrame::DuplicatePush(id) => simple_frame_encode(Type::DUPLICATE_PUSH, *id, buf),
         }
     }
 
@@ -43,6 +51,10 @@ impl HttpFrame {
             })),
             Type::PRIORITY => Ok(HttpFrame::Priority(PriorityFrame::decode(&mut payload)?)),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
+            Type::CANCEL_PUSH => Ok(HttpFrame::CancelPush(payload.get_var()?)),
+            Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
+            Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
+            Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
             _ => Err(Error::UnsupportedFrame),
         }
     }
@@ -65,6 +77,7 @@ frame_types! {
     PUSH_PROMISE = 0x5,
     GOAWAY = 0x7,
     MAX_PUSH_ID = 0xD,
+    DUPLICATE_PUSH = 0xE,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -286,6 +299,12 @@ macro_rules! setting_identifiers {
 setting_identifiers! {
     NUM_PLACEHOLDERS = 0x3,
     MAX_HEADER_LIST_SIZE = 0x6,
+}
+
+fn simple_frame_encode<B: BufMut>(ty: Type, id: u64, buf: &mut B) {
+    buf.write_var(1);
+    buf.put_u8(ty.0);
+    buf.write_var(id);
 }
 
 impl From<UnexpectedEnd> for Error {
