@@ -333,26 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_frame() {
-        let settings = SettingsFrame {
-            num_placeholders: 0xFADA,
-            max_header_list_size: 0xFADA,
-        };
-
-        let frame = HttpFrame::Settings(settings);
-        let mut buf = Vec::new();
-        frame.encode(&mut buf);
-        assert_eq!(
-            &buf,
-            &[12, 4, 0, 3, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218]
-        );
-
-        let mut read = Cursor::new(&buf);
-        let decoded = HttpFrame::decode(&mut read).unwrap();
-        assert_eq!(decoded, frame);
-    }
-
-    #[test]
     fn settings_frame_ignores_0x_a_a() {
         let settings = SettingsFrame {
             num_placeholders: 0xfada,
@@ -380,15 +360,10 @@ mod tests {
         assert_eq!(decoded, Err(Error::Malformed));
     }
 
-    #[test]
-    fn data_frame() {
-        let data = DataFrame {
-            payload: Bytes::from("foo bar"),
-        };
-        let frame = HttpFrame::Data(data);
+    fn codec_frame_check(frame: HttpFrame, wire: &[u8]) {
         let mut buf = Vec::new();
         frame.encode(&mut buf);
-        assert_eq!(&buf, &[7, 0, 102, 111, 111, 32, 98, 97, 114]);
+        assert_eq!(&buf, &wire);
 
         let mut read = Cursor::new(&buf);
         let decoded = HttpFrame::decode(&mut read).unwrap();
@@ -396,19 +371,43 @@ mod tests {
     }
 
     #[test]
-    fn priority_frame() {
-        let data = PriorityFrame {
-            prioritized: Priority::PushStream(21),
-            dependency: Priority::RequestStream(42),
-            weight: 2,
-        };
-        let frame = HttpFrame::Priority(data);
-        let mut buf = Vec::new();
-        frame.encode(&mut buf);
-        assert_eq!(&buf, &[4, 2, 64, 21, 42, 2]);
+    fn settings_frame() {
+        codec_frame_check(
+            HttpFrame::Settings(SettingsFrame {
+                num_placeholders: 0xFADA,
+                max_header_list_size: 0xFADA,
+            }),
+            &[12, 4, 0, 3, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
+        );
+    }
 
-        let mut read = Cursor::new(&buf);
-        let decoded = HttpFrame::decode(&mut read).unwrap();
-        assert_eq!(decoded, frame);
+    #[test]
+    fn data_frame() {
+        codec_frame_check(
+            HttpFrame::Data(DataFrame {
+                payload: Bytes::from("foo bar"),
+            }),
+            &[7, 0, 102, 111, 111, 32, 98, 97, 114],
+        );
+    }
+
+    #[test]
+    fn priority_frame() {
+        codec_frame_check(
+            HttpFrame::Priority(PriorityFrame {
+                prioritized: Priority::PushStream(21),
+                dependency: Priority::RequestStream(42),
+                weight: 2,
+            }),
+            &[4, 2, 64, 21, 42, 2],
+        );
+    }
+
+    #[test]
+    fn simple_frames() {
+        codec_frame_check(HttpFrame::CancelPush(2), &[1, 3, 2]);
+        codec_frame_check(HttpFrame::Goaway(2), &[1, 7, 2]);
+        codec_frame_check(HttpFrame::MaxPushId(2), &[1, 13, 2]);
+        codec_frame_check(HttpFrame::DuplicatePush(2), &[1, 14, 2]);
     }
 }
