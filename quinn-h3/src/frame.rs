@@ -15,6 +15,7 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 pub enum HttpFrame {
     Data(DataFrame),
+    Priority(PriorityFrame),
     Settings(SettingsFrame),
 }
 
@@ -22,6 +23,7 @@ impl HttpFrame {
     pub fn encode<T: BufMut>(&self, buf: &mut T) {
         match self {
             HttpFrame::Data(f) => f.encode(buf),
+            HttpFrame::Priority(f) => f.encode(buf),
             HttpFrame::Settings(f) => f.encode(buf),
         }
     }
@@ -39,6 +41,7 @@ impl HttpFrame {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
                 payload: payload.collect(),
             })),
+            Type::PRIORITY => Ok(HttpFrame::Priority(PriorityFrame::decode(&mut payload)?)),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
             _ => Err(Error::UnsupportedFrame),
         }
@@ -101,6 +104,103 @@ impl FrameHeader for DataFrame {
     const TYPE: Type = Type::DATA;
     fn len(&self) -> usize {
         self.payload.as_ref().len()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Priority {
+    RequestStream(u64),
+    PushStream(u64),
+    Placeholder(u64),
+    CurrentStream,
+    TreeRoot,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PriorityFrame {
+    prioritized: Priority,
+    dependency: Priority,
+    weight: u8,
+}
+
+impl Codec for PriorityFrame {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
+        let first = buf.get_u8();
+        let pt = (0b11000000 & first) >> 6;
+        let dt = (0b00110000 & first) >> 4;
+
+        let prioritized = match pt {
+            0b00 => Priority::RequestStream(buf.get_var()?),
+            0b01 => Priority::PushStream(buf.get_var()?),
+            0b10 => Priority::Placeholder(buf.get_var()?),
+            0b11 => Priority::CurrentStream,
+            _ => unreachable!(),
+        };
+
+        let dependency = match dt {
+            0b00 => Priority::RequestStream(buf.get_var()?),
+            0b01 => Priority::PushStream(buf.get_var()?),
+            0b10 => Priority::Placeholder(buf.get_var()?),
+            0b11 => Priority::TreeRoot,
+            _ => unreachable!(),
+        };
+
+        Ok(PriorityFrame {
+            prioritized,
+            dependency,
+            weight: buf.get_u8(),
+        })
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        let (pt, prioritized) = match self.prioritized {
+            Priority::RequestStream(id) => (0b00, Some(id)),
+            Priority::PushStream(id) => (0b01, Some(id)),
+            Priority::Placeholder(id) => (0b10, Some(id)),
+            Priority::CurrentStream => (0b11, None),
+            _ => unreachable!(),
+        };
+
+        let (dt, dependency) = match self.dependency {
+            Priority::RequestStream(id) => (0b00, Some(id)),
+            Priority::PushStream(id) => (0b01, Some(id)),
+            Priority::Placeholder(id) => (0b10, Some(id)),
+            Priority::CurrentStream => (0b11, None),
+            _ => unreachable!(),
+        };
+
+        let first: u8 = (pt << 6) | (dt << 4);
+
+        self.encode_header(buf);
+        buf.write(first);
+        if let Some(prioritized) = prioritized {
+            buf.write_var(prioritized)
+        }
+        if let Some(dependency) = dependency {
+            buf.write_var(dependency)
+        }
+        buf.write(self.weight);
+    }
+}
+
+impl FrameHeader for PriorityFrame {
+    const TYPE: Type = Type::PRIORITY;
+    fn len(&self) -> usize {
+        let mut size = size_of::<u8>() * 2;
+
+        size += match self.prioritized {
+            Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
+                varint::size(id).unwrap()
+            }
+            _ => 0,
+        };
+        size += match self.dependency {
+            Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
+                varint::size(id).unwrap()
+            }
+            _ => 0,
+        };
+
+        size
     }
 }
 
@@ -270,6 +370,23 @@ mod tests {
         let mut buf = Vec::new();
         frame.encode(&mut buf);
         assert_eq!(&buf, &[7, 0, 102, 111, 111, 32, 98, 97, 114]);
+
+        let mut read = Cursor::new(&buf);
+        let decoded = HttpFrame::decode(&mut read).unwrap();
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn priority_frame() {
+        let data = PriorityFrame {
+            prioritized: Priority::PushStream(21),
+            dependency: Priority::RequestStream(42),
+            weight: 2,
+        };
+        let frame = HttpFrame::Priority(data);
+        let mut buf = Vec::new();
+        frame.encode(&mut buf);
+        assert_eq!(&buf, &[4, 2, 64, 21, 42, 2]);
 
         let mut read = Cursor::new(&buf);
         let decoded = HttpFrame::decode(&mut read).unwrap();
