@@ -542,7 +542,7 @@ impl Connection {
                 } else {
                     // Congestion avoidance.
                     self.congestion_window +=
-                        self.config.default_mss * info.size as u64 / self.congestion_window;
+                        self.config.max_datagram_size * info.size as u64 / self.congestion_window;
                 }
             }
         }
