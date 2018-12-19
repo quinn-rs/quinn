@@ -682,6 +682,7 @@ impl Connection {
             }
         }
 
+        // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
             self.lost_packets += lost_packets.len() as u64;
             let old_bytes_in_flight = self.bytes_in_flight;
@@ -706,14 +707,15 @@ impl Connection {
     fn congestion_event(&mut self, now: u64, sent_time: u64) {
         // Start a new recovery epoch if the lost packet is larger than the end of the
         // previous recovery epoch.
-        if !self.in_recovery(sent_time) {
-            self.recovery_start_time = now;
-            // *= factor
-            self.congestion_window =
-                (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
-            self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
-            self.ssthresh = self.congestion_window;
+        if self.in_recovery(sent_time) {
+            return;
         }
+        self.recovery_start_time = now;
+        // *= factor
+        self.congestion_window =
+            (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
+        self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
+        self.ssthresh = self.congestion_window;
     }
 
     fn in_recovery(&self, sent_time: u64) -> bool {
