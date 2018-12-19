@@ -104,7 +104,7 @@ pub struct Connection {
     /// The last packet number sent prior to the first retransmission timeout.
     largest_sent_before_rto: u64,
     /// The time the most recently sent retransmittable packet was sent.
-    time_of_last_sent_retransmittable_packet: u64,
+    time_of_last_sent_ack_eliciting_packet: u64,
     /// The time the most recently sent handshake packet was sent.
     time_of_last_sent_handshake_packet: u64,
     /// The packet number of the next packet that will be sent, if any.
@@ -260,7 +260,7 @@ impl Connection {
             min_rtt: u64::max_value(),
             max_ack_delay: 0,
             largest_sent_before_rto: 0,
-            time_of_last_sent_retransmittable_packet: 0,
+            time_of_last_sent_ack_eliciting_packet: 0,
             time_of_last_sent_handshake_packet: 0,
             next_packet_number: 0,
             largest_acked_packet: 0,
@@ -388,7 +388,7 @@ impl Connection {
         }
         self.sent_packets.insert(packet_number, packet);
         if size != 0 {
-            self.time_of_last_sent_retransmittable_packet = now;
+            self.time_of_last_sent_ack_eliciting_packet = now;
             if handshake {
                 self.time_of_last_sent_handshake_packet = now;
             }
@@ -407,7 +407,7 @@ impl Connection {
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
             self.latest_rtt = now - info.time;
             let delay = ack.delay << self.params.ack_delay_exponent;
-            self.update_rtt(delay, info.ack_only());
+            self.update_rtt(delay, !info.ack_eliciting());
         }
         // Avoid DoS from unreasonably huge ack ranges
         let newly_acked = ack
@@ -750,7 +750,7 @@ impl Connection {
 
         if self.loss_time != 0 {
             // Early retransmit timer or time loss detection.
-            alarm_duration = self.loss_time - self.time_of_last_sent_retransmittable_packet;
+            alarm_duration = self.loss_time - self.time_of_last_sent_ack_eliciting_packet;
         } else {
             // TLP or RTO alarm
             alarm_duration = self.rto();
@@ -765,7 +765,7 @@ impl Connection {
         }
         self.io.timer_start(
             Timer::LossDetection,
-            self.time_of_last_sent_retransmittable_packet + alarm_duration,
+            self.time_of_last_sent_ack_eliciting_packet + alarm_duration,
         );
     }
 
@@ -2876,8 +2876,8 @@ pub struct SentPacket {
 }
 
 impl SentPacket {
-    fn ack_only(&self) -> bool {
-        self.size == 0
+    fn ack_eliciting(&self) -> bool {
+        self.size != 0
     }
 }
 
