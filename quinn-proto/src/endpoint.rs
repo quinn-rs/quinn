@@ -749,20 +749,14 @@ pub struct Config {
     pub max_tlps: u32,
     /// Maximum reordering in packet number space before FACK style loss detection considers a
     /// packet lost.
-    pub reordering_threshold: u32,
+    pub packet_threshold: u32,
     /// Maximum reordering in time space before time based loss detection considers a packet lost.
-    /// 0.16 format
-    pub time_reordering_fraction: u16,
-    /// Whether time based loss detection is in use. If false, uses FACK style loss detection.
-    pub using_time_loss_detection: bool,
-    /// Minimum time in the future a tail loss probe alarm may be set for (μs).
-    pub min_tlp_timeout: u64,
-    /// Minimum time in the future an RTO alarm may be set for (μs).
-    pub min_rto_timeout: u64,
+    /// 0.16 format, added to 1
+    pub time_threshold: u16,
     /// The length of the peer’s delayed ack timer (μs).
     pub delayed_ack_timeout: u64,
-    /// The default RTT used before an RTT sample is taken (μs)
-    pub default_initial_rtt: u64,
+    /// The RTT used before an RTT sample is taken (μs)
+    pub initial_rtt: u64,
 
     /// The default max packet size used for calculating default and minimum congestion windows.
     pub max_datagram_size: u64,
@@ -772,6 +766,8 @@ pub struct Config {
     pub minimum_window: u64,
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
+    /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
+    pub persistent_congestion_threshold: u32,
 
     /// Length of connection IDs for the endpoint.
     ///
@@ -807,13 +803,10 @@ impl Default for Config {
             receive_window: 8 * STREAM_RWND,
 
             max_tlps: 2,
-            reordering_threshold: 3,
-            time_reordering_fraction: 0x2000, // 1/8
-            using_time_loss_detection: false,
-            min_tlp_timeout: 10 * 1000,
-            min_rto_timeout: 200 * 1000,
+            packet_threshold: 3,
+            time_threshold: 0x2000, // 1/8
             delayed_ack_timeout: 25 * 1000,
-            default_initial_rtt: EXPECTED_RTT as u64 * 1000,
+            initial_rtt: EXPECTED_RTT as u64 * 1000,
 
             max_datagram_size: MAX_DATAGRAM_SIZE,
             initial_window: cmp::min(
@@ -822,6 +815,7 @@ impl Default for Config {
             ),
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
+            persistent_congestion_threshold: 2,
 
             local_cid_len: 8,
             reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
