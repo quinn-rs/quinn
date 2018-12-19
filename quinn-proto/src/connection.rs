@@ -21,7 +21,7 @@ use crate::stream::{self, ReadError, Stream, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
-    RESET_TOKEN_SIZE, VERSION,
+    RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
 };
 use rustls::internal::msgs::enums::AlertDescription;
 
@@ -75,15 +75,11 @@ pub struct Connection {
     //
     // Loss Detection
     //
-    /// The number of times the handshake packets have been retransmitted without receiving an ack.
-    handshake_count: u32,
-    /// The number of times a tail loss probe has been sent without receiving an ack.
-    tlp_count: u32,
-    /// The number of times an rto has been sent without receiving an ack.
-    rto_count: u32,
-    /// The largest packet number gap between the largest acked retransmittable packet and an
-    /// unacknowledged retransmittable packet before it is declared lost.
-    reordering_threshold: u32,
+    /// The number of times all unacknowledged CRYPTO data has been retransmitted without receiving
+    /// an ack.
+    crypto_count: u32,
+    /// The number of times a PTO has been sent without receiving an ack.
+    pto_count: u32,
     /// The time at which the next packet will be considered lost based on early transmit or
     /// exceeding the reordering window in time.
     loss_time: u64,
@@ -96,17 +92,10 @@ pub struct Connection {
     rttvar: u64,
     /// The minimum RTT seen in the connection, ignoring ack delay.
     min_rtt: u64,
-    /// The maximum ack delay in an incoming ACK frame for this connection.
-    ///
-    /// Excludes ack delays for ack only packets and those that create an RTT sample less than
-    /// min_rtt.
-    max_ack_delay: u64,
-    /// The last packet number sent prior to the first retransmission timeout.
-    largest_sent_before_rto: u64,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_ack_eliciting_packet: u64,
     /// The time the most recently sent handshake packet was sent.
-    time_of_last_sent_handshake_packet: u64,
+    time_of_last_sent_crypto_packet: u64,
     /// The packet number of the next packet that will be sent, if any.
     next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
@@ -146,11 +135,11 @@ pub struct Connection {
     //
     // Handshake retransmit state
     //
-    /// Whether we've sent handshake packets that have not been either explicitly acknowledged or
+    /// Whether we've sent crypto packets that have not been either explicitly acknowledged or
     /// rendered moot by handshake completion, i.e. whether we're waiting for proof that the peer
     /// has advanced their handshake state machine.
-    awaiting_handshake: bool,
-    handshake_pending: Retransmits,
+    crypto_in_flight: bool,
+    crypto_pending: Retransmits,
 
     //
     // Transmit queue
@@ -245,23 +234,15 @@ impl Connection {
             events: VecDeque::new(),
             cids_issued: 0,
 
-            handshake_count: 0,
-            tlp_count: 0,
-            rto_count: 0,
-            reordering_threshold: if config.using_time_loss_detection {
-                u32::max_value()
-            } else {
-                config.reordering_threshold
-            },
+            crypto_count: 0,
+            pto_count: 0,
             loss_time: 0,
             latest_rtt: 0,
             smoothed_rtt: 0,
             rttvar: 0,
             min_rtt: u64::max_value(),
-            max_ack_delay: 0,
-            largest_sent_before_rto: 0,
             time_of_last_sent_ack_eliciting_packet: 0,
-            time_of_last_sent_handshake_packet: 0,
+            time_of_last_sent_crypto_packet: 0,
             next_packet_number: 0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
@@ -275,8 +256,8 @@ impl Connection {
             sending_ecn: true,
             receiving_ecn: false,
 
-            awaiting_handshake: false,
-            handshake_pending: Retransmits::default(),
+            crypto_in_flight: false,
+            crypto_pending: Retransmits::default(),
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
@@ -359,14 +340,6 @@ impl Connection {
         self.events.pop_front()
     }
 
-    fn largest_sent_packet(&self) -> u64 {
-        debug_assert_ne!(
-            self.next_packet_number, 0,
-            "calls here are only expected after a packet has been sent"
-        );
-        self.next_packet_number - 1
-    }
-
     /// Initiate a connection
     fn connect(&mut self) {
         self.write_tls();
@@ -381,19 +354,23 @@ impl Connection {
     }
 
     fn on_packet_sent(&mut self, now: u64, packet_number: u64, packet: SentPacket) {
-        let size = packet.size;
-        let handshake = packet.handshake;
-        if handshake {
-            self.awaiting_handshake = true;
+        let SentPacket {
+            size,
+            is_crypto_packet,
+            ack_eliciting,
+            ..
+        } = packet;
+        if is_crypto_packet {
+            self.crypto_in_flight = true;
         }
         self.sent_packets.insert(packet_number, packet);
-        if size != 0 {
+        if ack_eliciting {
             self.time_of_last_sent_ack_eliciting_packet = now;
-            if handshake {
-                self.time_of_last_sent_handshake_packet = now;
+            if is_crypto_packet {
+                self.time_of_last_sent_crypto_packet = now;
             }
             self.bytes_in_flight += size as u64;
-            self.set_loss_detection_alarm();
+            self.set_loss_detection_timer();
         }
     }
 
@@ -402,28 +379,30 @@ impl Connection {
         let was_blocked = self.blocked();
         let prev_largest = self.largest_acked_packet;
         self.largest_acked_packet = cmp::max(ack.largest, self.largest_acked_packet);
-        let largest_sent_time = self.sent_packets.get(&ack.largest).map(|x| x.time);
+        let largest_acked_time_sent = self.sent_packets.get(&ack.largest).map(|x| x.time_sent);
 
         if let Some(info) = self.sent_packets.get(&ack.largest).cloned() {
-            self.latest_rtt = now - info.time;
-            let delay = ack.delay << self.params.ack_delay_exponent;
-            self.update_rtt(delay, !info.ack_eliciting());
+            if info.ack_eliciting {
+                self.latest_rtt = now - info.time_sent;
+                let delay = ack.delay << self.params.ack_delay_exponent;
+                self.update_rtt(delay);
+            }
         }
-        // Avoid DoS from unreasonably huge ack ranges
+
+        // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let newly_acked = ack
             .iter()
             .flat_map(|range| self.sent_packets.range(range).map(|(&n, _)| n))
             .collect::<Vec<_>>();
+        if newly_acked.is_empty() {
+            return;
+        }
         for &packet in &newly_acked {
             self.on_packet_acked(packet);
         }
-        self.detect_lost_packets(now, ack.largest);
-        self.set_loss_detection_alarm();
-        if was_blocked && !self.blocked() {
-            for stream in self.blocked_streams.drain() {
-                self.events.push_back(Event::StreamWritable { stream });
-            }
-        }
+
+        self.crypto_count = 0;
+        self.pto_count = 0;
 
         // Explicit congestion notification
         if self.sending_ecn {
@@ -433,12 +412,20 @@ impl Connection {
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
                 if ack.largest > prev_largest {
-                    self.process_ecn(now, newly_acked.len() as u64, ecn, largest_sent_time);
+                    self.process_ecn(now, newly_acked.len() as u64, ecn, largest_acked_time_sent);
                 }
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
                 debug!(self.log, "ECN not acknowledged by peer");
                 self.sending_ecn = false;
+            }
+        }
+
+        self.detect_lost_packets(now);
+        self.set_loss_detection_timer();
+        if was_blocked && !self.blocked() {
+            for stream in self.blocked_streams.drain() {
+                self.events.push_back(Event::StreamWritable { stream });
             }
         }
     }
@@ -505,14 +492,16 @@ impl Connection {
         Ok(ce_increase != 0)
     }
 
-    fn update_rtt(&mut self, ack_delay: u64, ack_only: bool) {
+    fn update_rtt(&mut self, ack_delay: u64) {
+        // min_rtt ignores ack delay.
         self.min_rtt = cmp::min(self.min_rtt, self.latest_rtt);
+        // Limit ack_delay by max_ack_delay
+        let ack_delay = cmp::min(ack_delay, self.max_ack_delay());
+        // Adjust for ack delay if it's plausible.
         if self.latest_rtt - self.min_rtt > ack_delay {
             self.latest_rtt -= ack_delay;
-            if !ack_only {
-                self.max_ack_delay = cmp::max(self.max_ack_delay, ack_delay);
-            }
         }
+        // Based on RFC6298.
         if self.smoothed_rtt == 0 {
             self.smoothed_rtt = self.latest_rtt;
             self.rttvar = self.latest_rtt / 2;
@@ -531,7 +520,7 @@ impl Connection {
         } else {
             return;
         };
-        if info.size != 0 {
+        if info.ack_eliciting {
             // Congestion control
             self.bytes_in_flight -= info.size as u64;
             // Do not increase congestion window in recovery period.
@@ -546,19 +535,6 @@ impl Connection {
                 }
             }
         }
-
-        // Loss recovery
-
-        // If a packet sent prior to RTO was acked, then the RTO was spurious. Otherwise, inform
-        // congestion control.
-        if self.rto_count > 0 && packet > self.largest_sent_before_rto {
-            // Retransmission timeout verified
-            self.congestion_window = self.config.minimum_window;
-        }
-
-        self.handshake_count = 0;
-        self.tlp_count = 0;
-        self.rto_count = 0;
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
@@ -608,93 +584,81 @@ impl Connection {
                 self.state = State::Draining;
             }
             Timer::LossDetection => {
-                self.check_packet_loss(now);
+                self.on_loss_detection_timeout(now);
             }
         }
         false
     }
 
-    fn check_packet_loss(&mut self, now: u64) {
-        if self.awaiting_handshake {
+    fn on_loss_detection_timeout(&mut self, now: u64) {
+        if self.crypto_in_flight {
             trace!(self.log, "retransmitting handshake packets");
             let packets = self
                 .sent_packets
                 .iter()
-                .filter_map(|(&packet, info)| if info.handshake { Some(packet) } else { None })
+                .filter_map(|(&packet, info)| {
+                    if info.is_crypto_packet {
+                        Some(packet)
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<_>>();
             for number in packets {
                 let info = self.sent_packets.remove(&number).unwrap();
-                self.handshake_pending += info.retransmits;
+                self.crypto_pending += info.retransmits;
                 self.bytes_in_flight -= info.size as u64;
             }
-            debug_assert!(!self.handshake_pending.is_empty());
-            self.handshake_count += 1;
+            debug_assert!(!self.crypto_pending.is_empty());
+            self.crypto_count += 1;
         } else if self.loss_time != 0 {
-            // Early retransmit or Time Loss Detection
-            let largest = self.largest_acked_packet;
-            self.detect_lost_packets(now, largest);
-        } else if self.tlp_count < self.config.max_tlps {
-            trace!(self.log, "sending TLP {number} in {pn}",
-                           number=self.tlp_count,
-                           pn=self.next_packet_number;
-                           "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
-                           "in flight" => self.bytes_in_flight);
-            // Tail Loss Probe.
-            self.io.probes += 1;
-            self.tlp_count += 1;
+            // Time threshold loss Detection
+            self.detect_lost_packets(now);
         } else {
-            trace!(self.log, "RTO fired, retransmitting"; "pn" => self.next_packet_number,
-                           "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
-                           "in flight" => self.bytes_in_flight);
-            // RTO
-            if self.rto_count == 0 {
-                self.largest_sent_before_rto = self.largest_sent_packet();
-            }
+            trace!(self.log, "PTO fired";
+                   "outstanding" => ?self.sent_packets.keys().collect::<Vec<_>>(),
+                   "in flight" => self.bytes_in_flight);
             self.io.probes += 2;
-            self.rto_count += 1;
+            self.pto_count += 1;
         }
-        self.set_loss_detection_alarm();
+        self.set_loss_detection_timer();
     }
 
-    fn detect_lost_packets(&mut self, now: u64, largest_acked: u64) {
+    fn detect_lost_packets(&mut self, now: u64) {
         self.loss_time = 0;
         let mut lost_packets = Vec::<u64>::new();
-        let delay_until_lost;
         let rtt = cmp::max(self.latest_rtt, self.smoothed_rtt);
-        if self.config.using_time_loss_detection {
-            // factor * (1 + fraction)
-            delay_until_lost = (rtt + (rtt * self.config.time_reordering_fraction as u64)) >> 16;
-        } else if largest_acked == self.largest_sent_packet() {
-            // Early retransmit alarm.
-            delay_until_lost = (5 * rtt) / 4;
-        } else {
-            delay_until_lost = u64::max_value();
-        }
-        for (&packet, info) in self.sent_packets.range(0..largest_acked) {
-            let time_since_sent = now - info.time;
-            let delta = largest_acked - packet;
-            // Use of >= for time comparison here is critical so that we successfully detect lost
-            // packets in testing when rtt = 0
-            if time_since_sent >= delay_until_lost || delta > self.reordering_threshold as u64 {
+        let loss_delay = rtt + ((rtt * self.config.time_threshold as u64) >> 16);
+        let lost_send_time = now.saturating_sub(loss_delay);
+        let lost_pn = self
+            .largest_acked_packet
+            .saturating_sub(self.config.packet_threshold as u64);
+        for (&packet, info) in self.sent_packets.range(0..self.largest_acked_packet) {
+            if info.time_sent <= lost_send_time || packet <= lost_pn {
                 lost_packets.push(packet);
-            } else if self.loss_time == 0 && delay_until_lost != u64::max_value() {
-                self.loss_time = now + delay_until_lost - time_since_sent;
+            } else if self.loss_time == 0 {
+                self.loss_time = info.time_sent + loss_delay;
+            } else {
+                self.loss_time = cmp::min(self.loss_time, info.time_sent + loss_delay);
             }
         }
 
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
-            self.lost_packets += lost_packets.len() as u64;
             let old_bytes_in_flight = self.bytes_in_flight;
-            let largest_lost_time = self.sent_packets[&largest_lost].time;
+            let largest_lost_time = self.sent_packets[&largest_lost].time_sent;
             for packet in lost_packets {
                 let info = self.sent_packets.remove(&packet).unwrap();
-                if info.handshake {
-                    self.handshake_pending += info.retransmits;
+                if !info.in_flight {
+                    continue;
+                }
+                self.bytes_in_flight -= info.size as u64;
+                self.lost_packets += 1;
+                if info.is_crypto_packet {
+                    self.crypto_pending += info.retransmits;
                 } else {
                     self.pending += info.retransmits;
                 }
-                self.bytes_in_flight -= info.size as u64;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
@@ -722,57 +686,46 @@ impl Connection {
         sent_time <= self.recovery_start_time
     }
 
-    fn set_loss_detection_alarm(&mut self) {
+    fn set_loss_detection_timer(&mut self) {
         if self.bytes_in_flight == 0 {
             self.io.timer_stop(Timer::LossDetection);
             return;
         }
 
-        let mut alarm_duration: u64;
-        if self.awaiting_handshake {
+        if self.crypto_in_flight {
             // Handshake retransmission alarm.
-            if self.smoothed_rtt == 0 {
-                alarm_duration = 2 * self.config.default_initial_rtt;
+            let timeout = if self.smoothed_rtt == 0 {
+                2 * self.config.initial_rtt
             } else {
-                alarm_duration = 2 * self.smoothed_rtt;
-            }
-            alarm_duration = cmp::max(
-                alarm_duration + self.max_ack_delay,
-                self.config.min_tlp_timeout,
-            );
-            alarm_duration *= 2u64.pow(self.handshake_count);
+                2 * self.smoothed_rtt
+            };
+            let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u64.pow(self.crypto_count);
             self.io.timer_start(
                 Timer::LossDetection,
-                self.time_of_last_sent_handshake_packet + alarm_duration,
+                self.time_of_last_sent_crypto_packet + timeout,
             );
             return;
         }
 
         if self.loss_time != 0 {
-            // Early retransmit timer or time loss detection.
-            alarm_duration = self.loss_time - self.time_of_last_sent_ack_eliciting_packet;
-        } else {
-            // TLP or RTO alarm
-            alarm_duration = self.rto();
-            if self.tlp_count < self.config.max_tlps {
-                // Tail Loss Probe
-                let tlp_duration = cmp::max(
-                    (3 * self.smoothed_rtt) / 2 + self.max_ack_delay,
-                    self.config.min_tlp_timeout,
-                );
-                alarm_duration = cmp::min(alarm_duration, tlp_duration);
-            }
+            // Time threshold loss detection.
+            self.io.timer_start(Timer::LossDetection, self.loss_time);
+            return;
         }
+
+        // Calculate PTO duration
+        let timeout = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay();
+        let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u64.pow(self.pto_count);
         self.io.timer_start(
             Timer::LossDetection,
-            self.time_of_last_sent_ack_eliciting_packet + alarm_duration,
+            self.time_of_last_sent_ack_eliciting_packet + timeout,
         );
     }
 
-    /// Retransmit time-out
-    fn rto(&self) -> u64 {
-        let computed = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay;
-        cmp::max(computed, self.config.min_rto_timeout) * 2u64.pow(self.rto_count)
+    /// Probe Timeout
+    fn pto(&self) -> u64 {
+        let computed = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay();
+        cmp::max(computed, TIMER_GRANULARITY)
     }
 
     fn on_packet_authenticated(
@@ -816,21 +769,21 @@ impl Connection {
     /// Consider all previously transmitted handshake packets to be delivered. Called when we
     /// receive a new handshake packet.
     fn handshake_cleanup(&mut self) {
-        if !self.awaiting_handshake {
+        if !self.crypto_in_flight {
             return;
         }
-        self.awaiting_handshake = false;
-        self.handshake_pending = Retransmits::default();
+        self.crypto_in_flight = false;
+        self.crypto_pending = Retransmits::default();
         let mut packets = Vec::new();
         for (&packet, info) in &self.sent_packets {
-            if info.handshake {
+            if info.is_crypto_packet {
                 packets.push(packet);
             }
         }
         for packet in packets {
             self.on_packet_acked(packet);
         }
-        self.set_loss_detection_alarm();
+        self.set_loss_detection_timer();
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -927,11 +880,11 @@ impl Connection {
         let offset = self.crypto_offset;
         self.crypto_offset += outgoing.len() as u64;
         if !outgoing.is_empty() {
-            self.handshake_pending.crypto.push_back(frame::Crypto {
+            self.crypto_pending.crypto.push_back(frame::Crypto {
                 offset,
                 data: outgoing.into(),
             });
-            self.awaiting_handshake = true;
+            self.crypto_in_flight = true;
         }
     }
 
@@ -1145,8 +1098,7 @@ impl Connection {
                                     return Ok(());
                                 }
                                 Frame::PathChallenge(value) => {
-                                    self.handshake_pending
-                                        .path_challenge(number.unwrap(), value);
+                                    self.crypto_pending.path_challenge(number.unwrap(), value);
                                 }
                                 _ => {
                                     debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
@@ -1183,7 +1135,7 @@ impl Connection {
                         self.handshake_cleanup();
                         self.write_tls();
                         if self.side.is_server() {
-                            self.awaiting_handshake = false;
+                            self.crypto_in_flight = false;
                         }
                         let crypto = CryptoSpace {
                             level: CryptoLevel::OneRtt,
@@ -1292,7 +1244,7 @@ impl Connection {
                     return Ok(());
                 }
 
-                if self.awaiting_handshake {
+                if self.crypto_in_flight {
                     assert_eq!(
                         self.side,
                         Side::Client,
@@ -1625,8 +1577,8 @@ impl Connection {
         let mut sent = Retransmits::default();
 
         let (number, header, crypto, header_crypto, pending, crypto_level) = if (!established
-            || self.awaiting_handshake)
-            && (!self.handshake_pending.is_empty()
+            || self.crypto_in_flight)
+            && (!self.crypto_pending.is_empty()
                 || (!self.pending_acks.is_empty() && self.permit_ack_only))
         {
             // (re)transmit handshake data in long-header packets
@@ -1634,7 +1586,7 @@ impl Connection {
             let number = self.get_tx_number();
             let header = if self.side.is_client()
                 && self
-                    .handshake_pending
+                    .crypto_pending
                     .crypto
                     .front()
                     .map_or(false, |x| x.offset == 0)
@@ -1665,7 +1617,7 @@ impl Connection {
                 header,
                 &self.cryptos.front().unwrap().crypto,
                 &self.header_cryptos.front().unwrap().1,
-                &mut self.handshake_pending,
+                &mut self.crypto_pending,
                 CryptoLevel::Initial,
             )
         } else if established {
@@ -1971,9 +1923,11 @@ impl Connection {
             number,
             SentPacket {
                 acks,
-                time: now,
-                size: if ack_only { 0 } else { buf.len() as u16 },
-                handshake: crypto_level == CryptoLevel::Initial,
+                time_sent: now,
+                size: buf.len() as u16,
+                is_crypto_packet: crypto_level == CryptoLevel::Initial && !ack_only,
+                ack_eliciting: !ack_only,
+                in_flight: !ack_only,
                 retransmits: sent,
             },
         );
@@ -2008,9 +1962,11 @@ impl Connection {
             now,
             number,
             SentPacket {
-                time: now,
+                time_sent: now,
                 size: buf.len() as u16,
-                handshake: false,
+                is_crypto_packet: false,
+                ack_eliciting: true,
+                in_flight: true,
                 acks: RangeSet::new(),
                 retransmits: Retransmits::default(),
             },
@@ -2091,7 +2047,7 @@ impl Connection {
     fn close_common(&mut self, now: u64) {
         trace!(self.log, "connection closed");
         self.io.timer_stop(Timer::LossDetection);
-        self.io.timer_start(Timer::Close, now + 3 * self.rto());
+        self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
     fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
@@ -2485,6 +2441,11 @@ impl Connection {
     pub fn using_ecn(&self) -> bool {
         self.sending_ecn
     }
+
+    /// Microseconds
+    fn max_ack_delay(&self) -> u64 {
+        u64::from(self.params.max_ack_delay) * 1000
+    }
 }
 
 struct CryptoSpace {
@@ -2867,18 +2828,20 @@ pub struct ClientConfig {
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
 pub struct SentPacket {
-    pub time: u64,
-    /// 0 iff ack-only
+    /// The time the packet was sent.
+    pub time_sent: u64,
+    /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
+    /// framing overhead.
     pub size: u16,
-    pub handshake: bool,
+    /// Whether an acknowledgement is expected directly in response to this packet.
+    pub ack_eliciting: bool,
+    /// Whether the packet contains cryptographic handshake messages critical to the completion of
+    /// the QUIC handshake.
+    pub is_crypto_packet: bool,
+    /// Whether the packet counts towards bytes in flight
+    pub in_flight: bool,
     pub acks: RangeSet,
     pub retransmits: Retransmits,
-}
-
-impl SentPacket {
-    fn ack_eliciting(&self) -> bool {
-        self.size != 0
-    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
