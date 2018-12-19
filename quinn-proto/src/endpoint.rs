@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::VecDeque;
 use std::net::SocketAddrV6;
 use std::sync::Arc;
@@ -764,7 +765,7 @@ pub struct Config {
     pub default_initial_rtt: u64,
 
     /// The default max packet size used for calculating default and minimum congestion windows.
-    pub default_mss: u64,
+    pub max_datagram_size: u64,
     /// Default limit on the amount of outstanding data in bytes.
     pub initial_window: u64,
     /// Default minimum congestion window.
@@ -793,6 +794,7 @@ impl Default for Config {
                                                         // Window size needed to avoid pipeline
                                                         // stalls
         const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+        const MAX_DATAGRAM_SIZE: u64 = 1200;
 
         let mut reset_value = [0; 64];
         rand::thread_rng().fill_bytes(&mut reset_value);
@@ -813,9 +815,12 @@ impl Default for Config {
             delayed_ack_timeout: 25 * 1000,
             default_initial_rtt: EXPECTED_RTT as u64 * 1000,
 
-            default_mss: 1460,
-            initial_window: 10 * 1460,
-            minimum_window: 2 * 1460,
+            max_datagram_size: MAX_DATAGRAM_SIZE,
+            initial_window: cmp::min(
+                10 * MAX_DATAGRAM_SIZE,
+                cmp::max(2 * MAX_DATAGRAM_SIZE, 14600),
+            ),
+            minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
 
             local_cid_len: 8,
