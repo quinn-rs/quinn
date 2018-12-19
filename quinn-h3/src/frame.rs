@@ -15,9 +15,11 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 pub enum HttpFrame {
     Data(DataFrame),
+    Headers(HeadersFrame),
     Priority(PriorityFrame),
     CancelPush(u64),
     Settings(SettingsFrame),
+    PushPromise(PushPromiseFrame),
     Goaway(u64),
     MaxPushId(u64),
     DuplicatePush(u64),
@@ -27,9 +29,11 @@ impl HttpFrame {
     pub fn encode<T: BufMut>(&self, buf: &mut T) {
         match self {
             HttpFrame::Data(f) => f.encode(buf),
+            HttpFrame::Headers(f) => f.encode(buf),
             HttpFrame::Priority(f) => f.encode(buf),
             HttpFrame::Settings(f) => f.encode(buf),
             HttpFrame::CancelPush(id) => simple_frame_encode(Type::CANCEL_PUSH, *id, buf),
+            HttpFrame::PushPromise(f) => f.encode(buf),
             HttpFrame::Goaway(id) => simple_frame_encode(Type::GOAWAY, *id, buf),
             HttpFrame::MaxPushId(id) => simple_frame_encode(Type::MAX_PUSH_ID, *id, buf),
             HttpFrame::DuplicatePush(id) => simple_frame_encode(Type::DUPLICATE_PUSH, *id, buf),
@@ -49,9 +53,13 @@ impl HttpFrame {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
                 payload: payload.collect(),
             })),
+            Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload)?)),
             Type::PRIORITY => Ok(HttpFrame::Priority(PriorityFrame::decode(&mut payload)?)),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
             Type::CANCEL_PUSH => Ok(HttpFrame::CancelPush(payload.get_var()?)),
+            Type::PUSH_PROMISE => Ok(HttpFrame::PushPromise(PushPromiseFrame::decode(
+                &mut payload,
+            )?)),
             Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
@@ -117,6 +125,67 @@ impl FrameHeader for DataFrame {
     const TYPE: Type = Type::DATA;
     fn len(&self) -> usize {
         self.payload.as_ref().len()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Headers {
+    // TODO is to be qpack decoded eventually
+    encoded: Bytes,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct HeadersFrame {
+    headers: Headers,
+}
+
+impl FrameHeader for HeadersFrame {
+    const TYPE: Type = Type::HEADERS;
+    fn len(&self) -> usize {
+        self.headers.encoded.as_ref().len()
+    }
+}
+
+impl HeadersFrame {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
+        Ok(HeadersFrame {
+            headers: Headers {
+                encoded: buf.collect(),
+            },
+        })
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        self.encode_header(buf);
+        buf.put(&self.headers.encoded);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PushPromiseFrame {
+    push_id: u64,
+    headers: Headers,
+}
+
+impl FrameHeader for PushPromiseFrame {
+    const TYPE: Type = Type::PUSH_PROMISE;
+    fn len(&self) -> usize {
+        varint::size(self.push_id).unwrap() + self.headers.encoded.as_ref().len()
+    }
+}
+
+impl PushPromiseFrame {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
+        Ok(PushPromiseFrame {
+            push_id: buf.get_var()?,
+            headers: Headers {
+                encoded: buf.collect(),
+            },
+        })
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        self.encode_header(buf);
+        buf.write_var(self.push_id);
+        buf.put(&self.headers.encoded);
     }
 }
 
@@ -409,5 +478,26 @@ mod tests {
         codec_frame_check(HttpFrame::Goaway(2), &[1, 7, 2]);
         codec_frame_check(HttpFrame::MaxPushId(2), &[1, 13, 2]);
         codec_frame_check(HttpFrame::DuplicatePush(2), &[1, 14, 2]);
+    }
+
+    #[test]
+    fn headers_frames() {
+        codec_frame_check(
+            HttpFrame::Headers(HeadersFrame {
+                headers: Headers {
+                    encoded: Bytes::from("TODO QPACK"),
+                },
+            }),
+            &[10, 1, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
+        );
+        codec_frame_check(
+            HttpFrame::PushPromise(PushPromiseFrame {
+                push_id: 134,
+                headers: Headers {
+                    encoded: Bytes::from("TODO QPACK"),
+                },
+            }),
+            &[12, 5, 64, 134, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
+        );
     }
 }
