@@ -381,18 +381,18 @@ impl Connection {
     }
 
     fn on_packet_sent(&mut self, now: u64, packet_number: u64, packet: SentPacket) {
-        let bytes = packet.bytes;
+        let size = packet.size;
         let handshake = packet.handshake;
         if handshake {
             self.awaiting_handshake = true;
         }
         self.sent_packets.insert(packet_number, packet);
-        if bytes != 0 {
+        if size != 0 {
             self.time_of_last_sent_retransmittable_packet = now;
             if handshake {
                 self.time_of_last_sent_handshake_packet = now;
             }
-            self.bytes_in_flight += bytes as u64;
+            self.bytes_in_flight += size as u64;
             self.set_loss_detection_alarm();
         }
     }
@@ -531,18 +531,18 @@ impl Connection {
         } else {
             return;
         };
-        if info.bytes != 0 {
+        if info.size != 0 {
             // Congestion control
-            self.bytes_in_flight -= info.bytes as u64;
+            self.bytes_in_flight -= info.size as u64;
             // Do not increase congestion window in recovery period.
             if !self.in_recovery(packet) {
                 if self.congestion_window < self.ssthresh {
                     // Slow start.
-                    self.congestion_window += info.bytes as u64;
+                    self.congestion_window += info.size as u64;
                 } else {
                     // Congestion avoidance.
                     self.congestion_window +=
-                        self.config.default_mss * info.bytes as u64 / self.congestion_window;
+                        self.config.default_mss * info.size as u64 / self.congestion_window;
                 }
             }
         }
@@ -625,7 +625,7 @@ impl Connection {
             for number in packets {
                 let info = self.sent_packets.remove(&number).unwrap();
                 self.handshake_pending += info.retransmits;
-                self.bytes_in_flight -= info.bytes as u64;
+                self.bytes_in_flight -= info.size as u64;
             }
             debug_assert!(!self.handshake_pending.is_empty());
             self.handshake_count += 1;
@@ -693,7 +693,7 @@ impl Connection {
                 } else {
                     self.pending += info.retransmits;
                 }
-                self.bytes_in_flight -= info.bytes as u64;
+                self.bytes_in_flight -= info.size as u64;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_nonack = old_bytes_in_flight != self.bytes_in_flight;
@@ -1970,7 +1970,7 @@ impl Connection {
             SentPacket {
                 acks,
                 time: now,
-                bytes: if ack_only { 0 } else { buf.len() as u16 },
+                size: if ack_only { 0 } else { buf.len() as u16 },
                 handshake: crypto_level == CryptoLevel::Initial,
                 retransmits: sent,
             },
@@ -2007,7 +2007,7 @@ impl Connection {
             number,
             SentPacket {
                 time: now,
-                bytes: buf.len() as u16,
+                size: buf.len() as u16,
                 handshake: false,
                 acks: RangeSet::new(),
                 retransmits: Retransmits::default(),
@@ -2867,7 +2867,7 @@ pub struct ClientConfig {
 pub struct SentPacket {
     pub time: u64,
     /// 0 iff ack-only
-    pub bytes: u16,
+    pub size: u16,
     pub handshake: bool,
     pub acks: RangeSet,
     pub retransmits: Retransmits,
@@ -2875,7 +2875,7 @@ pub struct SentPacket {
 
 impl SentPacket {
     fn ack_only(&self) -> bool {
-        self.bytes == 0
+        self.size == 0
     }
 }
 
