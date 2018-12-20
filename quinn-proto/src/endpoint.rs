@@ -36,7 +36,8 @@ use crate::{
 pub struct Endpoint {
     log: Logger,
     rng: OsRng,
-    ctx: Context,
+    io: VecDeque<Io>,
+    incoming: VecDeque<ConnectionHandle>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
@@ -63,13 +64,11 @@ impl Endpoint {
                 && config.local_cid_len <= MAX_CID_SIZE
         );
         Ok(Self {
-            ctx: Context {
-                io: VecDeque::new(),
-                // session_ticket_buffer,
-                incoming: VecDeque::new(),
-            },
             log,
             rng,
+            io: VecDeque::new(),
+            // session_ticket_buffer,
+            incoming: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
@@ -99,7 +98,7 @@ impl Endpoint {
 
     /// Get a pending IO operation
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
-        if let Some(x) = self.ctx.io.pop_front() {
+        if let Some(x) = self.io.pop_front() {
             return Some(x);
         }
         loop {
@@ -167,7 +166,7 @@ impl Endpoint {
                     .encode(&mut buf);
                     buf.write::<u32>(0x0a1a_2a3a); // reserved version
                     buf.write(VERSION); // supported version
-                    self.ctx.io.push_back(Io::Transmit {
+                    self.io.push_back(Io::Transmit {
                         destination: remote,
                         ecn: None,
                         packet: buf.into(),
@@ -211,7 +210,7 @@ impl Endpoint {
             let remaining = conn.handle_decode(now, ecn, partial_decode);
             if was_handshake && !conn.is_handshaking() && conn.side().is_server() {
                 self.incoming_handshakes -= 1;
-                self.ctx.incoming.push_back(conn_id);
+                self.incoming.push_back(conn_id);
             }
             self.dirty_conns.insert(conn_id);
             self.eventful_conns.insert(conn_id);
@@ -300,7 +299,7 @@ impl Endpoint {
                 &dst_cid,
             ));
 
-            self.ctx.io.push_back(Io::Transmit {
+            self.io.push_back(Io::Transmit {
                 destination: remote,
                 ecn: None,
                 packet: buf.into(),
@@ -433,11 +432,11 @@ impl Endpoint {
         };
         let loc_cid = self.new_cid();
 
-        if self.ctx.incoming.len() + self.incoming_handshakes
+        if self.incoming.len() + self.incoming_handshakes
             == self.server_config.as_ref().unwrap().accept_buffer as usize
         {
             debug!(self.log, "rejecting connection due to full accept buffer");
-            self.ctx.io.push_back(Io::Transmit {
+            self.io.push_back(Io::Transmit {
                 destination: remote,
                 ecn: None,
                 packet: handshake_close(
@@ -489,7 +488,7 @@ impl Endpoint {
                 encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
                 buf.put_slice(&token);
 
-                self.ctx.io.push_back(Io::Transmit {
+                self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
                     packet: buf.into(),
@@ -522,7 +521,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.ctx.io.push_back(Io::Transmit {
+                self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
                     packet: handshake_close(&crypto, &src_cid, &loc_cid, 0, e),
@@ -686,7 +685,7 @@ impl Endpoint {
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
-        self.ctx.incoming.pop_front()
+        self.incoming.pop_front()
     }
 
     pub fn connection(&self, handle: ConnectionHandle) -> &Connection {
@@ -850,11 +849,6 @@ impl From<crypto::TLSError> for EndpointError {
     fn from(x: crypto::TLSError) -> Self {
         EndpointError::Tls(x)
     }
-}
-
-struct Context {
-    io: VecDeque<Io>,
-    incoming: VecDeque<ConnectionHandle>,
 }
 
 /// Events of interest to the application
