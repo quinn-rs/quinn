@@ -35,7 +35,7 @@ pub struct Connection {
     loc_cid: ConnectionId,
     rem_cid: ConnectionId,
     pub(crate) remote: SocketAddrV6,
-    pub(crate) state: State,
+    state: State,
     side: Side,
     mtu: u16,
     /// Highest received packet number
@@ -2307,6 +2307,10 @@ impl Connection {
         self.state.is_handshake()
     }
 
+    pub fn is_drained(&self) -> bool {
+        self.state.is_drained()
+    }
+
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
         self.side
@@ -2649,7 +2653,7 @@ impl From<transport_parameters::Error> for ConnectionError {
 }
 
 #[derive(Clone)]
-pub enum State {
+enum State {
     Handshake(state::Handshake),
     Established,
     Closed(state::Closed),
@@ -2659,7 +2663,7 @@ pub enum State {
 }
 
 impl State {
-    pub fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
+    fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
         State::Closed(state::Closed {
             reason: reason.into(),
         })
@@ -2672,7 +2676,7 @@ impl State {
         }
     }
 
-    pub fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         match *self {
             State::Closed(_) => true,
             State::Draining => true,
@@ -2681,7 +2685,7 @@ impl State {
         }
     }
 
-    pub fn is_drained(&self) -> bool {
+    fn is_drained(&self) -> bool {
         if let State::Drained = *self {
             true
         } else {

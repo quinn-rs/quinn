@@ -14,8 +14,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, State,
-    TimerUpdate,
+    self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, TimerUpdate,
 };
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
@@ -841,7 +840,7 @@ impl Endpoint {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        if let State::Drained = self.connections[conn.0].state {
+        if self.connections[conn.0].is_drained() {
             self.forget(conn);
             return;
         }
