@@ -28,102 +28,6 @@ use crate::{
     RESET_TOKEN_SIZE, VERSION,
 };
 
-/// Parameters governing the core QUIC state machine.
-pub struct Config {
-    /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
-    pub max_remote_bi_streams: u16,
-    /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
-    pub max_remote_uni_streams: u16,
-    /// Maximum duration of inactivity to accept before timing out the connection (s).
-    ///
-    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
-    /// own idle timeout. 0 for none.
-    pub idle_timeout: u16,
-    /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
-    ///
-    /// This should be set to at least the expected connection latency multiplied by the maximum
-    /// desired throughput. Setting this smaller than `receive_window` helps ensure that a single
-    /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
-    /// chooses not to read from a large stream for a time while still requiring data on other
-    /// streams.
-    pub stream_receive_window: u32,
-    /// Maximum number of bytes the peer may transmit across all streams of a connection before
-    /// becoming blocked.
-    ///
-    /// This should be set to at least the expected connection latency multiplied by the maximum
-    /// desired throughput. Larger values can be useful to allow maximum throughput within a
-    /// stream while another is blocked.
-    pub receive_window: u32,
-
-    /// Maximum number of tail loss probes before an RTO fires.
-    pub max_tlps: u32,
-    /// Maximum reordering in packet number space before FACK style loss detection considers a
-    /// packet lost.
-    pub reordering_threshold: u32,
-    /// Maximum reordering in time space before time based loss detection considers a packet lost.
-    /// 0.16 format
-    pub time_reordering_fraction: u16,
-    /// Whether time based loss detection is in use. If false, uses FACK style loss detection.
-    pub using_time_loss_detection: bool,
-    /// Minimum time in the future a tail loss probe alarm may be set for (μs).
-    pub min_tlp_timeout: u64,
-    /// Minimum time in the future an RTO alarm may be set for (μs).
-    pub min_rto_timeout: u64,
-    /// The length of the peer’s delayed ack timer (μs).
-    pub delayed_ack_timeout: u64,
-    /// The default RTT used before an RTT sample is taken (μs)
-    pub default_initial_rtt: u64,
-
-    /// The default max packet size used for calculating default and minimum congestion windows.
-    pub default_mss: u64,
-    /// Default limit on the amount of outstanding data in bytes.
-    pub initial_window: u64,
-    /// Default minimum congestion window.
-    pub minimum_window: u64,
-    /// Reduction in congestion window when a new loss event is detected. 0.16 format
-    pub loss_reduction_factor: u16,
-
-    /// Length of connection IDs for the endpoint.
-    ///
-    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
-    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
-    /// responsible for making sure that the pool is large enough to cover the intended usage.
-    pub local_cid_len: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        const EXPECTED_RTT: u32 = 100; // ms
-        const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
-                                                        // Window size needed to avoid pipeline
-                                                        // stalls
-        const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
-        Self {
-            max_remote_bi_streams: 0,
-            max_remote_uni_streams: 0,
-            idle_timeout: 10,
-            stream_receive_window: STREAM_RWND,
-            receive_window: 8 * STREAM_RWND,
-
-            max_tlps: 2,
-            reordering_threshold: 3,
-            time_reordering_fraction: 0x2000, // 1/8
-            using_time_loss_detection: false,
-            min_tlp_timeout: 10 * 1000,
-            min_rto_timeout: 200 * 1000,
-            delayed_ack_timeout: 25 * 1000,
-            default_initial_rtt: EXPECTED_RTT as u64 * 1000,
-
-            default_mss: 1460,
-            initial_window: 10 * 1460,
-            minimum_window: 2 * 1460,
-            loss_reduction_factor: 0x8000, // 1/2
-
-            local_cid_len: 8,
-        }
-    }
-}
-
 /// The main entry point to the library
 ///
 /// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a
@@ -144,73 +48,6 @@ pub struct Endpoint {
     /// Connections that might have application-facing events to report
     eventful_conns: FnvHashSet<ConnectionHandle>,
     incoming_handshakes: usize,
-}
-
-struct Context {
-    io: VecDeque<Io>,
-    incoming: VecDeque<ConnectionHandle>,
-}
-
-/// Parameters governing incoming connections.
-pub struct ServerConfig {
-    /// TLS configuration used for incoming connections.
-    ///
-    /// Must be set to use TLS 1.3 only.
-    pub tls_config: Arc<crypto::ServerConfig>,
-
-    /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: TokenKey,
-    /// Whether to require clients to prove ownership of an address before committing resources.
-    ///
-    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub use_stateless_retry: bool,
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub retry_token_lifetime: u64,
-
-    /// Private key used to send authenticated connection resets to clients who were communicating
-    /// with a previous instance of this endpoint.
-    ///
-    /// Must be persisted across restarts to be useful.
-    pub reset_key: SigningKey,
-    /// Maximum number of incoming connections to buffer.
-    ///
-    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
-    /// be large.
-    pub accept_buffer: u32,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        let rng = &mut rand::thread_rng();
-
-        let mut token_value = [0; 64];
-        let mut reset_value = [0; 64];
-        rng.fill_bytes(&mut token_value);
-        rng.fill_bytes(&mut reset_value);
-
-        Self {
-            tls_config: Arc::new(crypto::build_server_config()),
-
-            token_key: TokenKey::new(&token_value),
-            use_stateless_retry: false,
-            retry_token_lifetime: 15_000_000,
-
-            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
-            accept_buffer: 1024,
-        }
-    }
-}
-
-#[derive(Debug, Fail)]
-pub enum EndpointError {
-    #[fail(display = "failed to configure TLS: {}", _0)]
-    Tls(crypto::TLSError),
-}
-
-impl From<crypto::TLSError> for EndpointError {
-    fn from(x: crypto::TLSError) -> Self {
-        EndpointError::Tls(x)
-    }
 }
 
 impl Endpoint {
@@ -855,6 +692,169 @@ impl Endpoint {
     pub fn connection(&self, handle: ConnectionHandle) -> &Connection {
         &self.connections[handle.0]
     }
+}
+
+/// Parameters governing the core QUIC state machine.
+pub struct Config {
+    /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
+    pub max_remote_bi_streams: u16,
+    /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
+    pub max_remote_uni_streams: u16,
+    /// Maximum duration of inactivity to accept before timing out the connection (s).
+    ///
+    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
+    /// own idle timeout. 0 for none.
+    pub idle_timeout: u16,
+    /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Setting this smaller than `receive_window` helps ensure that a single
+    /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
+    /// chooses not to read from a large stream for a time while still requiring data on other
+    /// streams.
+    pub stream_receive_window: u32,
+    /// Maximum number of bytes the peer may transmit across all streams of a connection before
+    /// becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Larger values can be useful to allow maximum throughput within a
+    /// stream while another is blocked.
+    pub receive_window: u32,
+
+    /// Maximum number of tail loss probes before an RTO fires.
+    pub max_tlps: u32,
+    /// Maximum reordering in packet number space before FACK style loss detection considers a
+    /// packet lost.
+    pub reordering_threshold: u32,
+    /// Maximum reordering in time space before time based loss detection considers a packet lost.
+    /// 0.16 format
+    pub time_reordering_fraction: u16,
+    /// Whether time based loss detection is in use. If false, uses FACK style loss detection.
+    pub using_time_loss_detection: bool,
+    /// Minimum time in the future a tail loss probe alarm may be set for (μs).
+    pub min_tlp_timeout: u64,
+    /// Minimum time in the future an RTO alarm may be set for (μs).
+    pub min_rto_timeout: u64,
+    /// The length of the peer’s delayed ack timer (μs).
+    pub delayed_ack_timeout: u64,
+    /// The default RTT used before an RTT sample is taken (μs)
+    pub default_initial_rtt: u64,
+
+    /// The default max packet size used for calculating default and minimum congestion windows.
+    pub default_mss: u64,
+    /// Default limit on the amount of outstanding data in bytes.
+    pub initial_window: u64,
+    /// Default minimum congestion window.
+    pub minimum_window: u64,
+    /// Reduction in congestion window when a new loss event is detected. 0.16 format
+    pub loss_reduction_factor: u16,
+
+    /// Length of connection IDs for the endpoint.
+    ///
+    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
+    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
+    /// responsible for making sure that the pool is large enough to cover the intended usage.
+    pub local_cid_len: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        const EXPECTED_RTT: u32 = 100; // ms
+        const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
+                                                        // Window size needed to avoid pipeline
+                                                        // stalls
+        const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+        Self {
+            max_remote_bi_streams: 0,
+            max_remote_uni_streams: 0,
+            idle_timeout: 10,
+            stream_receive_window: STREAM_RWND,
+            receive_window: 8 * STREAM_RWND,
+
+            max_tlps: 2,
+            reordering_threshold: 3,
+            time_reordering_fraction: 0x2000, // 1/8
+            using_time_loss_detection: false,
+            min_tlp_timeout: 10 * 1000,
+            min_rto_timeout: 200 * 1000,
+            delayed_ack_timeout: 25 * 1000,
+            default_initial_rtt: EXPECTED_RTT as u64 * 1000,
+
+            default_mss: 1460,
+            initial_window: 10 * 1460,
+            minimum_window: 2 * 1460,
+            loss_reduction_factor: 0x8000, // 1/2
+
+            local_cid_len: 8,
+        }
+    }
+}
+
+/// Parameters governing incoming connections.
+pub struct ServerConfig {
+    /// TLS configuration used for incoming connections.
+    ///
+    /// Must be set to use TLS 1.3 only.
+    pub tls_config: Arc<crypto::ServerConfig>,
+
+    /// Private key used to authenticate data included in handshake tokens.
+    pub token_key: TokenKey,
+    /// Whether to require clients to prove ownership of an address before committing resources.
+    ///
+    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
+    pub use_stateless_retry: bool,
+    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    pub retry_token_lifetime: u64,
+
+    /// Private key used to send authenticated connection resets to clients who were communicating
+    /// with a previous instance of this endpoint.
+    ///
+    /// Must be persisted across restarts to be useful.
+    pub reset_key: SigningKey,
+    /// Maximum number of incoming connections to buffer.
+    ///
+    /// Calling `Endpoint::accept` removes a connection from the buffer, so this does not need to
+    /// be large.
+    pub accept_buffer: u32,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        let rng = &mut rand::thread_rng();
+
+        let mut token_value = [0; 64];
+        let mut reset_value = [0; 64];
+        rng.fill_bytes(&mut token_value);
+        rng.fill_bytes(&mut reset_value);
+
+        Self {
+            tls_config: Arc::new(crypto::build_server_config()),
+
+            token_key: TokenKey::new(&token_value),
+            use_stateless_retry: false,
+            retry_token_lifetime: 15_000_000,
+
+            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+            accept_buffer: 1024,
+        }
+    }
+}
+
+#[derive(Debug, Fail)]
+pub enum EndpointError {
+    #[fail(display = "failed to configure TLS: {}", _0)]
+    Tls(crypto::TLSError),
+}
+
+impl From<crypto::TLSError> for EndpointError {
+    fn from(x: crypto::TLSError) -> Self {
+        EndpointError::Tls(x)
+    }
+}
+
+struct Context {
+    io: VecDeque<Io>,
+    incoming: VecDeque<ConnectionHandle>,
 }
 
 /// Events of interest to the application
