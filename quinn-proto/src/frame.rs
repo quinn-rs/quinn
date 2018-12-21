@@ -727,6 +727,16 @@ pub struct NewConnectionId {
     pub reset_token: [u8; 16],
 }
 
+impl NewConnectionId {
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(Type::NEW_CONNECTION_ID);
+        out.write_var(self.sequence);
+        out.write(self.id.len() as u8);
+        out.put_slice(&self.id);
+        out.put_slice(&self.reset_token);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
