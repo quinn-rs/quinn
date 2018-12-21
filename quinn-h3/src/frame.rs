@@ -23,6 +23,7 @@ pub enum HttpFrame {
     Goaway(u64),
     MaxPushId(u64),
     DuplicatePush(u64),
+    Reserved,
 }
 
 impl HttpFrame {
@@ -37,6 +38,7 @@ impl HttpFrame {
             HttpFrame::Goaway(id) => simple_frame_encode(Type::GOAWAY, *id, buf),
             HttpFrame::MaxPushId(id) => simple_frame_encode(Type::MAX_PUSH_ID, *id, buf),
             HttpFrame::DuplicatePush(id) => simple_frame_encode(Type::DUPLICATE_PUSH, *id, buf),
+            HttpFrame::Reserved => (),
         }
     }
 
@@ -63,6 +65,7 @@ impl HttpFrame {
             Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
+            t if (t.0 - 0xb) % 0x1f == 0 => Ok(HttpFrame::Reserved),
             _ => Err(Error::UnsupportedFrame),
         }
     }
@@ -500,4 +503,12 @@ mod tests {
             &[12, 5, 64, 134, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
         );
     }
+
+    #[test]
+    fn reserved_frame() {
+        let mut buf = Cursor::new(&[6, 0xb + 2 * 0x1f, 0, 255, 128, 0, 250, 218]);
+        let decoded = HttpFrame::decode(&mut buf);
+        assert_eq!(decoded, Ok(HttpFrame::Reserved));
+    }
+
 }
