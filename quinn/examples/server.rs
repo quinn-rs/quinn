@@ -138,7 +138,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
         incoming,
         connection,
     } = conn;
-    let log = log.new(o!("local_id" => format!("{}", connection.local_id())));
+    let log = log.clone();
     info!(log, "got connection";
           "remote_id" => %connection.remote_id(),
           "address" => %connection.remote_address(),

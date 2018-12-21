@@ -203,12 +203,24 @@ impl Endpoint {
                 .cloned()
         };
         if let Some(conn_id) = conn {
-            let conn = &mut self.connections[conn_id.0];
-            let was_handshake = conn.is_handshaking();
-            let remaining = conn.handle_decode(now, ecn, partial_decode);
-            if was_handshake && !conn.is_handshaking() && conn.side().is_server() {
-                self.incoming_handshakes -= 1;
-                self.incoming.push_back(conn_id);
+            let was_handshake = self.connections[conn_id.0].is_handshaking();
+            let remaining = self.connections[conn_id.0].handle_decode(now, ecn, partial_decode);
+            if was_handshake && !self.connections[conn_id.0].is_handshaking() {
+                // Newly established connection
+                if self.connections[conn_id.0].side().is_server() {
+                    self.incoming_handshakes -= 1;
+                    self.incoming.push_back(conn_id);
+                }
+                if self.config.local_cid_len != 0 {
+                    /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
+                    /// connection IDs
+                    const LOCAL_CID_COUNT: usize = 8;
+                    // We've already issued one CID as part of the normal handshake process.
+                    for _ in 1..LOCAL_CID_COUNT {
+                        let cid = self.new_cid();
+                        self.connections[conn_id.0].issue_cid(cid);
+                    }
+                }
             }
             self.dirty_conns.insert(conn_id);
             self.eventful_conns.insert(conn_id);
@@ -321,12 +333,10 @@ impl Endpoint {
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let local_id = self.new_cid();
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
             remote_id,
-            local_id,
             remote_id,
             remote,
             ConnectionOpts::Client(ClientConfig {
@@ -351,12 +361,11 @@ impl Endpoint {
     fn add_connection(
         &mut self,
         initial_id: ConnectionId,
-        local_id: ConnectionId,
         remote_id: ConnectionId,
         remote: SocketAddrV6,
         opts: ConnectionOpts,
     ) -> Result<ConnectionHandle, ConnectError> {
-        debug_assert!(!local_id.is_empty());
+        let local_id = self.new_cid();
         let (tls, client_config) = match opts {
             ConnectionOpts::Client(config) => (
                 TlsSession::new_client(
@@ -432,7 +441,9 @@ impl Endpoint {
             debug!(self.log, "failed to authenticate initial packet"; "pn" => packet_number);
             return;
         };
-        let loc_cid = self.new_cid();
+
+        // Local CID used for stateless packets
+        let temp_loc_cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
 
         if self.incoming.len() + self.incoming_handshakes
             == self.server_config.as_ref().unwrap().accept_buffer as usize
@@ -445,7 +456,7 @@ impl Endpoint {
                     crypto,
                     header_crypto,
                     &src_cid,
-                    &loc_cid,
+                    &temp_loc_cid,
                     0,
                     TransportError::SERVER_BUSY,
                 ),
@@ -482,7 +493,7 @@ impl Endpoint {
                 );
                 let mut buf = Vec::new();
                 let header = Header::Retry {
-                    src_cid: loc_cid,
+                    src_cid: temp_loc_cid,
                     dst_cid: src_cid,
                     orig_dst_cid: dst_cid,
                 };
@@ -503,7 +514,6 @@ impl Endpoint {
         let conn = self
             .add_connection(
                 dst_cid,
-                loc_cid,
                 src_cid,
                 remote,
                 ConnectionOpts::Server {
@@ -528,7 +538,7 @@ impl Endpoint {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: handshake_close(crypto, header_crypto, &src_cid, &loc_cid, 0, e),
+                    packet: handshake_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
             }
         }
@@ -540,8 +550,9 @@ impl Endpoint {
                 .remove(&self.connections[conn.0].init_cid);
         }
         if self.config.local_cid_len > 0 {
-            self.connection_ids
-                .remove(&self.connections[conn.0].loc_cid());
+            for cid in self.connections[conn.0].loc_cids() {
+                self.connection_ids.remove(cid);
+            }
         }
         self.connection_remotes
             .remove(&self.connections[conn.0].remote);

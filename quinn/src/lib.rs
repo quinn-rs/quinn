@@ -1030,16 +1030,19 @@ impl Connection {
             .into()
     }
 
-    /// The `ConnectionId` used for `conn` locally.
-    pub fn local_id(&self) -> ConnectionId {
+    /// The `ConnectionId`s defined for `conn` locally.
+    pub fn local_ids(&self) -> impl Iterator<Item = ConnectionId> {
         self.0
             .endpoint
             .borrow()
             .inner
             .connection(self.0.conn)
-            .loc_cid()
+            .loc_cids()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
     }
-    /// The `ConnectionId` used for `conn` by the peer.
+    /// The `ConnectionId` defined for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
         self.0
             .endpoint
