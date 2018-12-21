@@ -155,11 +155,7 @@ pub enum Frame {
         directionality: Directionality,
         limit: u64,
     },
-    NewConnectionId {
-        sequence: u64,
-        id: ConnectionId,
-        reset_token: [u8; 16],
-    },
+    NewConnectionId(NewConnectionId),
     RetireConnectionId {
         sequence: u64,
     },
@@ -608,11 +604,11 @@ impl Iter {
                 }
                 let mut reset_token = [0; RESET_TOKEN_SIZE];
                 self.bytes.copy_to_slice(&mut reset_token);
-                Frame::NewConnectionId {
+                Frame::NewConnectionId(NewConnectionId {
                     sequence,
                     id,
                     reset_token,
-                }
+                })
             }
             Type::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
@@ -722,6 +718,13 @@ impl ResetStream {
         out.write(self.error_code); // 2 bytes
         out.write_var(self.final_offset); // <= 8 bytes
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct NewConnectionId {
+    pub sequence: u64,
+    pub id: ConnectionId,
+    pub reset_token: [u8; 16],
 }
 
 #[cfg(test)]
