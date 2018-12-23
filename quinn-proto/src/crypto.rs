@@ -239,12 +239,15 @@ impl Crypto {
         let mut new_remote_secret = vec![0; self.digest.output_len];
         hkdf_expand(&remote_secret_key, UPDATE_LABEL, &mut new_remote_secret);
 
-        Self::generate_1rtt(
+        let mut new = Self::generate_1rtt(
             self.digest,
             self.opening_key.algorithm(),
             new_local_secret,
             new_remote_secret,
-        )
+        );
+        new.local_header_key = self.local_header_key.clone();
+        new.remote_header_key = self.remote_header_key.clone();
+        new
     }
 
     fn generate_1rtt(
@@ -311,6 +314,19 @@ impl From<TLSError> for ConnectError {
 pub enum HeaderKey {
     AesCtr128([u8; 16]),
     ChaCha20(chacha20::SecretKey),
+}
+
+// TODO: Make this unnecessary by isolating header keys from traffic keys.
+impl Clone for HeaderKey {
+    fn clone(&self) -> Self {
+        use self::HeaderKey::*;
+        match *self {
+            AesCtr128(ref x) => AesCtr128(x.clone()),
+            ChaCha20(ref x) => {
+                ChaCha20(chacha20::SecretKey::from_slice(x.unprotected_as_bytes()).unwrap())
+            }
+        }
+    }
 }
 
 impl HeaderKey {
@@ -638,7 +654,8 @@ mod test {
         assert_eq!(
             updated_onertt.local_header_key,
             HeaderKey::AesCtr128([
-                20, 96, 7, 204, 167, 174, 79, 250, 138, 213, 45, 234, 62, 176, 57, 139
+                0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
+                0xa8, 0x4d,
             ])
         );
 
@@ -649,7 +666,8 @@ mod test {
         assert_eq!(
             updated_onertt.remote_header_key,
             HeaderKey::AesCtr128([
-                9, 9, 81, 40, 9, 32, 28, 118, 137, 189, 99, 193, 216, 85, 165, 228
+                0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
+                0x23, 0x23
             ])
         );
     }
