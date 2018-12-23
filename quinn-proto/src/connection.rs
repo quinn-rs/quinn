@@ -2013,8 +2013,8 @@ impl Connection {
         }
 
         // Apply
-        self.streams.max_bi = params.initial_max_bidi_streams as u64;
-        self.streams.max_uni = params.initial_max_uni_streams as u64;
+        self.streams.max_bi = params.initial_max_streams_bidi;
+        self.streams.max_uni = params.initial_max_streams_uni;
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.streams.max_remote_bi {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);

@@ -696,14 +696,14 @@ impl Endpoint {
 /// Parameters governing the core QUIC state machine.
 pub struct Config {
     /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
-    pub max_remote_bi_streams: u16,
+    pub max_remote_bi_streams: u64,
     /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
-    pub max_remote_uni_streams: u16,
+    pub max_remote_uni_streams: u64,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
     /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
     /// own idle timeout. 0 for none.
-    pub idle_timeout: u16,
+    pub idle_timeout: u64,
     /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
     ///
     /// This should be set to at least the expected connection latency multiplied by the maximum
@@ -711,14 +711,14 @@ pub struct Config {
     /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
     /// chooses not to read from a large stream for a time while still requiring data on other
     /// streams.
-    pub stream_receive_window: u32,
+    pub stream_receive_window: u64,
     /// Maximum number of bytes the peer may transmit across all streams of a connection before
     /// becoming blocked.
     ///
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub receive_window: u32,
+    pub receive_window: u64,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -758,11 +758,11 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        const EXPECTED_RTT: u32 = 100; // ms
-        const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
+        const EXPECTED_RTT: u64 = 100; // ms
+        const MAX_STREAM_BANDWIDTH: u64 = 12500 * 1000; // bytes/s
                                                         // Window size needed to avoid pipeline
                                                         // stalls
-        const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+        const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
         Self {
             max_remote_bi_streams: 0,
             max_remote_uni_streams: 0,

@@ -1,44 +1,44 @@
-use std::{
-    mem,
-    net::{IpAddr, SocketAddr},
-};
+use std::net::{IpAddr, SocketAddr};
 
 use bytes::{Buf, BufMut};
 
-use crate::coding::{BufExt, BufMutExt};
+use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::endpoint::Config;
 use crate::packet::ConnectionId;
+use crate::varint;
 use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
-// Apply a given macro to a list of all the transport parameters having simple integer types, along with their codes and
-// default values. Using this helps us avoid error-prone duplication of the contained information across decoding,
-// encoding, and the `Default` impl. Whenever we want to do something with transport parameters, we'll handle the bulk
-// of cases by writing a macro that takes a list of arguments in this form, then passing it to this macro.
+// Apply a given macro to a list of all the transport parameters having integer types, along with
+// their codes and default values. Using this helps us avoid error-prone duplication of the
+// contained information across decoding, encoding, and the `Default` impl. Whenever we want to do
+// something with transport parameters, we'll handle the bulk of cases by writing a macro that takes
+// a list of arguments in this form, then passing it to this macro.
 macro_rules! apply_params {
     ($macro:ident) => {
         $macro! {
-            // name (id): type = default,
-            initial_max_stream_data_bidi_local(0x0000): u32 = 0,
-            initial_max_stream_data_bidi_remote(0x000a): u32 = 0,
-            initial_max_stream_data_uni(0x000b): u32 = 0,
-            initial_max_data(0x0001): u32 = 0,
+            // name (id) = default,
+            idle_timeout(0x0001) = 0,
+            max_packet_size(0x0003) = 65527,
 
-            initial_max_bidi_streams(0x0002): u16 = 0,
-            initial_max_uni_streams(0x0008): u16 = 0,
+            initial_max_data(0x0004) = 0,
+            initial_max_stream_data_bidi_local(0x0005) = 0,
+            initial_max_stream_data_bidi_remote(0x0006) = 0,
+            initial_max_stream_data_uni(0x0007) = 0,
 
-            idle_timeout(0x0003): u16 = 0,
-            max_packet_size(0x0005): u16 = 65527,
-            ack_delay_exponent(0x0007): u8 = 3,
-            max_ack_delay(0x000c): u8 = 25,
+            initial_max_streams_bidi(0x0008) = 0,
+            initial_max_streams_uni(0x0009) = 0,
+
+            ack_delay_exponent(0x000a) = 3,
+            max_ack_delay(0x000b) = 25,
         }
     };
 }
 
 macro_rules! make_struct {
-    {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
+    {$($name:ident ($code:expr) = $default:expr,)*} => {
         #[derive(Debug, Copy, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
-            $(pub $name : $ty,)*
+            $(pub $name : u64,)*
 
             pub disable_migration: bool,
 
@@ -70,8 +70,8 @@ apply_params!(make_struct);
 impl TransportParameters {
     pub fn new(config: &Config) -> Self {
         TransportParameters {
-            initial_max_bidi_streams: config.max_remote_bi_streams,
-            initial_max_uni_streams: config.max_remote_uni_streams,
+            initial_max_streams_bidi: config.max_remote_bi_streams,
+            initial_max_streams_uni: config.max_remote_uni_streams,
             initial_max_data: config.receive_window,
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
@@ -187,6 +187,12 @@ impl From<Error> for TransportError {
     }
 }
 
+impl From<UnexpectedEnd> for Error {
+    fn from(_: UnexpectedEnd) -> Self {
+        Error::Malformed
+    }
+}
+
 impl TransportParameters {
     pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
         if side.is_server() {
@@ -201,12 +207,12 @@ impl TransportParameters {
         let mut buf = Vec::new();
 
         macro_rules! write_params {
-            {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
+            {$($name:ident ($code:expr) = $default:expr,)*} => {
                 $(
                     if self.$name != $default {
                         buf.write::<u16>($code);
-                        buf.write::<u16>(mem::size_of::<$ty>() as u16);
-                        buf.write(self.$name);
+                        buf.write::<u16>(varint::size(self.$name).expect("value too large") as u16);
+                        buf.write_var(self.$name);
                     }
                 )*
             }
@@ -214,26 +220,26 @@ impl TransportParameters {
         apply_params!(write_params);
 
         if let Some(ref x) = self.original_connection_id {
-            buf.write::<u16>(0x000d);
+            buf.write::<u16>(0x0000);
             buf.write::<u16>(x.len() as u16);
             buf.put_slice(x);
         }
 
         if let Some(ref x) = self.stateless_reset_token {
-            buf.write::<u16>(0x0006);
+            buf.write::<u16>(0x0002);
             buf.write::<u16>(16);
             buf.put_slice(x);
         }
 
-        if let Some(ref x) = self.preferred_address {
-            buf.write::<u16>(0x0004);
-            buf.write::<u16>(x.wire_size());
-            x.write(&mut buf);
+        if self.disable_migration {
+            buf.write::<u16>(0x000c);
+            buf.write::<u16>(0);
         }
 
-        if self.disable_migration {
-            buf.write::<u16>(0x0009);
-            buf.write::<u16>(0);
+        if let Some(ref x) = self.preferred_address {
+            buf.write::<u16>(0x000d);
+            buf.write::<u16>(x.wire_size());
+            x.write(&mut buf);
         }
 
         w.write::<u16>(buf.len() as u16);
@@ -278,7 +284,7 @@ impl TransportParameters {
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {
-            {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {{
+            {$($name:ident ($code:expr) = $default:expr,)*} => {{
                 struct ParamState {
                     $($name: bool,)*
                 }
@@ -301,13 +307,7 @@ impl TransportParameters {
             }
 
             match id {
-                0x0009 => {
-                    if len != 0 || params.disable_migration {
-                        return Err(Error::Malformed);
-                    }
-                    params.disable_migration = true;
-                }
-                0x000d => {
+                0x0000 => {
                     if len < MIN_CID_SIZE as u16
                         || len > MAX_CID_SIZE as u16
                         || params.original_connection_id.is_some()
@@ -319,7 +319,7 @@ impl TransportParameters {
                     params.original_connection_id =
                         Some(ConnectionId::new(&staging[0..len as usize]));
                 }
-                0x0006 => {
+                0x0002 => {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -327,7 +327,13 @@ impl TransportParameters {
                     r.copy_to_slice(&mut tok);
                     params.stateless_reset_token = Some(tok);
                 }
-                0x0004 => {
+                0x000c => {
+                    if len != 0 || params.disable_migration {
+                        return Err(Error::Malformed);
+                    }
+                    params.disable_migration = true;
+                }
+                0x000d => {
                     if params.preferred_address.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -336,11 +342,11 @@ impl TransportParameters {
                 }
                 _ => {
                     macro_rules! parse {
-                        {$($name:ident ($code:expr) : $ty:ty = $default:expr,)*} => {
+                        {$($name:ident ($code:expr) = $default:expr,)*} => {
                             match id {
                                 $($code => {
-                                    if len != mem::size_of::<$ty>() as u16 || got.$name { return Err(Error::Malformed); }
-                                    params.$name = r.get().unwrap();
+                                    params.$name = r.get_var()?;
+                                    if len != varint::size(params.$name).unwrap() as u16 || got.$name { return Err(Error::Malformed); }
                                     got.$name = true;
                                 })*
                                 _ => r.advance(len as usize),
@@ -372,8 +378,8 @@ mod test {
     fn coding() {
         let mut buf = Vec::new();
         let params = TransportParameters {
-            initial_max_bidi_streams: 16,
-            initial_max_uni_streams: 16,
+            initial_max_streams_bidi: 16,
+            initial_max_streams_uni: 16,
             ack_delay_exponent: 2,
             max_packet_size: 1200,
             preferred_address: Some(PreferredAddress {
