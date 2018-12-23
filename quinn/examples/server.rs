@@ -96,7 +96,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut runtime = Runtime::new()?;
 
     let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
-        max_remote_bi_streams: 64,
+        max_remote_streams_bidi: 64,
         ..Default::default()
     });
     endpoint.logger(log.clone());

@@ -696,9 +696,9 @@ impl Endpoint {
 /// Parameters governing the core QUIC state machine.
 pub struct Config {
     /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
-    pub max_remote_bi_streams: u64,
+    pub max_remote_streams_bidi: u64,
     /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
-    pub max_remote_uni_streams: u64,
+    pub max_remote_streams_uni: u64,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
     /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
@@ -764,8 +764,8 @@ impl Default for Config {
                                                         // stalls
         const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
         Self {
-            max_remote_bi_streams: 0,
-            max_remote_uni_streams: 0,
+            max_remote_streams_bidi: 0,
+            max_remote_streams_uni: 0,
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
