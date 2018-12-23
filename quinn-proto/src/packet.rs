@@ -5,7 +5,7 @@ use rand::Rng;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::PacketNumberKey;
+use crate::crypto::HeaderKey;
 use crate::varint;
 use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
@@ -84,7 +84,7 @@ impl PartialDecode {
 
     pub fn finish(
         self,
-        pn_key: &PacketNumberKey,
+        header_key: &HeaderKey,
     ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
         let Self {
             invariant_header,
@@ -100,7 +100,7 @@ impl PartialDecode {
                 }
 
                 let sample_offset = 1 + dst_cid.len() + 4;
-                let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
+                let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
                 (
                     buf.remaining(),
                     Header::Short {
@@ -163,7 +163,7 @@ impl PartialDecode {
                         + varint::size(token_length as u64).unwrap()
                         + token.len();
 
-                    let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
+                    let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
                     (
                         (len as usize) - number.len(),
                         Header::Initial {
@@ -179,7 +179,7 @@ impl PartialDecode {
                     let len = buf.get_var()?;
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
-                    let number = Self::get_packet_number(&mut buf, pn_key, sample_offset)?;
+                    let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
                     (
                         (len as usize) - number.len(),
                         Header::Long {
@@ -220,31 +220,33 @@ impl PartialDecode {
 
     fn get_packet_number(
         buf: &mut io::Cursor<BytesMut>,
-        pn_key: &PacketNumberKey,
+        header_key: &HeaderKey,
         mut sample_offset: usize,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
-        if sample_offset + pn_key.sample_size() > packet_length {
+        if sample_offset + header_key.sample_size() > packet_length {
             sample_offset = packet_length
-                .checked_sub(pn_key.sample_size())
+                .checked_sub(header_key.sample_size())
                 .ok_or_else(|| {
                     PacketDecodeError::InvalidHeader("packet too short to decode packet number")
                 })?;
         }
-        if packet_length < sample_offset + pn_key.sample_size() {
+        if packet_length < sample_offset + header_key.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
                 "packet too short to extract packet number encryption sample",
             ));
         }
 
         let mut sample = [0; 16];
-        debug_assert!(pn_key.sample_size() <= 16);
-        sample.copy_from_slice(&buf.get_ref()[sample_offset..sample_offset + pn_key.sample_size()]);
+        debug_assert!(header_key.sample_size() <= 16);
+        sample.copy_from_slice(
+            &buf.get_ref()[sample_offset..sample_offset + header_key.sample_size()],
+        );
 
         let pos = buf.position() as usize;
         let len = PacketNumber::decode_len(buf.get_ref()[0]);
 
-        pn_key.decrypt(&sample, &mut buf.get_mut()[pos..pos + len]);
+        header_key.decrypt(&sample, &mut buf.get_mut()[pos..pos + len]);
         PacketNumber::decode(len, buf)
     }
 }
@@ -402,7 +404,7 @@ pub struct PartialEncode<'a> {
 }
 
 impl<'a> PartialEncode<'a> {
-    pub fn finish(self, buf: &mut [u8], pn_key: &PacketNumberKey, header_len: usize) {
+    pub fn finish(self, buf: &mut [u8], header_key: &HeaderKey, header_len: usize) {
         let PartialEncode { header, pn } = self;
         let payload_len = (buf.len() - header_len) as u64;
         let (mut sample_offset, pn_pos, pn_len) = match header {
@@ -440,18 +442,18 @@ impl<'a> PartialEncode<'a> {
         };
 
         let packet_length = buf.len();
-        if sample_offset + pn_key.sample_size() > packet_length {
-            sample_offset = packet_length - pn_key.sample_size();
+        if sample_offset + header_key.sample_size() > packet_length {
+            sample_offset = packet_length - header_key.sample_size();
         }
 
-        debug_assert!(pn_key.sample_size() <= 16);
+        debug_assert!(header_key.sample_size() <= 16);
         let sample = {
             let mut sample = [0; 16];
-            sample.copy_from_slice(&buf[sample_offset..sample_offset + pn_key.sample_size()]);
+            sample.copy_from_slice(&buf[sample_offset..sample_offset + header_key.sample_size()]);
             sample
         };
 
-        pn_key.encrypt(&sample, &mut buf[pn_pos..pn_pos + pn_len]);
+        header_key.encrypt(&sample, &mut buf[pn_pos..pn_pos + pn_len]);
     }
 }
 
@@ -839,9 +841,7 @@ impl EcnCodepoint {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ConnectionId, Header, PacketNumber, PacketNumberKey, PartialDecode, PartialEncode,
-    };
+    use super::{ConnectionId, Header, HeaderKey, PacketNumber, PartialDecode, PartialEncode};
     use orion::hazardous::stream::chacha20;
     use std::io;
 
@@ -882,7 +882,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pne_test_vector() {
-        let key = PacketNumberKey::AesCtr128([
+        let key = HeaderKey::AesCtr128([
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
         ]);
@@ -923,7 +923,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pne_test_chacha20() {
-        let key = PacketNumberKey::ChaCha20(
+        let key = HeaderKey::ChaCha20(
             chacha20::SecretKey::from_slice(&[
                 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
                 0x4f, 0x3c, 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88,
