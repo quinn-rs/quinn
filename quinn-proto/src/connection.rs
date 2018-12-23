@@ -1091,7 +1091,7 @@ impl Connection {
                         // Complete handshake (and ultimately send Finished)
                         for frame in frame::Iter::new(packet.payload.into()) {
                             match frame {
-                                Frame::Ack(_) => {}
+                                Frame::Ack(_) | Frame::Padding => {}
                                 _ => {
                                     self.permit_ack_only = true;
                                 }
@@ -1320,7 +1320,7 @@ impl Connection {
                 }
             }
             match frame {
-                Frame::Ack(_) => {}
+                Frame::Ack(_) | Frame::Padding => {}
                 _ => {
                     self.permit_ack_only = true;
                 }
