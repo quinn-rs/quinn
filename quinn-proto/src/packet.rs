@@ -75,13 +75,6 @@ impl PartialDecode {
         self.invariant_header.dst_cid()
     }
 
-    pub fn key_phase(&self) -> bool {
-        match self.invariant_header {
-            InvariantHeader::Short { first, .. } => (first & KEY_PHASE_BIT) != 0,
-            _ => false,
-        }
-    }
-
     pub fn finish(
         self,
         header_key: &HeaderKey,
@@ -91,8 +84,7 @@ impl PartialDecode {
             mut buf,
         } = self;
         let (payload_len, header, allow_coalesced) = match invariant_header {
-            InvariantHeader::Short { first, dst_cid } => {
-                let key_phase = first & KEY_PHASE_BIT != 0;
+            InvariantHeader::Short { dst_cid, .. } => {
                 if !buf.has_remaining() {
                     return Err(PacketDecodeError::InvalidHeader(
                         "header ends before packet number",
@@ -100,7 +92,8 @@ impl PartialDecode {
                 }
 
                 let sample_offset = 1 + dst_cid.len() + 4;
-                let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
+                let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
                     buf.remaining(),
                     Header::Short {
@@ -163,7 +156,7 @@ impl PartialDecode {
                         + varint::size(token_length as u64).unwrap()
                         + token.len();
 
-                    let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
                     (
                         (len as usize) - number.len(),
                         Header::Initial {
@@ -179,7 +172,7 @@ impl PartialDecode {
                     let len = buf.get_var()?;
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
-                    let number = Self::get_packet_number(&mut buf, header_key, sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
                     (
                         (len as usize) - number.len(),
                         Header::Long {
@@ -218,7 +211,7 @@ impl PartialDecode {
         ))
     }
 
-    fn get_packet_number(
+    fn decrypt_header(
         buf: &mut io::Cursor<BytesMut>,
         header_key: &HeaderKey,
         mut sample_offset: usize,
@@ -242,11 +235,10 @@ impl PartialDecode {
         sample.copy_from_slice(
             &buf.get_ref()[sample_offset..sample_offset + header_key.sample_size()],
         );
+        let pn_offset = buf.position() as usize;
+        header_key.decrypt(pn_offset, &sample, buf.get_mut());
 
-        let pos = buf.position() as usize;
         let len = PacketNumber::decode_len(buf.get_ref()[0]);
-
-        header_key.decrypt(&sample, &mut buf.get_mut()[pos..pos + len]);
         PacketNumber::decode(len, buf)
     }
 }
@@ -312,7 +304,7 @@ impl Header {
                     + token.len();
                 PartialEncode {
                     header: self,
-                    pn: Some((pn_pos, number.len())),
+                    pn: Some(pn_pos),
                 }
             }
             Long {
@@ -329,7 +321,7 @@ impl Header {
                 let pn_pos = 8 + dst_cid.len() + src_cid.len();
                 PartialEncode {
                     header: self,
-                    pn: Some((pn_pos, number.len())),
+                    pn: Some(pn_pos),
                 }
             }
             Retry {
@@ -357,7 +349,7 @@ impl Header {
                 number.encode(w);
                 PartialEncode {
                     header: self,
-                    pn: Some((1 + dst_cid.len(), number.len())),
+                    pn: Some(1 + dst_cid.len()),
                 }
             }
             VersionNegotiate {
@@ -400,18 +392,17 @@ impl Header {
 
 pub struct PartialEncode<'a> {
     header: &'a Header,
-    pn: Option<(usize, usize)>,
+    pn: Option<usize>,
 }
 
 impl<'a> PartialEncode<'a> {
     pub fn finish(self, buf: &mut [u8], header_key: &HeaderKey, header_len: usize) {
         let PartialEncode { header, pn } = self;
         let payload_len = (buf.len() - header_len) as u64;
-        let (mut sample_offset, pn_pos, pn_len) = match header {
+        let (mut sample_offset, pn_pos) = match header {
             Header::Short { dst_cid, .. } => {
                 let sample_offset = 1 + dst_cid.len() + 4;
-                let (pn_pos, pn_len) = pn.unwrap();
-                (sample_offset, pn_pos, pn_len)
+                (sample_offset, pn.unwrap())
             }
             Header::Initial {
                 dst_cid,
@@ -425,16 +416,14 @@ impl<'a> PartialEncode<'a> {
                     + varint::size(payload_len).unwrap()
                     + varint::size(token.len() as u64).unwrap()
                     + token.len();
-                let (pn_pos, pn_len) = pn.unwrap();
-                (sample_offset, pn_pos, pn_len)
+                (sample_offset, pn.unwrap())
             }
             Header::Long {
                 dst_cid, src_cid, ..
             } => {
                 let sample_offset =
                     10 + dst_cid.len() + src_cid.len() + varint::size(payload_len).unwrap();
-                let (pn_pos, pn_len) = pn.unwrap();
-                (sample_offset, pn_pos, pn_len)
+                (sample_offset, pn.unwrap())
             }
             _ => {
                 return;
@@ -453,7 +442,7 @@ impl<'a> PartialEncode<'a> {
             sample
         };
 
-        header_key.encrypt(&sample, &mut buf[pn_pos..pn_pos + pn_len]);
+        header_key.encrypt(pn_pos, &sample, buf);
     }
 }
 
@@ -589,7 +578,7 @@ impl PacketNumber {
         Ok(pn)
     }
 
-    fn decode_len(tag: u8) -> usize {
+    pub fn decode_len(tag: u8) -> usize {
         1 + (tag & 0x03) as usize
     }
 
@@ -808,7 +797,7 @@ pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
 
 pub const AEAD_TAG_SIZE: usize = 16;
 
-const LONG_HEADER_FORM: u8 = 0x80;
+pub const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x04;
 const FIXED_BIT: u8 = 0x40;
 
@@ -914,7 +903,7 @@ mod tests {
         };
         PartialEncode {
             header: &header,
-            pn: Some((1, 2)),
+            pn: Some(1),
         }
         .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0x80, 0x6d]);
@@ -959,7 +948,7 @@ mod tests {
         };
         PartialEncode {
             header: &header,
-            pn: Some((1, 2)),
+            pn: Some(1),
         }
         .finish(&mut sending, &key, 3);
         assert_eq!(&sending[1..3], [0xa9, 0x0e]);

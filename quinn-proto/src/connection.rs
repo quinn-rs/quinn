@@ -924,17 +924,11 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
-        let mut new_crypto = None;
-        let crypto = if partial_decode.is_handshake() {
-            self.find_crypto(CryptoLevel::Initial, 0).unwrap()
-        } else if partial_decode.key_phase() != self.key_phase {
-            new_crypto = Some(self.cryptos.back().unwrap().crypto.update());
-            new_crypto.as_ref().unwrap()
+        let header_key = if partial_decode.is_handshake() {
+            self.find_crypto(CryptoLevel::Initial, 0)
+                .unwrap()
+                .header_decrypt_key()
         } else {
-            // This is somewhat incorrect for pre-17 drafts, where packet number protection
-            // keys are supposed to get updated with key updates. Since supporting that is
-            // painful and will go away in draft 17, let's take the simple way out and just
-            // make sure we use the packet number protection key from the last 1-RTT key.
             let crypto_space = self.cryptos.back().unwrap();
             if crypto_space.level != CryptoLevel::OneRtt {
                 warn!(
@@ -943,12 +937,12 @@ impl Connection {
                 );
                 return None;
             }
-            &crypto_space.crypto
+            crypto_space.crypto.header_decrypt_key()
         };
 
-        match partial_decode.finish(crypto.header_decrypt_key()) {
+        match partial_decode.finish(header_key) {
             Ok((packet, rest)) => {
-                self.handle_packet(now, ecn, packet, new_crypto);
+                self.handle_packet(now, ecn, packet);
                 rest
             }
             Err(e) => {
@@ -958,13 +952,7 @@ impl Connection {
         }
     }
 
-    fn handle_packet(
-        &mut self,
-        now: u64,
-        ecn: Option<EcnCodepoint>,
-        mut packet: Packet,
-        crypto_update: Option<Crypto>,
-    ) {
+    fn handle_packet(&mut self, now: u64, ecn: Option<EcnCodepoint>, mut packet: Packet) {
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
         let was_handshake = self.is_handshaking();
         let was_closed = self.state.is_closed();
@@ -973,7 +961,7 @@ impl Connection {
             packet.payload.len() >= 16 && packet.payload[packet.payload.len() - 16..] == token
         });
 
-        let result = match self.decrypt_packet(was_handshake, &mut packet, crypto_update) {
+        let result = match self.decrypt_packet(was_handshake, &mut packet) {
             Err(Some(e)) => {
                 warn!(self.log, "got illegal packet"; "reason" => %e);
                 Err(e.into())
@@ -2181,16 +2169,17 @@ impl Connection {
         &mut self,
         handshake: bool,
         packet: &mut Packet,
-        crypto_update: Option<Crypto>,
     ) -> Result<Option<u64>, Option<TransportError>> {
         if packet.header.is_retry() {
             // Retry packets are not encrypted and have no packet number
             return Ok(None);
         }
-        let (level, number) = match packet.header {
-            Header::Short { number, .. } if !handshake => (CryptoLevel::OneRtt, number),
+        let (level, number, key_phase) = match packet.header {
+            Header::Short {
+                number, key_phase, ..
+            } if !handshake => (CryptoLevel::OneRtt, number, key_phase),
             Header::Initial { number, .. } | Header::Long { number, .. } if handshake => {
-                (CryptoLevel::Initial, number)
+                (CryptoLevel::Initial, number, false)
             }
             _ => {
                 return Err(None);
@@ -2198,12 +2187,13 @@ impl Connection {
         };
         let number = number.expand(self.rx_packet + 1);
 
-        let crypto = match crypto_update.as_ref() {
-            None => self.find_crypto(level, number).unwrap(),
-            Some(crypto) => {
-                assert_eq!(level, CryptoLevel::OneRtt);
-                crypto
-            }
+        let mut crypto_update = None;
+        let crypto = if key_phase == self.key_phase {
+            self.find_crypto(level, number).unwrap()
+        } else {
+            assert_eq!(level, CryptoLevel::OneRtt);
+            crypto_update = Some(self.find_crypto(level, number).unwrap().update());
+            crypto_update.as_ref().unwrap()
         };
 
         crypto
