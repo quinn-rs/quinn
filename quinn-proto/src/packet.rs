@@ -388,6 +388,18 @@ impl Header {
             _ => false,
         }
     }
+
+    pub fn number(&self) -> Option<PacketNumber> {
+        use self::Header::*;
+        Some(match *self {
+            Initial { number, .. } => number,
+            Long { number, .. } => number,
+            Short { number, .. } => number,
+            _ => {
+                return None;
+            }
+        })
+    }
 }
 
 pub struct PartialEncode<'a> {

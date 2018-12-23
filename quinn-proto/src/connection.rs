@@ -1636,7 +1636,7 @@ impl Connection {
 
         let partial_encode = header.encode(&mut buf);
         let ack_only = pending.is_empty();
-        let header_len = buf.len() as u16;
+        let header_len = buf.len();
         let max_size = self.mtu as usize - AEAD_TAG_SIZE;
 
         // PING
@@ -1849,15 +1849,23 @@ impl Connection {
                 buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
             }
         }
-        if crypto_level != CryptoLevel::OneRtt {
-            let pn_len = match header {
-                Header::Initial { number, .. } | Header::Long { number, .. } => number.len(),
-                _ => panic!("invalid header for packet payload length"),
-            };
-            set_payload_length(&mut buf, header_len as usize, pn_len);
+        let pn_len = header
+            .number()
+            .expect("next_packet should only send numbered packets")
+            .len();
+        // To ensure that sufficient data is available for sampling, packets are padded so that the
+        // combined lengths of the encoded packet number and protected payload is at least 4 bytes
+        // longer than the sample required for header protection.
+        if let Some(padding) = (crypto.header_encrypt_key().sample_size() + 4)
+            .checked_sub(buf.len() - header_len + pn_len)
+        {
+            buf.resize(buf.len() + padding, 0);
         }
-        crypto.encrypt(number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len as usize);
+        if crypto_level != CryptoLevel::OneRtt {
+            set_payload_length(&mut buf, header_len, pn_len);
+        }
+        crypto.encrypt(number, &mut buf, header_len);
+        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
