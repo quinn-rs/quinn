@@ -20,7 +20,7 @@ pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Sessi
 use webpki::DNSNameRef;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::packet::{ConnectionId, AEAD_TAG_SIZE};
+use crate::packet::{ConnectionId, PacketNumber, AEAD_TAG_SIZE, LONG_HEADER_FORM};
 use crate::transport_parameters::TransportParameters;
 use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
@@ -356,41 +356,58 @@ impl HeaderKey {
         }
     }
 
-    pub fn decrypt(&self, sample: &[u8], in_out: &mut [u8]) {
+    fn mask(&self, sample: &[u8]) -> [u8; 5] {
+        let mut buf = [0; 5];
         use self::HeaderKey::*;
         match self {
             AesCtr128(key) => {
                 let key = GenericArray::from_slice(key);
                 let nonce = GenericArray::from_slice(sample);
-                Aes128Ctr::new(key, nonce).apply_keystream(in_out)
+                Aes128Ctr::new(key, nonce).apply_keystream(&mut buf);
             }
             ChaCha20(key) => {
                 let counter = BigEndian::read_u32(&sample[..4]);
                 let nonce =
                     chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
-                let mut input = [0; 4];
-                (&mut input[..in_out.len()]).copy_from_slice(in_out);
-                chacha20::decrypt(key, &nonce, counter, &input[..in_out.len()], in_out).unwrap();
+                chacha20::decrypt(key, &nonce, counter, &[0; 5], &mut buf).unwrap();
             }
+        }
+        buf
+    }
+
+    pub fn decrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
+        let mask = self.mask(sample);
+        if packet[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
+            // Long header: 4 bits masked
+            packet[0] ^= mask[0] & 0x0f;
+        } else {
+            // Short header: 5 bits masked
+            packet[0] ^= mask[0] & 0x1f;
+        }
+        let pn_length = PacketNumber::decode_len(packet[0]);
+        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+            .iter_mut()
+            .zip(&mask[1..])
+        {
+            *out ^= inp;
         }
     }
 
-    pub fn encrypt(&self, sample: &[u8], in_out: &mut [u8]) {
-        use self::HeaderKey::*;
-        match self {
-            AesCtr128(key) => {
-                let key = GenericArray::from_slice(key);
-                let nonce = GenericArray::from_slice(sample);
-                Aes128Ctr::new(key, nonce).apply_keystream(in_out)
-            }
-            ChaCha20(key) => {
-                let counter = BigEndian::read_u32(&sample[..4]);
-                let nonce =
-                    chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
-                let mut input = [0; 4];
-                (&mut input[..in_out.len()]).copy_from_slice(in_out);
-                chacha20::encrypt(key, &nonce, counter, &input[..in_out.len()], in_out).unwrap();
-            }
+    pub fn encrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
+        let mask = self.mask(sample);
+        let pn_length = PacketNumber::decode_len(packet[0]);
+        if packet[0] & 0x80 == 0x80 {
+            // Long header: 4 bits masked
+            packet[0] ^= mask[0] & 0x0f;
+        } else {
+            // Short header: 5 bits masked
+            packet[0] ^= mask[0] & 0x1f;
+        }
+        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+            .iter_mut()
+            .zip(&mask[1..])
+        {
+            *out ^= inp;
         }
     }
 }
