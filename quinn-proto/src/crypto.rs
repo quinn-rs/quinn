@@ -305,10 +305,10 @@ impl From<TLSError> for ConnectError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum PacketNumberKey {
     AesCtr128([u8; 16]),
-    ChaCha20([u8; 32]),
+    ChaCha20(chacha20::SecretKey),
 }
 
 impl PacketNumberKey {
@@ -321,7 +321,10 @@ impl PacketNumberKey {
         } else if alg == &aead::CHACHA20_POLY1305 {
             let mut pn = [0; 32];
             qhkdf_expand(&secret_key, b"pn", &mut pn);
-            ChaCha20(pn)
+            ChaCha20(
+                chacha20::SecretKey::from_slice(&pn)
+                    .expect("packet number key construction failed"),
+            )
         } else {
             unimplemented!()
         }
@@ -344,10 +347,11 @@ impl PacketNumberKey {
             }
             ChaCha20(key) => {
                 let counter = BigEndian::read_u32(&sample[..4]);
-                let nonce = &sample[4..];
+                let nonce =
+                    chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
                 let mut input = [0; 4];
                 (&mut input[..in_out.len()]).copy_from_slice(in_out);
-                chacha20::decrypt(key, nonce, counter, &input[..in_out.len()], in_out).unwrap();
+                chacha20::decrypt(key, &nonce, counter, &input[..in_out.len()], in_out).unwrap();
             }
         }
     }
@@ -362,10 +366,11 @@ impl PacketNumberKey {
             }
             ChaCha20(key) => {
                 let counter = BigEndian::read_u32(&sample[..4]);
-                let nonce = &sample[4..];
+                let nonce =
+                    chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
                 let mut input = [0; 4];
                 (&mut input[..in_out.len()]).copy_from_slice(in_out);
-                chacha20::encrypt(key, nonce, counter, &input[..in_out.len()], in_out).unwrap();
+                chacha20::encrypt(key, &nonce, counter, &input[..in_out.len()], in_out).unwrap();
             }
         }
     }
