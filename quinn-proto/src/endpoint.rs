@@ -241,7 +241,7 @@ impl Endpoint {
                 }
 
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
-                return match partial_decode.finish(crypto.pn_decrypt_key()) {
+                return match partial_decode.finish(crypto.header_decrypt_key()) {
                     Ok((packet, rest)) => {
                         self.handle_initial(now, remote, ecn, packet, &crypto);
                         rest
@@ -484,7 +484,7 @@ impl Endpoint {
                 };
                 let encode = header.encode(&mut buf);
                 let header_len = buf.len();
-                encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
+                encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
                 buf.put_slice(&token);
 
                 self.io.push_back(Io::Transmit {

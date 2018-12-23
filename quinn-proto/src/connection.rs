@@ -946,7 +946,7 @@ impl Connection {
             &crypto_space.crypto
         };
 
-        match partial_decode.finish(crypto.pn_decrypt_key()) {
+        match partial_decode.finish(crypto.header_decrypt_key()) {
             Ok((packet, rest)) => {
                 self.handle_packet(now, ecn, packet, new_crypto);
                 rest
@@ -1868,7 +1868,7 @@ impl Connection {
             set_payload_length(&mut buf, header_len as usize, pn_len);
         }
         crypto.encrypt(number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
+        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len as usize);
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
@@ -1907,7 +1907,7 @@ impl Connection {
 
         let crypto = &self.cryptos.back().unwrap().crypto;
         crypto.encrypt(number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len as usize);
+        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len as usize);
 
         self.on_packet_sent(
             now,
@@ -1965,7 +1965,7 @@ impl Connection {
             .encrypt(full_number, &mut buf, header_len as usize);
         partial_encode.finish(
             &mut buf,
-            crypto_space.crypto.pn_encrypt_key(),
+            crypto_space.crypto.header_encrypt_key(),
             header_len as usize,
         );
         buf.into()
@@ -2431,7 +2431,7 @@ where
     }
     set_payload_length(&mut buf, header_len, number.len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
-    partial_encode.finish(&mut buf, crypto.pn_encrypt_key(), header_len);
+    partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
     buf.into()
 }
 
