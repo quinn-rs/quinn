@@ -19,7 +19,6 @@ use crate::connection::{
 use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
 use crate::packet::{
     ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
-    PACKET_NUMBER_32_MASK,
 };
 use crate::stream::{ReadError, WriteError};
 use crate::transport_parameters::TransportParameters;
@@ -282,7 +281,7 @@ impl Endpoint {
                 .saturating_sub(RESET_TOKEN_SIZE),
             );
             buf.reserve_exact(header_len + padding + RESET_TOKEN_SIZE);
-            let number = self.rng.gen::<u32>() & PACKET_NUMBER_32_MASK | 0x4000;
+            let number = self.rng.gen::<u32>();
             Header::Short {
                 dst_cid: ConnectionId::random(&mut self.rng, MAX_CID_SIZE),
                 number: PacketNumber::U32(number),
@@ -427,7 +426,7 @@ impl Endpoint {
             )
             .is_err()
         {
-            debug!(self.log, "failed to authenticate initial packet");
+            debug!(self.log, "failed to authenticate initial packet"; "pn" => packet_number);
             return;
         };
         let loc_cid = self.new_cid();
