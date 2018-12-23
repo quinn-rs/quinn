@@ -70,8 +70,8 @@ apply_params!(make_struct);
 impl TransportParameters {
     pub fn new(config: &Config) -> Self {
         TransportParameters {
-            initial_max_streams_bidi: config.max_remote_bi_streams,
-            initial_max_streams_uni: config.max_remote_uni_streams,
+            initial_max_streams_bidi: config.max_remote_streams_bidi,
+            initial_max_streams_uni: config.max_remote_streams_uni,
             initial_max_data: config.receive_window,
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,

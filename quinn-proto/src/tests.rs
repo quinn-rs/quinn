@@ -71,8 +71,8 @@ struct Pair {
 impl Default for Pair {
     fn default() -> Self {
         let mut server = Config::default();
-        server.max_remote_uni_streams = 32;
-        server.max_remote_bi_streams = 32;
+        server.max_remote_streams_uni = 32;
+        server.max_remote_streams_bidi = 32;
         Pair::new(server, Default::default(), server_config())
     }
 }
@@ -464,8 +464,8 @@ fn stateless_retry() {
 #[test]
 fn stateless_reset() {
     let mut server = Config::default();
-    server.max_remote_uni_streams = 32;
-    server.max_remote_bi_streams = 32;
+    server.max_remote_streams_uni = 32;
+    server.max_remote_streams_bidi = 32;
 
     let mut token_value = [0; 64];
     let mut reset_value = [0; 64];
@@ -689,7 +689,7 @@ fn close_during_handshake() {
 #[test]
 fn stream_id_backpressure() {
     let server = Config {
-        max_remote_uni_streams: 1,
+        max_remote_streams_uni: 1,
         ..Config::default()
     };
     let mut pair = Pair::new(server, Default::default(), server_config());
