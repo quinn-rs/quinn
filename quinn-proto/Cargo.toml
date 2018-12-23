@@ -20,7 +20,6 @@ maintenance = { status = "experimental" }
 dangerous_configuration = ["rustls/dangerous_configuration"]
 
 [dependencies]
-aes-ctr = "0.2"
 byteorder = "1.1"
 bytes = "0.4.7"
 constant_time_eq = "0.1"
@@ -34,6 +33,8 @@ rustls = { git = "https://github.com/Ralith/rustls.git", rev = "044b5f10a57ec385
 slab = "0.4"
 slog = "2.2"
 webpki = "0.18"
+aes = "0.3"
+block-modes = "0.2"
 
 [dev-dependencies]
 assert_matches = "1.1"
