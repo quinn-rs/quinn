@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, str};
 
-use aes_ctr::stream_cipher::generic_array::GenericArray;
-use aes_ctr::stream_cipher::{NewFixStreamCipher, StreamCipherCore};
-use aes_ctr::Aes128Ctr;
+use aes::{Aes128, Aes256};
+use block_modes::block_padding::ZeroPadding;
+use block_modes::{BlockMode, Ecb};
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, BytesMut};
 use orion::hazardous::stream::chacha20;
 use ring::aead;
@@ -312,7 +312,8 @@ impl From<TLSError> for ConnectError {
 
 #[derive(Debug, PartialEq)]
 pub enum HeaderKey {
-    AesCtr128([u8; 16]),
+    AesEcb128([u8; 16]),
+    AesEcb256([u8; 32]),
     ChaCha20(chacha20::SecretKey),
 }
 
@@ -321,7 +322,8 @@ impl Clone for HeaderKey {
     fn clone(&self) -> Self {
         use self::HeaderKey::*;
         match *self {
-            AesCtr128(ref x) => AesCtr128(x.clone()),
+            AesEcb128(ref x) => AesEcb128(x.clone()),
+            AesEcb256(ref x) => AesEcb256(x.clone()),
             ChaCha20(ref x) => {
                 ChaCha20(chacha20::SecretKey::from_slice(x.unprotected_as_bytes()).unwrap())
             }
@@ -336,7 +338,11 @@ impl HeaderKey {
         if alg == &aead::AES_128_GCM {
             let mut pn = [0; 16];
             hkdf_expand(&secret_key, LABEL, &mut pn);
-            AesCtr128(pn)
+            AesEcb128(pn)
+        } else if alg == &aead::AES_256_GCM {
+            let mut pn = [0; 32];
+            hkdf_expand(&secret_key, LABEL, &mut pn);
+            AesEcb256(pn)
         } else if alg == &aead::CHACHA20_POLY1305 {
             let mut pn = [0; 32];
             hkdf_expand(&secret_key, LABEL, &mut pn);
@@ -352,27 +358,36 @@ impl HeaderKey {
     pub fn sample_size(&self) -> usize {
         use self::HeaderKey::*;
         match *self {
-            AesCtr128(_) | ChaCha20(_) => 16,
+            AesEcb128(_) | AesEcb256(_) | ChaCha20(_) => 16,
         }
     }
 
     fn mask(&self, sample: &[u8]) -> [u8; 5] {
-        let mut buf = [0; 5];
         use self::HeaderKey::*;
         match self {
-            AesCtr128(key) => {
-                let key = GenericArray::from_slice(key);
-                let nonce = GenericArray::from_slice(sample);
-                Aes128Ctr::new(key, nonce).apply_keystream(&mut buf);
+            AesEcb128(key) => {
+                let mut cipher = Ecb::<Aes128, ZeroPadding>::new_varkey(key).unwrap();
+                let mut buf = [0; 16];
+                buf.copy_from_slice(sample);
+                cipher.encrypt_nopad(&mut buf).unwrap();
+                [buf[0], buf[1], buf[2], buf[3], buf[4]]
+            }
+            AesEcb256(key) => {
+                let mut cipher = Ecb::<Aes256, ZeroPadding>::new_varkey(key).unwrap();
+                let mut buf = [0; 16];
+                buf.copy_from_slice(sample);
+                cipher.encrypt_nopad(&mut buf).unwrap();
+                [buf[0], buf[1], buf[2], buf[3], buf[4]]
             }
             ChaCha20(key) => {
+                let mut buf = [0; 5];
                 let counter = BigEndian::read_u32(&sample[..4]);
                 let nonce =
                     chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
                 chacha20::decrypt(key, &nonce, counter, &[0; 5], &mut buf).unwrap();
+                buf
             }
         }
-        buf
     }
 
     pub fn decrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
@@ -561,7 +576,7 @@ mod test {
         );
         assert_eq!(
             client_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x9a, 0x85, 0x42, 0xef, 0x39, 0x90, 0x38, 0xab, 0xa6, 0x6e, 0xf1, 0x33, 0x38, 0x09,
                 0xfc, 0x5b
             ])
@@ -591,7 +606,7 @@ mod test {
         );
         assert_eq!(
             server_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x92, 0x2b, 0x11, 0x3f, 0x1b, 0x2a, 0x81, 0x5f, 0x08, 0x42, 0x54, 0xf9, 0x81, 0xa0,
                 0xb0, 0x97
             ])
@@ -644,7 +659,7 @@ mod test {
         );
         assert_eq!(
             onertt.local_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
                 0xa8, 0x4d,
             ])
@@ -656,7 +671,7 @@ mod test {
         );
         assert_eq!(
             onertt.remote_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
                 0x23, 0x23
             ])
@@ -670,7 +685,7 @@ mod test {
         );
         assert_eq!(
             updated_onertt.local_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
                 0xa8, 0x4d,
             ])
@@ -682,7 +697,7 @@ mod test {
         );
         assert_eq!(
             updated_onertt.remote_header_key,
-            HeaderKey::AesCtr128([
+            HeaderKey::AesEcb128([
                 0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
                 0x23, 0x23
             ])

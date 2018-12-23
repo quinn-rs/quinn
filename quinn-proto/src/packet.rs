@@ -842,8 +842,8 @@ impl EcnCodepoint {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionId, Header, HeaderKey, PacketNumber, PartialDecode, PartialEncode};
-    use orion::hazardous::stream::chacha20;
+    use super::*;
+    use crate::{crypto::Crypto, Side};
     use std::io;
 
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {
@@ -879,90 +879,58 @@ mod tests {
         }
     }
 
-    // https://github.com/quicwg/base-drafts/wiki/Test-vector-for-AES-packet-number-encryption
     #[test]
-    #[ignore]
-    fn pne_test_vector() {
-        let key = HeaderKey::AesCtr128([
-            0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
-            0x4f, 0x3c,
-        ]);
-
-        let received = vec![
-            0x30, 0x80, 0x6d, 0xbb, 0xb5, 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9,
-            0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0x20, 0x3f, 0xbe, 0x2e, 0x32, 0x17, 0xfc,
-            0x5b, 0x88, 0x55,
-        ];
-        let partial_decode = PartialDecode::new(received.into(), 0).unwrap();
-        let packet = partial_decode.finish(&key).unwrap().0;
-        match packet.header {
-            Header::Short {
-                number: PacketNumber::U16(15034),
-                ..
-            } => {}
-            _ => unreachable!(),
-        }
-
-        let mut sending = vec![
-            0x30, 0xba, 0xba, 0xbb, 0xb5, 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9,
-            0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0x20, 0x3f, 0xbe, 0x2e, 0x32, 0x17, 0xfc,
-            0x5b, 0x88, 0x55,
-        ];
-        let header = Header::Short {
-            dst_cid: ConnectionId::new(&[]),
-            number: PacketNumber::U16(15034),
-            key_phase: false,
+    fn header_encoding() {
+        let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
+        let client_crypto = Crypto::new_initial(&dcid, Side::Client);
+        let mut buf = Vec::new();
+        let header = Header::Initial {
+            number: PacketNumber::U8(0),
+            src_cid: ConnectionId::new(&[]),
+            dst_cid: dcid,
+            token: Bytes::new(),
         };
-        PartialEncode {
-            header: &header,
-            pn: Some(1),
+        let encode = header.encode(&mut buf);
+        let header_len = buf.len();
+        buf.resize(header_len + 16, 0);
+        set_payload_length(&mut buf, header_len, 1);
+        for byte in &buf {
+            eprint!("{:02x}", byte);
         }
-        .finish(&mut sending, &key, 3);
-        assert_eq!(&sending[1..3], [0x80, 0x6d]);
-    }
-
-    #[test]
-    #[ignore]
-    fn pne_test_chacha20() {
-        let key = HeaderKey::ChaCha20(
-            chacha20::SecretKey::from_slice(&[
-                0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
-                0x4f, 0x3c, 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88,
-                0x09, 0xcf, 0x4f, 0x3c,
-            ])
-            .unwrap(),
+        assert_eq!(
+            buf[..],
+            hex!("c0ff0000115006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
         );
 
-        let received = vec![
-            0x30, 0xa9, 0x0e, 0xbb, 0xb5, 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9,
-            0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0x20, 0x3f, 0xbe, 0x2e, 0x32, 0x17, 0xfc,
-            0x5b, 0x88, 0x55,
-        ];
-        let partial_decode = PartialDecode::new(received.into(), 0).unwrap();
-        let packet = partial_decode.finish(&key).unwrap().0;
+        client_crypto.encrypt(0, &mut buf, header_len);
+        encode.finish(&mut buf, client_crypto.header_encrypt_key(), header_len);
+        assert_eq!(
+            buf[..],
+            hex!(
+                "ccff0000115006b858ec6f80452b004021b5 
+                 f037a410591e943c31d1eefad0927b97e620160d59c776720c7118b9699a15b3"
+            )[..]
+        );
+
+        let server_crypto = Crypto::new_initial(&dcid, Side::Server);
+        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap();
+        let mut packet = decode.finish(server_crypto.header_decrypt_key()).unwrap().0;
+        assert_eq!(
+            packet.header_data[..],
+            hex!("c0ff0000115006b858ec6f80452b00402100")[..]
+        );
+        server_crypto
+            .decrypt(0, &packet.header_data, &mut packet.payload)
+            .unwrap();
+        assert_eq!(packet.payload[..], [0; 16]);
         match packet.header {
-            Header::Short {
-                number: PacketNumber::U16(15034),
+            Header::Initial {
+                number: PacketNumber::U8(0),
                 ..
             } => {}
-            _ => unreachable!(),
+            _ => {
+                panic!("unexpected header {:?}", packet.header);
+            }
         }
-
-        let mut sending = vec![
-            0x30, 0xba, 0xba, 0xbb, 0xb5, 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9,
-            0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0x20, 0x3f, 0xbe, 0x2e, 0x32, 0x17, 0xfc,
-            0x5b, 0x88, 0x55,
-        ];
-        let header = Header::Short {
-            dst_cid: ConnectionId::new(&[]),
-            number: PacketNumber::U16(15034),
-            key_phase: false,
-        };
-        PartialEncode {
-            header: &header,
-            pn: Some(1),
-        }
-        .finish(&mut sending, &key, 3);
-        assert_eq!(&sending[1..3], [0xa9, 0x0e]);
     }
 }
