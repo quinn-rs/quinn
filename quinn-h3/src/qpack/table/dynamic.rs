@@ -6,7 +6,6 @@ use std::collections::VecDeque;
 
 use super::field::HeaderField;
 
-
 /**
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
  * 4. Configuration
@@ -19,19 +18,16 @@ pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
  */
 pub const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 
-
 #[derive(Debug, PartialEq)]
 pub enum ErrorKind {
-    MaximumTableSizeTooLarge
+    MaximumTableSizeTooLarge,
 }
-
 
 pub struct DynamicTable {
     fields: VecDeque<HeaderField>,
     curr_mem_size: usize,
     mem_limit: usize,
 }
-
 
 impl DynamicTable {
     pub fn new() -> DynamicTable {
@@ -47,10 +43,11 @@ impl DynamicTable {
      * Number of fields removed to have enough space for the field
      */
     pub fn put_field(&mut self, field: HeaderField) -> (bool, usize) {
-        let at_most = 
-            if field.mem_size() <= self.mem_limit { 
-                self.mem_limit - field.mem_size() 
-            } else { 0 };
+        let at_most = if field.mem_size() <= self.mem_limit {
+            self.mem_limit - field.mem_size()
+        } else {
+            0
+        };
         let dropped = self.shrink_to(at_most);
 
         let available = self.mem_limit - self.curr_mem_size;
@@ -70,7 +67,7 @@ impl DynamicTable {
         if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
             return Err(ErrorKind::MaximumTableSizeTooLarge);
         }
-        
+
         self.mem_limit = size;
         Ok(self.shrink_to(size))
     }
@@ -78,18 +75,20 @@ impl DynamicTable {
     /**
      * https://tools.ietf.org/html/rfc7541
      * 4.4.  Entry Eviction When Adding New Entries
-     * 
+     *
      * @returns Number of fields removed
      */
     fn shrink_to(&mut self, lower_bound: usize) -> usize {
         let initial = self.fields.len();
-        
+
         while !self.fields.is_empty() && self.curr_mem_size > lower_bound {
-            let field = self.fields.pop_front()
+            let field = self
+                .fields
+                .pop_front()
                 .expect("there is at least one field");
             self.curr_mem_size -= field.mem_size();
         }
-        
+
         initial - self.fields.len()
     }
 
@@ -104,19 +103,17 @@ impl DynamicTable {
     pub fn get(&self, index: usize) -> Option<&HeaderField> {
         self.fields.get(index)
     }
-    
+
     pub fn count(&self) -> usize {
         self.fields.len()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // Test on table size
-
 
     /**
      * https://tools.ietf.org/html/rfc7541#section-4.1
@@ -140,10 +137,8 @@ mod tests {
         assert_eq!(table.mem_size(), table_size);
     }
 
-
     // Test on maximum table size
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "The decoder determines the maximum size that the encoder is permitted
@@ -162,7 +157,6 @@ mod tests {
         assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_DEFAULT);
     }
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "The decoder determines the maximum size that the encoder is permitted
@@ -178,7 +172,6 @@ mod tests {
         assert_eq!(res_change, Err(ErrorKind::MaximumTableSizeTooLarge));
     }
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "This mechanism can be used to completely clear entries from the
@@ -193,7 +186,6 @@ mod tests {
         assert_eq!(table.max_mem_size(), 0);
     }
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "The decoder determines the maximum size that the encoder is permitted
@@ -209,10 +201,8 @@ mod tests {
         assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_MAX);
     }
 
-
     // Test duplicated fields
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "The dynamic table can contain duplicate entries (i.e., entries with
@@ -227,10 +217,8 @@ mod tests {
         assert_eq!(table.count(), 2);
     }
 
-
     // Test adding fields
 
-    
     /** functional test */
     #[test]
     fn test_add_field_fitting_free_space() {
@@ -241,7 +229,6 @@ mod tests {
         assert_eq!(table.count(), 1);
     }
 
-    
     /** functional test */
     #[test]
     fn test_add_field_reduce_free_space() {
@@ -252,7 +239,6 @@ mod tests {
         assert_eq!(table.mem_size(), field.mem_size());
     }
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "Before a new entry is added to the dynamic table, entries are evicted
@@ -268,10 +254,10 @@ mod tests {
         table.put_field(HeaderField::new("Name-B", "Value-B"));
         let perfect_size = table.mem_size();
         assert!(table.set_max_mem_size(perfect_size).is_ok());
-        
+
         let field = HeaderField::new("Name-Large", "Value-Large");
         let (added, dropped) = table.put_field(field);
-        
+
         assert_eq!(added, true);
         assert_eq!(dropped, 2);
         assert_eq!(table.count(), 1);
@@ -290,19 +276,17 @@ mod tests {
         table.put_field(HeaderField::new("Name-A", "Value-A"));
         let perfect_size = table.mem_size();
         assert!(table.set_max_mem_size(perfect_size).is_ok());
-        
+
         let field = HeaderField::new("Name-Large", "Value-Large");
         let (added, dropped) = table.put_field(field);
-        
+
         assert_eq!(added, false);
         assert_eq!(dropped, 1);
         assert_eq!(table.count(), 0);
     }
 
-
     // Test on entry eviction
 
-    
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "This mechanism can be used to completely clear entries from the
@@ -322,7 +306,6 @@ mod tests {
         assert_eq!(table.count(), 0);
     }
 
-    
     /** functional test */
     #[test]
     fn test_eviction_is_fifo() {
@@ -339,5 +322,5 @@ mod tests {
         assert_eq!(table.get(1), Some(&HeaderField::new("Name-C", "Value-C")));
         assert_eq!(table.get(2), None);
     }
-    
+
 }
