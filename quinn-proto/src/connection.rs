@@ -1655,7 +1655,6 @@ impl Connection {
         if pending.ping {
             trace!(self.log, "ping");
             pending.ping = false;
-            sent.ping = true;
             buf.write(frame::Type::PING);
         }
 
