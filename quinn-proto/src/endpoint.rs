@@ -16,7 +16,9 @@ use crate::coding::BufMutExt;
 use crate::connection::{
     self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, TimerUpdate,
 };
-use crate::crypto::{self, reset_token_for, ConnectError, Crypto, TlsSession, TokenKey};
+use crate::crypto::{
+    self, reset_token_for, ConnectError, Crypto, HeaderCrypto, TlsSession, TokenKey,
+};
 use crate::packet::{
     ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PacketNumber, PartialDecode,
 };
@@ -241,9 +243,10 @@ impl Endpoint {
                 }
 
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
-                return match partial_decode.finish(crypto.header_decrypt_key()) {
+                let header_crypto = crypto.header_crypto();
+                return match partial_decode.finish(&header_crypto) {
                     Ok((packet, rest)) => {
-                        self.handle_initial(now, remote, ecn, packet, &crypto);
+                        self.handle_initial(now, remote, ecn, packet, &crypto, &header_crypto);
                         rest
                     }
                     Err(e) => {
@@ -406,6 +409,7 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         crypto: &Crypto,
+        header_crypto: &HeaderCrypto,
     ) {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
@@ -439,7 +443,8 @@ impl Endpoint {
                 destination: remote,
                 ecn: None,
                 packet: handshake_close(
-                    &crypto,
+                    crypto,
+                    header_crypto,
                     &src_cid,
                     &loc_cid,
                     0,
@@ -484,7 +489,7 @@ impl Endpoint {
                 };
                 let encode = header.encode(&mut buf);
                 let header_len = buf.len();
-                encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
+                encode.finish(&mut buf, header_crypto, header_len);
                 buf.put_slice(&token);
 
                 self.io.push_back(Io::Transmit {
@@ -523,7 +528,7 @@ impl Endpoint {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: handshake_close(&crypto, &src_cid, &loc_cid, 0, e),
+                    packet: handshake_close(crypto, header_crypto, &src_cid, &loc_cid, 0, e),
                 });
             }
         }
