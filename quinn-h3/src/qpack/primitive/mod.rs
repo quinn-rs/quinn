@@ -10,4 +10,3 @@ pub use self::parser::Parser;
 
 pub mod dump;
 pub use self::dump::{Dump, StringEncoding};
-

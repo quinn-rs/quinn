@@ -2,14 +2,13 @@
 // TODO remove allow dead code
 #![allow(dead_code)]
 
+use bytes::Buf;
 use std::borrow::Cow;
 use std::io::Cursor;
-use bytes::Buf;
 
-use super::primitive::{StarterByte, Parser};
-use super::table::{HeaderField, DynamicTable, StaticTable};
+use super::primitive::{Parser, StarterByte};
+use super::table::{DynamicTable, HeaderField, StaticTable};
 use super::vas::VirtualAddressSpace;
-
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -21,21 +20,19 @@ pub enum Error {
     // Same as HTTP_QPACK_DECOMPRESSION_FAILED
     BadNameIndexOnDynamicTable,
     BadNameIndexOnStaticTable,
-    BadDuplicateIndex
+    BadDuplicateIndex,
 }
-
 
 pub struct Decoder {
     table: DynamicTable,
-    vas: VirtualAddressSpace
+    vas: VirtualAddressSpace,
 }
-
 
 impl Decoder {
     pub fn new() -> Decoder {
         Decoder {
             table: DynamicTable::new(),
-            vas: VirtualAddressSpace::new()
+            vas: VirtualAddressSpace::new(),
         }
     }
 
@@ -57,8 +54,11 @@ impl Decoder {
     }
 
     fn resize_table(&mut self, size: usize) -> Result<(), Error> {
-        self.table.set_max_mem_size(size)
-            .map(|x| { self.vas.drop_many(x); })
+        self.table
+            .set_max_mem_size(size)
+            .map(|x| {
+                self.vas.drop_many(x);
+            })
             .map_err(|_| Error::BadMaximumDynamicTableSize)
     }
 
@@ -78,59 +78,49 @@ impl Decoder {
 
         while buf.has_remaining() {
             match buf.get_u8() as usize {
-                x if x & 128usize == 128usize
-                    => self.read_name_insert_by_ref(x, buf)?,
-                x if x & 64usize == 64usize
-                    => self.read_name_insert(x, buf)?,
-                x if x & 32usize == 32usize
-                    => self.read_table_size_update(x, buf)?,
-                x => self.read_duplicate_entry(x, buf)?
+                x if x & 128usize == 128usize => self.read_name_insert_by_ref(x, buf)?,
+                x if x & 64usize == 64usize => self.read_name_insert(x, buf)?,
+                x if x & 32usize == 32usize => self.read_table_size_update(x, buf)?,
+                x => self.read_duplicate_entry(x, buf)?,
             }
         }
 
         Ok(())
     }
 
-    fn read_name_insert_by_ref<T: Buf>(&mut self, byte: usize, buf: &mut T)
-        -> Result<(), Error>
-    {
+    fn read_name_insert_by_ref<T: Buf>(&mut self, byte: usize, buf: &mut T) -> Result<(), Error> {
         let is_static_table = byte & 64usize == 64usize;
 
         let mut parser = Parser::new(buf);
         let name_index = parser
-            .integer(StarterByte::valued(6, byte)
-                     .expect("valid starter byte"))
+            .integer(StarterByte::valued(6, byte).expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)? as usize;
         let value = parser
             .string(StarterByte::noprefix())
             .map_err(|_| Error::InvalidStringPrimitive)?;
 
-        let name =
-            if is_static_table {
-                self.static_field(name_index)
-                    .map(|x| x.name.clone())
-                    .ok_or(Error::BadNameIndexOnStaticTable)?
-            } else {
-                self.relative_field(name_index)
-                    .map(|x| x.name.clone())
-                    .ok_or(Error::BadNameIndexOnDynamicTable)?
-            };
+        let name = if is_static_table {
+            self.static_field(name_index)
+                .map(|x| x.name.clone())
+                .ok_or(Error::BadNameIndexOnStaticTable)?
+        } else {
+            self.relative_field(name_index)
+                .map(|x| x.name.clone())
+                .ok_or(Error::BadNameIndexOnDynamicTable)?
+        };
 
         self.put_field(HeaderField {
             name: name.clone(),
-            value: Cow::Owned(value)
+            value: Cow::Owned(value),
         });
 
         Ok(())
     }
 
-    fn read_name_insert<T: Buf>(&mut self, byte: usize, buf: &mut T)
-        -> Result<(), Error>
-    {
+    fn read_name_insert<T: Buf>(&mut self, byte: usize, buf: &mut T) -> Result<(), Error> {
         let mut parser = Parser::new(buf);
         let name = parser
-            .string(StarterByte::valued(6, byte)
-                    .expect("valid starter byte"))
+            .string(StarterByte::valued(6, byte).expect("valid starter byte"))
             .map_err(|_| Error::InvalidStringPrimitive)?;
         let value = parser
             .string(StarterByte::noprefix())
@@ -141,26 +131,21 @@ impl Decoder {
         Ok(())
     }
 
-    fn read_table_size_update<T: Buf>(&mut self, byte: usize, buf: &mut T)
-        -> Result<(), Error>
-    {
+    fn read_table_size_update<T: Buf>(&mut self, byte: usize, buf: &mut T) -> Result<(), Error> {
         let size = Parser::new(buf)
-            .integer(StarterByte::valued(5, byte)
-                     .expect("valid starter byte"))
+            .integer(StarterByte::valued(5, byte).expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
         self.resize_table(size as usize)
     }
 
-    fn read_duplicate_entry<T: Buf>(&mut self, byte: usize, buf: &mut T)
-        -> Result<(), Error>
-    {
+    fn read_duplicate_entry<T: Buf>(&mut self, byte: usize, buf: &mut T) -> Result<(), Error> {
         let dup_index = Parser::new(buf)
-            .integer(StarterByte::valued(5, byte)
-                     .expect("valid starter byte"))
+            .integer(StarterByte::valued(5, byte).expect("valid starter byte"))
             .map_err(|_| Error::InvalidIntegerPrimitive)?;
 
-        let field = self.relative_field(dup_index as usize)
+        let field = self
+            .relative_field(dup_index as usize)
             .map(|x| x.clone())
             .ok_or(Error::BadDuplicateIndex)?;
 
@@ -169,8 +154,6 @@ impl Decoder {
         Ok(())
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -184,7 +167,7 @@ mod tests {
     fn test_wrong_block_length() {
         let mut decoder = Decoder::new();
         let bytes: [u8; 1] = [
-            5 // block length
+            5, // block length
         ];
 
         let mut cursor = Cursor::new(&bytes);
@@ -197,7 +180,7 @@ mod tests {
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
      * 3.3.1.  Insert With Name Reference
      */
-     #[test]
+    #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
         let name_index = 1u8;
         let text = "serial value";
@@ -221,15 +204,13 @@ mod tests {
             'a' as u8,
             'l' as u8,
             'u' as u8,
-            'e' as u8
+            'e' as u8,
         ];
 
         let mut decoder = Decoder::new();
-        let model_field = decoder.static_field(name_index as usize)
-            .map(|x| x.clone());
-        let expected_field = HeaderField::new(
-            model_field.expect("field exists at name index").name,
-            text);
+        let model_field = decoder.static_field(name_index as usize).map(|x| x.clone());
+        let expected_field =
+            HeaderField::new(model_field.expect("field exists at name index").name, text);
 
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed_stream(&mut cursor);
@@ -262,7 +243,7 @@ mod tests {
             // name index (variable length encoding, end)
             22,
             // not huffman, string size
-            0 | 0
+            0 | 0,
         ];
 
         let mut cursor = Cursor::new(&bytes);
@@ -292,7 +273,7 @@ mod tests {
             // name index (variable length encoding, end)
             22,
             // not huffman, string size
-            0 | 0
+            0 | 0,
         ];
 
         let mut cursor = Cursor::new(&bytes);
@@ -325,7 +306,7 @@ mod tests {
             'a' as u8,
             'l' as u8,
             'u' as u8,
-            'e' as u8
+            'e' as u8,
         ];
 
         let mut decoder = Decoder::new();
@@ -376,8 +357,8 @@ mod tests {
     fn test_dynamic_table_size_update() {
         let mut decoder = Decoder::new();
         let bytes: [u8; 2] = [
-            1, // block length
-            32 | 25 // 0b001 message code, size
+            1,       // block length
+            32 | 25, // 0b001 message code, size
         ];
         let expected_size = 25;
 
