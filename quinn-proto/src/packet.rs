@@ -822,6 +822,8 @@ pub const AEAD_TAG_SIZE: usize = 16;
 pub const LONG_HEADER_FORM: u8 = 0x80;
 const KEY_PHASE_BIT: u8 = 0x04;
 const FIXED_BIT: u8 = 0x40;
+pub const SHORT_RESERVED_BITS: u8 = 0x18;
+pub const LONG_RESERVED_BITS: u8 = 0x0c;
 
 /// Explicit congestion notification codepoint
 #[repr(u8)]
