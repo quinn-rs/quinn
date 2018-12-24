@@ -7,7 +7,8 @@ use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 use crate::packet::EcnCodepoint;
 use crate::range_set::RangeSet;
 use crate::{
-    varint, ConnectionId, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
+    varint, ConnectionId, Directionality, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
+    RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -15,7 +16,7 @@ pub struct Type(u64);
 
 impl Type {
     fn stream(self) -> Option<StreamInfo> {
-        if self.0 >= 0x10 && self.0 <= 0x17 {
+        if self.0 >= STREAM_TY_MIN && self.0 <= STREAM_TY_MAX {
             Some(StreamInfo(self.0 as u8))
         } else {
             None
@@ -67,7 +68,7 @@ macro_rules! frame_types {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if x >= 0x10 && x <= 0x17 => f.write_str("STREAM"),
+                    x if x >= STREAM_TY_MIN && x <= STREAM_TY_MAX => f.write_str("STREAM"),
                     _ => write!(f, "<unknown {:02x}>", self.0),
                 }
             }
@@ -92,70 +93,80 @@ impl StreamInfo {
 
 frame_types! {
     PADDING = 0x00,
-    RST_STREAM = 0x01,
-    CONNECTION_CLOSE = 0x02,
-    APPLICATION_CLOSE = 0x03,
-    MAX_DATA = 0x04,
-    MAX_STREAM_DATA = 0x05,
-    MAX_STREAM_ID = 0x06,
-    PING = 0x07,
-    BLOCKED = 0x08,
-    STREAM_BLOCKED = 0x09,
-    STREAM_ID_BLOCKED = 0x0a,
-    NEW_CONNECTION_ID = 0x0b,
-    STOP_SENDING = 0x0c,
-    RETIRE_CONNECTION_ID = 0x0d,
-    PATH_CHALLENGE = 0x0e,
-    PATH_RESPONSE = 0x0f,
-    CRYPTO = 0x18,
-    NEW_TOKEN = 0x19,
-    ACK = 0x1a,
-    ACK_ECN = 0x1b,
+    PING = 0x01,
+    ACK = 0x02,
+    ACK_ECN = 0x03,
+    RESET_STREAM = 0x04,
+    STOP_SENDING = 0x05,
+    CRYPTO = 0x06,
+    NEW_TOKEN = 0x07,
+    // STREAM = STREAM_TY_MIN..STREAM_TY_MAX,
+    MAX_DATA = 0x10,
+    MAX_STREAM_DATA = 0x11,
+    MAX_STREAMS_BIDI = 0x12,
+    MAX_STREAMS_UNI = 0x13,
+    DATA_BLOCKED = 0x14,
+    STREAM_DATA_BLOCKED = 0x15,
+    STREAMS_BLOCKED_BIDI = 0x16,
+    STREAMS_BLOCKED_UNI = 0x17,
+    NEW_CONNECTION_ID = 0x18,
+    RETIRE_CONNECTION_ID = 0x19,
+    PATH_CHALLENGE = 0x1a,
+    PATH_RESPONSE = 0x1b,
+    CONNECTION_CLOSE = 0x1c,
+    APPLICATION_CLOSE = 0x1d,
 }
+
+const STREAM_TY_MIN: u64 = 0x08;
+const STREAM_TY_MAX: u64 = 0x0f;
 
 #[derive(Debug)]
 pub enum Frame {
     Padding,
-    RstStream(RstStream),
-    ConnectionClose(ConnectionClose),
-    ApplicationClose(ApplicationClose),
-    MaxData(u64),
-    MaxStreamData {
-        id: StreamId,
-        offset: u64,
-    },
-    MaxStreamId(StreamId),
     Ping,
-    Blocked {
-        offset: u64,
-    },
-    StreamBlocked {
-        id: StreamId,
-        offset: u64,
-    },
-    StreamIdBlocked {
-        id: StreamId,
-    },
+    Ack(Ack),
+    ResetStream(ResetStream),
     StopSending {
         id: StreamId,
         error_code: u16,
-    },
-    RetireConnectionId {
-        sequence: u64,
-    },
-    Ack(Ack),
-    Stream(Stream),
-    PathChallenge(u64),
-    PathResponse(u64),
-    NewConnectionId {
-        sequence: u64,
-        id: ConnectionId,
-        reset_token: [u8; 16],
     },
     Crypto(Crypto),
     NewToken {
         token: Bytes,
     },
+    Stream(Stream),
+    MaxData(u64),
+    MaxStreamData {
+        id: StreamId,
+        offset: u64,
+    },
+    MaxStreams {
+        directionality: Directionality,
+        count: u64,
+    },
+    DataBlocked {
+        offset: u64,
+    },
+    StreamDataBlocked {
+        id: StreamId,
+        offset: u64,
+    },
+    StreamsBlocked {
+        directionality: Directionality,
+        limit: u64,
+    },
+    NewConnectionId {
+        sequence: u64,
+        id: ConnectionId,
+        reset_token: [u8; 16],
+    },
+    RetireConnectionId {
+        sequence: u64,
+    },
+    PathChallenge(u64),
+    PathResponse(u64),
+    ConnectionClose(ConnectionClose),
+    ApplicationClose(ApplicationClose),
     Invalid(Type),
     Illegal(Type),
 }
@@ -165,16 +176,30 @@ impl Frame {
         use self::Frame::*;
         match *self {
             Padding => Type::PADDING,
-            RstStream(_) => Type::RST_STREAM,
+            ResetStream(_) => Type::RESET_STREAM,
             ConnectionClose(_) => Type::CONNECTION_CLOSE,
             ApplicationClose(_) => Type::APPLICATION_CLOSE,
             MaxData(_) => Type::MAX_DATA,
             MaxStreamData { .. } => Type::MAX_STREAM_DATA,
-            MaxStreamId(_) => Type::MAX_STREAM_ID,
+            MaxStreams {
+                directionality: Directionality::Bi,
+                ..
+            } => Type::MAX_STREAMS_BIDI,
+            MaxStreams {
+                directionality: Directionality::Uni,
+                ..
+            } => Type::MAX_STREAMS_UNI,
             Ping => Type::PING,
-            Blocked { .. } => Type::BLOCKED,
-            StreamBlocked { .. } => Type::STREAM_BLOCKED,
-            StreamIdBlocked { .. } => Type::STREAM_ID_BLOCKED,
+            DataBlocked { .. } => Type::DATA_BLOCKED,
+            StreamDataBlocked { .. } => Type::STREAM_DATA_BLOCKED,
+            StreamsBlocked {
+                directionality: Directionality::Bi,
+                ..
+            } => Type::STREAMS_BLOCKED_BIDI,
+            StreamsBlocked {
+                directionality: Directionality::Uni,
+                ..
+            } => Type::STREAMS_BLOCKED_UNI,
             StopSending { .. } => Type::STOP_SENDING,
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
@@ -398,7 +423,7 @@ where
     T: AsRef<[u8]>,
 {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
-        let mut ty = 0x10;
+        let mut ty = STREAM_TY_MIN;
         if self.offset != 0 {
             ty |= 0x04;
         }
@@ -408,7 +433,7 @@ where
         if self.fin {
             ty |= 0x01;
         }
-        out.put_u8(ty); // 1 byte
+        out.write_var(ty); // 1 byte
         out.write_var(self.id.0); // <=8 bytes
         if self.offset != 0 {
             out.write_var(self.offset); // <=8 bytes
@@ -484,7 +509,7 @@ impl Iter {
         }
         Ok(match ty {
             Type::PADDING => Frame::Padding,
-            Type::RST_STREAM => Frame::RstStream(RstStream {
+            Type::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
                 final_offset: self.bytes.get_var()?,
@@ -510,17 +535,29 @@ impl Iter {
                 id: self.bytes.get()?,
                 offset: self.bytes.get_var()?,
             },
-            Type::MAX_STREAM_ID => Frame::MaxStreamId(self.bytes.get()?),
+            Type::MAX_STREAMS_BIDI => Frame::MaxStreams {
+                directionality: Directionality::Bi,
+                count: self.bytes.get_var()?,
+            },
+            Type::MAX_STREAMS_UNI => Frame::MaxStreams {
+                directionality: Directionality::Uni,
+                count: self.bytes.get_var()?,
+            },
             Type::PING => Frame::Ping,
-            Type::BLOCKED => Frame::Blocked {
+            Type::DATA_BLOCKED => Frame::DataBlocked {
                 offset: self.bytes.get_var()?,
             },
-            Type::STREAM_BLOCKED => Frame::StreamBlocked {
+            Type::STREAM_DATA_BLOCKED => Frame::StreamDataBlocked {
                 id: self.bytes.get()?,
                 offset: self.bytes.get_var()?,
             },
-            Type::STREAM_ID_BLOCKED => Frame::StreamIdBlocked {
-                id: self.bytes.get()?,
+            Type::STREAMS_BLOCKED_BIDI => Frame::StreamsBlocked {
+                directionality: Directionality::Bi,
+                limit: self.bytes.get_var()?,
+            },
+            Type::STREAMS_BLOCKED_UNI => Frame::StreamsBlocked {
+                directionality: Directionality::Uni,
+                limit: self.bytes.get_var()?,
             },
             Type::STOP_SENDING => Frame::StopSending {
                 id: self.bytes.get()?,
@@ -668,19 +705,19 @@ impl<'a> Iterator for AckIter<'a> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct RstStream {
+pub struct ResetStream {
     pub id: StreamId,
     pub error_code: u16,
     pub final_offset: u64,
 }
 
-impl FrameStruct for RstStream {
+impl FrameStruct for ResetStream {
     const SIZE_BOUND: usize = 1 + 8 + 2 + 8;
 }
 
-impl RstStream {
+impl ResetStream {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::RST_STREAM); // 1 byte
+        out.write(Type::RESET_STREAM); // 1 byte
         out.write_var(self.id.0); // <= 8 bytes
         out.write(self.error_code); // 2 bytes
         out.write_var(self.final_offset); // <= 8 bytes
