@@ -14,7 +14,7 @@ use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
-    PartialDecode, AEAD_TAG_SIZE,
+    PartialDecode, AEAD_TAG_SIZE, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
 use crate::stream::{self, ReadError, Stream, WriteError};
@@ -2208,6 +2208,15 @@ impl Connection {
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
             .map_err(|()| None)?;
+
+        let reserved = match packet.header {
+            Header::Short { .. } => SHORT_RESERVED_BITS,
+            _ => LONG_RESERVED_BITS,
+        };
+        if packet.header_data[0] & reserved != 0 {
+            debug!(self.log, "peer set reserved bits");
+            return Err(Some(TransportError::PROTOCOL_VIOLATION));
+        }
 
         if let Some(crypto) = crypto_update {
             if number <= self.rx_packet {
