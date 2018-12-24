@@ -106,11 +106,9 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_
 pub struct Crypto {
     local_secret: Vec<u8>,
     local_iv: Vec<u8>,
-    local_header_key: HeaderKey,
     sealing_key: aead::SealingKey,
     remote_secret: Vec<u8>,
     remote_iv: Vec<u8>,
-    remote_header_key: HeaderKey,
     opening_key: aead::OpeningKey,
     digest: &'static digest::Algorithm,
 }
@@ -128,18 +126,15 @@ impl Crypto {
             expanded_initial_secret(&hs_secret, local_label),
             expanded_initial_secret(&hs_secret, remote_label),
         );
-        let (local_key, local_iv, local_header_key) = Self::get_keys(digest, cipher, &local_secret);
-        let (remote_key, remote_iv, remote_header_key) =
-            Self::get_keys(digest, cipher, &remote_secret);
+        let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
+        let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
 
         Self {
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
-            local_header_key,
             local_iv,
             remote_secret,
             opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
-            remote_header_key,
             remote_iv,
             digest,
         }
@@ -180,14 +175,6 @@ impl Crypto {
         for (out, inp) in out.iter_mut().zip(iv.iter()) {
             *out ^= inp;
         }
-    }
-
-    pub fn header_decrypt_key(&self) -> &HeaderKey {
-        &self.remote_header_key
-    }
-
-    pub fn header_encrypt_key(&self) -> &HeaderKey {
-        &self.local_header_key
     }
 
     pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
@@ -239,15 +226,12 @@ impl Crypto {
         let mut new_remote_secret = vec![0; self.digest.output_len];
         hkdf_expand(&remote_secret_key, UPDATE_LABEL, &mut new_remote_secret);
 
-        let mut new = Self::generate_1rtt(
+        Self::generate_1rtt(
             self.digest,
             self.opening_key.algorithm(),
             new_local_secret,
             new_remote_secret,
-        );
-        new.local_header_key = self.local_header_key.clone();
-        new.remote_header_key = self.remote_header_key.clone();
-        new
+        )
     }
 
     fn generate_1rtt(
@@ -256,18 +240,15 @@ impl Crypto {
         local_secret: Vec<u8>,
         remote_secret: Vec<u8>,
     ) -> Crypto {
-        let (local_key, local_iv, local_header_key) = Self::get_keys(digest, cipher, &local_secret);
-        let (remote_key, remote_iv, remote_header_key) =
-            Self::get_keys(digest, cipher, &remote_secret);
+        let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
+        let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
 
         Crypto {
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
-            local_header_key,
             local_iv,
             remote_secret,
             opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
-            remote_header_key,
             remote_iv,
             digest,
         }
@@ -277,7 +258,7 @@ impl Crypto {
         digest: &'static digest::Algorithm,
         cipher: &'static aead::Algorithm,
         secret: &[u8],
-    ) -> (Vec<u8>, Vec<u8>, HeaderKey) {
+    ) -> (Vec<u8>, Vec<u8>) {
         let secret_key = SigningKey::new(digest, &secret);
 
         let mut key = vec![0; cipher.key_len()];
@@ -286,7 +267,64 @@ impl Crypto {
         let mut iv = vec![0; cipher.nonce_len()];
         hkdf_expand(&secret_key, b"quic iv", &mut iv);
 
-        (key, iv, HeaderKey::from_aead(cipher, &secret_key))
+        (key, iv)
+    }
+
+    pub fn header_crypto(&self) -> HeaderCrypto {
+        let local = SigningKey::new(self.digest, &self.local_secret);
+        let remote = SigningKey::new(self.digest, &self.remote_secret);
+        let cipher = self.sealing_key.algorithm();
+        HeaderCrypto {
+            local: HeaderKey::from_aead(cipher, &local),
+            remote: HeaderKey::from_aead(cipher, &remote),
+        }
+    }
+}
+
+pub struct HeaderCrypto {
+    local: HeaderKey,
+    remote: HeaderKey,
+}
+
+impl HeaderCrypto {
+    pub fn decrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
+        let mask = self.remote.mask(sample);
+        if packet[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
+            // Long header: 4 bits masked
+            packet[0] ^= mask[0] & 0x0f;
+        } else {
+            // Short header: 5 bits masked
+            packet[0] ^= mask[0] & 0x1f;
+        }
+        let pn_length = PacketNumber::decode_len(packet[0]);
+        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+            .iter_mut()
+            .zip(&mask[1..])
+        {
+            *out ^= inp;
+        }
+    }
+
+    pub fn encrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
+        let mask = self.local.mask(sample);
+        let pn_length = PacketNumber::decode_len(packet[0]);
+        if packet[0] & 0x80 == 0x80 {
+            // Long header: 4 bits masked
+            packet[0] ^= mask[0] & 0x0f;
+        } else {
+            // Short header: 5 bits masked
+            packet[0] ^= mask[0] & 0x1f;
+        }
+        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+            .iter_mut()
+            .zip(&mask[1..])
+        {
+            *out ^= inp;
+        }
+    }
+
+    pub fn sample_size(&self) -> usize {
+        self.local.sample_size()
     }
 }
 
@@ -311,24 +349,10 @@ impl From<TLSError> for ConnectError {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum HeaderKey {
+enum HeaderKey {
     AesEcb128([u8; 16]),
     AesEcb256([u8; 32]),
     ChaCha20(chacha20::SecretKey),
-}
-
-// TODO: Make this unnecessary by isolating header keys from traffic keys.
-impl Clone for HeaderKey {
-    fn clone(&self) -> Self {
-        use self::HeaderKey::*;
-        match *self {
-            AesEcb128(ref x) => AesEcb128(x.clone()),
-            AesEcb256(ref x) => AesEcb256(x.clone()),
-            ChaCha20(ref x) => {
-                ChaCha20(chacha20::SecretKey::from_slice(x.unprotected_as_bytes()).unwrap())
-            }
-        }
-    }
 }
 
 impl HeaderKey {
@@ -355,7 +379,7 @@ impl HeaderKey {
         }
     }
 
-    pub fn sample_size(&self) -> usize {
+    fn sample_size(&self) -> usize {
         use self::HeaderKey::*;
         match *self {
             AesEcb128(_) | AesEcb256(_) | ChaCha20(_) => 16,
@@ -387,42 +411,6 @@ impl HeaderKey {
                 chacha20::decrypt(key, &nonce, counter, &[0; 5], &mut buf).unwrap();
                 buf
             }
-        }
-    }
-
-    pub fn decrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
-        let mask = self.mask(sample);
-        if packet[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
-            // Long header: 4 bits masked
-            packet[0] ^= mask[0] & 0x0f;
-        } else {
-            // Short header: 5 bits masked
-            packet[0] ^= mask[0] & 0x1f;
-        }
-        let pn_length = PacketNumber::decode_len(packet[0]);
-        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
-            .iter_mut()
-            .zip(&mask[1..])
-        {
-            *out ^= inp;
-        }
-    }
-
-    pub fn encrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
-        let mask = self.mask(sample);
-        let pn_length = PacketNumber::decode_len(packet[0]);
-        if packet[0] & 0x80 == 0x80 {
-            // Long header: 4 bits masked
-            packet[0] ^= mask[0] & 0x0f;
-        } else {
-            // Short header: 5 bits masked
-            packet[0] ^= mask[0] & 0x1f;
-        }
-        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
-            .iter_mut()
-            .zip(&mask[1..])
-        {
-            *out ^= inp;
         }
     }
 }
@@ -561,8 +549,9 @@ mod test {
                 0xb6, 0xd6, 0x0e, 0x08,
             ]
         );
-        let (client_key, client_iv, client_header_key) =
-            Crypto::get_keys(digest, cipher, &client_secret);
+        let (client_key, client_iv) = Crypto::get_keys(digest, cipher, &client_secret);
+        let client_header_key =
+            HeaderKey::from_aead(cipher, &SigningKey::new(digest, &client_secret));
         assert_eq!(
             &client_key[..],
             [
@@ -591,8 +580,9 @@ mod test {
                 0x72, 0x2f, 0x0d, 0x6a
             ]
         );
-        let (server_key, server_iv, server_header_key) =
-            Crypto::get_keys(digest, cipher, &server_secret);
+        let (server_key, server_iv) = Crypto::get_keys(digest, cipher, &server_secret);
+        let server_header_key =
+            HeaderKey::from_aead(cipher, &SigningKey::new(digest, &server_secret));
         assert_eq!(
             &server_key[..],
             [
@@ -653,12 +643,14 @@ mod test {
             .to_vec(),
         );
 
+        let header = onertt.header_crypto();
+
         assert_eq!(
             &onertt.local_iv[..],
             [0xd5, 0x1b, 0x16, 0x6a, 0x3e, 0xc4, 0x6f, 0x7e, 0x5f, 0x93, 0x27, 0x15]
         );
         assert_eq!(
-            onertt.local_header_key,
+            header.local,
             HeaderKey::AesEcb128([
                 0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
                 0xa8, 0x4d,
@@ -670,7 +662,7 @@ mod test {
             [0x03, 0xda, 0x92, 0xa0, 0x91, 0x95, 0xe4, 0xbf, 0x87, 0x98, 0xd3, 0x78]
         );
         assert_eq!(
-            onertt.remote_header_key,
+            header.remote,
             HeaderKey::AesEcb128([
                 0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
                 0x23, 0x23
@@ -683,24 +675,10 @@ mod test {
             &updated_onertt.local_iv[..],
             [233, 47, 171, 44, 133, 77, 133, 109, 110, 95, 31, 254]
         );
-        assert_eq!(
-            updated_onertt.local_header_key,
-            HeaderKey::AesEcb128([
-                0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
-                0xa8, 0x4d,
-            ])
-        );
 
         assert_eq!(
             &updated_onertt.remote_iv[..],
             [182, 36, 161, 179, 178, 62, 80, 216, 255, 14, 228, 172]
-        );
-        assert_eq!(
-            updated_onertt.remote_header_key,
-            HeaderKey::AesEcb128([
-                0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
-                0x23, 0x23
-            ])
         );
     }
 }

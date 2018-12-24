@@ -5,7 +5,7 @@ use rand::Rng;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::HeaderKey;
+use crate::crypto::HeaderCrypto;
 use crate::varint;
 use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
@@ -77,7 +77,7 @@ impl PartialDecode {
 
     pub fn finish(
         self,
-        header_key: &HeaderKey,
+        header_crypto: &HeaderCrypto,
     ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
         let Self {
             invariant_header,
@@ -92,7 +92,7 @@ impl PartialDecode {
                 }
 
                 let sample_offset = 1 + dst_cid.len() + 4;
-                let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
                     buf.remaining(),
@@ -156,7 +156,7 @@ impl PartialDecode {
                         + varint::size(token_length as u64).unwrap()
                         + token.len();
 
-                    let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -177,7 +177,7 @@ impl PartialDecode {
                     let len = buf.get_var()?;
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
-                    let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -223,30 +223,30 @@ impl PartialDecode {
 
     fn decrypt_header(
         buf: &mut io::Cursor<BytesMut>,
-        header_key: &HeaderKey,
+        header_crypto: &HeaderCrypto,
         mut sample_offset: usize,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
-        if sample_offset + header_key.sample_size() > packet_length {
+        if sample_offset + header_crypto.sample_size() > packet_length {
             sample_offset = packet_length
-                .checked_sub(header_key.sample_size())
+                .checked_sub(header_crypto.sample_size())
                 .ok_or_else(|| {
                     PacketDecodeError::InvalidHeader("packet too short to decode packet number")
                 })?;
         }
-        if packet_length < sample_offset + header_key.sample_size() {
+        if packet_length < sample_offset + header_crypto.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
                 "packet too short to extract packet number encryption sample",
             ));
         }
 
         let mut sample = [0; 16];
-        debug_assert!(header_key.sample_size() <= 16);
+        debug_assert!(header_crypto.sample_size() <= 16);
         sample.copy_from_slice(
-            &buf.get_ref()[sample_offset..sample_offset + header_key.sample_size()],
+            &buf.get_ref()[sample_offset..sample_offset + header_crypto.sample_size()],
         );
         let pn_offset = buf.position() as usize;
-        header_key.decrypt(pn_offset, &sample, buf.get_mut());
+        header_crypto.decrypt(pn_offset, &sample, buf.get_mut());
 
         let len = PacketNumber::decode_len(buf.get_ref()[0]);
         PacketNumber::decode(len, buf)
@@ -418,7 +418,7 @@ pub struct PartialEncode<'a> {
 }
 
 impl<'a> PartialEncode<'a> {
-    pub fn finish(self, buf: &mut [u8], header_key: &HeaderKey, header_len: usize) {
+    pub fn finish(self, buf: &mut [u8], header_crypto: &HeaderCrypto, header_len: usize) {
         let PartialEncode { header, pn } = self;
         let payload_len = (buf.len() - header_len) as u64;
         let (mut sample_offset, pn_pos) = match header {
@@ -453,18 +453,19 @@ impl<'a> PartialEncode<'a> {
         };
 
         let packet_length = buf.len();
-        if sample_offset + header_key.sample_size() > packet_length {
-            sample_offset = packet_length - header_key.sample_size();
+        if sample_offset + header_crypto.sample_size() > packet_length {
+            sample_offset = packet_length - header_crypto.sample_size();
         }
 
-        debug_assert!(header_key.sample_size() <= 16);
+        debug_assert!(header_crypto.sample_size() <= 16);
         let sample = {
             let mut sample = [0; 16];
-            sample.copy_from_slice(&buf[sample_offset..sample_offset + header_key.sample_size()]);
+            sample
+                .copy_from_slice(&buf[sample_offset..sample_offset + header_crypto.sample_size()]);
             sample
         };
 
-        header_key.encrypt(pn_pos, &sample, buf);
+        header_crypto.encrypt(pn_pos, &sample, buf);
     }
 }
 
@@ -895,6 +896,7 @@ mod tests {
     fn header_encoding() {
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client_crypto = Crypto::new_initial(&dcid, Side::Client);
+        let client_header_crypto = client_crypto.header_crypto();
         let mut buf = Vec::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
@@ -915,7 +917,7 @@ mod tests {
         );
 
         client_crypto.encrypt(0, &mut buf, header_len);
-        encode.finish(&mut buf, client_crypto.header_encrypt_key(), header_len);
+        encode.finish(&mut buf, &client_header_crypto, header_len);
         assert_eq!(
             buf[..],
             hex!(
@@ -925,8 +927,9 @@ mod tests {
         );
 
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
+        let server_header_crypto = server_crypto.header_crypto();
         let decode = PartialDecode::new(buf.clone().into(), 0).unwrap();
-        let mut packet = decode.finish(server_crypto.header_decrypt_key()).unwrap().0;
+        let mut packet = decode.finish(&server_header_crypto).unwrap().0;
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff0000115006b858ec6f80452b00402100")[..]

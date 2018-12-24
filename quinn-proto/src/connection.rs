@@ -8,7 +8,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::crypto::{self, Crypto, TlsSession, ACK_DELAY_EXPONENT};
+use crate::crypto::{self, Crypto, HeaderCrypto, TlsSession, ACK_DELAY_EXPONENT};
 use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
@@ -43,6 +43,7 @@ pub struct Connection {
     /// Time at which the above was received
     rx_packet_time: u64,
     cryptos: VecDeque<CryptoSpace>,
+    header_cryptos: VecDeque<(CryptoLevel, HeaderCrypto)>,
     //zero_rtt_crypto: Option<Crypto>,
     key_phase: bool,
     params: TransportParameters,
@@ -179,12 +180,15 @@ impl Connection {
             Side::Server
         };
 
-        let mut cryptos = VecDeque::with_capacity(4);
-        cryptos.push_back(CryptoSpace {
+        let crypto = CryptoSpace {
             level: CryptoLevel::Initial,
             start: 0,
             crypto: Crypto::new_initial(&init_cid, side),
-        });
+        };
+        let mut header_cryptos = VecDeque::with_capacity(3);
+        header_cryptos.push_back((CryptoLevel::Initial, crypto.crypto.header_crypto()));
+        let mut cryptos = VecDeque::with_capacity(4);
+        cryptos.push_back(crypto);
         let mut streams = FnvHashMap::default();
         for i in 0..config.max_remote_streams_uni {
             streams.insert(
@@ -217,6 +221,7 @@ impl Connection {
             rx_packet: 0,
             rx_packet_time: 0,
             cryptos,
+            header_cryptos,
             //zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::new(&config),
@@ -924,23 +929,21 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
-        let header_key = if partial_decode.is_handshake() {
-            self.find_crypto(CryptoLevel::Initial, 0)
-                .unwrap()
-                .header_decrypt_key()
+        let header_crypto = if partial_decode.is_handshake() {
+            self.find_header_crypto(CryptoLevel::Initial).unwrap()
         } else {
-            let crypto_space = self.cryptos.back().unwrap();
-            if crypto_space.level != CryptoLevel::OneRtt {
+            let (level, ref x) = *self.header_cryptos.back().unwrap();
+            if level != CryptoLevel::OneRtt {
                 warn!(
                     self.log,
                     "received a non-handshake packet before handshake completed"
                 );
                 return None;
             }
-            crypto_space.crypto.header_decrypt_key()
+            x
         };
 
-        match partial_decode.finish(header_key) {
+        match partial_decode.finish(header_crypto) {
             Ok((packet, rest)) => {
                 self.handle_packet(now, ecn, packet);
                 rest
@@ -1068,7 +1071,8 @@ impl Connection {
                         .unwrap();
                         self.crypto_offset = 0;
                         let new_crypto = Crypto::new_initial(&rem_cid, self.side);
-                        mem::replace(&mut self.cryptos[0].crypto, new_crypto);
+                        self.header_cryptos[0].1 = new_crypto.header_crypto();
+                        self.cryptos[0].crypto = new_crypto;
                         self.write_tls();
 
                         self.state = State::Handshake(state::Handshake {
@@ -1168,11 +1172,14 @@ impl Connection {
                         if self.side.is_server() {
                             self.awaiting_handshake = false;
                         }
-                        self.cryptos.push_back(CryptoSpace {
+                        let crypto = CryptoSpace {
                             level: CryptoLevel::OneRtt,
                             start: 0,
                             crypto: Crypto::new_1rtt(&self.tls, self.side),
-                        });
+                        };
+                        self.header_cryptos
+                            .push_back((crypto.level, crypto.crypto.header_crypto()));
+                        self.cryptos.push_back(crypto);
                         if self.side.is_client() {
                             // Server applications don't see connections until the handshake
                             // completes, so this would be redundant.
@@ -1560,7 +1567,7 @@ impl Connection {
         let mut buf = Vec::new();
         let mut sent = Retransmits::default();
 
-        let (number, header, crypto, pending, crypto_level) = if (!established
+        let (number, header, crypto, header_crypto, pending, crypto_level) = if (!established
             || self.awaiting_handshake)
             && (!self.handshake_pending.is_empty()
                 || (!self.pending_acks.is_empty() && self.permit_ack_only))
@@ -1600,6 +1607,7 @@ impl Connection {
                 number,
                 header,
                 &self.cryptos.front().unwrap().crypto,
+                &self.header_cryptos.front().unwrap().1,
                 &mut self.handshake_pending,
                 CryptoLevel::Initial,
             )
@@ -1635,6 +1643,7 @@ impl Connection {
                 number,
                 header,
                 &self.cryptos.back().unwrap().crypto,
+                &self.header_cryptos.back().unwrap().1,
                 &mut self.pending,
                 CryptoLevel::OneRtt,
             )
@@ -1855,8 +1864,8 @@ impl Connection {
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
-        if let Some(padding) = (crypto.header_encrypt_key().sample_size() + 4)
-            .checked_sub(buf.len() - header_len + pn_len)
+        if let Some(padding) =
+            (header_crypto.sample_size() + 4).checked_sub(buf.len() - header_len + pn_len)
         {
             buf.resize(buf.len() + padding, 0);
         }
@@ -1864,7 +1873,7 @@ impl Connection {
             set_payload_length(&mut buf, header_len, pn_len);
         }
         crypto.encrypt(number, &mut buf, header_len);
-        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
+        partial_encode.finish(&mut buf, header_crypto, header_len);
 
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
@@ -1903,7 +1912,11 @@ impl Connection {
 
         let crypto = &self.cryptos.back().unwrap().crypto;
         crypto.encrypt(number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len as usize);
+        partial_encode.finish(
+            &mut buf,
+            &self.header_cryptos.back().unwrap().1,
+            header_len as usize,
+        );
 
         self.on_packet_sent(
             now,
@@ -1961,7 +1974,7 @@ impl Connection {
             .encrypt(full_number, &mut buf, header_len as usize);
         partial_encode.finish(
             &mut buf,
-            crypto_space.crypto.header_encrypt_key(),
+            &self.header_cryptos.back().unwrap().1,
             header_len as usize,
         );
         buf.into()
@@ -2309,6 +2322,13 @@ impl Connection {
         })
     }
 
+    fn find_header_crypto(&self, level: CryptoLevel) -> Option<&HeaderCrypto> {
+        self.header_cryptos
+            .iter()
+            .rev()
+            .find_map(|x| if x.0 == level { Some(&x.1) } else { None })
+    }
+
     pub fn is_handshaking(&self) -> bool {
         self.state.is_handshake()
     }
@@ -2412,6 +2432,7 @@ fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Crypto>, 
 
 pub fn handshake_close<R>(
     crypto: &Crypto,
+    header_crypto: &HeaderCrypto,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
@@ -2438,7 +2459,7 @@ where
     }
     set_payload_length(&mut buf, header_len, number.len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
-    partial_encode.finish(&mut buf, crypto.header_encrypt_key(), header_len);
+    partial_encode.finish(&mut buf, header_crypto, header_len);
     buf.into()
 }
 
