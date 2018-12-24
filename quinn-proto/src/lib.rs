@@ -102,6 +102,27 @@ pub enum Directionality {
     Uni = 1,
 }
 
+impl fmt::Display for Directionality {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::Directionality::*;
+        f.pad(match *self {
+            Bi => "bidirectional",
+            Uni => "unidirectional",
+        })
+    }
+}
+
+impl slog::Value for Directionality {
+    fn serialize(
+        &self,
+        _: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
 /// Identifier for a stream within a particular connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StreamId(pub(crate) u64);
