@@ -1453,20 +1453,21 @@ impl Connection {
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                 }
-                Frame::MaxStreamId(id) => {
-                    let limit = match id.directionality() {
+                Frame::MaxStreams {
+                    directionality,
+                    count,
+                } => {
+                    let current = match directionality {
                         Directionality::Uni => &mut self.streams.max_uni,
                         Directionality::Bi => &mut self.streams.max_bi,
                     };
-                    let update = id.index() + 1;
-                    if update > *limit {
-                        *limit = update;
-                        self.events.push_back(Event::StreamAvailable {
-                            directionality: id.directionality(),
-                        });
+                    if count > *current {
+                        *current = count;
+                        self.events
+                            .push_back(Event::StreamAvailable { directionality });
                     }
                 }
-                Frame::RstStream(frame::RstStream {
+                Frame::ResetStream(frame::ResetStream {
                     id,
                     error_code,
                     final_offset,
@@ -1500,14 +1501,17 @@ impl Connection {
                     self.events
                         .push_back(Event::StreamReadable { stream: id, fresh });
                 }
-                Frame::Blocked { offset } => {
+                Frame::DataBlocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
                 }
-                Frame::StreamBlocked { id, offset } => {
+                Frame::StreamDataBlocked { id, offset } => {
                     debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
                 }
-                Frame::StreamIdBlocked { id } => {
-                    debug!(self.log, "peer claims to be blocked at stream ID level"; "stream" => id);
+                Frame::StreamsBlocked {
+                    directionality,
+                    limit,
+                } => {
+                    debug!(self.log, "peer claims to be blocked opening more than {limit} {directionality} streams", limit=limit, directionality=directionality);
                 }
                 Frame::StopSending { id, error_code } => {
                     if self
@@ -1516,7 +1520,11 @@ impl Connection {
                         .get(&id)
                         .map_or(true, |x| x.send().map_or(true, |ss| ss.offset == 0))
                     {
-                        debug!(self.log, "got STOP_SENDING on invalid stream");
+                        debug!(
+                            self.log,
+                            "got STOP_SENDING on invalid stream {stream}",
+                            stream = id
+                        );
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                     self.reset(id, error_code);
@@ -1717,8 +1725,8 @@ impl Connection {
             }
         }
 
-        // RST_STREAM
-        while buf.len() + frame::RstStream::SIZE_BOUND < max_size {
+        // RESET_STREAM
+        while buf.len() + frame::ResetStream::SIZE_BOUND < max_size {
             let (id, error_code) = if let Some(x) = pending.rst_stream.pop() {
                 x
             } else {
@@ -1729,9 +1737,9 @@ impl Connection {
             } else {
                 continue;
             };
-            trace!(self.log, "RST_STREAM"; "stream" => id.0);
+            trace!(self.log, "RESET_STREAM"; "stream" => id.0);
             sent.rst_stream.push((id, error_code));
-            frame::RstStream {
+            frame::ResetStream {
                 id,
                 error_code,
                 final_offset: stream.send().unwrap().offset,
@@ -1793,30 +1801,22 @@ impl Connection {
             buf.write_var(rs.max_data);
         }
 
-        // MAX_STREAM_ID uni
+        // MAX_STREAMS_UNI
         if pending.max_uni_stream_id && buf.len() + 9 < max_size {
             pending.max_uni_stream_id = false;
             sent.max_uni_stream_id = true;
-            trace!(self.log, "MAX_STREAM_ID (unidirectional)"; "value" => self.streams.max_remote_uni - 1);
-            buf.write(frame::Type::MAX_STREAM_ID);
-            buf.write(StreamId::new(
-                !self.side,
-                Directionality::Uni,
-                self.streams.max_remote_uni - 1,
-            ));
+            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote_uni);
+            buf.write(frame::Type::MAX_STREAMS_UNI);
+            buf.write_var(self.streams.max_remote_uni);
         }
 
-        // MAX_STREAM_ID bi
+        // MAX_STREAMS_BIDI
         if pending.max_bi_stream_id && buf.len() + 9 < max_size {
             pending.max_bi_stream_id = false;
             sent.max_bi_stream_id = true;
-            trace!(self.log, "MAX_STREAM_ID (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
-            buf.write(frame::Type::MAX_STREAM_ID);
-            buf.write(StreamId::new(
-                !self.side,
-                Directionality::Bi,
-                self.streams.max_remote_bi - 1,
-            ));
+            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
+            buf.write(frame::Type::MAX_STREAMS_BIDI);
+            buf.write_var(self.streams.max_remote_bi);
         }
 
         // STREAM
