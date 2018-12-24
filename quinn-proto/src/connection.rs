@@ -1890,9 +1890,11 @@ impl Connection {
             }
         }
 
+        let mut padded = false;
         if let Header::Initial { .. } = header {
             if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
                 buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
+                padded = true;
             }
         }
         let pn_len = header
@@ -1905,6 +1907,7 @@ impl Connection {
         if let Some(padding) =
             (header_crypto.sample_size() + 4).checked_sub(buf.len() - header_len + pn_len)
         {
+            padded |= padding != 0;
             buf.resize(buf.len() + padding, 0);
         }
         if crypto_level != CryptoLevel::OneRtt {
@@ -1927,7 +1930,7 @@ impl Connection {
                 size: buf.len() as u16,
                 is_crypto_packet: crypto_level == CryptoLevel::Initial && !ack_only,
                 ack_eliciting: !ack_only,
-                in_flight: !ack_only,
+                in_flight: padded || !ack_only,
                 retransmits: sent,
             },
         );
