@@ -157,6 +157,11 @@ impl PartialDecode {
                         + token.len();
 
                     let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                    if len < number.len() as u64 {
+                        return Err(PacketDecodeError::InvalidHeader(
+                            "packet number longer than packet",
+                        ));
+                    }
                     (
                         (len as usize) - number.len(),
                         Header::Initial {
@@ -173,6 +178,11 @@ impl PartialDecode {
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
                     let number = Self::decrypt_header(&mut buf, header_key, sample_offset)?;
+                    if len < number.len() as u64 {
+                        return Err(PacketDecodeError::InvalidHeader(
+                            "packet number longer than packet",
+                        ));
+                    }
                     (
                         (len as usize) - number.len(),
                         Header::Long {
