@@ -303,7 +303,7 @@ impl Endpoint {
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
-        const MIN_PADDING_LEN: usize = 20;
+        const MIN_PADDING_LEN: usize = 23;
         /// Minimum total length for a stateless reset packet
         const MIN_LEN: usize = 1 + MIN_PADDING_LEN + RESET_TOKEN_SIZE;
 
@@ -321,9 +321,9 @@ impl Endpoint {
             inciting_dgram_len - (MIN_LEN - MIN_PADDING_LEN),
         );
         buf.reserve_exact(1 + padding_len + RESET_TOKEN_SIZE);
-        buf.resize(1 + padding_len, 0);
-        buf[0] = 0b00110000; // Changes in draft 17
-        self.rng.fill_bytes(&mut buf[1..padding_len + 1]);
+        buf.resize(padding_len, 0);
+        self.rng.fill_bytes(&mut buf[0..padding_len]);
+        buf[0] = 0b01000000 | buf[0] >> 2;
         buf.extend(&reset_token_for(&self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
