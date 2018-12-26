@@ -71,6 +71,8 @@ pub struct Connection {
     events: VecDeque<Event>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
+    /// Outgoing spin bit state
+    spin: bool,
 
     //
     // Loss Detection
@@ -233,6 +235,7 @@ impl Connection {
             io: IoQueue::new(),
             events: VecDeque::new(),
             cids_issued: 0,
+            spin: false,
 
             crypto_count: 0,
             pto_count: 0,
@@ -733,6 +736,7 @@ impl Connection {
         now: u64,
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
+        spin: bool,
     ) {
         self.reset_idle_timeout(now);
         self.receiving_ecn |= ecn.is_some();
@@ -753,6 +757,8 @@ impl Connection {
         if packet > self.rx_packet {
             self.rx_packet = packet;
             self.rx_packet_time = now;
+            // Update outgoing spin bit, inverting iff we're the client
+            self.spin = self.side.is_client() ^ spin;
         }
     }
 
@@ -850,7 +856,7 @@ impl Connection {
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
         )?;
         self.set_params(params)?;
-        self.on_packet_authenticated(now, ecn, Some(packet_number));
+        self.on_packet_authenticated(now, ecn, Some(packet_number), false);
         self.write_tls();
         Ok(())
     }
@@ -960,7 +966,12 @@ impl Connection {
                     }
                 } else {
                     if !was_closed {
-                        self.on_packet_authenticated(now, ecn, number);
+                        let spin = if let Header::Short { spin, .. } = packet.header {
+                            spin
+                        } else {
+                            false
+                        };
+                        self.on_packet_authenticated(now, ecn, number, spin);
                     }
                     self.handle_connected_inner(now, number, packet)
                 }
@@ -1638,6 +1649,7 @@ impl Connection {
             let header = Header::Short {
                 dst_cid: self.rem_cid,
                 number: PacketNumber::new(number, self.largest_acked_packet),
+                spin: self.spin,
                 key_phase: self.key_phase,
             };
             //}
@@ -1940,6 +1952,7 @@ impl Connection {
         let header = Header::Short {
             dst_cid: self.rem_cid,
             number: PacketNumber::new(number, self.largest_acked_packet),
+            spin: self.spin,
             key_phase: self.key_phase,
         };
         let partial_encode = header.encode(&mut buf);
@@ -1980,6 +1993,7 @@ impl Connection {
             CryptoLevel::OneRtt => Header::Short {
                 dst_cid: self.rem_cid,
                 number,
+                spin: self.spin,
                 key_phase: self.key_phase,
             },
             CryptoLevel::Initial => Header::Long {

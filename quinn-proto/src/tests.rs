@@ -66,6 +66,9 @@ struct Pair {
     time: u64,
     // One-way
     latency: u64,
+    /// Number of spin bit flips
+    spins: u64,
+    last_spin: bool,
 }
 
 impl Default for Pair {
@@ -148,6 +151,8 @@ impl Pair {
             client: TestEndpoint::new(Side::Client, client, client_addr),
             time: 0,
             latency: 0,
+            spins: 0,
+            last_spin: false,
         }
     }
 
@@ -191,6 +196,11 @@ impl Pair {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
         for (ecn, packet) in self.client.outbound.drain(..) {
+            if packet[0] & packet::LONG_HEADER_FORM == 0 {
+                let spin = packet[0] & packet::SPIN_BIT != 0;
+                self.spins += (spin == self.last_spin) as u64;
+                self.last_spin = spin;
+            }
             if let Some(ref socket) = self.client.socket {
                 socket.send_to(&packet, self.server.addr).unwrap();
             }
@@ -441,6 +451,7 @@ fn lifecycle() {
     info!(pair.log, "closing");
     pair.client.close(pair.time, client_conn, 42, REASON.into());
     pair.drive();
+    assert!(pair.spins > 0);
     assert_matches!(pair.server.poll(),
                     Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
                         reason: ApplicationClose { error_code: 42, ref reason }
