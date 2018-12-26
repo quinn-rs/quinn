@@ -38,7 +38,7 @@ tokio-timer = "0.2.1"
 untrusted = "0.6.2"
 webpki = "0.18"
 webpki-roots = "0.15"
-libc = { git = "https://github.com/Ralith/libc/", branch = "ip-tos" }
+libc = { git = "https://github.com/rust-lang/libc.git", rev = "8ee27008ffb0dec2e79360e8e65d96446ac54dff" }
 mio = "0.6"
 
 [dev-dependencies]
