@@ -1239,11 +1239,6 @@ impl Connection {
                 }
             }
             State::Established => {
-                if let Header::Long { .. } = packet.header {
-                    trace!(self.log, "discarding unprotected packet");
-                    return Ok(());
-                }
-
                 if self.crypto_in_flight {
                     assert_eq!(
                         self.side,
