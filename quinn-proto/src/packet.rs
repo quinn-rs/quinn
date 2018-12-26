@@ -93,12 +93,14 @@ impl PartialDecode {
 
                 let sample_offset = 1 + dst_cid.len() + 4;
                 let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
+                let spin = buf.get_ref()[0] & SPIN_BIT != 0;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
                     buf.remaining(),
                     Header::Short {
                         dst_cid,
                         number,
+                        spin,
                         key_phase,
                     },
                     false,
@@ -279,6 +281,7 @@ pub enum Header {
     Short {
         dst_cid: ConnectionId,
         number: PacketNumber,
+        spin: bool,
         key_phase: bool,
     },
     VersionNegotiate {
@@ -350,9 +353,15 @@ impl Header {
             Short {
                 ref dst_cid,
                 number,
+                spin,
                 key_phase,
             } => {
-                w.write(FIXED_BIT | if key_phase { KEY_PHASE_BIT } else { 0 } | number.tag());
+                w.write(
+                    FIXED_BIT
+                        | if key_phase { KEY_PHASE_BIT } else { 0 }
+                        | if spin { SPIN_BIT } else { 0 }
+                        | number.tag(),
+                );
                 w.put_slice(dst_cid);
                 number.encode(w);
                 PartialEncode {
@@ -814,10 +823,11 @@ pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
 pub const AEAD_TAG_SIZE: usize = 16;
 
 pub const LONG_HEADER_FORM: u8 = 0x80;
-const KEY_PHASE_BIT: u8 = 0x04;
 const FIXED_BIT: u8 = 0x40;
+pub const SPIN_BIT: u8 = 0x20;
 pub const SHORT_RESERVED_BITS: u8 = 0x18;
 pub const LONG_RESERVED_BITS: u8 = 0x0c;
+const KEY_PHASE_BIT: u8 = 0x04;
 
 /// Explicit congestion notification codepoint
 #[repr(u8)]
