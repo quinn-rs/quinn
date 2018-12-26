@@ -1081,10 +1081,6 @@ impl Connection {
                                 Frame::Crypto(frame) => {
                                     self.read_tls(&frame)?;
                                 }
-                                Frame::Stream(frame::Stream { .. }) => {
-                                    debug!(self.log, "stream frame in handshake");
-                                    return Err(TransportError::PROTOCOL_VIOLATION.into());
-                                }
                                 Frame::Ack(ack) => {
                                     self.on_ack_received(now, ack);
                                 }
@@ -1106,9 +1102,6 @@ impl Connection {
                                     );
                                     self.state = State::Draining;
                                     return Ok(());
-                                }
-                                Frame::PathChallenge(value) => {
-                                    self.crypto_pending.path_challenge(number.unwrap(), value);
                                 }
                                 _ => {
                                     debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
