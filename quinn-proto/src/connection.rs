@@ -928,7 +928,6 @@ impl Connection {
 
     fn handle_packet(&mut self, now: u64, ecn: Option<EcnCodepoint>, mut packet: Packet) {
         trace!(self.log, "connection got packet"; "len" => packet.payload.len());
-        let was_handshake = self.is_handshaking();
         let was_closed = self.state.is_closed();
 
         let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
@@ -936,7 +935,7 @@ impl Connection {
                 && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token
         });
 
-        let result = match self.decrypt_packet(was_handshake, &mut packet) {
+        let result = match self.decrypt_packet(&mut packet) {
             Err(Some(e)) => {
                 warn!(self.log, "got illegal packet"; "reason" => %e);
                 Err(e.into())
@@ -965,7 +964,7 @@ impl Connection {
                         return;
                     }
                 } else {
-                    if !was_closed {
+                    if !self.state.is_closed() {
                         let spin = if let Header::Short { spin, .. } = packet.header {
                             spin
                         } else {
@@ -2247,7 +2246,6 @@ impl Connection {
 
     fn decrypt_packet(
         &mut self,
-        handshake: bool,
         packet: &mut Packet,
     ) -> Result<Option<u64>, Option<TransportError>> {
         if packet.header.is_retry() {
@@ -2257,8 +2255,10 @@ impl Connection {
         let (level, number, key_phase) = match packet.header {
             Header::Short {
                 number, key_phase, ..
-            } if !handshake => (CryptoLevel::OneRtt, number, key_phase),
-            Header::Initial { number, .. } | Header::Long { number, .. } if handshake => {
+            } if !self.is_handshaking() => (CryptoLevel::OneRtt, number, key_phase),
+            Header::Initial { number, .. } | Header::Long { number, .. }
+                if self.is_handshaking() =>
+            {
                 (CryptoLevel::Initial, number, false)
             }
             _ => {
