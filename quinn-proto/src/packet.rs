@@ -49,7 +49,7 @@ impl PartialDecode {
                 version: VERSION,
                 first,
                 ..
-            } => PacketType::from_byte(first) == Ok(PacketType::Initial),
+            } => LongHeaderType::from_byte(first) == Ok(LongHeaderType::Initial),
             Long { .. } | Short { .. } => false,
         }
     }
@@ -60,10 +60,10 @@ impl PartialDecode {
                 version: VERSION,
                 first,
                 ..
-            } => match PacketType::from_byte(first).unwrap() {
-                PacketType::Initial => true,
-                PacketType::Retry => true,
-                PacketType::Long(LongType::Handshake) => true,
+            } => match LongHeaderType::from_byte(first).unwrap() {
+                LongHeaderType::Initial => true,
+                LongHeaderType::Retry => true,
+                LongHeaderType::Standard(LongType::Handshake) => true,
                 _ => false,
             },
             InvariantHeader::Long { .. } => false,
@@ -124,8 +124,8 @@ impl PartialDecode {
                 version: VERSION,
                 dst_cid,
                 src_cid,
-            } => match PacketType::from_byte(first)? {
-                PacketType::Retry => {
+            } => match LongHeaderType::from_byte(first)? {
+                LongHeaderType::Retry => {
                     let odcil = buf.get::<u8>()? as usize;
                     let mut odci_stage = [0; 18];
                     buf.copy_to_slice(&mut odci_stage[0..odcil]);
@@ -140,7 +140,7 @@ impl PartialDecode {
                         false,
                     )
                 }
-                PacketType::Initial => {
+                LongHeaderType::Initial => {
                     let token_length = buf.get_var()? as usize;
                     // Could we avoid this alloc/copy somehow?
                     let mut token = BytesMut::with_capacity(token_length);
@@ -173,7 +173,7 @@ impl PartialDecode {
                         true,
                     )
                 }
-                PacketType::Long(ty) => {
+                LongHeaderType::Standard(ty) => {
                     let len = buf.get_var()?;
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
@@ -194,8 +194,6 @@ impl PartialDecode {
                         true,
                     )
                 }
-                // InvariantHeader should be Short variant for Short packet type
-                PacketType::Short { .. } => unreachable!(),
             },
             // InvariantHeader decode checks for unsupported versions
             InvariantHeader::Long { .. } => unreachable!(),
@@ -300,7 +298,7 @@ impl Header {
                 ref token,
                 number,
             } => {
-                w.write(u8::from(PacketType::Initial) | number.tag());
+                w.write(u8::from(LongHeaderType::Initial) | number.tag());
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.write_var(token.len() as u64);
@@ -323,7 +321,7 @@ impl Header {
                 ref dst_cid,
                 number,
             } => {
-                w.write(u8::from(PacketType::Long(ty)) | number.tag());
+                w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -339,7 +337,7 @@ impl Header {
                 ref dst_cid,
                 ref orig_dst_cid,
             } => {
-                w.write(u8::from(PacketType::Retry));
+                w.write(u8::from(LongHeaderType::Retry));
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.write(orig_dst_cid.len() as u8);
@@ -354,7 +352,7 @@ impl Header {
                 number,
                 key_phase,
             } => {
-                w.write(u8::from(PacketType::Short { key_phase }) | number.tag());
+                w.write(FIXED_BIT | if key_phase { KEY_PHASE_BIT } else { 0 } | number.tag());
                 w.put_slice(dst_cid);
                 number.encode(w);
                 PartialEncode {
@@ -647,50 +645,44 @@ impl PacketNumber {
     }
 }
 
+/// Long packet type including non-uniform cases
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PacketType {
+pub enum LongHeaderType {
     Initial,
-    Long(LongType),
     Retry,
-    Short { key_phase: bool },
+    Standard(LongType),
 }
 
-impl PacketType {
+impl LongHeaderType {
     fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
-        use self::{LongType::*, PacketType::*};
+        use self::{LongHeaderType::*, LongType::*};
         if b & FIXED_BIT == 0 {
             return Err(PacketDecodeError::InvalidHeader("fixed bit unset"));
         }
-        if b & LONG_HEADER_FORM != 0 {
-            Ok(match (b & 0x30) >> 4 {
-                0x0 => Initial,
-                0x1 => Long(ZeroRtt),
-                0x2 => Long(Handshake),
-                0x3 => Retry,
-                _ => unreachable!(),
-            })
-        } else {
-            Ok(Short {
-                key_phase: b & KEY_PHASE_BIT != 0,
-            })
-        }
+        debug_assert!(b & LONG_HEADER_FORM != 0, "not a long packet");
+        Ok(match (b & 0x30) >> 4 {
+            0x0 => Initial,
+            0x1 => Standard(ZeroRtt),
+            0x2 => Standard(Handshake),
+            0x3 => Retry,
+            _ => unreachable!(),
+        })
     }
 }
 
-impl From<PacketType> for u8 {
-    fn from(ty: PacketType) -> u8 {
-        use self::{LongType::*, PacketType::*};
+impl From<LongHeaderType> for u8 {
+    fn from(ty: LongHeaderType) -> u8 {
+        use self::{LongHeaderType::*, LongType::*};
         match ty {
             Initial => LONG_HEADER_FORM | FIXED_BIT,
-            Long(ZeroRtt) => LONG_HEADER_FORM | FIXED_BIT | (0x1 << 4),
-            Long(Handshake) => LONG_HEADER_FORM | FIXED_BIT | (0x2 << 4),
+            Standard(ZeroRtt) => LONG_HEADER_FORM | FIXED_BIT | (0x1 << 4),
+            Standard(Handshake) => LONG_HEADER_FORM | FIXED_BIT | (0x2 << 4),
             Retry => LONG_HEADER_FORM | FIXED_BIT | (0x3 << 4),
-            Short { key_phase } => FIXED_BIT | if key_phase { KEY_PHASE_BIT } else { 0 },
         }
     }
 }
 
-impl slog::Value for PacketType {
+impl slog::Value for LongHeaderType {
     fn serialize(
         &self,
         _: &slog::Record<'_>,
@@ -701,6 +693,7 @@ impl slog::Value for PacketType {
     }
 }
 
+/// Long packet types with uniform header structure
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LongType {
     Handshake,
