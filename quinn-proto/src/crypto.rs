@@ -13,6 +13,7 @@ use ring::aead;
 use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
+pub use rustls::quic::Secrets;
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
 use rustls::ProtocolVersion;
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
@@ -116,20 +117,31 @@ pub struct Crypto {
 impl Crypto {
     pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
-        let (local_label, remote_label) = if side.is_client() {
-            (b"client in", b"server in")
-        } else {
-            (b"server in", b"client in")
-        };
+        const CLIENT_LABEL: &[u8] = b"client in";
+        const SERVER_LABEL: &[u8] = b"server in";
         let hs_secret = initial_secret(id);
-        let (local_secret, remote_secret) = (
-            expanded_initial_secret(&hs_secret, local_label),
-            expanded_initial_secret(&hs_secret, remote_label),
-        );
+        let secrets = Secrets {
+            client: expanded_initial_secret(&hs_secret, CLIENT_LABEL),
+            server: expanded_initial_secret(&hs_secret, SERVER_LABEL),
+        };
+        Self::new(side, digest, cipher, secrets)
+    }
+
+    pub fn new(
+        side: Side,
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        secrets: Secrets,
+    ) -> Self {
+        let (local_secret, remote_secret) = if side.is_client() {
+            (secrets.client, secrets.server)
+        } else {
+            (secrets.server, secrets.client)
+        };
         let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
         let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
 
-        Self {
+        Crypto {
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
             local_iv,
@@ -138,29 +150,6 @@ impl Crypto {
             remote_iv,
             digest,
         }
-    }
-
-    pub fn new_1rtt(tls: &TlsSession, side: Side) -> Self {
-        let suite = tls.get_negotiated_ciphersuite().unwrap();
-        let (cipher, digest) = (suite.get_aead_alg(), suite.get_hash());
-
-        const SERVER_LABEL: &[u8] = b"EXPORTER-QUIC server 1rtt";
-        const CLIENT_LABEL: &[u8] = b"EXPORTER-QUIC client 1rtt";
-
-        let (local_label, remote_label) = if side.is_client() {
-            (CLIENT_LABEL, SERVER_LABEL)
-        } else {
-            (SERVER_LABEL, CLIENT_LABEL)
-        };
-
-        let mut local_secret = vec![0; digest.output_len];
-        tls.export_keying_material(&mut local_secret, local_label, None)
-            .unwrap();
-        let mut remote_secret = vec![0; digest.output_len];
-        tls.export_keying_material(&mut remote_secret, remote_label, None)
-            .unwrap();
-
-        Self::generate_1rtt(digest, cipher, local_secret, remote_secret)
     }
 
     pub fn write_nonce(&self, iv: &[u8], number: u64, out: &mut [u8]) {
@@ -215,45 +204,6 @@ impl Crypto {
         Ok(())
     }
 
-    pub fn update(&self) -> Crypto {
-        const UPDATE_LABEL: &[u8] = b"traffic upd";
-
-        let local_secret_key = SigningKey::new(self.digest, &self.local_secret);
-        let mut new_local_secret = vec![0; self.digest.output_len];
-        hkdf_expand(&local_secret_key, UPDATE_LABEL, &mut new_local_secret);
-
-        let remote_secret_key = SigningKey::new(self.digest, &self.remote_secret);
-        let mut new_remote_secret = vec![0; self.digest.output_len];
-        hkdf_expand(&remote_secret_key, UPDATE_LABEL, &mut new_remote_secret);
-
-        Self::generate_1rtt(
-            self.digest,
-            self.opening_key.algorithm(),
-            new_local_secret,
-            new_remote_secret,
-        )
-    }
-
-    fn generate_1rtt(
-        digest: &'static digest::Algorithm,
-        cipher: &'static aead::Algorithm,
-        local_secret: Vec<u8>,
-        remote_secret: Vec<u8>,
-    ) -> Crypto {
-        let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
-        let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
-
-        Crypto {
-            local_secret,
-            sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
-            local_iv,
-            remote_secret,
-            opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
-            remote_iv,
-            digest,
-        }
-    }
-
     fn get_keys(
         digest: &'static digest::Algorithm,
         cipher: &'static aead::Algorithm,
@@ -278,6 +228,16 @@ impl Crypto {
             local: HeaderKey::from_aead(cipher, &local),
             remote: HeaderKey::from_aead(cipher, &remote),
         }
+    }
+
+    pub fn update(&self, side: Side, tls: &TlsSession) -> Self {
+        let (client_secret, server_secret) = match side {
+            Side::Client => (&self.local_secret, &self.remote_secret),
+            Side::Server => (&self.remote_secret, &self.local_secret),
+        };
+        let secrets = tls.update_secrets(client_secret, server_secret);
+        let suite = tls.get_negotiated_ciphersuite().unwrap();
+        Self::new(side, suite.get_hash(), suite.get_aead_alg(), secrets)
     }
 }
 
@@ -624,23 +584,22 @@ mod test {
         // Pre-update test vectors generated by ngtcp2
         let digest = &digest::SHA256;
         let cipher = &aead::AES_128_GCM;
-        let onertt = Crypto::generate_1rtt(
+        let onertt = Crypto::new(
+            Side::Client,
             digest,
             cipher,
-            [
-                // Local
-                0xb8, 0x76, 0x77, 0x08, 0xf8, 0x77, 0x23, 0x58, 0xa6, 0xea, 0x9f, 0xc4, 0x3e, 0x4a,
-                0xdd, 0x2c, 0x96, 0x1b, 0x3f, 0x52, 0x87, 0xa6, 0xd1, 0x46, 0x7e, 0xe0, 0xae, 0xab,
-                0x33, 0x72, 0x4d, 0xbf,
-            ]
-            .to_vec(),
-            [
-                // Remote
-                0x42, 0xdc, 0x97, 0x21, 0x40, 0xe0, 0xf2, 0xe3, 0x98, 0x45, 0xb7, 0x67, 0x61, 0x34,
-                0x39, 0xdc, 0x67, 0x58, 0xca, 0x43, 0x25, 0x9b, 0x87, 0x85, 0x06, 0x82, 0x4e, 0xb1,
-                0xe4, 0x38, 0xd8, 0x55,
-            ]
-            .to_vec(),
+            Secrets {
+                client: vec![
+                    0xb8, 0x76, 0x77, 0x08, 0xf8, 0x77, 0x23, 0x58, 0xa6, 0xea, 0x9f, 0xc4, 0x3e,
+                    0x4a, 0xdd, 0x2c, 0x96, 0x1b, 0x3f, 0x52, 0x87, 0xa6, 0xd1, 0x46, 0x7e, 0xe0,
+                    0xae, 0xab, 0x33, 0x72, 0x4d, 0xbf,
+                ],
+                server: vec![
+                    0x42, 0xdc, 0x97, 0x21, 0x40, 0xe0, 0xf2, 0xe3, 0x98, 0x45, 0xb7, 0x67, 0x61,
+                    0x34, 0x39, 0xdc, 0x67, 0x58, 0xca, 0x43, 0x25, 0x9b, 0x87, 0x85, 0x06, 0x82,
+                    0x4e, 0xb1, 0xe4, 0x38, 0xd8, 0x55,
+                ],
+            },
         );
 
         let header = onertt.header_crypto();
@@ -667,18 +626,6 @@ mod test {
                 0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
                 0x23, 0x23
             ])
-        );
-
-        let updated_onertt = onertt.update();
-
-        assert_eq!(
-            &updated_onertt.local_iv[..],
-            [233, 47, 171, 44, 133, 77, 133, 109, 110, 95, 31, 254]
-        );
-
-        assert_eq!(
-            &updated_onertt.remote_iv[..],
-            [182, 36, 161, 179, 178, 62, 80, 216, 255, 14, 228, 172]
         );
     }
 }

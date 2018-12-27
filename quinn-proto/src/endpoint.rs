@@ -221,7 +221,7 @@ impl Endpoint {
                     self.incoming_handshakes -= 1;
                     self.incoming.push_back(conn_id);
                 }
-                if self.config.local_cid_len != 0 {
+                if self.config.local_cid_len != 0 && self.connections[conn_id.0].can_send() {
                     /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
                     /// connection IDs
                     const LOCAL_CID_COUNT: usize = 8;
@@ -264,7 +264,7 @@ impl Endpoint {
 
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 let header_crypto = crypto.header_crypto();
-                return match partial_decode.finish(&header_crypto) {
+                return match partial_decode.finish(Some(&header_crypto)) {
                     Ok((packet, rest)) => {
                         self.handle_initial(now, remote, ecn, packet, &crypto, &header_crypto);
                         rest

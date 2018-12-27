@@ -43,31 +43,23 @@ impl PartialDecode {
     }
 
     pub fn is_initial(&self) -> bool {
+        self.space() == Some(SpaceId::Initial)
+    }
+
+    pub fn space(&self) -> Option<SpaceId> {
         use self::InvariantHeader::*;
         match self.invariant_header {
+            Short { .. } => Some(SpaceId::OneRtt),
             Long {
                 version: VERSION,
                 first,
                 ..
-            } => LongHeaderType::from_byte(first) == Ok(LongHeaderType::Initial),
-            Long { .. } | Short { .. } => false,
-        }
-    }
-
-    pub fn is_handshake(&self) -> bool {
-        match self.invariant_header {
-            InvariantHeader::Long {
-                version: VERSION,
-                first,
-                ..
-            } => match LongHeaderType::from_byte(first).unwrap() {
-                LongHeaderType::Initial => true,
-                LongHeaderType::Retry => true,
-                LongHeaderType::Standard(LongType::Handshake) => true,
-                _ => false,
+            } => match LongHeaderType::from_byte(first) {
+                Ok(LongHeaderType::Initial) => Some(SpaceId::Initial),
+                Ok(LongHeaderType::Standard(LongType::Handshake)) => Some(SpaceId::Handshake),
+                _ => None,
             },
-            InvariantHeader::Long { .. } => false,
-            InvariantHeader::Short { .. } => false,
+            _ => None,
         }
     }
 
@@ -77,7 +69,7 @@ impl PartialDecode {
 
     pub fn finish(
         self,
-        header_crypto: &HeaderCrypto,
+        header_crypto: Option<&HeaderCrypto>,
     ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
         let Self {
             invariant_header,
@@ -92,7 +84,7 @@ impl PartialDecode {
                 }
 
                 let sample_offset = 1 + dst_cid.len() + 4;
-                let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
+                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
                 let spin = buf.get_ref()[0] & SPIN_BIT != 0;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
@@ -158,7 +150,8 @@ impl PartialDecode {
                         + varint::size(token_length as u64).unwrap()
                         + token.len();
 
-                    let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
+                    let number =
+                        Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -179,7 +172,8 @@ impl PartialDecode {
                     let len = buf.get_var()?;
                     let sample_offset =
                         10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
-                    let number = Self::decrypt_header(&mut buf, header_crypto, sample_offset)?;
+                    let number =
+                        Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -416,6 +410,25 @@ impl Header {
                 return None;
             }
         })
+    }
+
+    pub fn space(&self) -> SpaceId {
+        use self::Header::*;
+        match *self {
+            Short { .. } => SpaceId::OneRtt,
+            Long {
+                ty: LongType::Handshake,
+                ..
+            } => SpaceId::Handshake,
+            _ => SpaceId::Initial,
+        }
+    }
+
+    pub fn key_phase(&self) -> bool {
+        match *self {
+            Header::Short { key_phase, .. } => key_phase,
+            _ => false,
+        }
     }
 }
 
@@ -856,6 +869,29 @@ impl EcnCodepoint {
     }
 }
 
+/// Packet number space identifiers
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum SpaceId {
+    Initial = 0,
+    Handshake = 1,
+    OneRtt = 2,
+}
+
+impl SpaceId {
+    pub const VALUES: [Self; 3] = [SpaceId::Initial, SpaceId::Handshake, SpaceId::OneRtt];
+}
+
+impl slog::Value for SpaceId {
+    fn serialize(
+        &self,
+        _: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,7 +968,7 @@ mod tests {
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
         let server_header_crypto = server_crypto.header_crypto();
         let decode = PartialDecode::new(buf.clone().into(), 0).unwrap();
-        let mut packet = decode.finish(&server_header_crypto).unwrap().0;
+        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap().0;
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff0000115006b858ec6f80452b00402100")[..]
