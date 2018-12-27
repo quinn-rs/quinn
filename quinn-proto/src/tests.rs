@@ -811,7 +811,6 @@ fn key_update() {
 }
 
 #[test]
-#[should_panic] // TODO: Spec design flaw fixed in draft 17
 fn key_update_reordered() {
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
@@ -820,7 +819,7 @@ fn key_update_reordered() {
         .open(client_conn, Directionality::Bi)
         .expect("couldn't open first stream");
 
-    const MSG1: &[u8] = b"one";
+    const MSG1: &[u8] = b"1";
     pair.client.write(client_conn, s, MSG1).unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     assert!(!pair.client.outbound.is_empty());
@@ -840,7 +839,7 @@ fn key_update_reordered() {
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
-        Ok((ref data, 3)) if data == MSG2
+        Ok((ref data, 1)) if data == MSG2
     );
     assert_matches!(
         pair.server.read_unordered(server_conn, s),

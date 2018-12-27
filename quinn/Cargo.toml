@@ -29,7 +29,7 @@ fnv = "1.0.6"
 futures = "0.1.21"
 quinn-proto = { path = "../quinn-proto", version = "0.1.0" }
 rand = "0.6"
-rustls = { git = "https://github.com/Ralith/rustls.git", rev = "044b5f10a57ec385157fae0cad46b462208ff257", features = ["quic"] }
+rustls = { git = "https://github.com/Ralith/rustls.git", rev = "ebbed84658cb55c20798bdad65e2b462c04757e6", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
