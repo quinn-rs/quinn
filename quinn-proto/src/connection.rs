@@ -330,6 +330,15 @@ impl Connection {
             ack_eliciting,
             ..
         } = packet;
+
+        trace!(
+            self.log,
+            "sent {space:?} packet {number} ({len} bytes)",
+            space = space,
+            number = packet_number,
+            len = size,
+        );
+
         if is_crypto_packet {
             self.crypto_in_flight += 1;
         }
@@ -571,7 +580,7 @@ impl Connection {
 
     fn on_loss_detection_timeout(&mut self, now: u64) {
         if self.crypto_in_flight != 0 {
-            trace!(self.log, "retransmitting crypto packets");
+            trace!(self.log, "retransmitting handshake packets");
             for space in self.spaces.iter_mut().filter_map(|x| x.as_mut()) {
                 let packets = space
                     .sent_packets
@@ -971,7 +980,12 @@ impl Connection {
     }
 
     fn handle_packet(&mut self, now: u64, ecn: Option<EcnCodepoint>, mut packet: Packet) {
-        trace!(self.log, "connection got packet"; "len" => packet.payload.len());
+        trace!(
+            self.log,
+            "connection got {space:?} packet ({len} bytes)",
+            space = packet.header.space(),
+            len = packet.payload.len() + packet.header_data.len()
+        );
         let was_closed = self.state.is_closed();
 
         let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
@@ -1616,12 +1630,6 @@ impl Connection {
 
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let number = space.get_tx_number();
-        trace!(
-            self.log,
-            "sending {space:?} packet {number}",
-            space = space_id,
-            number = number
-        );
         let mut buf = Vec::new();
         let mut sent = Retransmits::default();
         let header = match space_id {
