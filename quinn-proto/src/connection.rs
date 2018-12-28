@@ -1792,7 +1792,7 @@ impl Connection {
         }
 
         // STREAM
-        while buf.len() + frame::Stream::<Bytes>::SIZE_BOUND < max_size {
+        while buf.len() + frame::Stream::SIZE_BOUND < max_size {
             let mut stream = if let Some(x) = space.pending.stream.pop_front() {
                 x
             } else {
@@ -1808,7 +1808,7 @@ impl Connection {
             }
             let len = cmp::min(
                 stream.data.len(),
-                max_size as usize - buf.len() - frame::Stream::<Bytes>::SIZE_BOUND,
+                max_size as usize - buf.len() - frame::Stream::SIZE_BOUND,
             );
             let data = stream.data.split_to(len);
             let fin = stream.fin && stream.data.is_empty();
