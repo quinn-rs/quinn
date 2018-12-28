@@ -120,7 +120,8 @@ impl PartialDecode {
                 src_cid,
             } => match LongHeaderType::from_byte(first)? {
                 LongHeaderType::Retry => {
-                    let odcil = buf.get::<u8>()? as usize;
+                    let odcil = first & 0xf;
+                    let odcil = if odcil == 0 { 0 } else { (odcil + 3) as usize };
                     let mut odci_stage = [0; 18];
                     buf.copy_to_slice(&mut odci_stage[0..odcil]);
                     let orig_dst_cid = ConnectionId::new(&odci_stage[..odcil]);
@@ -334,10 +335,14 @@ impl Header {
                 ref dst_cid,
                 ref orig_dst_cid,
             } => {
-                w.write(u8::from(LongHeaderType::Retry));
+                let odcil = if orig_dst_cid.len() == 0 {
+                    0
+                } else {
+                    orig_dst_cid.len() as u8 - 3
+                };
+                w.write(u8::from(LongHeaderType::Retry) | odcil);
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
-                w.write(orig_dst_cid.len() as u8);
                 w.put_slice(orig_dst_cid);
                 PartialEncode {
                     header: self,
