@@ -926,3 +926,36 @@ fn idle_timeout() {
         ))
     );
 }
+
+#[test]
+fn server_busy() {
+    let mut pair = Pair::new(
+        Config::default(),
+        Config::default(),
+        ServerConfig {
+            accept_buffer: 0,
+            ..server_config()
+        },
+    );
+    pair.client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    pair.drive();
+    assert_matches!(
+        pair.client.poll(),
+        Some((
+            _,
+            Event::ConnectionLost {
+                reason:
+                    ConnectionError::ConnectionClosed {
+                        reason:
+                            frame::ConnectionClose {
+                                error_code: TransportError::SERVER_BUSY,
+                                ..
+                            },
+                    },
+            },
+        ))
+    );
+    assert_matches!(pair.server.poll(), None);
+}
