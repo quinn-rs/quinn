@@ -265,25 +265,7 @@ impl Connection {
     /// - an incoming packet is handled
     /// - any timer expires
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
-        // TODO: Fold everything into next_packet?
-        let packet = self
-            .next_packet(now)
-            .or_else(|| {
-                if self.io.probes == 0 {
-                    return None;
-                }
-                self.io.probes -= 1;
-                Some(self.make_probe(now))
-            })
-            .or_else(|| {
-                if !self.io.close {
-                    return None;
-                }
-                self.io.close = false;
-                Some(self.make_close())
-            });
-
-        if let Some(packet) = packet {
+        if let Some(packet) = self.next_packet(now) {
             self.reset_idle_timeout(now);
             return Some(Io::Transmit {
                 destination: self.remote,
@@ -1614,51 +1596,14 @@ impl Connection {
         self.params.stateless_reset_token = Some(new.reset_token);
     }
 
-    fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
-        let space_id = *SpaceId::VALUES.iter().find(|&&x| {
-            self.spaces[x as usize]
-                .as_ref()
-                .map_or(false, |space| space.can_send())
-        })?;
-
-        if space_id == SpaceId::OneRtt && self.congestion_blocked() {
-            return None;
-        }
-
-        // No need to force a transmit after all!
-        self.io.probes = self.io.probes.saturating_sub(1);
-
+    fn populate_packet(
+        &mut self,
+        now: u64,
+        space_id: SpaceId,
+        buf: &mut Vec<u8>,
+    ) -> (Retransmits, RangeSet) {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
-        let number = space.get_tx_number();
-        let mut buf = Vec::new();
         let mut sent = Retransmits::default();
-        let header = match space_id {
-            SpaceId::OneRtt => Header::Short {
-                dst_cid: self.rem_cid,
-                number: PacketNumber::new(number, space.largest_acked_packet),
-                spin: self.spin,
-                key_phase: self.key_phase,
-            },
-            SpaceId::Handshake => Header::Long {
-                ty: LongType::Handshake,
-                src_cid: *self.loc_cids.values().next().unwrap(),
-                dst_cid: self.rem_cid,
-                number: PacketNumber::new(number, space.largest_acked_packet),
-            },
-            SpaceId::Initial => Header::Initial {
-                src_cid: *self.loc_cids.get(&0).unwrap(),
-                dst_cid: self.rem_cid,
-                token: match self.state {
-                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
-                    _ => unreachable!("initial only sent in handshake state"),
-                },
-                number: PacketNumber::new(number, space.largest_acked_packet),
-            },
-        };
-
-        let partial_encode = header.encode(&mut buf);
-        let ack_only = space.pending.is_empty();
-        let header_len = buf.len();
         let max_size = self.mtu as usize - AEAD_TAG_SIZE;
 
         // PING
@@ -1679,7 +1624,7 @@ impl Connection {
             } else {
                 None
             };
-            frame::Ack::encode(delay, &space.pending_acks, ecn, &mut buf);
+            frame::Ack::encode(delay, &space.pending_acks, ecn, buf);
             space.pending_acks.clone()
         } else {
             RangeSet::new()
@@ -1717,7 +1662,7 @@ impl Connection {
                 offset = truncated.offset,
                 length = truncated.data.len()
             );
-            truncated.encode(&mut buf);
+            truncated.encode(buf);
             sent.crypto.push_back(truncated);
             if !frame.data.is_empty() {
                 frame.offset += len as u64;
@@ -1744,7 +1689,7 @@ impl Connection {
                 error_code,
                 final_offset: stream.send().unwrap().offset,
             }
-            .encode(&mut buf);
+            .encode(buf);
         }
 
         // STOP_SENDING
@@ -1831,7 +1776,7 @@ impl Connection {
                 "NEW_CONNECTION_ID {sequence}",
                 sequence = frame.sequence
             );
-            frame.encode(&mut buf);
+            frame.encode(buf);
             sent.new_cids.push(frame);
         }
 
@@ -1876,7 +1821,7 @@ impl Connection {
                 fin,
                 data,
             };
-            frame.encode(true, &mut buf);
+            frame.encode(true, buf);
             sent.stream.push_back(frame);
             if !stream.data.is_empty() {
                 stream.offset += len as u64;
@@ -1884,6 +1829,89 @@ impl Connection {
             }
         }
 
+        (sent, acks)
+    }
+
+    fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
+        let close = mem::replace(&mut self.io.close, false);
+        let (space_id, probe) = if close {
+            (self.highest_space, false)
+        } else {
+            SpaceId::VALUES
+                .iter()
+                .find(|&&x| {
+                    self.spaces[x as usize]
+                        .as_ref()
+                        .map_or(false, |space| space.can_send())
+                })
+                .cloned()
+                .map(|x| (x, false))
+                .or_else(|| {
+                    if self.io.probes != 0 {
+                        Some((self.highest_space, true))
+                    } else {
+                        None
+                    }
+                })?
+        };
+        self.io.probes = self.io.probes.saturating_sub(1);
+
+        if space_id == SpaceId::OneRtt && !probe && self.congestion_blocked() {
+            return None;
+        }
+
+        let space = self.spaces[space_id as usize].as_mut().unwrap();
+        let number = space.get_tx_number();
+        let header = match space_id {
+            SpaceId::OneRtt => Header::Short {
+                dst_cid: self.rem_cid,
+                number: PacketNumber::new(number, space.largest_acked_packet),
+                spin: self.spin,
+                key_phase: self.key_phase,
+            },
+            SpaceId::Handshake => Header::Long {
+                ty: LongType::Handshake,
+                src_cid: *self.loc_cids.values().next().unwrap(),
+                dst_cid: self.rem_cid,
+                number: PacketNumber::new(number, space.largest_acked_packet),
+            },
+            SpaceId::Initial => Header::Initial {
+                src_cid: *self.loc_cids.get(&0).unwrap(),
+                dst_cid: self.rem_cid,
+                token: match self.state {
+                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
+                    _ => Bytes::new(),
+                },
+                number: PacketNumber::new(number, space.largest_acked_packet),
+            },
+        };
+        let mut buf = Vec::new();
+        let partial_encode = header.encode(&mut buf);
+        let ack_only = space.pending.is_empty();
+        let header_len = buf.len();
+
+        let sent = if close {
+            trace!(self.log, "sending CONNECTION_CLOSE");
+            let max_len = self.mtu as usize - header_len - AEAD_TAG_SIZE;
+            match self.state {
+                State::Closed(state::Closed {
+                    reason: state::CloseReason::Application(ref x),
+                }) => x.encode(&mut buf, max_len),
+                State::Closed(state::Closed {
+                    reason: state::CloseReason::Connection(ref x),
+                }) => x.encode(&mut buf, max_len),
+                _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
+            }
+            None
+        } else if probe {
+            // Nothing to send, but we need to make something up
+            buf.write(frame::Type::PING);
+            None
+        } else {
+            Some(self.populate_packet(now, space_id, &mut buf))
+        };
+
+        let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
         if let Header::Initial { .. } = header {
             if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
@@ -1910,113 +1938,29 @@ impl Connection {
         space.crypto.encrypt(number, &mut buf, header_len);
         partial_encode.finish(&mut buf, &space.header_crypto, header_len);
 
-        // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-        // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-        // the need for subtler logic to avoid double-transmitting acks all the time.
-        space.permit_ack_only &= acks.is_empty();
+        if let Some((sent, acks)) = sent {
+            // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
+            // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
+            // the need for subtler logic to avoid double-transmitting acks all the time.
+            space.permit_ack_only &= acks.is_empty();
 
-        self.on_packet_sent(
-            now,
-            space_id,
-            number,
-            SentPacket {
-                acks,
-                time_sent: now,
-                size: buf.len() as u16,
-                is_crypto_packet: space_id != SpaceId::OneRtt && !ack_only,
-                ack_eliciting: !ack_only,
-                in_flight: padded || !ack_only,
-                retransmits: sent,
-            },
-        );
+            self.on_packet_sent(
+                now,
+                space_id,
+                number,
+                SentPacket {
+                    acks,
+                    time_sent: now,
+                    size: buf.len() as u16,
+                    is_crypto_packet: space_id != SpaceId::OneRtt && !ack_only,
+                    ack_eliciting: !ack_only,
+                    in_flight: padded || !ack_only,
+                    retransmits: sent,
+                },
+            );
+        }
 
         Some(buf.into())
-    }
-
-    /// Construct a packet when there's nothing to transmit
-    ///
-    /// Useful for tail loss and RTO probes
-    fn make_probe(&mut self, now: u64) -> Box<[u8]> {
-        let mut buf = Vec::new();
-        let dst_cid = self.rem_cid;
-        let key_phase = self.key_phase;
-        let spin = self.spin;
-        let space = self.space_mut(self.highest_space);
-        let number = space.get_tx_number();
-        let header = Header::Short {
-            dst_cid,
-            key_phase,
-            spin,
-            number: PacketNumber::new(number, space.largest_acked_packet),
-        };
-        let partial_encode = header.encode(&mut buf);
-        let header_len = buf.len() as u16;
-        buf.write(frame::Type::PING);
-
-        space.crypto.encrypt(number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, &space.header_crypto, header_len as usize);
-
-        self.on_packet_sent(
-            now,
-            self.highest_space,
-            number,
-            SentPacket {
-                time_sent: now,
-                size: buf.len() as u16,
-                is_crypto_packet: false,
-                ack_eliciting: true,
-                in_flight: true,
-                acks: RangeSet::new(),
-                retransmits: Retransmits::default(),
-            },
-        );
-        buf.into()
-    }
-
-    fn make_close(&mut self) -> Box<[u8]> {
-        trace!(self.log, "sending CONNECTION_CLOSE");
-        let space = self.space_mut(self.highest_space);
-        let full_number = space.get_tx_number();
-        let number = PacketNumber::new(full_number, space.largest_acked_packet);
-        let mut buf = Vec::new();
-        let header = match self.highest_space {
-            SpaceId::OneRtt => Header::Short {
-                dst_cid: self.rem_cid,
-                number,
-                spin: self.spin,
-                key_phase: self.key_phase,
-            },
-            SpaceId::Initial | SpaceId::Handshake => Header::Long {
-                ty: LongType::Handshake,
-                dst_cid: self.rem_cid,
-                src_cid: *self.loc_cids.values().next().unwrap(),
-                number,
-            },
-        };
-        let partial_encode = header.encode(&mut buf);
-        let header_len = buf.len();
-
-        let max_len = self.mtu as usize - header_len - AEAD_TAG_SIZE;
-        match self.state {
-            State::Closed(state::Closed {
-                reason: state::CloseReason::Application(ref x),
-            }) => x.encode(&mut buf, max_len),
-            State::Closed(state::Closed {
-                reason: state::CloseReason::Connection(ref x),
-            }) => x.encode(&mut buf, max_len),
-            _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
-        }
-
-        if let Header::Long { .. } = header {
-            set_payload_length(&mut buf, header_len as usize, number.len());
-        }
-
-        let space = self.space_mut(self.highest_space);
-        space
-            .crypto
-            .encrypt(full_number, &mut buf, header_len as usize);
-        partial_encode.finish(&mut buf, &space.header_crypto, header_len as usize);
-        buf.into()
     }
 
     /// Close a connection immediately
@@ -2230,7 +2174,11 @@ impl Connection {
     }
 
     fn congestion_blocked(&self) -> bool {
-        self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
+        if let State::Established = self.state {
+            self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
+        } else {
+            false
+        }
     }
 
     fn blocked(&self) -> bool {
