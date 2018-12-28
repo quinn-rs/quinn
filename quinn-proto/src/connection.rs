@@ -118,6 +118,8 @@ pub struct Connection {
     /// count towards bytes_in_flight to ensure congestion control does not impede congestion
     /// feedback.
     bytes_in_flight: u64,
+    /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
+    crypto_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
     congestion_window: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
@@ -137,12 +139,6 @@ pub struct Connection {
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
 
-    /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
-    crypto_in_flight: u64,
-
-    //
-    // Stream states
-    //
     streams: Streams,
 }
 
@@ -230,6 +226,7 @@ impl Connection {
             time_of_last_sent_crypto_packet: 0,
 
             bytes_in_flight: 0,
+            crypto_in_flight: 0,
             congestion_window: config.initial_window,
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
@@ -237,8 +234,6 @@ impl Connection {
             ecn_feedback: frame::EcnCounts::ZERO,
             sending_ecn: true,
             receiving_ecn: false,
-
-            crypto_in_flight: 0,
 
             streams: Streams {
                 streams,
