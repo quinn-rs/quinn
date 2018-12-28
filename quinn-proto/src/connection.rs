@@ -2405,7 +2405,7 @@ impl Connection {
     }
 }
 
-pub fn handshake_close<R>(
+pub fn initial_close<R>(
     crypto: &Crypto,
     header_crypto: &HeaderCrypto,
     remote_id: &ConnectionId,
@@ -2417,11 +2417,11 @@ where
     R: Into<state::CloseReason>,
 {
     let number = PacketNumber::U8(packet_number);
-    let header = Header::Long {
-        ty: LongType::Handshake,
+    let header = Header::Initial {
         dst_cid: *remote_id,
         src_cid: *local_id,
         number,
+        token: Bytes::new(),
     };
 
     let mut buf = Vec::<u8>::new();
