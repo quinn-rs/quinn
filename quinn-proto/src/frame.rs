@@ -221,21 +221,18 @@ impl Frame {
 }
 
 #[derive(Debug, Clone)]
-pub struct ConnectionClose<T = Bytes> {
+pub struct ConnectionClose {
     pub error_code: TransportError,
     pub frame_type: Option<Type>,
-    pub reason: T,
+    pub reason: Bytes,
 }
 
-impl<T> fmt::Display for ConnectionClose<T>
-where
-    T: AsRef<[u8]>,
-{
+impl fmt::Display for ConnectionClose {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error_code.fmt(f)?;
         if !self.reason.as_ref().is_empty() {
             f.write_str(": ")?;
-            f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
+            f.write_str(&String::from_utf8_lossy(&self.reason))?;
         }
         Ok(())
     }
@@ -251,14 +248,11 @@ impl From<TransportError> for ConnectionClose {
     }
 }
 
-impl<T> FrameStruct for ConnectionClose<T> {
+impl FrameStruct for ConnectionClose {
     const SIZE_BOUND: usize = 1 + 2 + 8 + 8;
 }
 
-impl<T> ConnectionClose<T>
-where
-    T: AsRef<[u8]>,
-{
+impl ConnectionClose {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::CONNECTION_CLOSE); // 1 byte
         out.write(self.error_code); // 2 bytes
@@ -267,26 +261,23 @@ where
         let max_len = max_len
             - 3
             - varint::size(ty).unwrap()
-            - varint::size(self.reason.as_ref().len() as u64).unwrap();
-        let actual_len = self.reason.as_ref().len().min(max_len);
+            - varint::size(self.reason.len() as u64).unwrap();
+        let actual_len = self.reason.len().min(max_len);
         out.write_var(actual_len as u64); // <= 8 bytes
-        out.put_slice(&self.reason.as_ref()[0..actual_len]); // whatever's left
+        out.put_slice(&self.reason[0..actual_len]); // whatever's left
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct ApplicationClose<T = Bytes> {
+pub struct ApplicationClose {
     pub error_code: u16,
-    pub reason: T,
+    pub reason: Bytes,
 }
 
-impl<T> fmt::Display for ApplicationClose<T>
-where
-    T: AsRef<[u8]>,
-{
+impl fmt::Display for ApplicationClose {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.reason.as_ref().is_empty() {
-            f.write_str(&String::from_utf8_lossy(self.reason.as_ref()))?;
+            f.write_str(&String::from_utf8_lossy(&self.reason))?;
             f.write_str(" (code ")?;
             self.error_code.fmt(f)?;
             f.write_str(")")?;
@@ -297,22 +288,18 @@ where
     }
 }
 
-impl<T> FrameStruct for ApplicationClose<T> {
+impl FrameStruct for ApplicationClose {
     const SIZE_BOUND: usize = 1 + 2 + 8;
 }
 
-impl<T> ApplicationClose<T>
-where
-    T: AsRef<[u8]>,
-{
+impl ApplicationClose {
     pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::APPLICATION_CLOSE); // 1 byte
         out.write(self.error_code); // 2 bytes
-        let max_len =
-            max_len as usize - 3 - varint::size(self.reason.as_ref().len() as u64).unwrap();
-        let actual_len = self.reason.as_ref().len().min(max_len);
+        let max_len = max_len as usize - 3 - varint::size(self.reason.len() as u64).unwrap();
+        let actual_len = self.reason.len().min(max_len);
         out.write_var(actual_len as u64); // <= 8 bytes
-        out.put_slice(&self.reason.as_ref()[0..actual_len]); // whatever's left
+        out.put_slice(&self.reason[0..actual_len]); // whatever's left
     }
 }
 
@@ -403,21 +390,18 @@ impl EcnCounts {
 }
 
 #[derive(Debug, Clone)]
-pub struct Stream<T = Bytes> {
+pub struct Stream {
     pub id: StreamId,
     pub offset: u64,
     pub fin: bool,
-    pub data: T,
+    pub data: Bytes,
 }
 
-impl<T> FrameStruct for Stream<T> {
+impl FrameStruct for Stream {
     const SIZE_BOUND: usize = 1 + 8 + 8 + 8;
 }
 
-impl<T> Stream<T>
-where
-    T: AsRef<[u8]>,
-{
+impl Stream {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
         let mut ty = STREAM_TY_MIN;
         if self.offset != 0 {
@@ -435,9 +419,9 @@ where
             out.write_var(self.offset); // <=8 bytes
         }
         if length {
-            out.write_var(self.data.as_ref().len() as u64); // <=8 bytes
+            out.write_var(self.data.len() as u64); // <=8 bytes
         }
-        out.put_slice(self.data.as_ref());
+        out.put_slice(&self.data);
     }
 }
 
