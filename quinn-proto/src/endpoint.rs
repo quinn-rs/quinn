@@ -570,7 +570,7 @@ impl Endpoint {
             }
         }
         self.connection_remotes
-            .remove(&self.connections[conn.0].remote);
+            .remove(&self.connections[conn.0].remote());
         self.dirty_conns.remove(&conn);
         self.eventful_conns.remove(&conn);
         self.connections.remove(conn.0);

@@ -40,7 +40,7 @@ pub struct Connection {
     loc_cids: HashMap<u64, ConnectionId>,
     rem_cid: ConnectionId,
     rem_cid_seq: u64,
-    pub(crate) remote: SocketAddrV6,
+    remote: SocketAddrV6,
     state: State,
     side: Side,
     mtu: u16,
@@ -748,7 +748,7 @@ impl Connection {
         }
     }
 
-    pub fn reset_idle_timeout(&mut self, now: u64) {
+    fn reset_idle_timeout(&mut self, now: u64) {
         let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
             cmp::max(self.config.idle_timeout, self.params.idle_timeout)
         } else {
@@ -2491,7 +2491,7 @@ impl Streams {
 }
 
 #[derive(Debug, Clone)]
-pub struct Retransmits {
+struct Retransmits {
     max_data: bool,
     max_uni_stream_id: bool,
     max_bi_stream_id: bool,
@@ -2523,7 +2523,7 @@ impl Retransmits {
             && self.retire_cids.is_empty()
     }
 
-    pub fn path_challenge(&mut self, packet: u64, token: u64) {
+    fn path_challenge(&mut self, packet: u64, token: u64) {
         match self.path_response {
             None => {
                 self.path_response = Some((packet, token));
@@ -2698,7 +2698,7 @@ impl State {
     }
 }
 
-pub mod state {
+mod state {
     use super::*;
 
     #[derive(Clone)]
@@ -2748,22 +2748,22 @@ pub struct ClientConfig {
 
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
-pub struct SentPacket {
+struct SentPacket {
     /// The time the packet was sent.
-    pub time_sent: u64,
+    time_sent: u64,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead.
-    pub size: u16,
+    size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
-    pub ack_eliciting: bool,
+    ack_eliciting: bool,
     /// Whether the packet contains cryptographic handshake messages critical to the completion of
     /// the QUIC handshake.
     // FIXME: Implied by retransmits + space
-    pub is_crypto_packet: bool,
+    is_crypto_packet: bool,
     /// Whether the packet counts towards bytes in flight
-    pub in_flight: bool,
-    pub acks: RangeSet,
-    pub retransmits: Retransmits,
+    in_flight: bool,
+    acks: RangeSet,
+    retransmits: Retransmits,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2799,7 +2799,7 @@ pub enum Io {
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
 #[derive(Debug)]
-pub struct IoQueue {
+struct IoQueue {
     /// Number of probe packets to transmit
     probes: u8,
     /// Whether to transmit a close packet
@@ -2813,7 +2813,7 @@ pub struct IoQueue {
 }
 
 impl IoQueue {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             probes: 0,
             close: false,
