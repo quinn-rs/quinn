@@ -14,7 +14,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    self, handshake_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, TimerUpdate,
+    self, initial_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, TimerUpdate,
 };
 use crate::crypto::{
     self, reset_token_for, ConnectError, Crypto, HeaderCrypto, TlsSession, TokenKey,
@@ -469,7 +469,7 @@ impl Endpoint {
             self.io.push_back(Io::Transmit {
                 destination: remote,
                 ecn: None,
-                packet: handshake_close(
+                packet: initial_close(
                     crypto,
                     header_crypto,
                     &src_cid,
@@ -553,7 +553,7 @@ impl Endpoint {
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: handshake_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
+                    packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
             }
         }
