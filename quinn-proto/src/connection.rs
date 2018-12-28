@@ -823,6 +823,9 @@ impl Connection {
         packet: Packet,
     ) -> Result<(), TransportError> {
         self.process_early_payload(now, packet)?;
+        if self.state.is_closed() {
+            return Ok(());
+        }
         self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false);
         let params = TransportParameters::read(
             Side::Server,
@@ -1254,6 +1257,12 @@ impl Connection {
     fn process_early_payload(&mut self, now: u64, packet: Packet) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::OneRtt);
         for frame in frame::Iter::new(packet.payload.into()) {
+            match frame {
+                Frame::Padding => {}
+                _ => {
+                    trace!(self.log, "got frame"; "type" => %frame.ty());
+                }
+            }
             match frame {
                 Frame::Ack(_) | Frame::Padding => {}
                 _ => {
@@ -1831,6 +1840,9 @@ impl Connection {
         let (space_id, probe) = if close {
             (self.highest_space, false)
         } else {
+            if self.state.is_closed() {
+                return None;
+            }
             SpaceId::VALUES
                 .iter()
                 .find(|&&x| {
