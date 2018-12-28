@@ -440,9 +440,9 @@ impl Endpoint {
             Header::Initial {
                 src_cid,
                 dst_cid,
-                token,
+                ref token,
                 number,
-            } => (src_cid, dst_cid, token, number),
+            } => (src_cid, dst_cid, token.clone(), number),
             _ => panic!("non-initial packet in handle_initial()"),
         };
         let packet_number = packet_number.expand(0);
@@ -539,12 +539,7 @@ impl Endpoint {
             )
             .unwrap();
         self.connection_ids_initial.insert(dst_cid, conn);
-        match self.connections[conn.0].handle_initial(
-            now,
-            ecn,
-            packet_number as u64,
-            packet.payload.freeze(),
-        ) {
+        match self.connections[conn.0].handle_initial(now, ecn, packet_number as u64, packet) {
             Ok(()) => {
                 self.incoming_handshakes += 1;
                 self.dirty_conns.insert(conn);

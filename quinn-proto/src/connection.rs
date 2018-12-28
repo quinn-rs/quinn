@@ -820,16 +820,10 @@ impl Connection {
         now: u64,
         ecn: Option<EcnCodepoint>,
         packet_number: u64,
-        payload: Bytes,
+        packet: Packet,
     ) -> Result<(), TransportError> {
-        let frame = if let Ok(Some(frame)) = parse_initial(&self.log, payload) {
-            frame
-        } else {
-            return Ok(());
-        }; // TODO: Send close?
-
+        self.process_early_payload(now, packet)?;
         self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false);
-        self.read_tls(&frame)?;
         let params = TransportParameters::read(
             Side::Server,
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
@@ -1257,7 +1251,7 @@ impl Connection {
     }
 
     /// Process an Initial or Handshake packet payload
-    fn process_early_payload(&mut self, now: u64, packet: Packet) -> Result<(), ConnectionError> {
+    fn process_early_payload(&mut self, now: u64, packet: Packet) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::OneRtt);
         for frame in frame::Iter::new(packet.payload.into()) {
             match frame {
@@ -1293,7 +1287,7 @@ impl Connection {
                 }
                 _ => {
                     debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
-                    return Err(TransportError::PROTOCOL_VIOLATION.into());
+                    return Err(TransportError::PROTOCOL_VIOLATION);
                 }
             }
         }
@@ -2402,30 +2396,6 @@ impl Connection {
             .as_mut()
             .expect("tried to access unavailable packet space")
     }
-}
-
-/// Extract crypto data from the first Initial packet
-fn parse_initial(log: &Logger, payload: Bytes) -> Result<Option<frame::Crypto>, ()> {
-    let mut result = None;
-    for frame in frame::Iter::new(payload) {
-        match frame {
-            Frame::Padding => {}
-            Frame::Ack(_) => {}
-            Frame::ConnectionClose(_) => {}
-            Frame::Crypto(x) => {
-                if x.offset != 0 {
-                    debug!(log, "nonzero offset in first crypto frame"; "offset" => x.offset);
-                    return Err(());
-                }
-                result = Some(x);
-            }
-            x => {
-                debug!(log, "unexpected frame in initial/retry packet"; "ty" => %x.ty());
-                return Err(());
-            } // Invalid packet
-        }
-    }
-    Ok(result)
 }
 
 pub fn handshake_close<R>(
