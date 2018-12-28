@@ -893,3 +893,36 @@ fn instant_close_2() {
         reason: ApplicationClose { error_code: 42, ref reason }
     }})) if reason.is_empty());
 }
+
+#[test]
+fn idle_timeout() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    pair.client.ping(client_conn);
+    while !pair.client.connection(client_conn).is_closed()
+        || !pair.server.connection(server_conn).is_closed()
+    {
+        pair.step();
+        pair.client.inbound.clear();
+        pair.time = pair.client.next_wakeup();
+    }
+    assert!(pair.time != u64::max_value());
+    assert_matches!(
+        pair.client.poll(),
+        Some((
+            _,
+            Event::ConnectionLost {
+                reason: ConnectionError::TimedOut,
+            },
+        ))
+    );
+    assert_matches!(
+        pair.server.poll(),
+        Some((
+            _,
+            Event::ConnectionLost {
+                reason: ConnectionError::TimedOut,
+            },
+        ))
+    );
+}
