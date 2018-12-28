@@ -1646,7 +1646,7 @@ impl Connection {
                 number: PacketNumber::new(number, space.largest_acked_packet),
             },
             SpaceId::Initial => Header::Initial {
-                src_cid: *self.loc_cids.values().next().unwrap(),
+                src_cid: *self.loc_cids.get(&0).unwrap(),
                 dst_cid: self.rem_cid,
                 token: match self.state {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
@@ -2370,9 +2370,12 @@ impl Connection {
         self.state.is_handshake()
     }
 
-    /// Whether the connection has the keys to transmit application data and isn't closed.
-    pub fn can_send(&self) -> bool {
-        !self.state.is_closed() && self.spaces[SpaceId::OneRtt as usize].is_some()
+    pub fn is_closed(&self) -> bool {
+        self.state.is_closed()
+    }
+
+    pub fn has_1rtt(&self) -> bool {
+        self.spaces[SpaceId::OneRtt as usize].is_some()
     }
 
     pub fn is_drained(&self) -> bool {
