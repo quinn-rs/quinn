@@ -189,6 +189,24 @@ impl Endpoint {
         }
     }
 
+    /// Connection is either ready to accept data or failed.
+    fn conn_ready(&mut self, conn: ConnectionHandle) {
+        if self.connections[conn.0].side().is_server() {
+            self.incoming_handshakes -= 1;
+            self.incoming.push_back(conn);
+        }
+        if self.config.local_cid_len != 0 && !self.connections[conn.0].is_closed() {
+            /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
+            /// connection IDs
+            const LOCAL_CID_COUNT: usize = 8;
+            // We've already issued one CID as part of the normal handshake process.
+            for _ in 1..LOCAL_CID_COUNT {
+                let cid = self.new_cid();
+                self.connections[conn.0].issue_cid(cid);
+            }
+        }
+    }
+
     fn handle_decode(
         &mut self,
         now: u64,
@@ -213,24 +231,13 @@ impl Endpoint {
                 .cloned()
         };
         if let Some(conn_id) = conn {
-            let was_handshake = self.connections[conn_id.0].is_handshaking();
+            let had_1rtt = self.connections[conn_id.0].has_1rtt();
             let remaining = self.connections[conn_id.0].handle_decode(now, ecn, partial_decode);
-            if was_handshake && !self.connections[conn_id.0].is_handshaking() {
-                // Newly established connection
-                if self.connections[conn_id.0].side().is_server() {
-                    self.incoming_handshakes -= 1;
-                    self.incoming.push_back(conn_id);
-                }
-                if self.config.local_cid_len != 0 && self.connections[conn_id.0].can_send() {
-                    /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
-                    /// connection IDs
-                    const LOCAL_CID_COUNT: usize = 8;
-                    // We've already issued one CID as part of the normal handshake process.
-                    for _ in 1..LOCAL_CID_COUNT {
-                        let cid = self.new_cid();
-                        self.connections[conn_id.0].issue_cid(cid);
-                    }
-                }
+            if !had_1rtt
+                && (self.connections[conn_id.0].has_1rtt()
+                    || !self.connections[conn_id.0].is_handshaking())
+            {
+                self.conn_ready(conn_id);
             }
             self.dirty_conns.insert(conn_id);
             self.eventful_conns.insert(conn_id);
@@ -541,6 +548,9 @@ impl Endpoint {
             Ok(()) => {
                 self.incoming_handshakes += 1;
                 self.dirty_conns.insert(conn);
+                if self.connections[conn.0].has_1rtt() {
+                    self.conn_ready(conn);
+                }
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
