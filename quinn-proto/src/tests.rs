@@ -861,3 +861,35 @@ fn initial_retransmit() {
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 }
+
+#[test]
+fn instant_close() {
+    let mut pair = Pair::default();
+    info!(pair.log, "connecting");
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    pair.client.close(pair.time, client_conn, 0, Bytes::new());
+    pair.drive();
+    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.server.poll(), None);
+}
+
+#[test]
+fn instant_close_2() {
+    let mut pair = Pair::default();
+    info!(pair.log, "connecting");
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    // Unlike `instant_close`, the server sees a valid Initial packet first.
+    pair.drive_client();
+    pair.client.close(pair.time, client_conn, 42, Bytes::new());
+    pair.drive();
+    assert_matches!(pair.client.poll(), None);
+    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
+        reason: ApplicationClose { error_code: 42, ref reason }
+    }})) if reason.is_empty());
+}
