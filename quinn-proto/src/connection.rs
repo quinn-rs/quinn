@@ -1860,6 +1860,12 @@ impl Connection {
             return None;
         }
 
+        // SCID must be consistent through the handshake, even if we've issued new CIDs in 1-RTT; an
+        // earlier Handshake packet might have gotten lost.
+        let src_cid = *self
+            .loc_cids
+            .get(&0)
+            .unwrap_or_else(|| self.loc_cids.values().next().unwrap());
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let number = space.get_tx_number();
         let header = match space_id {
@@ -1871,12 +1877,12 @@ impl Connection {
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
-                src_cid: *self.loc_cids.values().next().unwrap(),
+                src_cid,
                 dst_cid: self.rem_cid,
                 number: PacketNumber::new(number, space.largest_acked_packet),
             },
             SpaceId::Initial => Header::Initial {
-                src_cid: *self.loc_cids.get(&0).unwrap(),
+                src_cid,
                 dst_cid: self.rem_cid,
                 token: match self.state {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
