@@ -222,14 +222,9 @@ impl PartialDecode {
         sample_offset: usize,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
-        if sample_offset + header_crypto.sample_size() > packet_length {
-            return Err(PacketDecodeError::InvalidHeader(
-                "packet too short to decode packet number",
-            ));
-        }
         if packet_length < sample_offset + header_crypto.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
-                "packet too short to extract packet number encryption sample",
+                "packet too short to extract header protection sample",
             ));
         }
 
