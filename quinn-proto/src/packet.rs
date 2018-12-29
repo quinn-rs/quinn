@@ -435,6 +435,13 @@ impl Header {
             _ => false,
         }
     }
+
+    pub fn is_short(&self) -> bool {
+        match *self {
+            Header::Short { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 pub struct PartialEncode<'a> {
