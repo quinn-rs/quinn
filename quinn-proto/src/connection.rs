@@ -1094,8 +1094,14 @@ impl Connection {
                     }
                     Header::Long {
                         ty: LongType::Handshake,
+                        src_cid: rem_cid,
                         ..
                     } => {
+                        if rem_cid != self.rem_cid {
+                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
+                            return Ok(());
+                        }
+
                         let state = state.clone();
                         self.process_early_payload(now, packet)?;
                         if self.state.is_closed() {
@@ -1142,6 +1148,9 @@ impl Connection {
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
                             self.state = State::Handshake(state);
+                        } else if rem_cid != self.rem_cid {
+                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
+                            return Ok(());
                         }
                         self.process_early_payload(now, packet)?;
                         Ok(())
