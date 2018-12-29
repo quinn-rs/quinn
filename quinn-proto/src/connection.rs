@@ -817,11 +817,6 @@ impl Connection {
                 match space {
                     SpaceId::Initial => {
                         self.upgrade_crypto(SpaceId::Handshake, secrets);
-                        // A client stops both sending and processing Initial packets when it
-                        // sends its first Handshake packet.
-                        if self.side.is_client() {
-                            self.discard_space(SpaceId::Initial);
-                        }
                     }
                     SpaceId::Handshake => {
                         self.upgrade_crypto(SpaceId::Data, secrets);
@@ -1807,10 +1802,22 @@ impl Connection {
             })?
         };
         let probe = !close && self.io.probes != 0;
-        self.io.probes = self.io.probes.saturating_sub(1);
-
         if space_id == SpaceId::Data && !probe && self.congestion_blocked() {
             return None;
+        }
+
+        //
+        // From here on, we've determined that a packet will definitely be sent.
+        //
+
+        self.io.probes = self.io.probes.saturating_sub(1);
+        if self.spaces[SpaceId::Initial as usize].is_some()
+            && self.side.is_client()
+            && space_id == SpaceId::Handshake
+        {
+            // A client stops both sending and processing Initial packets when it
+            // sends its first Handshake packet.
+            self.discard_space(SpaceId::Initial)
         }
 
         // SCID must be consistent through the handshake, even if we've issued new CIDs in 1-RTT; an
