@@ -515,8 +515,7 @@ impl Endpoint {
                     orig_dst_cid: dst_cid,
                 };
                 let encode = header.encode(&mut buf);
-                let header_len = buf.len();
-                encode.finish(&mut buf, header_crypto, header_len);
+                encode.finish(&mut buf, header_crypto);
                 buf.put_slice(&token);
 
                 self.io.push_back(Io::Transmit {

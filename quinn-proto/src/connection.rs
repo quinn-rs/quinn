@@ -1949,7 +1949,7 @@ impl Connection {
             set_payload_length(&mut buf, header_len, pn_len, space.crypto.tag_len());
         }
         space.crypto.encrypt(number, &mut buf, header_len);
-        partial_encode.finish(&mut buf, &space.header_crypto, header_len);
+        partial_encode.finish(&mut buf, &space.header_crypto);
 
         if let Some((sent, acks)) = sent {
             // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
@@ -2464,7 +2464,7 @@ where
     }
     set_payload_length(&mut buf, header_len, number.len(), crypto.tag_len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
-    partial_encode.finish(&mut buf, header_crypto, header_len);
+    partial_encode.finish(&mut buf, header_crypto);
     buf.into()
 }
 
