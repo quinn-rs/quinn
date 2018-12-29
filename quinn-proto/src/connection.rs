@@ -62,10 +62,6 @@ pub struct Connection {
     /// Limit on incoming data
     local_max_data: u64,
     client_config: Option<ClientConfig>,
-    /// Incoming cryptographic handshake stream
-    crypto_stream: stream::Assembler,
-    /// Current offset of outgoing cryptographic handshake stream
-    crypto_offset: u64,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -205,8 +201,6 @@ impl Connection {
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
             client_config,
-            crypto_stream: stream::Assembler::new(),
-            crypto_offset: 0,
             orig_rem_cid: None,
             lost_packets: 0,
             io: IoQueue::new(),
@@ -840,11 +834,12 @@ impl Connection {
         Ok(())
     }
 
-    fn read_tls(&mut self, crypto: &frame::Crypto) -> Result<(), TransportError> {
-        self.crypto_stream.insert(crypto.offset, &crypto.data);
+    fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
+        let space = self.spaces[space as usize].as_mut().unwrap();
+        space.crypto_stream.insert(crypto.offset, &crypto.data);
         let mut buf = [0; 8192];
         loop {
-            let n = self.crypto_stream.read(&mut buf);
+            let n = space.crypto_stream.read(&mut buf);
             if n == 0 {
                 return Ok(());
             }
@@ -865,7 +860,7 @@ impl Connection {
             let space = self.highest_space;
             let mut outgoing = Vec::new();
             if let Some(secrets) = self.tls.write_hs(&mut outgoing) {
-                match self.highest_space {
+                match space {
                     SpaceId::Initial => {
                         self.upgrade_crypto(SpaceId::Handshake, secrets);
                         // A client stops both sending and processing Initial packets when it
@@ -883,8 +878,8 @@ impl Connection {
             if outgoing.is_empty() {
                 break;
             }
-            let offset = self.crypto_offset;
-            self.crypto_offset += outgoing.len() as u64;
+            let offset = self.space_mut(space).crypto_offset;
+            self.space_mut(space).crypto_offset += outgoing.len() as u64;
             trace!(
                 self.log,
                 "wrote {} {space:?} TLS bytes",
@@ -1087,7 +1082,6 @@ impl Connection {
                             &TransportParameters::new(&self.config),
                         )
                         .unwrap();
-                        self.crypto_offset = 0;
                         self.spaces[0] =
                             Some(PacketSpace::new(Crypto::new_initial(&rem_cid, self.side)));
                         self.write_tls();
@@ -1272,7 +1266,7 @@ impl Connection {
             match frame {
                 Frame::Padding => {}
                 Frame::Crypto(frame) => {
-                    self.read_tls(&frame)?;
+                    self.read_tls(packet.header.space(), &frame)?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), ack);
@@ -1348,7 +1342,7 @@ impl Connection {
                     return Err(TransportError::PROTOCOL_VIOLATION);
                 }
                 Frame::Crypto(frame) => {
-                    self.read_tls(&frame)?;
+                    self.read_tls(SpaceId::OneRtt, &frame)?;
                 }
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
@@ -2870,6 +2864,11 @@ struct PacketSpace {
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     sent_packets: BTreeMap<u64, SentPacket>,
+
+    /// Incoming cryptographic handshake stream
+    crypto_stream: stream::Assembler,
+    /// Current offset of outgoing cryptographic handshake stream
+    crypto_offset: u64,
 }
 
 impl PacketSpace {
@@ -2886,6 +2885,9 @@ impl PacketSpace {
             next_packet_number: 0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
+
+            crypto_stream: stream::Assembler::new(),
+            crypto_offset: 0,
         }
     }
 
