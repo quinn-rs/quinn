@@ -835,16 +835,14 @@ impl slog::Value for ConnectionId {
     }
 }
 
-pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize) {
-    let len = packet.len() - header_len + pn_len + AEAD_TAG_SIZE;
+pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize, tag_len: usize) {
+    let len = packet.len() - header_len + pn_len + tag_len;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
     BigEndian::write_u16(
         &mut packet[header_len - pn_len - 2..],
         len as u16 | 0b01 << 14,
     );
 }
-
-pub const AEAD_TAG_SIZE: usize = 16;
 
 pub const LONG_HEADER_FORM: u8 = 0x80;
 const FIXED_BIT: u8 = 0x40;
@@ -959,7 +957,7 @@ mod tests {
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
         buf.resize(header_len + 16, 0);
-        set_payload_length(&mut buf, header_len, 1);
+        set_payload_length(&mut buf, header_len, 1, client_crypto.tag_len());
         for byte in &buf {
             eprint!("{:02x}", byte);
         }

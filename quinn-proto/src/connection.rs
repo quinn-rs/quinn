@@ -19,7 +19,7 @@ use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
-    PartialDecode, SpaceId, AEAD_TAG_SIZE, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
+    PartialDecode, SpaceId, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
 use crate::stream::{self, ReadError, Stream, WriteError};
@@ -1564,7 +1564,7 @@ impl Connection {
     ) -> (Retransmits, RangeSet) {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut sent = Retransmits::default();
-        let max_size = self.mtu as usize - AEAD_TAG_SIZE;
+        let max_size = self.mtu as usize - space.crypto.tag_len();
 
         // PING
         if space.pending.ping {
@@ -1851,7 +1851,7 @@ impl Connection {
 
         let sent = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
-            let max_len = self.mtu as usize - header_len - AEAD_TAG_SIZE;
+            let max_len = self.mtu as usize - header_len - space.crypto.tag_len();
             match self.state {
                 State::Closed(state::Closed {
                     reason: state::CloseReason::Application(ref x),
@@ -1876,8 +1876,8 @@ impl Connection {
         let mut padded = false;
         if let Header::Initial { .. } = header {
             if self.side.is_client() {
-                if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                    buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
+                if buf.len() < MIN_INITIAL_SIZE - space.crypto.tag_len() {
+                    buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
                     padded = true;
                 }
             }
@@ -1889,7 +1889,7 @@ impl Connection {
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
-        let protected_payload_len = (buf.len() + AEAD_TAG_SIZE) - header_len;
+        let protected_payload_len = (buf.len() + space.crypto.tag_len()) - header_len;
         if let Some(padding_minus_one) =
             (space.header_crypto.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
         {
@@ -1899,7 +1899,7 @@ impl Connection {
             buf.resize(buf.len() + padding, 0);
         }
         if !header.is_short() {
-            set_payload_length(&mut buf, header_len, pn_len);
+            set_payload_length(&mut buf, header_len, pn_len, space.crypto.tag_len());
         }
         space.crypto.encrypt(number, &mut buf, header_len);
         partial_encode.finish(&mut buf, &space.header_crypto, header_len);
@@ -2392,12 +2392,12 @@ where
     let mut buf = Vec::<u8>::new();
     let partial_encode = header.encode(&mut buf);
     let header_len = buf.len();
-    let max_len = MIN_MTU as usize - header_len - AEAD_TAG_SIZE;
+    let max_len = MIN_MTU as usize - header_len - crypto.tag_len();
     match reason.into() {
         state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
     }
-    set_payload_length(&mut buf, header_len, number.len());
+    set_payload_length(&mut buf, header_len, number.len(), crypto.tag_len());
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
     partial_encode.finish(&mut buf, header_crypto, header_len);
     buf.into()
