@@ -1088,7 +1088,7 @@ impl Connection {
 
                         self.state = State::Handshake(state::Handshake {
                             token: Some(packet.payload.into()),
-                            rem_cid_set: true,
+                            rem_cid_set: false,
                         });
                         Ok(())
                     }
