@@ -1915,9 +1915,11 @@ impl Connection {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
         if let Header::Initial { .. } = header {
-            if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
-                buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
-                padded = true;
+            if self.side.is_client() {
+                if buf.len() < MIN_INITIAL_SIZE - AEAD_TAG_SIZE {
+                    buf.resize(MIN_INITIAL_SIZE - AEAD_TAG_SIZE, 0);
+                    padded = true;
+                }
             }
         }
         let pn_len = header
