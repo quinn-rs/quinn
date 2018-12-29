@@ -1850,6 +1850,9 @@ impl Connection {
                 _ => {}
             }
         }
+        if let Some(ref mut prev) = self.prev_crypto {
+            prev.update_unacked = false;
+        }
 
         // SCID must be consistent through the handshake, even if we've issued new CIDs in 1-RTT; an
         // earlier Handshake packet might have gotten lost.
@@ -2254,12 +2257,17 @@ impl Connection {
         }
 
         if let Some(crypto) = crypto_update {
-            if number <= self.rx_packet {
+            if number <= self.rx_packet
+                || self
+                    .prev_crypto
+                    .as_ref()
+                    .map_or(false, |x| x.update_unacked)
+            {
                 warn!(self.log, "recieved an illegal key update");
                 return Err(Some(TransportError::PROTOCOL_VIOLATION));
             }
             trace!(self.log, "key update authenticated");
-            self.update_keys(crypto, number);
+            self.update_keys(crypto, number, true);
             // No need to wait for confirmation of a remotely-initiated key update
             self.prev_crypto.as_mut().unwrap().update_ack_time = Some(now);
             self.set_key_discard_timer(now);
@@ -2272,7 +2280,7 @@ impl Connection {
     pub fn initiate_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
         let update = space.crypto.update(self.side, &self.tls);
-        self.update_keys(update, space.next_packet_number);
+        self.update_keys(update, space.next_packet_number, false);
     }
 
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
@@ -2317,7 +2325,7 @@ impl Connection {
         Ok(n)
     }
 
-    fn update_keys(&mut self, crypto: Crypto, number: u64) {
+    fn update_keys(&mut self, crypto: Crypto, number: u64, remote: bool) {
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize].as_mut().unwrap().crypto,
             crypto,
@@ -2326,6 +2334,7 @@ impl Connection {
             crypto: old,
             end_packet: number,
             update_ack_time: None,
+            update_unacked: remote,
         });
         self.key_phase = !self.key_phase;
     }
@@ -2961,4 +2970,6 @@ struct PrevCrypto {
     end_packet: u64,
     /// Time at which a packet using the following key phase was received
     update_ack_time: Option<u64>,
+    /// Whether the following key phase is from a remotely initiated update that we haven't acked
+    update_unacked: bool,
 }
