@@ -49,7 +49,7 @@ pub use crate::transport_error::Error as TransportError;
 pub const VERSION: u32 = 0xff00_0011;
 
 /// TLS ALPN value for HTTP over QUIC
-pub const ALPN_QUIC_HTTP: &[u8] = b"hq-11";
+pub const ALPN_QUIC_HTTP: &[u8] = b"hq-17";
 
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
