@@ -162,7 +162,9 @@ impl Pair {
         self.drive_server();
         let client_t = self.client.next_wakeup();
         let server_t = self.server.next_wakeup();
-        if client_t == self.client.idle && server_t == self.server.idle {
+        if client_t == self.client.timers[Timer::Idle as usize]
+            && server_t == self.server.timers[Timer::Idle as usize]
+        {
             return false;
         }
         if client_t < server_t {
@@ -245,9 +247,7 @@ struct TestEndpoint {
     endpoint: Endpoint,
     addr: SocketAddrV6,
     socket: Option<UdpSocket>,
-    idle: u64,
-    loss: u64,
-    close: u64,
+    timers: [u64; 3],
     conn: Option<ConnectionHandle>,
     outbound: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
     delayed: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
@@ -270,9 +270,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            idle: u64::max_value(),
-            loss: u64::max_value(),
-            close: u64::max_value(),
+            timers: [u64::max_value(); 3],
             conn: None,
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
@@ -290,35 +288,17 @@ impl TestEndpoint {
             }
         }
         if let Some(conn) = self.conn {
-            if self.loss <= now {
-                trace!(
-                    log,
-                    "{side:?} {timer:?} timeout",
-                    side = self.side,
-                    timer = Timer::LossDetection
-                );
-                self.loss = u64::max_value();
-                self.endpoint.timeout(now, conn, Timer::LossDetection);
-            }
-            if self.idle <= now {
-                trace!(
-                    log,
-                    "{side:?} {timer:?} timeout",
-                    side = self.side,
-                    timer = Timer::Idle
-                );
-                self.idle = u64::max_value();
-                self.endpoint.timeout(now, conn, Timer::Idle);
-            }
-            if self.close <= now {
-                trace!(
-                    log,
-                    "{side:?} {timer:?} timeout",
-                    side = self.side,
-                    timer = Timer::Close
-                );
-                self.close = u64::max_value();
-                self.endpoint.timeout(now, conn, Timer::Close);
+            for &timer in Timer::VALUES.iter() {
+                if self.timers[timer as usize] <= now {
+                    trace!(
+                        log,
+                        "{side:?} {timer:?} timeout",
+                        side = self.side,
+                        timer = timer
+                    );
+                    self.timers[timer as usize] = u64::max_value();
+                    self.endpoint.timeout(now, conn, timer);
+                }
             }
         }
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
@@ -358,26 +338,18 @@ impl TestEndpoint {
                             time
                         }
                     };
-                    match timer {
-                        Timer::LossDetection => {
-                            self.loss = time;
-                        }
-                        Timer::Idle => {
-                            self.idle = time;
-                        }
-                        Timer::Close => {
-                            self.close = time;
-                        }
-                    }
+                    self.timers[timer as usize] = time;
                 }
             }
         }
     }
 
     fn next_wakeup(&self) -> u64 {
-        self.idle
-            .min(self.loss)
-            .min(self.close)
+        self.timers
+            .iter()
+            .cloned()
+            .min()
+            .unwrap()
             .min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
     }
 
