@@ -128,10 +128,6 @@ pub struct Connection {
     ssthresh: u64,
     /// Explicit congestion notification (ECN) counters
     ecn_counters: frame::EcnCounts,
-    /// Recent ECN counters sent by the peer in ACK frames
-    ///
-    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet number.
-    ecn_feedback: frame::EcnCounts,
     /// Whether we're enabling ECN on outgoing packets
     sending_ecn: bool,
     /// Whether the most recently received packet had an ECN codepoint set
@@ -228,7 +224,6 @@ impl Connection {
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
             ecn_counters: frame::EcnCounts::ZERO,
-            ecn_feedback: frame::EcnCounts::ZERO,
             sending_ecn: true,
             receiving_ecn: false,
 
@@ -376,6 +371,7 @@ impl Connection {
                 if ack.largest > prev_largest {
                     self.process_ecn(
                         now,
+                        space,
                         newly_acked.len() as u64,
                         ecn,
                         largest_acked_time_sent.unwrap(),
@@ -401,11 +397,12 @@ impl Connection {
     fn process_ecn(
         &mut self,
         now: u64,
+        space: SpaceId,
         newly_acked: u64,
         ecn: frame::EcnCounts,
         largest_sent_time: u64,
     ) {
-        match self.detect_ecn(newly_acked, ecn) {
+        match self.space_mut(space).detect_ecn(newly_acked, ecn) {
             Err(e) => {
                 debug!(
                     self.log,
@@ -419,45 +416,6 @@ impl Connection {
                 self.congestion_event(now, largest_sent_time);
             }
         }
-    }
-
-    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
-    fn detect_ecn(
-        &mut self,
-        newly_acked: u64,
-        ecn: frame::EcnCounts,
-    ) -> Result<bool, &'static str> {
-        let ect0_increase = ecn
-            .ect0
-            .checked_sub(self.ecn_feedback.ect0)
-            .ok_or("peer ECT(0) count regression")?;
-        let ect1_increase = ecn
-            .ect1
-            .checked_sub(self.ecn_feedback.ect1)
-            .ok_or("peer ECT(1) count regression")?;
-        let ce_increase = ecn
-            .ce
-            .checked_sub(self.ecn_feedback.ce)
-            .ok_or("peer CE count regression")?;
-        let total_increase = ect0_increase + ect1_increase + ce_increase;
-        if total_increase < newly_acked {
-            trace!(
-                self.log,
-                "ECN bleaching: {} newly acked, but ECN counts increased by {}",
-                newly_acked,
-                total_increase
-            );
-            return Err("ECN bleaching");
-        }
-        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
-            return Err("ECN corruption");
-        }
-        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
-        // the draft so that long-term drift does not occur. If =, then the only question is whether
-        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
-        // congestion check obvious.
-        self.ecn_feedback = ecn;
-        Ok(ce_increase != 0)
     }
 
     fn update_rtt(&mut self, ack_delay: u64) {
@@ -2876,6 +2834,13 @@ struct PacketSpace {
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     sent_packets: BTreeMap<u64, SentPacket>,
+    /// Recent ECN counters sent by the peer in ACK frames
+    ///
+    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
+    /// number. Stored per-space to simplify verification, which would otherwise have difficulty
+    /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
+    /// ACK already processed in another space.
+    ecn_feedback: frame::EcnCounts,
 
     /// Incoming cryptographic handshake stream
     crypto_stream: stream::Assembler,
@@ -2897,6 +2862,7 @@ impl PacketSpace {
             next_packet_number: 0,
             largest_acked_packet: 0,
             sent_packets: BTreeMap::new(),
+            ecn_feedback: frame::EcnCounts::ZERO,
 
             crypto_stream: stream::Assembler::new(),
             crypto_offset: 0,
@@ -2913,5 +2879,38 @@ impl PacketSpace {
 
     fn can_send(&self) -> bool {
         !self.pending.is_empty() || (self.permit_ack_only && !self.pending_acks.is_empty())
+    }
+
+    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
+    fn detect_ecn(
+        &mut self,
+        newly_acked: u64,
+        ecn: frame::EcnCounts,
+    ) -> Result<bool, &'static str> {
+        let ect0_increase = ecn
+            .ect0
+            .checked_sub(self.ecn_feedback.ect0)
+            .ok_or("peer ECT(0) count regression")?;
+        let ect1_increase = ecn
+            .ect1
+            .checked_sub(self.ecn_feedback.ect1)
+            .ok_or("peer ECT(1) count regression")?;
+        let ce_increase = ecn
+            .ce
+            .checked_sub(self.ecn_feedback.ce)
+            .ok_or("peer CE count regression")?;
+        let total_increase = ect0_increase + ect1_increase + ce_increase;
+        if total_increase < newly_acked {
+            return Err("ECN bleaching");
+        }
+        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
+            return Err("ECN corruption");
+        }
+        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
+        // the draft so that long-term drift does not occur. If =, then the only question is whether
+        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
+        // congestion check obvious.
+        self.ecn_feedback = ecn;
+        Ok(ce_increase != 0)
     }
 }

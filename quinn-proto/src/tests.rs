@@ -667,10 +667,12 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let (client_conn, _) = pair.connect();
+    let (client_conn, server_conn) = pair.connect();
     assert_eq!(pair.client.connection(client_conn).bytes_in_flight(), 0);
     // TODO: Implement handshake key timeout
     //assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
+    assert!(pair.client.connection(client_conn).using_ecn());
+    assert!(pair.server.connection(server_conn).using_ecn());
 }
 
 /*
