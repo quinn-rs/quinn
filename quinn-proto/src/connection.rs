@@ -732,7 +732,10 @@ impl Connection {
             packet = packet
         );
         // A server stops sending and processing Initial packets when it receives its first Handshake packet.
-        if space_id == SpaceId::Handshake && packet == 0 && self.side.is_server() {
+        if self.spaces[SpaceId::Initial as usize].is_some()
+            && space_id == SpaceId::Handshake
+            && self.side.is_server()
+        {
             self.discard_space(SpaceId::Initial);
         }
         let space = self.spaces[space_id as usize].as_mut().unwrap();
