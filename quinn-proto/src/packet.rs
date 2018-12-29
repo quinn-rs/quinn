@@ -219,15 +219,13 @@ impl PartialDecode {
     fn decrypt_header(
         buf: &mut io::Cursor<BytesMut>,
         header_crypto: &HeaderCrypto,
-        mut sample_offset: usize,
+        sample_offset: usize,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
         if sample_offset + header_crypto.sample_size() > packet_length {
-            sample_offset = packet_length
-                .checked_sub(header_crypto.sample_size())
-                .ok_or_else(|| {
-                    PacketDecodeError::InvalidHeader("packet too short to decode packet number")
-                })?;
+            return Err(PacketDecodeError::InvalidHeader(
+                "packet too short to decode packet number",
+            ));
         }
         if packet_length < sample_offset + header_crypto.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
@@ -455,7 +453,7 @@ impl<'a> PartialEncode<'a> {
         let payload_field_len =
             varint::size((buf.len() - header_len + PacketNumber::decode_len(buf[0])) as u64)
                 .unwrap();
-        let (mut sample_offset, pn_pos) = match header {
+        let (sample_offset, pn_pos) = match header {
             Header::Short { dst_cid, .. } => {
                 let sample_offset = 1 + dst_cid.len() + 4;
                 (sample_offset, pn.unwrap())
@@ -485,11 +483,11 @@ impl<'a> PartialEncode<'a> {
             }
         };
 
-        let packet_length = buf.len();
-        if sample_offset + header_crypto.sample_size() > packet_length {
-            sample_offset = packet_length - header_crypto.sample_size();
-        }
-
+        debug_assert!(
+            sample_offset + header_crypto.sample_size() <= buf.len(),
+            "packet must be padded to at least {} bytes for header protection sampling",
+            sample_offset + header_crypto.sample_size()
+        );
         debug_assert!(header_crypto.sample_size() <= 16);
         let sample = {
             let mut sample = [0; 16];
