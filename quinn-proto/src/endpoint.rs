@@ -946,10 +946,16 @@ pub enum Timer {
     Idle = 1,
     /// When the close timer expires, the connection has been gracefully terminated.
     Close = 2,
+    KeyDiscard = 3,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Timer; 3] = [Timer::LossDetection, Timer::Idle, Timer::Close];
+    pub(crate) const VALUES: [Timer; 4] = [
+        Timer::LossDetection,
+        Timer::Idle,
+        Timer::Close,
+        Timer::KeyDiscard,
+    ];
 }
 
 impl slog::Value for Timer {

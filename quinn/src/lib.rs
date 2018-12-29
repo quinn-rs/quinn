@@ -142,6 +142,7 @@ struct Pending {
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     cancel_loss_detect: Option<oneshot::Sender<()>>,
     cancel_idle: Option<oneshot::Sender<()>>,
+    cancel_key_discard: Option<oneshot::Sender<()>>,
     incoming_streams: VecDeque<StreamId>,
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
@@ -162,6 +163,7 @@ impl Pending {
             bi_opening: VecDeque::new(),
             cancel_loss_detect: None,
             cancel_idle: None,
+            cancel_key_discard: None,
             incoming_streams: VecDeque::new(),
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
@@ -825,6 +827,7 @@ impl Future for Driver {
                         let cancel = match timer {
                             LossDetection => &mut pending.cancel_loss_detect,
                             Idle => &mut pending.cancel_idle,
+                            KeyDiscard => &mut pending.cancel_key_discard,
                             Close => unreachable!(),
                         };
                         let instant = endpoint.epoch + duration_micros(time);
@@ -858,6 +861,9 @@ impl Future for Driver {
                                 }
                                 Idle => {
                                     pending.cancel_idle.take().map(|x| x.send(()));
+                                }
+                                KeyDiscard => {
+                                    pending.cancel_key_discard.take().map(|x| x.send(()));
                                 }
                                 Close => {} // Arises from stateless reset
                             }
