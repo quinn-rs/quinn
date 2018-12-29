@@ -27,3 +27,5 @@ pub mod table;
 
 pub mod decoder;
 pub mod vas;
+
+pub mod prefix_int;

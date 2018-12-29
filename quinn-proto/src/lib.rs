@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::ops;
 use std::time::Duration;
 
-mod coding;
+pub mod coding;
 mod dedup;
 mod range_set;
 #[cfg(test)]
