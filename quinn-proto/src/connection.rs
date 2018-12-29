@@ -1,10 +1,7 @@
 use std::collections::{hash_map, BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddrV6;
 use std::sync::Arc;
-use std::{
-    cmp::{self, Ordering},
-    io, mem,
-};
+use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
@@ -691,17 +688,11 @@ impl Connection {
         if space.pending_acks.len() > MAX_ACK_BLOCKS {
             space.pending_acks.pop_min();
         }
-        match space_id
-            .cmp(&self.rx_packet_space)
-            .then(packet.cmp(&self.rx_packet))
-        {
-            Ordering::Greater | Ordering::Equal => {
-                self.rx_packet = packet;
-                self.rx_packet_time = now;
-                // Update outgoing spin bit, inverting iff we're the client
-                self.spin = self.side.is_client() ^ spin;
-            }
-            _ => {}
+        if (space_id, packet) >= (self.rx_packet_space, self.rx_packet) {
+            self.rx_packet = packet;
+            self.rx_packet_time = now;
+            // Update outgoing spin bit, inverting iff we're the client
+            self.spin = self.side.is_client() ^ spin;
         }
     }
 
