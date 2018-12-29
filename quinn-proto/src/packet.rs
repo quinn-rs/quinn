@@ -83,8 +83,7 @@ impl PartialDecode {
                     ));
                 }
 
-                let sample_offset = 1 + dst_cid.len() + 4;
-                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
+                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let spin = buf.get_ref()[0] & SPIN_BIT != 0;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
@@ -144,15 +143,7 @@ impl PartialDecode {
                     buf.advance(token_length);
 
                     let len = buf.get_var()?;
-                    let sample_offset = 10
-                        + dst_cid.len()
-                        + src_cid.len()
-                        + varint::size(len).unwrap()
-                        + varint::size(token_length as u64).unwrap()
-                        + token.len();
-
-                    let number =
-                        Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -171,10 +162,7 @@ impl PartialDecode {
                 }
                 LongHeaderType::Standard(ty) => {
                     let len = buf.get_var()?;
-                    let sample_offset =
-                        10 + dst_cid.len() + src_cid.len() + varint::size(len).unwrap();
-                    let number =
-                        Self::decrypt_header(&mut buf, header_crypto.unwrap(), sample_offset)?;
+                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                     if len < number.len() as u64 {
                         return Err(PacketDecodeError::InvalidHeader(
                             "packet number longer than packet",
@@ -219,22 +207,16 @@ impl PartialDecode {
     fn decrypt_header(
         buf: &mut io::Cursor<BytesMut>,
         header_crypto: &HeaderCrypto,
-        sample_offset: usize,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
-        if packet_length < sample_offset + header_crypto.sample_size() {
+        let pn_offset = buf.position() as usize;
+        if packet_length < pn_offset + 4 + header_crypto.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
                 "packet too short to extract header protection sample",
             ));
         }
 
-        let mut sample = [0; 16];
-        debug_assert!(header_crypto.sample_size() <= 16);
-        sample.copy_from_slice(
-            &buf.get_ref()[sample_offset..sample_offset + header_crypto.sample_size()],
-        );
-        let pn_offset = buf.position() as usize;
-        header_crypto.decrypt(pn_offset, &sample, buf.get_mut());
+        header_crypto.decrypt(pn_offset, buf.get_mut());
 
         let len = PacketNumber::decode_len(buf.get_ref()[0]);
         PacketNumber::decode(len, buf)
@@ -280,7 +262,7 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode<'_> {
+    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode {
         use self::Header::*;
         match *self {
             Initial {
@@ -301,10 +283,7 @@ impl Header {
                     + src_cid.len()
                     + varint::size(token.len() as u64).unwrap()
                     + token.len();
-                PartialEncode {
-                    header: self,
-                    pn: Some(pn_pos),
-                }
+                PartialEncode { pn: Some(pn_pos) }
             }
             Long {
                 ty,
@@ -318,10 +297,7 @@ impl Header {
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
                 let pn_pos = 8 + dst_cid.len() + src_cid.len();
-                PartialEncode {
-                    header: self,
-                    pn: Some(pn_pos),
-                }
+                PartialEncode { pn: Some(pn_pos) }
             }
             Retry {
                 ref src_cid,
@@ -337,10 +313,7 @@ impl Header {
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.put_slice(orig_dst_cid);
-                PartialEncode {
-                    header: self,
-                    pn: None,
-                }
+                PartialEncode { pn: None }
             }
             Short {
                 ref dst_cid,
@@ -357,7 +330,6 @@ impl Header {
                 w.put_slice(dst_cid);
                 number.encode(w);
                 PartialEncode {
-                    header: self,
                     pn: Some(1 + dst_cid.len()),
                 }
             }
@@ -369,10 +341,7 @@ impl Header {
                 w.write(0x80u8 | random);
                 w.write::<u32>(0);
                 Self::encode_cids(w, dst_cid, src_cid);
-                PartialEncode {
-                    header: self,
-                    pn: None,
-                }
+                PartialEncode { pn: None }
             }
         }
     }
@@ -437,61 +406,26 @@ impl Header {
     }
 }
 
-pub struct PartialEncode<'a> {
-    header: &'a Header,
+pub struct PartialEncode {
     pn: Option<usize>,
 }
 
-impl<'a> PartialEncode<'a> {
-    pub fn finish(self, buf: &mut [u8], header_crypto: &HeaderCrypto, header_len: usize) {
-        let PartialEncode { header, pn } = self;
-        let payload_field_len =
-            varint::size((buf.len() - header_len + PacketNumber::decode_len(buf[0])) as u64)
-                .unwrap();
-        let (sample_offset, pn_pos) = match header {
-            Header::Short { dst_cid, .. } => {
-                let sample_offset = 1 + dst_cid.len() + 4;
-                (sample_offset, pn.unwrap())
-            }
-            Header::Initial {
-                dst_cid,
-                src_cid,
-                token,
-                ..
-            } => {
-                let sample_offset = 10
-                    + dst_cid.len()
-                    + src_cid.len()
-                    + payload_field_len
-                    + varint::size(token.len() as u64).unwrap()
-                    + token.len();
-                (sample_offset, pn.unwrap())
-            }
-            Header::Long {
-                dst_cid, src_cid, ..
-            } => {
-                let sample_offset = 10 + dst_cid.len() + src_cid.len() + payload_field_len;
-                (sample_offset, pn.unwrap())
-            }
-            _ => {
-                return;
-            }
+impl PartialEncode {
+    pub fn finish(self, buf: &mut [u8], header_crypto: &HeaderCrypto) {
+        let PartialEncode { pn, .. } = self;
+        let pn_pos = if let Some(pn) = pn {
+            pn
+        } else {
+            return;
         };
 
         debug_assert!(
-            sample_offset + header_crypto.sample_size() <= buf.len(),
+            pn_pos + 4 + header_crypto.sample_size() <= buf.len(),
             "packet must be padded to at least {} bytes for header protection sampling",
-            sample_offset + header_crypto.sample_size()
+            pn_pos + 4 + header_crypto.sample_size()
         );
-        debug_assert!(header_crypto.sample_size() <= 16);
-        let sample = {
-            let mut sample = [0; 16];
-            sample
-                .copy_from_slice(&buf[sample_offset..sample_offset + header_crypto.sample_size()]);
-            sample
-        };
 
-        header_crypto.encrypt(pn_pos, &sample, buf);
+        header_crypto.encrypt(pn_pos, buf);
     }
 }
 
@@ -953,20 +887,17 @@ mod tests {
         let header_len = buf.len();
         buf.resize(header_len + 16, 0);
         set_payload_length(&mut buf, header_len, 1, client_crypto.tag_len());
-        for byte in &buf {
-            eprint!("{:02x}", byte);
-        }
         assert_eq!(
             buf[..],
             hex!("c0ff0000115006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
         );
 
         client_crypto.encrypt(0, &mut buf, header_len);
-        encode.finish(&mut buf, &client_header_crypto, header_len);
+        encode.finish(&mut buf, &client_header_crypto);
         assert_eq!(
             buf[..],
             hex!(
-                "ccff0000115006b858ec6f80452b004021b5 
+                "c8ff0000115006b858ec6f80452b004021a7
                  f037a410591e943c31d1eefad0927b97e620160d59c776720c7118b9699a15b3"
             )[..]
         );

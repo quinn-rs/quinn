@@ -251,17 +251,18 @@ pub struct HeaderCrypto {
 }
 
 impl HeaderCrypto {
-    pub fn decrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
-        let mask = self.remote.mask(sample);
-        if packet[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
+    pub fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+        let (header, sample) = packet.split_at_mut(pn_offset + 4);
+        let mask = self.remote.mask(&sample[0..self.sample_size()]);
+        if header[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
             // Long header: 4 bits masked
-            packet[0] ^= mask[0] & 0x0f;
+            header[0] ^= mask[0] & 0x0f;
         } else {
             // Short header: 5 bits masked
-            packet[0] ^= mask[0] & 0x1f;
+            header[0] ^= mask[0] & 0x1f;
         }
-        let pn_length = PacketNumber::decode_len(packet[0]);
-        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+        let pn_length = PacketNumber::decode_len(header[0]);
+        for (out, inp) in header[pn_offset..pn_offset + pn_length]
             .iter_mut()
             .zip(&mask[1..])
         {
@@ -269,17 +270,18 @@ impl HeaderCrypto {
         }
     }
 
-    pub fn encrypt(&self, pn_offset: usize, sample: &[u8], packet: &mut [u8]) {
-        let mask = self.local.mask(sample);
-        let pn_length = PacketNumber::decode_len(packet[0]);
-        if packet[0] & 0x80 == 0x80 {
+    pub fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+        let (header, sample) = packet.split_at_mut(pn_offset + 4);
+        let mask = self.local.mask(&sample[0..self.sample_size()]);
+        let pn_length = PacketNumber::decode_len(header[0]);
+        if header[0] & 0x80 == 0x80 {
             // Long header: 4 bits masked
-            packet[0] ^= mask[0] & 0x0f;
+            header[0] ^= mask[0] & 0x0f;
         } else {
             // Short header: 5 bits masked
-            packet[0] ^= mask[0] & 0x1f;
+            header[0] ^= mask[0] & 0x1f;
         }
-        for (out, inp) in packet[pn_offset..pn_offset + pn_length]
+        for (out, inp) in header[pn_offset..pn_offset + pn_length]
             .iter_mut()
             .zip(&mask[1..])
         {
