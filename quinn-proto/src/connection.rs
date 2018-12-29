@@ -240,7 +240,8 @@ impl Connection {
             config,
         };
         if side.is_client() {
-            this.connect();
+            // Kick off the connection
+            this.write_tls();
         }
         this
     }
@@ -285,11 +286,6 @@ impl Connection {
     /// - the idle timer expires
     pub fn poll(&mut self) -> Option<Event> {
         self.events.pop_front()
-    }
-
-    /// Initiate a connection
-    fn connect(&mut self) {
-        self.write_tls();
     }
 
     fn on_packet_sent(&mut self, now: u64, space: SpaceId, packet_number: u64, packet: SentPacket) {
