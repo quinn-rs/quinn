@@ -21,7 +21,7 @@ pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Sessi
 use webpki::DNSNameRef;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::packet::{ConnectionId, PacketNumber, AEAD_TAG_SIZE, LONG_HEADER_FORM};
+use crate::packet::{ConnectionId, PacketNumber, LONG_HEADER_FORM};
 use crate::transport_parameters::TransportParameters;
 use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
@@ -184,7 +184,7 @@ impl Crypto {
     }
 
     pub fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
-        if payload.len() < AEAD_TAG_SIZE {
+        if payload.len() < self.tag_len() {
             return Err(());
         }
 
@@ -238,6 +238,10 @@ impl Crypto {
         let secrets = tls.update_secrets(client_secret, server_secret);
         let suite = tls.get_negotiated_ciphersuite().unwrap();
         Self::new(side, suite.get_hash(), suite.get_aead_alg(), secrets)
+    }
+
+    pub fn tag_len(&self) -> usize {
+        self.sealing_key.algorithm().tag_len()
     }
 }
 
