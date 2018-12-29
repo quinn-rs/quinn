@@ -120,6 +120,8 @@ pub struct Connection {
     bytes_in_flight: u64,
     /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
     crypto_in_flight: u64,
+    /// Number of in flight containing frames other than ACK and PADDING
+    ack_eliciting_in_flight: u64,
     /// Maximum number of bytes in flight that may be sent.
     congestion_window: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
@@ -227,6 +229,7 @@ impl Connection {
 
             bytes_in_flight: 0,
             crypto_in_flight: 0,
+            ack_eliciting_in_flight: 0,
             congestion_window: config.initial_window,
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
@@ -322,8 +325,11 @@ impl Connection {
         self.space_mut(space)
             .sent_packets
             .insert(packet_number, packet);
-        if ack_eliciting {
-            self.time_of_last_sent_ack_eliciting_packet = now;
+        if size != 0 {
+            if ack_eliciting {
+                self.ack_eliciting_in_flight += 1;
+                self.time_of_last_sent_ack_eliciting_packet = now;
+            }
             if is_crypto_packet {
                 self.time_of_last_sent_crypto_packet = now;
             }
@@ -441,6 +447,12 @@ impl Connection {
             .ok_or("peer CE count regression")?;
         let total_increase = ect0_increase + ect1_increase + ce_increase;
         if total_increase < newly_acked {
+            trace!(
+                self.log,
+                "ECN bleaching: {} newly acked, but ECN counts increased by {}",
+                newly_acked,
+                total_increase
+            );
             return Err("ECN bleaching");
         }
         if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
@@ -482,12 +494,9 @@ impl Connection {
         } else {
             return;
         };
-        if info.is_crypto_packet {
-            self.crypto_in_flight -= 1;
-        }
+        self.forget_packet(&info);
         if info.ack_eliciting {
             // Congestion control
-            self.bytes_in_flight -= info.size as u64;
             // Do not increase congestion window in recovery period.
             if !self.in_recovery(packet) {
                 if self.congestion_window < self.ssthresh {
@@ -555,25 +564,25 @@ impl Connection {
         false
     }
 
+    /// Update counters to account for a packet being acknowledged or lost
+    fn forget_packet(&mut self, packet: &SentPacket) {
+        self.bytes_in_flight -= packet.size as u64;
+        self.crypto_in_flight -= packet.is_crypto_packet as u64;
+        self.ack_eliciting_in_flight -= packet.ack_eliciting as u64;
+    }
+
     fn on_loss_detection_timeout(&mut self, now: u64) {
         if self.crypto_in_flight != 0 {
             trace!(self.log, "retransmitting handshake packets");
-            for space in self.spaces.iter_mut().filter_map(|x| x.as_mut()) {
-                let packets = space
-                    .sent_packets
-                    .iter()
-                    .filter_map(|(&packet, info)| {
-                        if info.is_crypto_packet {
-                            Some(packet)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                for number in packets {
-                    let info = space.sent_packets.remove(&number).unwrap();
-                    space.pending += info.retransmits;
-                    self.bytes_in_flight -= info.size as u64;
+            for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
+                if self.spaces[space_id as usize].is_none() {
+                    continue;
+                }
+                let sent_packets =
+                    mem::replace(&mut self.space_mut(space_id).sent_packets, BTreeMap::new());
+                for (_, packet) in sent_packets {
+                    self.forget_packet(&packet);
+                    self.space_mut(space_id).pending += packet.retransmits;
                 }
             }
             self.crypto_count += 1;
@@ -621,14 +630,11 @@ impl Connection {
                 );
                 for packet in &lost_packets {
                     let info = space.sent_packets.remove(&packet).unwrap();
-                    if !info.in_flight {
-                        continue;
-                    }
+                    // Inlineld from `forget_packet` for borrowck
                     self.bytes_in_flight -= info.size as u64;
+                    self.crypto_in_flight -= info.is_crypto_packet as u64;
+                    self.ack_eliciting_in_flight -= info.ack_eliciting as u64;
                     self.lost_packets += 1;
-                    if info.is_crypto_packet {
-                        self.crypto_in_flight -= 1;
-                    }
                     space.pending += info.retransmits;
                 }
                 // Don't apply congestion penalty for lost ack-only packets
@@ -659,7 +665,7 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if self.bytes_in_flight == 0 {
+        if self.ack_eliciting_in_flight == 0 {
             self.io.timer_stop(Timer::LossDetection);
             return;
         }
@@ -908,14 +914,10 @@ impl Connection {
     }
 
     fn discard_space(&mut self, space: SpaceId) {
+        trace!(self.log, "discarding {space:?} keys", space = space);
         let space = self.spaces[space as usize].take().unwrap();
         for (_, packet) in space.sent_packets {
-            if packet.is_crypto_packet {
-                self.crypto_in_flight -= 1;
-            }
-            if packet.ack_eliciting {
-                self.bytes_in_flight -= packet.size as u64;
-            }
+            self.forget_packet(&packet);
         }
     }
 
@@ -1954,10 +1956,13 @@ impl Connection {
                 SentPacket {
                     acks,
                     time_sent: now,
-                    size: buf.len() as u16,
+                    size: if padded || !ack_only {
+                        buf.len() as u16
+                    } else {
+                        0
+                    },
                     is_crypto_packet: space_id != SpaceId::OneRtt && !ack_only,
                     ack_eliciting: !ack_only,
-                    in_flight: padded || !ack_only,
                     retransmits: sent,
                 },
             );
@@ -2754,7 +2759,8 @@ struct SentPacket {
     /// The time the packet was sent.
     time_sent: u64,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
-    /// framing overhead.
+    /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
+    /// "in flight" packet.
     size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
     ack_eliciting: bool,
@@ -2762,8 +2768,6 @@ struct SentPacket {
     /// the QUIC handshake.
     // FIXME: Implied by retransmits + space
     is_crypto_packet: bool,
-    /// Whether the packet counts towards bytes in flight
-    in_flight: bool,
     acks: RangeSet,
     retransmits: Retransmits,
 }
