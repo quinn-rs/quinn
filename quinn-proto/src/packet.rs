@@ -452,7 +452,9 @@ pub struct PartialEncode<'a> {
 impl<'a> PartialEncode<'a> {
     pub fn finish(self, buf: &mut [u8], header_crypto: &HeaderCrypto, header_len: usize) {
         let PartialEncode { header, pn } = self;
-        let payload_len = (buf.len() - header_len) as u64;
+        let payload_field_len =
+            varint::size((buf.len() - header_len + PacketNumber::decode_len(buf[0])) as u64)
+                .unwrap();
         let (mut sample_offset, pn_pos) = match header {
             Header::Short { dst_cid, .. } => {
                 let sample_offset = 1 + dst_cid.len() + 4;
@@ -467,7 +469,7 @@ impl<'a> PartialEncode<'a> {
                 let sample_offset = 10
                     + dst_cid.len()
                     + src_cid.len()
-                    + varint::size(payload_len).unwrap()
+                    + payload_field_len
                     + varint::size(token.len() as u64).unwrap()
                     + token.len();
                 (sample_offset, pn.unwrap())
@@ -475,8 +477,7 @@ impl<'a> PartialEncode<'a> {
             Header::Long {
                 dst_cid, src_cid, ..
             } => {
-                let sample_offset =
-                    10 + dst_cid.len() + src_cid.len() + varint::size(payload_len).unwrap();
+                let sample_offset = 10 + dst_cid.len() + src_cid.len() + payload_field_len;
                 (sample_offset, pn.unwrap())
             }
             _ => {
