@@ -49,7 +49,7 @@ impl PartialDecode {
     pub fn space(&self) -> Option<SpaceId> {
         use self::InvariantHeader::*;
         match self.invariant_header {
-            Short { .. } => Some(SpaceId::OneRtt),
+            Short { .. } => Some(SpaceId::Data),
             Long {
                 version: VERSION,
                 first,
@@ -418,7 +418,7 @@ impl Header {
     pub fn space(&self) -> SpaceId {
         use self::Header::*;
         match *self {
-            Short { .. } => SpaceId::OneRtt,
+            Short { .. } => SpaceId::Data,
             Long {
                 ty: LongType::Handshake,
                 ..
@@ -883,13 +883,15 @@ impl EcnCodepoint {
 /// Packet number space identifiers
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum SpaceId {
+    /// Unprotected packets, used to bootstrap the handshake
     Initial = 0,
     Handshake = 1,
-    OneRtt = 2,
+    /// Application data space, used for 0-RTT and post-handshake/1-RTT packets
+    Data = 2,
 }
 
 impl SpaceId {
-    pub const VALUES: [Self; 3] = [SpaceId::Initial, SpaceId::Handshake, SpaceId::OneRtt];
+    pub const VALUES: [Self; 3] = [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data];
 }
 
 impl slog::Value for SpaceId {

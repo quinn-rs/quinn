@@ -768,7 +768,7 @@ impl Connection {
         ss.offset += data.len() as u64;
         ss.bytes_in_flight += data.len() as u64;
         self.data_sent += data.len() as u64;
-        self.space_mut(SpaceId::OneRtt)
+        self.space_mut(SpaceId::Data)
             .pending
             .stream
             .push_back(frame::Stream {
@@ -805,7 +805,7 @@ impl Connection {
         }
         stream.state = stream::SendState::ResetSent { stop_reason: None };
 
-        self.spaces[SpaceId::OneRtt as usize]
+        self.spaces[SpaceId::Data as usize]
             .as_mut()
             .unwrap()
             .pending
@@ -870,7 +870,7 @@ impl Connection {
                         }
                     }
                     SpaceId::Handshake => {
-                        self.upgrade_crypto(SpaceId::OneRtt, secrets);
+                        self.upgrade_crypto(SpaceId::Data, secrets);
                     }
                     _ => unreachable!("got updated secrets during 1-RTT"),
                 }
@@ -1232,7 +1232,7 @@ impl Connection {
             }
             State::Established => {
                 match packet.header.space() {
-                    SpaceId::OneRtt => {
+                    SpaceId::Data => {
                         self.process_payload(now, number.unwrap(), packet.payload.into())?
                     }
                     _ => self.process_early_payload(now, packet)?,
@@ -1258,7 +1258,7 @@ impl Connection {
 
     /// Process an Initial or Handshake packet payload
     fn process_early_payload(&mut self, now: u64, packet: Packet) -> Result<(), TransportError> {
-        debug_assert_ne!(packet.header.space(), SpaceId::OneRtt);
+        debug_assert_ne!(packet.header.space(), SpaceId::Data);
         for frame in frame::Iter::new(packet.payload.into()) {
             match frame {
                 Frame::Padding => {}
@@ -1311,7 +1311,7 @@ impl Connection {
         let token = reset_token_for(&self.config.reset_key, &cid);
         self.cids_issued += 1;
         let sequence = self.cids_issued;
-        self.space_mut(SpaceId::OneRtt)
+        self.space_mut(SpaceId::Data)
             .pending
             .new_cids
             .push(frame::NewConnectionId {
@@ -1338,7 +1338,7 @@ impl Connection {
             match frame {
                 Frame::Ack(_) | Frame::Padding => {}
                 _ => {
-                    self.space_mut(SpaceId::OneRtt).permit_ack_only = true;
+                    self.space_mut(SpaceId::Data).permit_ack_only = true;
                 }
             }
             match frame {
@@ -1351,7 +1351,7 @@ impl Connection {
                     return Err(TransportError::PROTOCOL_VIOLATION);
                 }
                 Frame::Crypto(frame) => {
-                    self.read_tls(SpaceId::OneRtt, &frame)?;
+                    self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
@@ -1406,7 +1406,7 @@ impl Connection {
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, SpaceId::OneRtt, ack);
+                    self.on_ack_received(now, SpaceId::Data, ack);
                     for stream in self.streams.finished.drain(..) {
                         self.events.push_back(Event::StreamFinished { stream });
                     }
@@ -1425,7 +1425,7 @@ impl Connection {
                     return Ok(());
                 }
                 Frame::PathChallenge(x) => {
-                    self.space_mut(SpaceId::OneRtt)
+                    self.space_mut(SpaceId::Data)
                         .pending
                         .path_challenge(number, x);
                 }
@@ -1593,7 +1593,7 @@ impl Connection {
             connection_id = new.id
         );
         let retired = self.rem_cid_seq;
-        self.space_mut(SpaceId::OneRtt)
+        self.space_mut(SpaceId::Data)
             .pending
             .retire_cids
             .push(retired);
@@ -1865,7 +1865,7 @@ impl Connection {
         };
         self.io.probes = self.io.probes.saturating_sub(1);
 
-        if space_id == SpaceId::OneRtt && !probe && self.congestion_blocked() {
+        if space_id == SpaceId::Data && !probe && self.congestion_blocked() {
             return None;
         }
 
@@ -1878,7 +1878,7 @@ impl Connection {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let number = space.get_tx_number();
         let header = match space_id {
-            SpaceId::OneRtt => Header::Short {
+            SpaceId::Data => Header::Short {
                 dst_cid: self.rem_cid,
                 number: PacketNumber::new(number, space.largest_acked_packet),
                 spin: self.spin,
@@ -1973,7 +1973,7 @@ impl Connection {
                     } else {
                         0
                     },
-                    is_crypto_packet: space_id != SpaceId::OneRtt && !ack_only,
+                    is_crypto_packet: space_id != SpaceId::Data && !ack_only,
                     ack_eliciting: !ack_only,
                     retransmits: sent,
                 },
@@ -2069,7 +2069,7 @@ impl Connection {
     ///
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self) {
-        self.space_mut(SpaceId::OneRtt).pending.ping = true;
+        self.space_mut(SpaceId::Data).pending.ping = true;
     }
 
     /// Discard state for a stream if it's fully closed.
@@ -2082,7 +2082,7 @@ impl Connection {
                 if e.get().is_closed() {
                     e.remove_entry();
                     if id.initiator() != self.side {
-                        let space = self.spaces[SpaceId::OneRtt as usize].as_mut().unwrap();
+                        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
                         Some(match id.directionality() {
                             Directionality::Uni => {
                                 self.streams.max_remote_uni += 1;
@@ -2130,7 +2130,7 @@ impl Connection {
             .expect("unknown or recv-only stream");
         assert_eq!(ss.state, stream::SendState::Ready);
         ss.state = stream::SendState::DataSent;
-        let space = self.spaces[SpaceId::OneRtt as usize].as_mut().unwrap();
+        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
         for frame in &mut space.pending.stream {
             if frame.id == id && frame.offset + frame.data.len() as u64 == ss.offset {
                 frame.fin = true;
@@ -2152,7 +2152,7 @@ impl Connection {
         // reduce overhead
         self.local_max_data += buf.len() as u64; // BUG: Don't issue credit for
                                                  // already-received data!
-        let space = self.spaces[SpaceId::OneRtt as usize].as_mut().unwrap();
+        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
             space.pending.max_stream_data.insert(id);
@@ -2166,7 +2166,7 @@ impl Connection {
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
         self.local_max_data += len as u64;
-        let space = self.spaces[SpaceId::OneRtt as usize].as_mut().unwrap();
+        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
             space.pending.max_stream_data.insert(id);
@@ -2188,7 +2188,7 @@ impl Connection {
             .unwrap();
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
-            let space = self.spaces[SpaceId::OneRtt as usize].as_mut().unwrap();
+            let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
             space.pending.stop_sending.push((id, error_code));
         }
     }
@@ -2237,7 +2237,7 @@ impl Connection {
         {
             crypto
         } else {
-            assert_eq!(space, SpaceId::OneRtt);
+            assert_eq!(space, SpaceId::Data);
             crypto_update = Some(
                 self.spaces[space as usize]
                     .as_mut()
@@ -2275,7 +2275,7 @@ impl Connection {
 
     #[cfg(test)]
     pub fn initiate_key_update(&mut self) {
-        let space = self.space(SpaceId::OneRtt);
+        let space = self.space(SpaceId::Data);
         let update = space.crypto.update(self.side, &self.tls);
         self.update_keys(update, space.next_packet_number);
     }
@@ -2324,10 +2324,7 @@ impl Connection {
 
     fn update_keys(&mut self, crypto: Crypto, number: u64) {
         let old = mem::replace(
-            &mut self.spaces[SpaceId::OneRtt as usize]
-                .as_mut()
-                .unwrap()
-                .crypto,
+            &mut self.spaces[SpaceId::Data as usize].as_mut().unwrap().crypto,
             crypto,
         );
         self.prev_crypto = Some((number, old));
@@ -2343,7 +2340,7 @@ impl Connection {
     }
 
     pub fn has_1rtt(&self) -> bool {
-        self.spaces[SpaceId::OneRtt as usize].is_some()
+        self.spaces[SpaceId::Data as usize].is_some()
     }
 
     pub fn is_drained(&self) -> bool {
