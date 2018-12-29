@@ -1794,29 +1794,19 @@ impl Connection {
 
     fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
         let close = mem::replace(&mut self.io.close, false);
-        let (space_id, probe) = if close {
-            (self.highest_space, false)
+        let space_id = if close {
+            self.highest_space
         } else {
             if self.state.is_closed() {
                 return None;
             }
-            SpaceId::VALUES
-                .iter()
-                .find(|&&x| {
-                    self.spaces[x as usize]
-                        .as_ref()
-                        .map_or(false, |space| space.can_send())
-                })
-                .cloned()
-                .map(|x| (x, false))
-                .or_else(|| {
-                    if self.io.probes != 0 {
-                        Some((self.highest_space, true))
-                    } else {
-                        None
-                    }
-                })?
+            *SpaceId::VALUES.iter().find(|&&x| {
+                self.spaces[x as usize]
+                    .as_ref()
+                    .map_or(false, |space| space.can_send())
+            })?
         };
+        let probe = !close && self.io.probes != 0;
         self.io.probes = self.io.probes.saturating_sub(1);
 
         if space_id == SpaceId::Data && !probe && self.congestion_blocked() {
@@ -1856,7 +1846,7 @@ impl Connection {
         };
         let mut buf = Vec::new();
         let partial_encode = header.encode(&mut buf);
-        let ack_only = space.pending.is_empty();
+        let mut ack_only = space.pending.is_empty();
         let header_len = buf.len();
 
         let sent = if close {
@@ -1872,13 +1862,15 @@ impl Connection {
                 _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
             }
             None
-        } else if probe {
-            // Nothing to send, but we need to make something up
-            buf.write(frame::Type::PING);
-            None
         } else {
             Some(self.populate_packet(now, space_id, &mut buf))
         };
+
+        if probe && ack_only {
+            // Nothing ack-eliciting to send, so we need to make something up
+            buf.write(frame::Type::PING);
+            ack_only = false;
+        }
 
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
