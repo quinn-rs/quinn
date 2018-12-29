@@ -1889,10 +1889,13 @@ impl Connection {
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
-        if let Some(padding) =
-            (space.header_crypto.sample_size() + 4).checked_sub(buf.len() - header_len + pn_len)
+        let protected_payload_len = (buf.len() + AEAD_TAG_SIZE) - header_len;
+        if let Some(padding_minus_one) =
+            (space.header_crypto.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
         {
-            padded |= padding != 0;
+            let padding = padding_minus_one + 1;
+            padded = true;
+            trace!(self.log, "PADDING * {count}", count = padding);
             buf.resize(buf.len() + padding, 0);
         }
         if !header.is_short() {
