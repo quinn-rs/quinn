@@ -667,17 +667,7 @@ fn congestion() {
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let client_conn = pair
-        .client
-        .connect(pair.server.addr, &client_config(), "localhost")
-        .unwrap();
-    pair.drive();
-    let server_conn = if let Some(c) = pair.server.accept() {
-        c
-    } else {
-        panic!("server didn't connect");
-    };
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    let (client_conn, _) = pair.connect();
     assert_eq!(pair.client.connection(client_conn).bytes_in_flight(), 0);
     // TODO: Implement handshake key timeout
     //assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
