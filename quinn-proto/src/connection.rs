@@ -1940,7 +1940,7 @@ impl Connection {
             padded |= padding != 0;
             buf.resize(buf.len() + padding, 0);
         }
-        if space_id != SpaceId::OneRtt {
+        if !header.is_short() {
             set_payload_length(&mut buf, header_len, pn_len);
         }
         space.crypto.encrypt(number, &mut buf, header_len);
