@@ -74,7 +74,7 @@ pub struct Connection {
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
-    prev_crypto: Option<(u64, Crypto)>,
+    prev_crypto: Option<PrevCrypto>,
 
     //
     // Loss Detection
@@ -505,8 +505,37 @@ impl Connection {
             Timer::LossDetection => {
                 self.on_loss_detection_timeout(now);
             }
+            Timer::KeyDiscard => {
+                if self.spaces[SpaceId::Handshake as usize].is_some() {
+                    self.discard_space(SpaceId::Handshake);
+                    // Might have a key update to discard too
+                    self.set_key_discard_timer(now);
+                } else if let Some(ref prev) = self.prev_crypto {
+                    if prev
+                        .update_ack_time
+                        .map_or(false, |x| now.saturating_sub(x) >= self.pto() * 3)
+                    {
+                        self.prev_crypto = None;
+                    } else {
+                        self.set_key_discard_timer(now);
+                    }
+                }
+            }
         }
         false
+    }
+
+    fn set_key_discard_timer(&mut self, now: u64) {
+        let time = if self.spaces[SpaceId::Handshake as usize].is_some() {
+            // TODO: Determine whether we can get away with discarding handshake keys immediately,
+            // as with Initial keys.
+            now + self.pto() * 3
+        } else if let Some(ref time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
+            time + self.pto() * 3
+        } else {
+            return;
+        };
+        self.io.timer_start(Timer::KeyDiscard, time);
     }
 
     /// Update counters to account for a packet being acknowledged or lost
@@ -676,12 +705,18 @@ impl Connection {
             space = space_id,
             packet = packet
         );
-        // A server stops sending and processing Initial packets when it receives its first Handshake packet.
-        if self.spaces[SpaceId::Initial as usize].is_some()
-            && space_id == SpaceId::Handshake
-            && self.side.is_server()
-        {
-            self.discard_space(SpaceId::Initial);
+        if self.side.is_server() {
+            match space_id {
+                SpaceId::Handshake if self.spaces[SpaceId::Initial as usize].is_some() => {
+                    // A server stops sending and processing Initial packets when it receives its first Handshake packet.
+                    self.discard_space(SpaceId::Initial);
+                }
+                SpaceId::Data if self.rx_packet_space != SpaceId::Data => {
+                    // If the client's sending 1-RTT data, it must have received all handshake packets.
+                    self.set_key_discard_timer(now);
+                }
+                _ => {}
+            }
         }
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         space.pending_acks.insert_one(packet);
@@ -907,7 +942,7 @@ impl Connection {
                 && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token
         });
 
-        let result = match self.decrypt_packet(&mut packet) {
+        let result = match self.decrypt_packet(now, &mut packet) {
             Err(Some(e)) => {
                 warn!(self.log, "got illegal packet"; "reason" => %e);
                 Err(e.into())
@@ -1802,13 +1837,18 @@ impl Connection {
         //
 
         self.io.probes = self.io.probes.saturating_sub(1);
-        if self.spaces[SpaceId::Initial as usize].is_some()
-            && self.side.is_client()
-            && space_id == SpaceId::Handshake
-        {
+        if self.side.is_client() {
             // A client stops both sending and processing Initial packets when it
             // sends its first Handshake packet.
-            self.discard_space(SpaceId::Initial)
+            match space_id {
+                SpaceId::Handshake if self.spaces[SpaceId::Initial as usize].is_some() => {
+                    self.discard_space(SpaceId::Initial)
+                }
+                SpaceId::Data if self.space(SpaceId::Data).next_packet_number == 0 => {
+                    self.set_key_discard_timer(now);
+                }
+                _ => {}
+            }
         }
 
         // SCID must be consistent through the handshake, even if we've issued new CIDs in 1-RTT; an
@@ -2154,6 +2194,7 @@ impl Connection {
 
     fn decrypt_packet(
         &mut self,
+        now: u64,
         packet: &mut Packet,
     ) -> Result<Option<u64>, Option<TransportError>> {
         if packet.header.is_retry() {
@@ -2171,18 +2212,14 @@ impl Connection {
         let mut crypto_update = None;
         let crypto = if key_phase == self.key_phase {
             &self.spaces[space as usize].as_mut().unwrap().crypto
-        } else if let Some(crypto) =
-            self.prev_crypto
-                .as_ref()
-                .and_then(|&(threshold, ref crypto)| {
-                    if number < threshold {
-                        Some(crypto)
-                    } else {
-                        None
-                    }
-                })
-        {
-            crypto
+        } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
+            if number < crypto.end_packet {
+                Some(crypto)
+            } else {
+                None
+            }
+        }) {
+            &prev.crypto
         } else {
             assert_eq!(space, SpaceId::Data);
             crypto_update = Some(
@@ -2198,6 +2235,14 @@ impl Connection {
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
             .map_err(|()| None)?;
+
+        if let Some(ref mut prev) = self.prev_crypto {
+            if prev.update_ack_time.is_none() && key_phase == self.key_phase {
+                // Key update newly acknowledged
+                prev.update_ack_time = Some(now);
+                self.set_key_discard_timer(now);
+            }
+        }
 
         let reserved = match packet.header {
             Header::Short { .. } => SHORT_RESERVED_BITS,
@@ -2215,6 +2260,9 @@ impl Connection {
             }
             trace!(self.log, "key update authenticated");
             self.update_keys(crypto, number);
+            // No need to wait for confirmation of a remotely-initiated key update
+            self.prev_crypto.as_mut().unwrap().update_ack_time = Some(now);
+            self.set_key_discard_timer(now);
         }
 
         Ok(Some(number))
@@ -2274,7 +2322,11 @@ impl Connection {
             &mut self.spaces[SpaceId::Data as usize].as_mut().unwrap().crypto,
             crypto,
         );
-        self.prev_crypto = Some((number, old));
+        self.prev_crypto = Some(PrevCrypto {
+            crypto: old,
+            end_packet: number,
+            update_ack_time: None,
+        });
         self.key_phase = !self.key_phase;
     }
 
@@ -2770,7 +2822,7 @@ struct IoQueue {
     ///
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
-    timers: [Option<TimerUpdate>; 3],
+    timers: [Option<TimerUpdate>; 4],
     retired_cids: Vec<ConnectionId>,
 }
 
@@ -2779,7 +2831,7 @@ impl IoQueue {
         Self {
             probes: 0,
             close: false,
-            timers: [None; 3],
+            timers: [None; 4],
             retired_cids: Vec::new(),
         }
     }
@@ -2902,4 +2954,11 @@ impl PacketSpace {
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
     }
+}
+
+struct PrevCrypto {
+    crypto: Crypto,
+    end_packet: u64,
+    /// Time at which a packet using the following key phase was received
+    update_ack_time: Option<u64>,
 }

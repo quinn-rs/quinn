@@ -247,7 +247,7 @@ struct TestEndpoint {
     endpoint: Endpoint,
     addr: SocketAddrV6,
     socket: Option<UdpSocket>,
-    timers: [u64; 3],
+    timers: [u64; 4],
     conn: Option<ConnectionHandle>,
     outbound: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
     delayed: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
@@ -270,7 +270,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            timers: [u64::max_value(); 3],
+            timers: [u64::max_value(); 4],
             conn: None,
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
@@ -641,8 +641,7 @@ fn high_latency_handshake() {
     pair.latency = 200 * 1000;
     let (client_conn, server_conn) = pair.connect();
     assert_eq!(pair.client.connection(client_conn).bytes_in_flight(), 0);
-    // TODO: Implement handshake key timeout
-    //assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
+    assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
     assert!(pair.client.connection(client_conn).using_ecn());
     assert!(pair.server.connection(server_conn).using_ecn());
 }
