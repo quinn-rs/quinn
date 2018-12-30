@@ -2587,15 +2587,13 @@ impl Default for Retransmits {
 }
 
 impl ::std::ops::AddAssign for Retransmits {
+    /// Take ownership of retransmittable data from `rhs`; discard the rest.
     fn add_assign(&mut self, rhs: Self) {
         self.max_data |= rhs.max_data;
         self.ping |= rhs.ping;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
         self.max_bi_stream_id |= rhs.max_bi_stream_id;
         self.stream.extend(rhs.stream.into_iter());
-        if let Some((packet, token)) = rhs.path_response {
-            self.path_challenge(packet, token);
-        }
         self.rst_stream.extend_from_slice(&rhs.rst_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);
