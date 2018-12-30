@@ -63,6 +63,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut builder = quinn::Endpoint::new();
     let mut client_config = quinn::ClientConfigBuilder::new();
     client_config.accept_insecure_certs(); // Various interop test servers use self-signed certs
+    client_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
     builder.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();
