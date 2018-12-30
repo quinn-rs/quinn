@@ -83,6 +83,9 @@ pub use crate::quinn::{
 };
 use crate::udp::UdpSocket;
 
+#[cfg(test)]
+mod tests;
+
 /// Errors that can occur during the construction of an `Endpoint`.
 #[derive(Debug, Fail)]
 pub enum Error {
