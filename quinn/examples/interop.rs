@@ -183,7 +183,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn get(stream: quinn::Stream) -> impl Future<Item = Box<[u8]>, Error = Error> {
+fn get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
     tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned())
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(stream, _)| {
