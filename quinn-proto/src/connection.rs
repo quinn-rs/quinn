@@ -1921,7 +1921,7 @@ impl Connection {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
         if let Header::Initial { .. } = header {
-            if self.side.is_client() {
+            if self.side.is_client() && !ack_only {
                 if buf.len() < MIN_INITIAL_SIZE - space.crypto.tag_len() {
                     buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
                     padded = true;
