@@ -318,6 +318,15 @@ impl Connection {
             self.bytes_in_flight += size as u64;
             self.set_loss_detection_timer();
         }
+
+        if space == SpaceId::Handshake
+            && !self.state.is_handshake()
+            && self.side.is_server()
+            && !self.space(SpaceId::Handshake).permit_ack_only
+        {
+            // We've acked the TLS FIN.
+            self.set_key_discard_timer(now);
+        }
     }
 
     fn on_ack_received(&mut self, now: u64, space: SpaceId, ack: frame::Ack) {
@@ -349,6 +358,16 @@ impl Connection {
         }
         for &packet in &newly_acked {
             self.on_packet_acked(space, packet);
+        }
+
+        if space == SpaceId::Handshake
+            && !self.state.is_handshake()
+            && self.side.is_client()
+            && self.crypto_in_flight == 0
+            && self.space(SpaceId::Handshake).pending.crypto.is_empty()
+        {
+            // All Handshake CRYPTO data sent and acked.
+            self.set_key_discard_timer(now);
         }
 
         self.crypto_count = 0;
@@ -527,8 +546,6 @@ impl Connection {
 
     fn set_key_discard_timer(&mut self, now: u64) {
         let time = if self.spaces[SpaceId::Handshake as usize].is_some() {
-            // TODO: Determine whether we can get away with discarding handshake keys immediately,
-            // as with Initial keys.
             now + self.pto() * 3
         } else if let Some(ref time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
             time + self.pto() * 3
@@ -705,18 +722,12 @@ impl Connection {
             space = space_id,
             packet = packet
         );
-        if self.side.is_server() {
-            match space_id {
-                SpaceId::Handshake if self.spaces[SpaceId::Initial as usize].is_some() => {
-                    // A server stops sending and processing Initial packets when it receives its first Handshake packet.
-                    self.discard_space(SpaceId::Initial);
-                }
-                SpaceId::Data if self.rx_packet_space != SpaceId::Data => {
-                    // If the client's sending 1-RTT data, it must have received all handshake packets.
-                    self.set_key_discard_timer(now);
-                }
-                _ => {}
-            }
+        if self.spaces[SpaceId::Initial as usize].is_some()
+            && space_id == SpaceId::Handshake
+            && self.side.is_server()
+        {
+            // A server stops sending and processing Initial packets when it receives its first Handshake packet.
+            self.discard_space(SpaceId::Initial);
         }
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         space.pending_acks.insert_one(packet);
@@ -1837,18 +1848,13 @@ impl Connection {
         //
 
         self.io.probes = self.io.probes.saturating_sub(1);
-        if self.side.is_client() {
+        if self.spaces[SpaceId::Initial as usize].is_some()
+            && space_id == SpaceId::Handshake
+            && self.side.is_client()
+        {
             // A client stops both sending and processing Initial packets when it
             // sends its first Handshake packet.
-            match space_id {
-                SpaceId::Handshake if self.spaces[SpaceId::Initial as usize].is_some() => {
-                    self.discard_space(SpaceId::Initial)
-                }
-                SpaceId::Data if self.space(SpaceId::Data).next_packet_number == 0 => {
-                    self.set_key_discard_timer(now);
-                }
-                _ => {}
-            }
+            self.discard_space(SpaceId::Initial)
         }
         if let Some(ref mut prev) = self.prev_crypto {
             prev.update_unacked = false;
