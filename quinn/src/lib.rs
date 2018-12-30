@@ -58,7 +58,7 @@ mod udp;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
-use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::rc::Rc;
 use std::str;
 use std::sync::Arc;
@@ -116,7 +116,7 @@ struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
     inner: quinn::Endpoint,
-    outgoing: VecDeque<(SocketAddrV6, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
+    outgoing: VecDeque<(SocketAddr, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
     epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
@@ -588,9 +588,7 @@ impl Endpoint {
         let (send, recv) = oneshot::channel();
         let handle = {
             let mut endpoint = self.inner.borrow_mut();
-            let handle = endpoint
-                .inner
-                .connect(normalize(*addr), config, server_name)?;
+            let handle = endpoint.inner.connect(*addr, config, server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
             handle
         };
@@ -659,9 +657,7 @@ impl Future for Driver {
             loop {
                 match endpoint.socket.poll_recv(&mut buf) {
                     Ok(Async::Ready((n, addr, ecn))) => {
-                        endpoint
-                            .inner
-                            .handle(now, normalize(addr), ecn, (&buf[0..n]).into());
+                        endpoint.inner.handle(now, addr, ecn, (&buf[0..n]).into());
                     }
                     Ok(Async::NotReady) => {
                         break;
@@ -760,10 +756,7 @@ impl Future for Driver {
             while !endpoint.outgoing.is_empty() {
                 {
                     let (destination, ecn, packet) = endpoint.outgoing.front().unwrap();
-                    match endpoint
-                        .socket
-                        .poll_send(&(*destination).into(), *ecn, packet)
-                    {
+                    match endpoint.socket.poll_send(destination, *ecn, packet) {
                         Ok(Async::Ready(_)) => {}
                         Ok(Async::NotReady) => {
                             blocked = true;
@@ -789,7 +782,7 @@ impl Future for Driver {
                         ecn,
                     } => {
                         if !blocked {
-                            match endpoint.socket.poll_send(&destination.into(), ecn, &packet) {
+                            match endpoint.socket.poll_send(&destination, ecn, &packet) {
                                 Ok(Async::Ready(_)) => {}
                                 Ok(Async::NotReady) => {
                                     blocked = true;
@@ -928,13 +921,6 @@ fn duration_micros(x: u64) -> Duration {
 }
 fn micros_from(x: Duration) -> u64 {
     x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
-}
-
-fn normalize(x: SocketAddr) -> SocketAddrV6 {
-    match x {
-        SocketAddr::V6(x) => x,
-        SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),
-    }
 }
 
 struct ConnectionInner {

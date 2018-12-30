@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Ipv6Addr, SocketAddrV6, UdpSocket};
+use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -132,18 +132,13 @@ impl Pair {
         .unwrap();
         let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
 
-        let localhost = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
-        let server_addr = SocketAddrV6::new(
-            localhost,
+        let server_addr = SocketAddr::new(
+            Ipv6Addr::LOCALHOST.into(),
             SERVER_PORTS.lock().unwrap().next().unwrap(),
-            0,
-            0,
         );
-        let client_addr = SocketAddrV6::new(
-            localhost,
+        let client_addr = SocketAddr::new(
+            Ipv6Addr::LOCALHOST.into(),
             CLIENT_PORTS.lock().unwrap().next().unwrap(),
-            0,
-            0,
         );
         Self {
             log,
@@ -245,7 +240,7 @@ impl Pair {
 struct TestEndpoint {
     side: Side,
     endpoint: Endpoint,
-    addr: SocketAddrV6,
+    addr: SocketAddr,
     socket: Option<UdpSocket>,
     timers: [u64; 4],
     conn: Option<ConnectionHandle>,
@@ -255,7 +250,7 @@ struct TestEndpoint {
 }
 
 impl TestEndpoint {
-    fn new(side: Side, endpoint: Endpoint, addr: SocketAddrV6) -> Self {
+    fn new(side: Side, endpoint: Endpoint, addr: SocketAddr) -> Self {
         let socket = if env::var_os("SSLKEYLOGFILE").is_some() {
             let socket = UdpSocket::bind(addr).expect("failed to bind UDP socket");
             socket
@@ -278,7 +273,7 @@ impl TestEndpoint {
         }
     }
 
-    fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddrV6) {
+    fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddr) {
         if let Some(ref socket) = self.socket {
             loop {
                 let mut buf = [0; 8192];
