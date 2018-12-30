@@ -26,7 +26,8 @@ struct Opt {
     host: String,
     #[structopt(default_value = "4433")]
     port: u16,
-    retry_port: Option<u16>,
+    #[structopt(default_value = "4434")]
+    retry_port: u16,
 
     /// Enable key logging
     #[structopt(long = "keylog")]
@@ -113,9 +114,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
 
     let mut retry = false;
-    if let Some(port) = options.retry_port {
+    {
         println!("connecting to retry port");
-        let remote = format!("{}:{}", options.host, port)
+        let remote = format!("{}:{}", options.host, options.retry_port)
             .to_socket_addrs()?
             .next()
             .ok_or(format_err!("couldn't resolve to an address"))?;
