@@ -293,14 +293,6 @@ impl Connection {
             ..
         } = packet;
 
-        trace!(
-            self.log,
-            "sent {space:?} packet {number} ({len} bytes)",
-            space = space,
-            number = packet_number,
-            len = size,
-        );
-
         if is_crypto_packet {
             self.crypto_in_flight += 1;
         }
@@ -917,8 +909,9 @@ impl Connection {
             } else {
                 debug!(
                     self.log,
-                    "discarding unexpected {space:?} packet",
-                    space = space
+                    "discarding unexpected {space:?} packet ({len} bytes)",
+                    space = space,
+                    len = partial_decode.len(),
                 );
                 return None;
             }
@@ -1868,6 +1861,12 @@ impl Connection {
             .unwrap_or_else(|| self.loc_cids.values().next().unwrap());
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let number = space.get_tx_number();
+        trace!(
+            self.log,
+            "sending {space:?} packet {number}",
+            space = space_id,
+            number = number
+        );
         let header = match space_id {
             SpaceId::Data => Header::Short {
                 dst_cid: self.rem_cid,
@@ -1975,6 +1974,8 @@ impl Connection {
                 },
             );
         }
+
+        trace!(self.log, "{len} bytes", len = buf.len());
 
         Some(buf.into())
     }
