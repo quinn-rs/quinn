@@ -372,6 +372,12 @@ impl ServerConfigBuilder {
         }
         self
     }
+
+    /// Whether to require clients to prove they can receive packets before accepting a connection
+    pub fn use_stateless_retry(&mut self, enabled: bool) -> &mut Self {
+        self.config.use_stateless_retry = enabled;
+        self
+    }
 }
 
 impl Default for ServerConfigBuilder {

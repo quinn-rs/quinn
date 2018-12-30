@@ -59,11 +59,9 @@ struct Opt {
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert")]
     cert: PathBuf,
-    /*
     /// Enable stateless retries
     #[structopt(long = "stateless-retry")]
     stateless_retry: bool,
-    */
     /// Address to listen on
     #[structopt(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
@@ -106,6 +104,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     if options.keylog {
         server_config.enable_keylog();
+    }
+
+    if options.stateless_retry {
+        server_config.use_stateless_retry(true);
     }
 
     let keys = {
