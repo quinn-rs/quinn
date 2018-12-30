@@ -30,8 +30,8 @@ before_script:
 
 script:
 - cargo clean
-- cargo build
-- cargo test
+- cargo build --all-features
+- cargo test --all-features
 - if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     cargo fmt -- --check;
   fi
