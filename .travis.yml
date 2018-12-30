@@ -9,11 +9,17 @@ addons:
 cache: cargo
 rust:
   - stable
-  - beta
-  - nightly
+os:
+  - linux
+  - osx
 matrix:
   allow_failures:
     - rust: nightly
+  include:
+    - os: linux
+      rust: beta
+    - os: linux
+      rust: nightly
 
 before_cache:
   if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
