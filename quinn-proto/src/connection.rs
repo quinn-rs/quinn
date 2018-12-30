@@ -104,17 +104,8 @@ pub struct Connection {
     //
     // Congestion Control
     //
-    /// The sum of the size in bytes of all sent packets that contain at least one retransmittable
-    /// frame, and have not been acked or declared lost.
-    ///
-    /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
-    /// count towards bytes_in_flight to ensure congestion control does not impede congestion
-    /// feedback.
-    bytes_in_flight: u64,
-    /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
-    crypto_in_flight: u64,
-    /// Number of in flight containing frames other than ACK and PADDING
-    ack_eliciting_in_flight: u64,
+    /// Summary statistics of packets that have been sent, but not yet acked or deemed lost
+    in_flight: InFlight,
     /// Maximum number of bytes in flight that may be sent.
     congestion_window: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
@@ -214,9 +205,7 @@ impl Connection {
             time_of_last_sent_ack_eliciting_packet: 0,
             time_of_last_sent_crypto_packet: 0,
 
-            bytes_in_flight: 0,
-            crypto_in_flight: 0,
-            ack_eliciting_in_flight: 0,
+            in_flight: InFlight::new(),
             congestion_window: config.initial_window,
             recovery_start_time: 0,
             ssthresh: u64::max_value(),
@@ -293,21 +282,17 @@ impl Connection {
             ..
         } = packet;
 
-        if is_crypto_packet {
-            self.crypto_in_flight += 1;
-        }
+        self.in_flight.insert(&packet);
         self.space_mut(space)
             .sent_packets
             .insert(packet_number, packet);
         if size != 0 {
             if ack_eliciting {
-                self.ack_eliciting_in_flight += 1;
                 self.time_of_last_sent_ack_eliciting_packet = now;
             }
             if is_crypto_packet {
                 self.time_of_last_sent_crypto_packet = now;
             }
-            self.bytes_in_flight += size as u64;
             self.set_loss_detection_timer();
         }
 
@@ -355,7 +340,7 @@ impl Connection {
         if space == SpaceId::Handshake
             && !self.state.is_handshake()
             && self.side.is_client()
-            && self.crypto_in_flight == 0
+            && self.in_flight.crypto == 0
             && self.space(SpaceId::Handshake).pending.crypto.is_empty()
         {
             // All Handshake CRYPTO data sent and acked.
@@ -450,7 +435,7 @@ impl Connection {
         } else {
             return;
         };
-        self.forget_packet(&info);
+        self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
             // Do not increase congestion window in recovery period.
@@ -547,15 +532,8 @@ impl Connection {
         self.io.timer_start(Timer::KeyDiscard, time);
     }
 
-    /// Update counters to account for a packet being acknowledged or lost
-    fn forget_packet(&mut self, packet: &SentPacket) {
-        self.bytes_in_flight -= packet.size as u64;
-        self.crypto_in_flight -= packet.is_crypto_packet as u64;
-        self.ack_eliciting_in_flight -= packet.ack_eliciting as u64;
-    }
-
     fn on_loss_detection_timeout(&mut self, now: u64) {
-        if self.crypto_in_flight != 0 {
+        if self.in_flight.crypto != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
                 if self.spaces[space_id as usize].is_none() {
@@ -564,7 +542,7 @@ impl Connection {
                 let sent_packets =
                     mem::replace(&mut self.space_mut(space_id).sent_packets, BTreeMap::new());
                 for (_, packet) in sent_packets {
-                    self.forget_packet(&packet);
+                    self.in_flight.remove(&packet);
                     self.space_mut(space_id).pending += packet.retransmits;
                 }
             }
@@ -573,7 +551,7 @@ impl Connection {
             // Time threshold loss Detection
             self.detect_lost_packets(now);
         } else {
-            trace!(self.log, "PTO fired"; "in flight" => self.bytes_in_flight);
+            trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes);
             self.io.probes += 2;
             self.pto_count += 1;
         }
@@ -606,22 +584,19 @@ impl Connection {
 
             // OnPacketsLost
             if let Some(largest_lost) = lost_packets.last().cloned() {
-                let old_bytes_in_flight = self.bytes_in_flight;
+                let old_bytes_in_flight = self.in_flight.bytes;
                 largest_lost_time = cmp::max(
                     largest_lost_time,
                     space.sent_packets[&largest_lost].time_sent,
                 );
                 for packet in &lost_packets {
                     let info = space.sent_packets.remove(&packet).unwrap();
-                    // Inlineld from `forget_packet` for borrowck
-                    self.bytes_in_flight -= info.size as u64;
-                    self.crypto_in_flight -= info.is_crypto_packet as u64;
-                    self.ack_eliciting_in_flight -= info.ack_eliciting as u64;
+                    self.in_flight.remove(&info);
                     self.lost_packets += 1;
                     space.pending += info.retransmits;
                 }
                 // Don't apply congestion penalty for lost ack-only packets
-                lost_ack_eliciting |= old_bytes_in_flight != self.bytes_in_flight;
+                lost_ack_eliciting |= old_bytes_in_flight != self.in_flight.bytes;
             }
         }
         if lost_ack_eliciting {
@@ -648,12 +623,12 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if self.ack_eliciting_in_flight == 0 {
+        if self.in_flight.ack_eliciting == 0 {
             self.io.timer_stop(Timer::LossDetection);
             return;
         }
 
-        if self.crypto_in_flight != 0 {
+        if self.in_flight.crypto != 0 {
             // Handshake retransmission alarm.
             let timeout = if self.smoothed_rtt == 0 {
                 2 * self.config.initial_rtt
@@ -893,7 +868,7 @@ impl Connection {
         trace!(self.log, "discarding {space:?} keys", space = space);
         let space = self.spaces[space as usize].take().unwrap();
         for (_, packet) in space.sent_packets {
-            self.forget_packet(&packet);
+            self.in_flight.remove(&packet);
         }
     }
 
@@ -2201,7 +2176,7 @@ impl Connection {
 
     fn congestion_blocked(&self) -> bool {
         if let State::Established = self.state {
-            self.congestion_window.saturating_sub(self.bytes_in_flight) < self.mtu as u64
+            self.congestion_window.saturating_sub(self.in_flight.bytes) < self.mtu as u64
         } else {
             false
         }
@@ -2397,12 +2372,12 @@ impl Connection {
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
     pub fn bytes_in_flight(&self) -> u64 {
-        self.bytes_in_flight
+        self.in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
     pub fn congestion_state(&self) -> u64 {
-        self.congestion_window.saturating_sub(self.bytes_in_flight)
+        self.congestion_window.saturating_sub(self.in_flight.bytes)
     }
 
     /// The name a client supplied via SNI
@@ -2986,4 +2961,43 @@ struct PrevCrypto {
     update_ack_time: Option<u64>,
     /// Whether the following key phase is from a remotely initiated update that we haven't acked
     update_unacked: bool,
+}
+
+struct InFlight {
+    /// Sum of the sizes of all sent packets considered "in flight" by congestion control
+    ///
+    /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
+    /// count towards this to ensure congestion control does not impede congestion feedback.
+    bytes: u64,
+    /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
+    crypto: u64,
+    /// Number of packets in flight containing frames other than ACK and PADDING
+    ///
+    /// This can be 0 even when bytes is not 0 because PADDING frames cause a packet to be
+    /// considered "in flight" by congestion control. However, if this is nonzero, bytes will always
+    /// also be nonzero.
+    ack_eliciting: u64,
+}
+
+impl InFlight {
+    pub fn new() -> Self {
+        Self {
+            bytes: 0,
+            crypto: 0,
+            ack_eliciting: 0,
+        }
+    }
+
+    fn insert(&mut self, packet: &SentPacket) {
+        self.bytes += packet.size as u64;
+        self.crypto += packet.is_crypto_packet as u64;
+        self.ack_eliciting += packet.ack_eliciting as u64;
+    }
+
+    /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
+    fn remove(&mut self, packet: &SentPacket) {
+        self.bytes -= packet.size as u64;
+        self.crypto -= packet.is_crypto_packet as u64;
+        self.ack_eliciting -= packet.ack_eliciting as u64;
+    }
 }
