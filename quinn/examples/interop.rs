@@ -84,12 +84,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let tickets = conn.session_tickets;
                 let conn = conn.connection;
                 let stream = conn.open_bi();
+                let stream_data = &mut stream_data;
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| get(stream))
                     .and_then(move |data| {
                         println!("read {} bytes, closing", data.len());
-                        stream_data = true;
+                        *stream_data = true;
                         conn.close(0, b"done").map_err(|_| unreachable!())
                     })
                     .map(|()| {
