@@ -8,11 +8,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-Quinn is an implementation of the [QUIC][quic] network protocol currently
-undergoing standardization by the IETF. It is currently suitable for
-experimental use. The implementation is split up into the state machine crate
-`quinn-proto` which performs no I/O internally and can be tested deterministically,
-and a high-level tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
+Quinn is an implementation of the [QUIC][quic] transport protocol undergoing
+standardization by the IETF. It is suitable for experimental use. The
+implementation is split up into the state machine crate `quinn-proto` which
+performs no I/O internally and can be tested deterministically, and a high-level
+tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
 
 Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can
 also get the [slides][slides] (and the [animation][animation] about head-of-line
@@ -33,7 +33,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 
 ## Status
 
-- [x] QUIC draft 11 with TLS 1.3
+- [x] QUIC draft 17 with TLS 1.3
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
