@@ -86,19 +86,6 @@ fn main() {
 }
 
 fn run(log: Logger, options: Opt) -> Result<()> {
-    let root = Rc::new(options.root);
-    if !root.exists() {
-        bail!("root path does not exist");
-    }
-
-    let mut runtime = Runtime::new()?;
-
-    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
-        max_remote_streams_bidi: 64,
-        ..Default::default()
-    });
-    endpoint.logger(log.clone());
-
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
 
@@ -123,9 +110,20 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
     server_config.set_certificate(cert_chain, keys[0].clone())?;
 
+    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
+        max_remote_streams_bidi: 64,
+        ..Default::default()
+    });
+    endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
+    let root = Rc::new(options.root);
+    if !root.exists() {
+        bail!("root path does not exist");
+    }
+
     let (_, driver, incoming) = endpoint.bind(options.listen)?;
+    let mut runtime = Runtime::new()?;
     runtime.spawn(incoming.for_each(move |conn| {
         handle_connection(&root, &log, conn);
         Ok(())
