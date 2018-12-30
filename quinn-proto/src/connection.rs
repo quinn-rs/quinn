@@ -1930,11 +1930,12 @@ impl Connection {
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
         if let Header::Initial { .. } = header {
-            if self.side.is_client() && !ack_only {
-                if buf.len() < MIN_INITIAL_SIZE - space.crypto.tag_len() {
-                    buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
-                    padded = true;
-                }
+            if self.side.is_client()
+                && !ack_only
+                && buf.len() < MIN_INITIAL_SIZE - space.crypto.tag_len()
+            {
+                buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
+                padded = true;
             }
         }
         let pn_len = header
@@ -2099,8 +2100,7 @@ impl Connection {
                                         Directionality::Uni,
                                         self.streams.max_remote_uni - 1,
                                     ),
-                                    stream::Recv::new(u64::from(self.config.stream_receive_window))
-                                        .into(),
+                                    stream::Recv::new(self.config.stream_receive_window).into(),
                                 )
                             }
                             Directionality::Bi => {
