@@ -27,7 +27,9 @@ impl super::UdpExt for UdpSocket {
             std::cmp::max(Cmsg::IP_TOS(0).space(), Cmsg::IPV6_TCLASS(0).space(),) as usize
         );
 
-        if !self.only_v6()? {
+        let addr = self.local_addr()?;
+
+        if addr.is_ipv4() || !self.only_v6()? {
             let rc = unsafe {
                 libc::setsockopt(
                     self.as_raw_fd(),
@@ -41,18 +43,20 @@ impl super::UdpExt for UdpSocket {
                 return Err(io::Error::last_os_error());
             }
         }
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                self.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVTCLASS,
-                &on as *const _ as _,
-                mem::size_of::<libc::c_int>() as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
+        if addr.is_ipv6() {
+            let on: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    self.as_raw_fd(),
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_RECVTCLASS,
+                    &on as *const _ as _,
+                    mem::size_of::<libc::c_int>() as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
         }
         Ok(())
     }
