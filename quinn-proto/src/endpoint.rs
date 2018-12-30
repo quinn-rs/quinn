@@ -232,7 +232,8 @@ impl Endpoint {
         };
         if let Some(conn_id) = conn {
             let had_1rtt = self.connections[conn_id.0].has_1rtt();
-            let remaining = self.connections[conn_id.0].handle_decode(now, ecn, partial_decode);
+            let remaining =
+                self.connections[conn_id.0].handle_decode(now, remote, ecn, partial_decode);
             if !had_1rtt
                 && (self.connections[conn_id.0].has_1rtt()
                     || !self.connections[conn_id.0].is_handshaking())

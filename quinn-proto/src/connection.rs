@@ -900,9 +900,18 @@ impl Connection {
     pub fn handle_decode(
         &mut self,
         now: u64,
+        remote: SocketAddrV6,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
+        if remote != self.remote && self.side.is_client() {
+            trace!(
+                self.log,
+                "discarding packet from unknown server {address}",
+                address = format!("{}", remote)
+            );
+            return None;
+        }
         let header_crypto = if let Some(space) = partial_decode.space() {
             if let Some(ref space) = self.spaces[space as usize] {
                 Some(&space.header_crypto)
