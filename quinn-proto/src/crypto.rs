@@ -294,12 +294,6 @@ impl HeaderCrypto {
     }
 }
 
-#[derive(Clone)]
-pub struct ConnectionInfo {
-    pub(crate) id: ConnectionId,
-    pub(crate) remote: SocketAddrV6,
-}
-
 #[derive(Debug, Fail)]
 pub enum ConnectError {
     #[fail(display = "invalid DNS name: {}", _0)]
