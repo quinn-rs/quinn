@@ -572,7 +572,7 @@ impl PacketNumber {
         1 + (tag & 0x03) as usize
     }
 
-    fn tag(&self) -> u8 {
+    fn tag(self) -> u8 {
         use self::PacketNumber::*;
         match self {
             U8(_) => 0b00,
