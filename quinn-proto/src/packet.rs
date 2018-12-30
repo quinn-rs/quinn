@@ -67,6 +67,13 @@ impl PartialDecode {
         self.invariant_header.dst_cid()
     }
 
+    /// Length of data being decoded
+    ///
+    /// May account for multiple packets.
+    pub fn len(&self) -> usize {
+        self.buf.get_ref().len()
+    }
+
     pub fn finish(
         self,
         header_crypto: Option<&HeaderCrypto>,
