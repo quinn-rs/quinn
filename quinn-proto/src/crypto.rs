@@ -1,4 +1,4 @@
-use std::net::SocketAddrV6;
+use std::net::{IpAddr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -429,7 +429,7 @@ impl TokenKey {
 
     pub(crate) fn generate(
         &self,
-        address: &SocketAddrV6,
+        address: &SocketAddr,
         dst_cid: &ConnectionId,
         issued: SystemTime,
     ) -> Vec<u8> {
@@ -443,7 +443,10 @@ impl TokenKey {
                 .unwrap_or(0),
         );
         let signature_pos = buf.len();
-        buf.put_slice(&address.ip().octets());
+        match address.ip() {
+            IpAddr::V4(x) => buf.put_slice(&x.octets()),
+            IpAddr::V6(x) => buf.put_slice(&x.octets()),
+        }
         buf.write(address.port());
         let signature = hmac::sign(&self.inner, &buf);
         // No reason to actually encode the IP in the token, since we always have the remote addr for an incoming packet.
@@ -454,7 +457,7 @@ impl TokenKey {
 
     pub(crate) fn check(
         &self,
-        address: &SocketAddrV6,
+        address: &SocketAddr,
         data: &[u8],
     ) -> Option<(ConnectionId, SystemTime)> {
         let mut reader = io::Cursor::new(data);
@@ -471,7 +474,10 @@ impl TokenKey {
 
         let mut buf = Vec::new();
         buf.put_slice(&data[0..signature_start]);
-        buf.put_slice(&address.ip().octets());
+        match address.ip() {
+            IpAddr::V4(x) => buf.put_slice(&x.octets()),
+            IpAddr::V6(x) => buf.put_slice(&x.octets()),
+        }
         buf.write(address.port());
 
         hmac::verify_with_own_key(&self.inner, &buf, &data[signature_start..]).ok()?;
@@ -576,7 +582,7 @@ mod test {
         let mut key = [0; TokenKey::SIZE];
         rand::thread_rng().fill_bytes(&mut key);
         let key = TokenKey::new(&key);
-        let addr = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 4433, 0, 0);
+        let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
         let token = key.generate(&addr, &dst_cid, issued);

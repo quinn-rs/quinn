@@ -1,5 +1,5 @@
 use std::collections::{hash_map, BTreeMap, HashMap, VecDeque};
-use std::net::SocketAddrV6;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{cmp, io, mem};
 
@@ -37,7 +37,7 @@ pub struct Connection {
     loc_cids: HashMap<u64, ConnectionId>,
     rem_cid: ConnectionId,
     rem_cid_seq: u64,
-    remote: SocketAddrV6,
+    remote: SocketAddr,
     state: State,
     side: Side,
     mtu: u16,
@@ -131,7 +131,7 @@ impl Connection {
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
     ) -> Self {
@@ -875,7 +875,7 @@ impl Connection {
     pub fn handle_decode(
         &mut self,
         now: u64,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) -> Option<BytesMut> {
@@ -2361,7 +2361,7 @@ impl Connection {
         self.rem_cid
     }
 
-    pub fn remote(&self) -> SocketAddrV6 {
+    pub fn remote(&self) -> SocketAddr {
         self.remote
     }
 
@@ -2794,7 +2794,7 @@ const MAX_ACK_BLOCKS: usize = 64;
 #[derive(Debug)]
 pub enum Io {
     Transmit {
-        destination: SocketAddrV6,
+        destination: SocketAddr,
         /// Explicit congestion notification bits to set on the packet
         ecn: Option<EcnCodepoint>,
         packet: Box<[u8]>,

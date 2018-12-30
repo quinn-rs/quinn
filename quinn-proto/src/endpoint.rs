@@ -1,6 +1,6 @@
 use std::cmp;
 use std::collections::VecDeque;
-use std::net::SocketAddrV6;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -39,7 +39,7 @@ pub struct Endpoint {
     incoming: VecDeque<ConnectionHandle>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
-    connection_remotes: FnvHashMap<SocketAddrV6, ConnectionHandle>,
+    connection_remotes: FnvHashMap<SocketAddr, ConnectionHandle>,
     pub(crate) connections: Slab<Connection>,
     config: Arc<Config>,
     server_config: Option<ServerConfig>,
@@ -138,10 +138,11 @@ impl Endpoint {
     pub fn handle(
         &mut self,
         now: u64,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         mut data: BytesMut,
     ) {
+        let remote = normalize(remote);
         let datagram_len = data.len();
         while !data.is_empty() {
             match PartialDecode::new(data, self.config.local_cid_len) {
@@ -210,7 +211,7 @@ impl Endpoint {
     fn handle_decode(
         &mut self,
         now: u64,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
         datagram_len: usize,
@@ -308,7 +309,7 @@ impl Endpoint {
     fn stateless_reset(
         &mut self,
         inciting_dgram_len: usize,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
@@ -347,10 +348,11 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(
         &mut self,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
+        let remote = normalize(remote);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
@@ -380,7 +382,7 @@ impl Endpoint {
         &mut self,
         initial_id: ConnectionId,
         remote_id: ConnectionId,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         opts: ConnectionOpts,
     ) -> Result<ConnectionHandle, ConnectError> {
         let local_id = self.new_cid();
@@ -431,7 +433,7 @@ impl Endpoint {
     fn handle_initial(
         &mut self,
         now: u64,
-        remote: SocketAddrV6,
+        remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         crypto: &Crypto,
@@ -927,7 +929,7 @@ impl From<ConnectionError> for Event {
 #[derive(Debug)]
 pub enum Io {
     Transmit {
-        destination: SocketAddrV6,
+        destination: SocketAddr,
         /// Explicit congestion notification bits to set on the packet
         ecn: Option<EcnCodepoint>,
         packet: Box<[u8]>,
@@ -972,4 +974,16 @@ impl slog::Value for Timer {
 enum ConnectionOpts {
     Client(ClientConfig),
     Server { orig_dst_cid: Option<ConnectionId> },
+}
+
+/// Convert IPv4-mapped IPv6 SocketAddrs into normal IPv4 addrs for consistent hashing/comparison
+fn normalize(x: SocketAddr) -> SocketAddr {
+    if let SocketAddr::V6(x) = x {
+        if let Some(ip) = x.ip().to_ipv4() {
+            if x.ip().segments()[5] == 0xFFFF {
+                return SocketAddr::V4(SocketAddrV4::new(ip, x.port()));
+            }
+        }
+    }
+    x
 }
