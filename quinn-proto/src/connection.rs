@@ -553,6 +553,10 @@ impl Connection {
                 }
             }
             self.crypto_count += 1;
+        } else if self.state.is_handshake() && self.side.is_client() {
+            trace!(self.log, "sending anti-deadlock handshake packet");
+            self.io.probes += 1;
+            self.crypto_count += 1;
         } else if self.loss_time != 0 {
             // Time threshold loss Detection
             self.detect_lost_packets(now);
@@ -629,12 +633,7 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if self.in_flight.ack_eliciting == 0 {
-            self.io.timer_stop(Timer::LossDetection);
-            return;
-        }
-
-        if self.in_flight.crypto != 0 {
+        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission alarm.
             let timeout = if self.smoothed_rtt == 0 {
                 2 * self.config.initial_rtt
@@ -646,6 +645,11 @@ impl Connection {
                 Timer::LossDetection,
                 self.time_of_last_sent_crypto_packet + timeout,
             );
+            return;
+        }
+
+        if self.in_flight.ack_eliciting == 0 {
+            self.io.timer_stop(Timer::LossDetection);
             return;
         }
 
@@ -1930,7 +1934,7 @@ impl Connection {
             Some(self.populate_packet(now, space_id, &mut buf))
         };
 
-        if probe && ack_only {
+        if probe && ack_only && !self.state.is_handshake() {
             // Nothing ack-eliciting to send, so we need to make something up
             buf.write(frame::Type::PING);
             ack_only = false;
@@ -1938,14 +1942,13 @@ impl Connection {
 
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
-        if let Header::Initial { .. } = header {
-            if self.side.is_client()
-                && !ack_only
-                && buf.len() < MIN_INITIAL_SIZE - space.crypto.tag_len()
-            {
-                buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
-                padded = true;
-            }
+        if self.side.is_client()
+            && (space_id == SpaceId::Initial || (probe && space_id == SpaceId::Handshake))
+        {
+            // Either this is an initial packet, or the server might be blocked by
+            // anti-amplification measures and need some bytes to continue
+            buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
+            padded = true;
         }
         let pn_len = header
             .number()
