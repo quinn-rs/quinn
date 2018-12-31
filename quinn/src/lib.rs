@@ -919,6 +919,17 @@ impl Future for Driver {
     }
 }
 
+impl Drop for Driver {
+    fn drop(&mut self) {
+        let mut endpoint = self.0.borrow_mut();
+        for connection in endpoint.pending.values_mut() {
+            connection.fail(ConnectionError::TransportError {
+                error_code: quinn::TransportError::INTERNAL_ERROR,
+            });
+        }
+    }
+}
+
 fn duration_micros(x: u64) -> Duration {
     Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
 }
