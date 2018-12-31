@@ -319,7 +319,7 @@ impl Assembler {
         }
     }
 
-    /// Whether `peek` will return at least one nonempty slice
+    /// Whether `read` will return nonzero
     pub fn blocked(&self) -> bool {
         let mask = !0 >> self.written_offset;
         self.written.front().map_or(true, |x| x & mask == mask)
