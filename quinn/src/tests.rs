@@ -42,8 +42,8 @@ fn simple_echo() {
     let (client, client_driver, _) = client.bind("[::1]:24433").unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(server_driver.map_err(|_| ()));
-    runtime.spawn(client_driver.map_err(|_| ()));
+    runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
+    runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
     runtime.spawn(server_incoming.for_each(move |conn| {
         tokio_current_thread::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
         Ok(())
@@ -54,7 +54,7 @@ fn simple_echo() {
             client
                 .connect(&"[::1]:14433".parse().unwrap(), "localhost")
                 .unwrap()
-                .map_err(|_| ())
+                .map_err(|e| panic!("connection failed: {}", e))
                 .and_then(move |conn| {
                     let conn = conn.connection;
                     let stream = conn.open_bi();
