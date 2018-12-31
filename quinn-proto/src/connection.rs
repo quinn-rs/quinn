@@ -25,7 +25,6 @@ use crate::{
     frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
     RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
 };
-use rustls::internal::msgs::enums::AlertDescription;
 
 pub struct Connection {
     log: Logger,
@@ -2748,11 +2747,6 @@ mod state {
     impl From<frame::ApplicationClose> for CloseReason {
         fn from(x: frame::ApplicationClose) -> Self {
             CloseReason::Application(x)
-        }
-    }
-    impl From<AlertDescription> for CloseReason {
-        fn from(x: AlertDescription) -> Self {
-            TransportError::crypto(x).into()
         }
     }
 
