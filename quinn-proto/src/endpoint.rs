@@ -411,6 +411,9 @@ impl Endpoint {
             }
         };
 
+        let remote_validated = self.server_config.as_ref().map_or(false, |cfg| {
+            cfg.use_stateless_retry && client_config.is_none()
+        });
         let conn = self.connections.insert(Connection::new(
             self.log.new(o!("connection" => local_id)),
             Arc::clone(&self.config),
@@ -420,6 +423,7 @@ impl Endpoint {
             remote,
             client_config,
             tls,
+            remote_validated,
         ));
         let conn = ConnectionHandle(conn);
 

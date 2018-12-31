@@ -119,6 +119,9 @@ pub struct Connection {
     sending_ecn: bool,
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
+    remote_validated: bool,
+    total_recvd: u64,
+    total_sent: u64,
 
     streams: Streams,
 }
@@ -133,6 +136,7 @@ impl Connection {
         remote: SocketAddr,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
+        remote_validated: bool,
     ) -> Self {
         let side = if client_config.is_some() {
             Side::Client
@@ -211,6 +215,9 @@ impl Connection {
             ecn_counters: frame::EcnCounts::ZERO,
             sending_ecn: true,
             receiving_ecn: false,
+            remote_validated,
+            total_recvd: 0,
+            total_sent: 0,
 
             streams: Streams {
                 streams,
@@ -670,7 +677,10 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
         spin: bool,
+        size: usize,
     ) {
+        self.remote_validated |= space_id == SpaceId::Handshake;
+        self.total_recvd = self.total_recvd.wrapping_add(size as u64);
         self.reset_idle_timeout(now);
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
@@ -777,11 +787,12 @@ impl Connection {
         packet_number: u64,
         packet: Packet,
     ) -> Result<(), TransportError> {
+        let len = packet.header_data.len() + packet.payload.len();
         self.process_early_payload(now, packet)?;
         if self.state.is_closed() {
             return Ok(());
         }
-        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false);
+        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false, len);
         let params = TransportParameters::read(
             Side::Server,
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
@@ -969,7 +980,14 @@ impl Connection {
                         } else {
                             false
                         };
-                        self.on_packet_authenticated(now, packet.header.space(), ecn, number, spin);
+                        self.on_packet_authenticated(
+                            now,
+                            packet.header.space(),
+                            ecn,
+                            number,
+                            spin,
+                            packet.header_data.len() + packet.payload.len(),
+                        );
                     }
                     self.handle_connected_inner(now, number, packet)
                 }
@@ -1828,6 +1846,14 @@ impl Connection {
         if space_id == SpaceId::Data && !probe && !ack_only && self.congestion_blocked() {
             return None;
         }
+        if self.state.is_handshake()
+            && !self.remote_validated
+            && self.side.is_server()
+            && self.total_recvd * 3 < self.total_sent + self.mtu as u64
+        {
+            trace!(self.log, "blocked by anti-amplification");
+            return None;
+        }
 
         //
         // From here on, we've determined that a packet will definitely be sent.
@@ -1969,6 +1995,7 @@ impl Connection {
         }
 
         trace!(self.log, "{len} bytes", len = buf.len());
+        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
         Some(buf.into())
     }
