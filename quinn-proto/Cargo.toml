@@ -26,7 +26,7 @@ constant_time_eq = "0.1"
 failure = "0.1"
 fnv = "1.0.6"
 lazy_static = "1"
-orion = "0.11"
+orion = "0.12"
 rand = "0.6"
 ring = "0.13"
 rustls = { git = "https://github.com/Ralith/rustls.git", rev = "ebbed84658cb55c20798bdad65e2b462c04757e6", features = ["quic"] }
