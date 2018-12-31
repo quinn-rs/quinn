@@ -350,14 +350,14 @@ impl HeaderKey {
         use self::HeaderKey::*;
         match self {
             AesEcb128(key) => {
-                let mut cipher = Ecb::<Aes128, ZeroPadding>::new_var(key, &[]).unwrap();
+                let cipher = Ecb::<Aes128, ZeroPadding>::new_var(key, &[]).unwrap();
                 let mut buf = [0; 16];
                 buf.copy_from_slice(sample);
                 cipher.encrypt(&mut buf, 16).unwrap();
                 [buf[0], buf[1], buf[2], buf[3], buf[4]]
             }
             AesEcb256(key) => {
-                let mut cipher = Ecb::<Aes256, ZeroPadding>::new_var(key, &[]).unwrap();
+                let cipher = Ecb::<Aes256, ZeroPadding>::new_var(key, &[]).unwrap();
                 let mut buf = [0; 16];
                 buf.copy_from_slice(sample);
                 cipher.encrypt(&mut buf, 16).unwrap();

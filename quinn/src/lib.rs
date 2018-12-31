@@ -1039,7 +1039,6 @@ impl Connection {
             .inner
             .connection(self.0.conn)
             .remote()
-            .into()
     }
 
     /// The `ConnectionId`s defined for `conn` locally.
