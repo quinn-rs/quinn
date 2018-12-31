@@ -1825,7 +1825,8 @@ impl Connection {
                 })?
         };
         let probe = !close && self.io.probes != 0;
-        if space_id == SpaceId::Data && !probe && self.congestion_blocked() {
+        let mut ack_only = self.space(space_id).pending.is_empty();
+        if space_id == SpaceId::Data && !probe && !ack_only && self.congestion_blocked() {
             return None;
         }
 
@@ -1885,7 +1886,6 @@ impl Connection {
         };
         let mut buf = Vec::new();
         let partial_encode = header.encode(&mut buf);
-        let mut ack_only = space.pending.is_empty();
         let header_len = buf.len();
 
         let sent = if close {
