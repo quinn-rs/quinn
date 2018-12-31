@@ -34,7 +34,7 @@ slab = "0.4"
 slog = "2.2"
 webpki = "0.18"
 aes = "0.3"
-block-modes = "0.2"
+block-modes = "0.3"
 
 [dev-dependencies]
 assert_matches = "1.1"
