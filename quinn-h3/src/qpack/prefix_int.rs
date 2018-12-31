@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 
 use quinn_proto::coding::{self, BufExt, BufMutExt};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
     Overflow,
     UnexpectedEnd,
@@ -130,9 +130,9 @@ mod test {
     #[test]
     #[should_panic]
     fn size_too_big_of_size() {
-        let mut buf = vec![];
+        let buf = vec![];
         let mut read = Cursor::new(&buf);
-        super::decode(9, &mut read);
+        super::decode(9, &mut read).unwrap();
     }
 
     #[cfg(target_pointer_width = "64")]
