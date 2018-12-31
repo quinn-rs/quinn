@@ -934,6 +934,16 @@ fn server_hs_retransmit() {
         pair.client.inbound.len() - 1
     );
     pair.client.inbound.drain(1..);
+    // Client's Initial ACK buys a lot of budget, so keep dropping...
+    for _ in 0..3 {
+        pair.step();
+        info!(
+            pair.log,
+            "dropping {} server handshake packets",
+            pair.client.inbound.len()
+        );
+        pair.client.inbound.drain(..);
+    }
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 }
