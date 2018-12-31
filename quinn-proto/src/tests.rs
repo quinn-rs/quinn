@@ -918,3 +918,22 @@ fn server_busy() {
     );
     assert_matches!(pair.server.poll(), None);
 }
+
+#[test]
+fn server_hs_retransmit() {
+    let mut pair = Pair::default();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    pair.step();
+    assert!(pair.client.inbound.len() > 1); // Initial + Handshakes
+    info!(
+        pair.log,
+        "dropping {} server handshake packets",
+        pair.client.inbound.len() - 1
+    );
+    pair.client.inbound.drain(1..);
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+}
