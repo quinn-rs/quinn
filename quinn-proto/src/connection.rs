@@ -1805,15 +1805,24 @@ impl Connection {
         let close = mem::replace(&mut self.io.close, false);
         let space_id = if close {
             self.highest_space
+        } else if self.state.is_closed() {
+            return None;
         } else {
-            if self.state.is_closed() {
-                return None;
-            }
-            *SpaceId::VALUES.iter().find(|&&x| {
-                self.spaces[x as usize]
-                    .as_ref()
-                    .map_or(false, |space| space.can_send())
-            })?
+            SpaceId::VALUES
+                .iter()
+                .find(|&&x| {
+                    self.spaces[x as usize]
+                        .as_ref()
+                        .map_or(false, |space| space.can_send())
+                })
+                .cloned()
+                .or_else(|| {
+                    if self.io.probes != 0 {
+                        Some(self.highest_space)
+                    } else {
+                        None
+                    }
+                })?
         };
         let probe = !close && self.io.probes != 0;
         if space_id == SpaceId::Data && !probe && self.congestion_blocked() {
