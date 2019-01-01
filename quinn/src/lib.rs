@@ -58,7 +58,7 @@ mod udp;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{hash_map, VecDeque};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::rc::Rc;
 use std::str;
 use std::sync::Arc;
@@ -126,6 +126,7 @@ struct EndpointInner {
     timers: FuturesUnordered<Timer>,
     incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
+    ipv6: bool,
 }
 
 impl EndpointInner {
@@ -260,6 +261,7 @@ impl<'a> EndpointBuilder<'a> {
         } else {
             Cow::Owned(tokio_reactor::Handle::current())
         };
+        let addr = socket.local_addr().map_err(Error::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
         let (send, recv) = futures::sync::mpsc::channel(4);
         let rc = Rc::new(RefCell::new(EndpointInner {
@@ -272,6 +274,7 @@ impl<'a> EndpointBuilder<'a> {
             timers: FuturesUnordered::new(),
             incoming: send,
             driver: None,
+            ipv6: addr.is_ipv6(),
         }));
         Ok((
             Endpoint {
@@ -591,7 +594,12 @@ impl Endpoint {
         let (send, recv) = oneshot::channel();
         let handle = {
             let mut endpoint = self.inner.borrow_mut();
-            let handle = endpoint.inner.connect(*addr, config, server_name)?;
+            let addr = if endpoint.ipv6 {
+                SocketAddr::V6(ensure_ipv6(*addr))
+            } else {
+                *addr
+            };
+            let handle = endpoint.inner.connect(addr, config, server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
             handle
         };
@@ -1596,5 +1604,12 @@ impl<T: Read> Future for ReadToEnd<T> {
                 }
             }
         }
+    }
+}
+
+fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
+    match x {
+        SocketAddr::V6(x) => x,
+        SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),
     }
 }
