@@ -1,6 +1,6 @@
 use std::cmp;
 use std::collections::VecDeque;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -142,7 +142,6 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         mut data: BytesMut,
     ) {
-        let remote = normalize(remote);
         let datagram_len = data.len();
         while !data.is_empty() {
             match PartialDecode::new(data, self.config.local_cid_len) {
@@ -352,7 +351,6 @@ impl Endpoint {
         config: &Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        let remote = normalize(remote);
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let conn = self.add_connection(
@@ -978,16 +976,4 @@ impl slog::Value for Timer {
 enum ConnectionOpts {
     Client(ClientConfig),
     Server { orig_dst_cid: Option<ConnectionId> },
-}
-
-/// Convert IPv4-mapped IPv6 SocketAddrs into normal IPv4 addrs for consistent hashing/comparison
-fn normalize(x: SocketAddr) -> SocketAddr {
-    if let SocketAddr::V6(x) = x {
-        if let Some(ip) = x.ip().to_ipv4() {
-            if x.ip().segments()[5] == 0xFFFF {
-                return SocketAddr::V4(SocketAddrV4::new(ip, x.port()));
-            }
-        }
-    }
-    x
 }
