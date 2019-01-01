@@ -5,11 +5,39 @@ use super::{
 use futures::{Future, Stream};
 use rustls::internal::pemfile;
 use slog::{Drain, Logger, KV};
-use std::{fmt, fs, io, str};
+use std::{
+    fmt, fs, io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    str,
+};
 use tokio;
 
 #[test]
-fn simple_echo() {
+fn echo_v6() {
+    run_echo(
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+    );
+}
+
+#[test]
+fn echo_v4() {
+    run_echo(
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")] // Dual-stack sockets aren't the default anywhere else.
+fn echo_dualstack() {
+    run_echo(
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+    );
+}
+
+fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let log = logger();
     let mut server_config = ServerConfigBuilder::default();
     let keys = {
@@ -30,7 +58,9 @@ fn simple_echo() {
     });
     server.logger(log.clone());
     server.listen(server_config.build());
-    let (_, server_driver, server_incoming) = server.bind("[::1]:14433").unwrap();
+    let server_sock = UdpSocket::bind(server_addr).unwrap();
+    let server_addr = server_sock.local_addr().unwrap();
+    let (_, server_driver, server_incoming) = server.from_socket(server_sock).unwrap();
 
     let mut client_config = ClientConfigBuilder::default();
     client_config
@@ -39,7 +69,7 @@ fn simple_echo() {
     let mut client = Endpoint::new();
     client.logger(log.clone());
     client.default_client_config(client_config.build());
-    let (client, client_driver, _) = client.bind("[::1]:24433").unwrap();
+    let (client, client_driver, _) = client.bind(client_addr).unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
@@ -49,10 +79,11 @@ fn simple_echo() {
         Ok(())
     }));
 
+    info!(log, "connecting from {} to {}", client_addr, server_addr);
     runtime
         .block_on(
             client
-                .connect(&"[::1]:14433".parse().unwrap(), "localhost")
+                .connect(&server_addr, "localhost")
                 .unwrap()
                 .map_err(|e| panic!("connection failed: {}", e))
                 .and_then(move |conn| {
