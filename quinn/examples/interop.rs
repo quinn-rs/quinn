@@ -6,7 +6,6 @@ extern crate failure;
 extern crate slog;
 extern crate futures;
 extern crate slog_term;
-#[macro_use]
 extern crate structopt;
 
 use std::net::ToSocketAddrs;
