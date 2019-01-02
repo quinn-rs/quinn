@@ -9,7 +9,7 @@ use mio::net::UdpSocket;
 
 use quinn_proto::EcnCodepoint;
 
-use super::cmsg::{self, Cmsg};
+use super::cmsg;
 
 impl super::UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
@@ -22,10 +22,9 @@ impl super::UdpExt for UdpSocket {
             mem::size_of::<SocketAddrV6>(),
             mem::size_of::<libc::sockaddr_in6>()
         );
-        assert_eq!(
-            CMSG_LEN,
-            std::cmp::max(Cmsg::IP_TOS(0).space(), Cmsg::IPV6_TCLASS(0).space(),) as usize
-        );
+        assert_eq!(CMSG_LEN, unsafe {
+            libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize
+        });
 
         let addr = self.local_addr()?;
 
@@ -75,7 +74,7 @@ impl super::UdpExt for UdpSocket {
                 (addr as *const _ as _, mem::size_of::<libc::sockaddr_in6>())
             }
         };
-        let ecn = ecn.map_or(0, |x| x as u8);
+        let ecn = ecn.map_or(0, |x| x as libc::c_int);
         let mut iov = libc::iovec {
             iov_base: msg.as_ptr() as *const _ as *mut _,
             iov_len: msg.len(),
@@ -89,14 +88,18 @@ impl super::UdpExt for UdpSocket {
             msg_controllen: 0,
             msg_flags: 0,
         };
-        let cmsg;
-        if remote.is_ipv4() {
-            cmsg = Cmsg::IP_TOS(ecn as _);
-        } else {
-            cmsg = Cmsg::IPV6_TCLASS(ecn as _);
-        }
         let mut ctrl: [u8; CMSG_LEN] = unsafe { mem::uninitialized() };
-        cmsg::encode(&mut hdr, &mut ctrl, &[cmsg]);
+        if remote.is_ipv4() {
+            cmsg::encode(&mut hdr, &mut ctrl, libc::IPPROTO_IP, libc::IP_TOS, ecn);
+        } else {
+            cmsg::encode(
+                &mut hdr,
+                &mut ctrl,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_TCLASS,
+                ecn,
+            );
+        }
         let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
         if n == -1 {
             return Err(io::Error::last_os_error());
@@ -125,15 +128,17 @@ impl super::UdpExt for UdpSocket {
             return Err(io::Error::last_os_error());
         }
         let mut ecn = None;
-        for cmsg in unsafe { cmsg::Iter::new(&hdr) } {
-            match cmsg {
-                Cmsg::IP_TOS(bits) => {
-                    ecn = EcnCodepoint::from_bits(bits);
-                }
-                Cmsg::IPV6_TCLASS(bits) => {
-                    ecn = EcnCodepoint::from_bits(bits as u8);
-                }
-            }
+        if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
+            let bits = match (cmsg.cmsg_level, cmsg.cmsg_type) {
+                (libc::IPPROTO_IP, libc::IP_TOS) => unsafe {
+                    ptr::read(libc::CMSG_DATA(cmsg) as *const u8)
+                },
+                (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
+                    ptr::read(libc::CMSG_DATA(cmsg) as *const libc::c_int) as u8
+                },
+                _ => 0,
+            };
+            ecn = EcnCodepoint::from_bits(bits);
         }
         let addr = match name.ss_family as libc::c_int {
             libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
