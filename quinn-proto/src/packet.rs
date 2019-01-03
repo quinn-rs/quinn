@@ -54,12 +54,26 @@ impl PartialDecode {
                 version: VERSION,
                 first,
                 ..
-            } => match LongHeaderType::from_byte(first) {
-                Ok(LongHeaderType::Initial) => Some(SpaceId::Initial),
-                Ok(LongHeaderType::Standard(LongType::Handshake)) => Some(SpaceId::Handshake),
-                _ => None,
+            } => match LongHeaderType::from_byte(first).ok()? {
+                LongHeaderType::Retry => None,
+                LongHeaderType::Initial => Some(SpaceId::Initial),
+                LongHeaderType::Standard(LongType::Handshake) => Some(SpaceId::Handshake),
+                LongHeaderType::Standard(LongType::ZeroRtt) => Some(SpaceId::Data),
             },
             _ => None,
+        }
+    }
+
+    pub fn is_0rtt(&self) -> bool {
+        match self.invariant_header {
+            InvariantHeader::Long {
+                version: VERSION,
+                first,
+                ..
+            } => {
+                LongHeaderType::from_byte(first) == Ok(LongHeaderType::Standard(LongType::ZeroRtt))
+            }
+            _ => false,
         }
     }
 
