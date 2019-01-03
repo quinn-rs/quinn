@@ -130,7 +130,7 @@ impl PartialDecode {
             invariant_header,
             mut buf,
         } = self;
-        let (payload_len, header) = match invariant_header {
+        Ok(match invariant_header {
             InvariantHeader::Short { dst_cid, .. } => {
                 if !buf.has_remaining() {
                     return Err(PacketDecodeError::InvalidHeader(
@@ -141,15 +141,18 @@ impl PartialDecode {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let spin = buf.get_ref()[0] & SPIN_BIT != 0;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
-                (
-                    buf.remaining(),
-                    Header::Short {
+                let header_len = buf.position() as usize;
+                let mut bytes = buf.into_inner();
+                Packet {
+                    header: Header::Short {
                         dst_cid,
                         number,
                         spin,
                         key_phase,
                     },
-                )
+                    header_data: bytes.split_to(header_len).freeze(),
+                    payload: bytes,
+                }
             }
             InvariantHeader::Long {
                 first,
@@ -157,14 +160,19 @@ impl PartialDecode {
                 dst_cid,
                 src_cid,
                 ..
-            } => (
-                buf.remaining(),
-                Header::VersionNegotiate {
-                    random: first & !LONG_HEADER_FORM,
-                    src_cid,
-                    dst_cid,
-                },
-            ),
+            } => {
+                let header_len = buf.position() as usize;
+                let mut bytes = buf.into_inner();
+                Packet {
+                    header: Header::VersionNegotiate {
+                        random: first & !LONG_HEADER_FORM,
+                        src_cid,
+                        dst_cid,
+                    },
+                    header_data: bytes.split_to(header_len).freeze(),
+                    payload: bytes,
+                }
+            }
             InvariantHeader::Long {
                 first,
                 version: VERSION,
@@ -177,22 +185,25 @@ impl PartialDecode {
                     let mut odci_stage = [0; 18];
                     buf.copy_to_slice(&mut odci_stage[0..odcil]);
                     let orig_dst_cid = ConnectionId::new(&odci_stage[..odcil]);
-                    (
-                        buf.remaining(),
-                        Header::Retry {
+                    let header_len = buf.position() as usize;
+                    let mut bytes = buf.into_inner();
+                    Packet {
+                        header: Header::Retry {
                             src_cid,
                             dst_cid,
                             orig_dst_cid,
                         },
-                    )
+                        header_data: bytes.split_to(header_len).freeze(),
+                        payload: bytes,
+                    }
                 }
                 LongHeaderType::Initial => {
-                    let token_length = buf.get_var()? as usize;
-                    // Could we avoid this alloc/copy somehow?
-                    let mut token = BytesMut::with_capacity(token_length);
-                    token.extend_from_slice(&buf.bytes()[..token_length]);
-                    let token = token.freeze();
-                    buf.advance(token_length);
+                    let token_length = buf.get_var()?;
+                    if token_length > buf.remaining() as u64 {
+                        return Err(PacketDecodeError::InvalidHeader("token longer than packet"));
+                    }
+                    let token_pos = buf.position() as usize;
+                    buf.advance(token_length as usize);
 
                     let len = buf.get_var()?;
                     let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
@@ -201,15 +212,20 @@ impl PartialDecode {
                             "packet number longer than packet",
                         ));
                     }
-                    (
-                        (len as usize) - number.len(),
-                        Header::Initial {
+                    let header_len = buf.position() as usize;
+                    let mut bytes = buf.into_inner();
+                    let header_data = bytes.split_to(header_len).freeze();
+                    let token = header_data.slice(token_pos, token_pos + token_length as usize);
+                    Packet {
+                        header: Header::Initial {
                             src_cid,
                             dst_cid,
                             token,
                             number,
                         },
-                    )
+                        header_data,
+                        payload: bytes,
+                    }
                 }
                 LongHeaderType::Standard(ty) => {
                     let len = buf.get_var()?;
@@ -219,35 +235,22 @@ impl PartialDecode {
                             "packet number longer than packet",
                         ));
                     }
-                    (
-                        (len as usize) - number.len(),
-                        Header::Long {
+                    let header_len = buf.position() as usize;
+                    let mut bytes = buf.into_inner();
+                    Packet {
+                        header: Header::Long {
                             ty,
                             src_cid,
                             dst_cid,
                             number,
                         },
-                    )
+                        header_data: bytes.split_to(header_len).freeze(),
+                        payload: bytes,
+                    }
                 }
             },
             // InvariantHeader decode checks for unsupported versions
             InvariantHeader::Long { .. } => unreachable!(),
-        };
-
-        let header_len = buf.position() as usize;
-        let mut bytes = buf.into_inner();
-        if bytes.len() < header_len + payload_len {
-            return Err(PacketDecodeError::InvalidHeader(
-                "payload longer than packet",
-            ));
-        }
-
-        let header_data = bytes.split_to(header_len).freeze();
-        let payload = bytes.split_to(payload_len);
-        Ok(Packet {
-            header,
-            header_data,
-            payload,
         })
     }
 
