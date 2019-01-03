@@ -901,6 +901,10 @@ impl Connection {
             );
             return None;
         }
+        if partial_decode.is_0rtt() {
+            debug!(self.log, "dropping 0-RTT packet (currently unimplemented)");
+            return None;
+        }
         let header_crypto = if let Some(space) = partial_decode.space() {
             if let Some(ref space) = self.spaces[space as usize] {
                 Some(&space.header_crypto)
@@ -1187,10 +1191,7 @@ impl Connection {
                     Header::Long {
                         ty: LongType::ZeroRtt,
                         ..
-                    } => {
-                        debug!(self.log, "dropping 0-RTT packet (currently unimplemented)");
-                        Ok(())
-                    }
+                    } => unreachable!("0-RTT is dropped in handle_decode"),
                     Header::VersionNegotiate { .. } => {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
                         if packet.payload.len() % 4 != 0 {
