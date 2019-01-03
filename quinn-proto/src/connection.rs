@@ -792,11 +792,11 @@ impl Connection {
         packet: Packet,
     ) -> Result<(), TransportError> {
         let len = packet.header_data.len() + packet.payload.len();
+        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false, len);
         self.process_early_payload(now, packet)?;
         if self.state.is_closed() {
             return Ok(());
         }
-        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false, len);
         let params = TransportParameters::read(
             Side::Server,
             &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
