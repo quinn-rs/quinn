@@ -1057,7 +1057,7 @@ impl Connection {
                             // match the Destination Connection ID from its Initial packet.
                             return Ok(());
                         }
-                        trace!(self.log, "retrying");
+                        trace!(self.log, "retrying with CID {rem_cid}", rem_cid = rem_cid);
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
                         self.on_packet_acked(SpaceId::Initial, 0);
@@ -1132,6 +1132,11 @@ impl Connection {
                         src_cid: rem_cid, ..
                     } => {
                         if !state.rem_cid_set {
+                            trace!(
+                                self.log,
+                                "switching remote CID to {rem_cid}",
+                                rem_cid = rem_cid
+                            );
                             let mut state = state.clone();
                             self.rem_cid = rem_cid;
                             state.rem_cid_set = true;
@@ -1429,7 +1434,11 @@ impl Connection {
                 }
                 Frame::MaxStreamData { id, offset } => {
                     if id.initiator() != self.side && id.directionality() == Directionality::Uni {
-                        debug!(self.log, "got MAX_STREAM_DATA on recv-only stream");
+                        debug!(
+                            self.log,
+                            "got MAX_STREAM_DATA on recv-only {stream}",
+                            stream = id
+                        );
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                     if let Some(ss) = self.streams.get_send_mut(id) {
@@ -1442,7 +1451,11 @@ impl Connection {
                             ss.max_data = offset;
                         }
                     } else {
-                        debug!(self.log, "got MAX_STREAM_DATA on unopened stream");
+                        debug!(
+                            self.log,
+                            "got MAX_STREAM_DATA on unopened {stream}",
+                            stream = id
+                        );
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                 }
