@@ -7,6 +7,7 @@ pub fn encode<T: Copy + ?Sized>(
     ty: libc::c_int,
     value: T,
 ) {
+    assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
     let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
     assert!(buf.len() >= space);
     hdr.msg_control = buf.as_mut_ptr() as _;
@@ -20,6 +21,12 @@ pub fn encode<T: Copy + ?Sized>(
         ptr::write(libc::CMSG_DATA(cmsg) as *const T as *mut T, value);
     }
     hdr.msg_controllen = space as _;
+}
+
+pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
+    assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
+    debug_assert_eq!(cmsg.cmsg_len, libc::CMSG_LEN(mem::size_of::<T>() as _) as _);
+    ptr::read(libc::CMSG_DATA(cmsg) as *const T)
 }
 
 pub struct Iter<'a> {

@@ -127,25 +127,23 @@ impl super::UdpExt for UdpSocket {
         if n == -1 {
             return Err(io::Error::last_os_error());
         }
-        let mut ecn = None;
-        if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
-            let bits = match (cmsg.cmsg_level, cmsg.cmsg_type) {
-                (libc::IPPROTO_IP, libc::IP_TOS) => unsafe {
-                    ptr::read(libc::CMSG_DATA(cmsg) as *const u8)
-                },
+        let ecn_bits = if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
+            match (cmsg.cmsg_level, cmsg.cmsg_type) {
+                (libc::IPPROTO_IP, libc::IP_TOS) => unsafe { cmsg::decode::<u8>(cmsg) },
                 (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
-                    ptr::read(libc::CMSG_DATA(cmsg) as *const libc::c_int) as u8
+                    cmsg::decode::<libc::c_int>(cmsg) as u8
                 },
                 _ => 0,
-            };
-            ecn = EcnCodepoint::from_bits(bits);
-        }
+            }
+        } else {
+            0
+        };
         let addr = match name.ss_family as libc::c_int {
             libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
             libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
             _ => unreachable!(),
         };
-        Ok((n as usize, addr, ecn))
+        Ok((n as usize, addr, EcnCodepoint::from_bits(ecn_bits)))
     }
 }
 
