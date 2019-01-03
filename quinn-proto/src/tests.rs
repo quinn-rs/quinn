@@ -947,3 +947,28 @@ fn server_hs_retransmit() {
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
 }
+
+#[test]
+fn decode_coalesced() {
+    // We can't currently generate coalesced packets natively, but we must support decoding
+    // them. Hack around the problem by manually concatenating the server's first flight.
+    let mut pair = Pair::default();
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &client_config(), "localhost")
+        .unwrap();
+    pair.step();
+    assert!(
+        pair.client.inbound.len() > 1,
+        "if the server's flight isn't multiple packets, this test is redundant"
+    );
+    let mut coalesced = Vec::new();
+    for (_, _, packet) in pair.client.inbound.drain(..) {
+        coalesced.extend_from_slice(&packet);
+    }
+    pair.client
+        .inbound
+        .push_back((pair.time, Some(EcnCodepoint::ECT0), coalesced.into()));
+    pair.drive();
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+}
