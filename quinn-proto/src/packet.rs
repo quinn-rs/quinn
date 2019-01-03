@@ -25,13 +25,64 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
-    pub fn new(bytes: BytesMut, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
+    pub fn new(
+        bytes: BytesMut,
+        local_cid_len: usize,
+    ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let invariant_header = InvariantHeader::decode(&mut buf, local_cid_len)?;
-        Ok(Self {
-            invariant_header,
-            buf,
-        })
+        let end = match invariant_header {
+            InvariantHeader::Long {
+                version: VERSION,
+                first,
+                ..
+            } => {
+                let mut buf2 = buf.clone();
+                match LongHeaderType::from_byte(first) {
+                    Err(_) | Ok(LongHeaderType::Retry) => None,
+                    Ok(LongHeaderType::Initial) => {
+                        let token_len = buf2.get_var()?;
+                        if token_len > buf2.remaining() as u64 {
+                            return Err(PacketDecodeError::InvalidHeader(
+                                "token longer than packet",
+                            ));
+                        }
+                        buf2.advance(token_len as usize);
+                        let len = buf2.get_var()?;
+                        if len > buf2.remaining() as u64 {
+                            return Err(PacketDecodeError::InvalidHeader(
+                                "payload longer than packet",
+                            ));
+                        }
+                        Some(buf2.position() + len)
+                    }
+                    Ok(LongHeaderType::Standard(_)) => {
+                        let len = buf2.get_var()?;
+                        if len > buf2.remaining() as u64 {
+                            return Err(PacketDecodeError::InvalidHeader(
+                                "payload longer than packet",
+                            ));
+                        }
+                        Some(buf2.position() + len)
+                    }
+                }
+            }
+            _ => None,
+        };
+        let rest = end.and_then(|end| {
+            if end == buf.get_ref().len() as u64 {
+                None
+            } else {
+                Some(buf.get_mut().split_off(end as usize))
+            }
+        });
+        Ok((
+            Self {
+                invariant_header,
+                buf,
+            },
+            rest,
+        ))
     }
 
     pub fn has_long_header(&self) -> bool {
@@ -74,15 +125,12 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
-    pub fn finish(
-        self,
-        header_crypto: Option<&HeaderCrypto>,
-    ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
+    pub fn finish(self, header_crypto: Option<&HeaderCrypto>) -> Result<Packet, PacketDecodeError> {
         let Self {
             invariant_header,
             mut buf,
         } = self;
-        let (payload_len, header, allow_coalesced) = match invariant_header {
+        let (payload_len, header) = match invariant_header {
             InvariantHeader::Short { dst_cid, .. } => {
                 if !buf.has_remaining() {
                     return Err(PacketDecodeError::InvalidHeader(
@@ -101,7 +149,6 @@ impl PartialDecode {
                         spin,
                         key_phase,
                     },
-                    false,
                 )
             }
             InvariantHeader::Long {
@@ -117,7 +164,6 @@ impl PartialDecode {
                     src_cid,
                     dst_cid,
                 },
-                false,
             ),
             InvariantHeader::Long {
                 first,
@@ -138,7 +184,6 @@ impl PartialDecode {
                             dst_cid,
                             orig_dst_cid,
                         },
-                        false,
                     )
                 }
                 LongHeaderType::Initial => {
@@ -164,7 +209,6 @@ impl PartialDecode {
                             token,
                             number,
                         },
-                        true,
                     )
                 }
                 LongHeaderType::Standard(ty) => {
@@ -183,7 +227,6 @@ impl PartialDecode {
                             dst_cid,
                             number,
                         },
-                        true,
                     )
                 }
             },
@@ -201,14 +244,11 @@ impl PartialDecode {
 
         let header_data = bytes.split_to(header_len).freeze();
         let payload = bytes.split_to(payload_len);
-        Ok((
-            Packet {
-                header,
-                header_data,
-                payload,
-            },
-            if allow_coalesced { Some(bytes) } else { None },
-        ))
+        Ok(Packet {
+            header,
+            header_data,
+            payload,
+        })
     }
 
     fn decrypt_header(
@@ -911,8 +951,8 @@ mod tests {
 
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
         let server_header_crypto = server_crypto.header_crypto();
-        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap();
-        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap().0;
+        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap().0;
+        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff0000115006b858ec6f80452b00402100")[..]
