@@ -110,10 +110,10 @@ impl PartialDecode {
                 (
                     buf.remaining(),
                     Header::Short {
-                        dst_cid,
-                        number,
                         spin,
                         key_phase,
+                        dst_cid,
+                        number,
                     },
                     false,
                 )
@@ -128,8 +128,8 @@ impl PartialDecode {
                 buf.remaining(),
                 Header::VersionNegotiate {
                     random: first & !LONG_HEADER_FORM,
-                    src_cid,
                     dst_cid,
+                    src_cid,
                 },
                 false,
             ),
@@ -148,8 +148,8 @@ impl PartialDecode {
                     (
                         buf.remaining(),
                         Header::Retry {
-                            src_cid,
                             dst_cid,
+                            src_cid,
                             orig_dst_cid,
                         },
                         false,
@@ -173,8 +173,8 @@ impl PartialDecode {
                     (
                         (len as usize) - number.len(),
                         Header::Initial {
-                            src_cid,
                             dst_cid,
+                            src_cid,
                             token,
                             number,
                         },
@@ -193,8 +193,8 @@ impl PartialDecode {
                         (len as usize) - number.len(),
                         Header::Long {
                             ty,
-                            src_cid,
                             dst_cid,
+                            src_cid,
                             number,
                         },
                         true,
@@ -253,27 +253,27 @@ pub struct Packet {
 #[derive(Debug, Clone)]
 pub enum Header {
     Initial {
-        src_cid: ConnectionId,
         dst_cid: ConnectionId,
+        src_cid: ConnectionId,
         token: Bytes,
         number: PacketNumber,
     },
     Long {
         ty: LongType,
-        src_cid: ConnectionId,
         dst_cid: ConnectionId,
+        src_cid: ConnectionId,
         number: PacketNumber,
     },
     Retry {
-        src_cid: ConnectionId,
         dst_cid: ConnectionId,
+        src_cid: ConnectionId,
         orig_dst_cid: ConnectionId,
     },
     Short {
-        dst_cid: ConnectionId,
-        number: PacketNumber,
         spin: bool,
         key_phase: bool,
+        dst_cid: ConnectionId,
+        number: PacketNumber,
     },
     VersionNegotiate {
         random: u8,
@@ -287,8 +287,8 @@ impl Header {
         use self::Header::*;
         match *self {
             Initial {
-                ref src_cid,
                 ref dst_cid,
+                ref src_cid,
                 ref token,
                 number,
             } => {
@@ -308,8 +308,8 @@ impl Header {
             }
             Long {
                 ty,
-                ref src_cid,
                 ref dst_cid,
+                ref src_cid,
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
@@ -321,8 +321,8 @@ impl Header {
                 PartialEncode { pn: Some(pn_pos) }
             }
             Retry {
-                ref src_cid,
                 ref dst_cid,
+                ref src_cid,
                 ref orig_dst_cid,
             } => {
                 let odcil = if orig_dst_cid.len() == 0 {
@@ -337,10 +337,10 @@ impl Header {
                 PartialEncode { pn: None }
             }
             Short {
-                ref dst_cid,
-                number,
                 spin,
                 key_phase,
+                ref dst_cid,
+                number,
             } => {
                 w.write(
                     FIXED_BIT
@@ -356,8 +356,8 @@ impl Header {
             }
             VersionNegotiate {
                 ref random,
-                ref src_cid,
                 ref dst_cid,
+                ref src_cid,
             } => {
                 w.write(0x80u8 | random);
                 w.write::<u32>(0);
