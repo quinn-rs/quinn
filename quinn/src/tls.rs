@@ -1,3 +1,5 @@
+//! TLS-related helpers
+
 use std::fmt;
 
 use rustls::{self, internal::pemfile};
@@ -49,6 +51,7 @@ impl PrivateKey {
     }
 }
 
+/// Errors encountered while parsing a TLS certificate or private key
 #[derive(Debug, Clone)]
 pub struct ParseError(&'static str);
 
