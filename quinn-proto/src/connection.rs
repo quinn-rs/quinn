@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{cmp, io, mem};
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, Bytes};
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
@@ -949,21 +949,21 @@ impl Connection {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
-    ) -> Option<BytesMut> {
+    ) {
         if remote != self.remote && self.side.is_client() {
             trace!(
                 self.log,
                 "discarding packet from unknown server {address}",
                 address = format!("{}", remote)
             );
-            return None;
+            return;
         }
         let header_crypto = if partial_decode.is_0rtt() {
             if let Some(ref crypto) = self.zero_rtt_crypto {
                 Some(&crypto.header)
             } else {
                 debug!(self.log, "dropping unexpected 0-RTT packet");
-                return None;
+                return;
             }
         } else if let Some(space) = partial_decode.space() {
             if let Some(ref crypto) = self.spaces[space as usize].crypto {
@@ -975,7 +975,7 @@ impl Connection {
                     space = space,
                     len = partial_decode.len(),
                 );
-                return None;
+                return;
             }
         } else {
             // Unprotected packet
@@ -983,13 +983,9 @@ impl Connection {
         };
 
         match partial_decode.finish(header_crypto) {
-            Ok((packet, rest)) => {
-                self.handle_packet(now, remote, ecn, packet);
-                rest
-            }
+            Ok(packet) => self.handle_packet(now, remote, ecn, packet),
             Err(e) => {
                 trace!(self.log, "unable to complete packet decoding"; "reason" => %e);
-                None
             }
         }
     }

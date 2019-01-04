@@ -1,4 +1,4 @@
-use std::{fmt, io, str};
+use std::{cmp::Ordering, fmt, io, str};
 
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
@@ -25,10 +25,27 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
-    pub fn new(bytes: BytesMut, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
+    pub fn new(
+        bytes: BytesMut,
+        local_cid_len: usize,
+    ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let plain_header = PlainHeader::decode(&mut buf, local_cid_len)?;
-        Ok(Self { plain_header, buf })
+        let dgram_len = buf.get_ref().len();
+        let packet_len = plain_header
+            .payload_len()
+            .map(|len| (buf.position() + len) as usize)
+            .unwrap_or(dgram_len);
+        match dgram_len.cmp(&packet_len) {
+            Ordering::Equal => Ok((Self { plain_header, buf }, None)),
+            Ordering::Less => Err(PacketDecodeError::InvalidHeader(
+                "packet too short to contain payload length",
+            )),
+            Ordering::Greater => {
+                let rest = Some(buf.get_mut().split_off(packet_len));
+                Ok((Self { plain_header, buf }, rest))
+            }
+        }
     }
 
     pub fn has_long_header(&self) -> bool {
@@ -78,112 +95,72 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
-    pub fn finish(
-        self,
-        header_crypto: Option<&HeaderCrypto>,
-    ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
+    pub fn finish(self, header_crypto: Option<&HeaderCrypto>) -> Result<Packet, PacketDecodeError> {
         use self::PlainHeader::*;
         let Self {
             plain_header,
             mut buf,
         } = self;
-        let (payload_len, header, allow_coalesced) = match plain_header {
+        let header = match plain_header {
             Initial {
                 dst_cid,
                 src_cid,
                 token,
-                len,
-            } => {
-                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                (
-                    (len as usize) - number.len(),
-                    Header::Initial {
-                        dst_cid,
-                        src_cid,
-                        token,
-                        number,
-                    },
-                    true,
-                )
-            }
+                ..
+            } => Header::Initial {
+                dst_cid,
+                src_cid,
+                token,
+                number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
+            },
             Long {
                 ty,
                 dst_cid,
                 src_cid,
-                len,
-            } => {
-                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                (
-                    (len as usize) - number.len(),
-                    Header::Long {
-                        ty,
-                        dst_cid,
-                        src_cid,
-                        number,
-                    },
-                    true,
-                )
-            }
+                ..
+            } => Header::Long {
+                ty,
+                dst_cid,
+                src_cid,
+                number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
+            },
             Retry {
                 dst_cid,
                 src_cid,
                 orig_dst_cid,
-            } => (
-                buf.remaining(),
-                Header::Retry {
-                    dst_cid,
-                    src_cid,
-                    orig_dst_cid,
-                },
-                false,
-            ),
+            } => Header::Retry {
+                dst_cid,
+                src_cid,
+                orig_dst_cid,
+            },
             Short { spin, dst_cid, .. } => {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
-                (
-                    buf.remaining(),
-                    Header::Short {
-                        spin,
-                        key_phase,
-                        dst_cid,
-                        number,
-                    },
-                    false,
-                )
+                Header::Short {
+                    spin,
+                    key_phase,
+                    dst_cid,
+                    number,
+                }
             }
             VersionNegotiate {
                 random,
                 dst_cid,
                 src_cid,
-            } => (
-                buf.remaining(),
-                Header::VersionNegotiate {
-                    random,
-                    dst_cid,
-                    src_cid,
-                },
-                false,
-            ),
+            } => Header::VersionNegotiate {
+                random,
+                dst_cid,
+                src_cid,
+            },
         };
 
         let header_len = buf.position() as usize;
         let mut bytes = buf.into_inner();
-        if bytes.len() < header_len + payload_len {
-            return Err(PacketDecodeError::InvalidHeader(
-                "payload longer than packet",
-            ));
-        }
-
-        let header_data = bytes.split_to(header_len).freeze();
-        let payload = bytes.split_to(payload_len);
-        Ok((
-            Packet {
-                header,
-                header_data,
-                payload,
-            },
-            if allow_coalesced { Some(bytes) } else { None },
-        ))
+        Ok(Packet {
+            header,
+            header_data: bytes.split_to(header_len).freeze(),
+            payload: bytes,
+        })
     }
 
     fn decrypt_header(
@@ -464,6 +441,14 @@ impl PlainHeader {
             Retry { dst_cid, .. } => *dst_cid,
             Short { dst_cid, .. } => *dst_cid,
             VersionNegotiate { dst_cid, .. } => *dst_cid,
+        }
+    }
+
+    fn payload_len(&self) -> Option<u64> {
+        use self::PlainHeader::*;
+        match self {
+            Initial { len, .. } | Long { len, .. } => Some(*len),
+            _ => None,
         }
     }
 
@@ -965,8 +950,8 @@ mod tests {
 
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
         let server_header_crypto = server_crypto.header_crypto();
-        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap();
-        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap().0;
+        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap().0;
+        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff0000115006b858ec6f80452b00402100")[..]
