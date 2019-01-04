@@ -7,7 +7,7 @@ use std::{io, str};
 use aes::{Aes128, Aes256};
 use block_modes::block_padding::ZeroPadding;
 use block_modes::{BlockMode, Ecb};
-use bytes::{BigEndian, Buf, BufMut, ByteOrder, BytesMut};
+use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
 use orion::hazardous::stream::chacha20;
 use ring::aead;
 use ring::digest;
@@ -365,7 +365,7 @@ impl HeaderKey {
             }
             ChaCha20(key) => {
                 let mut buf = [0; 5];
-                let counter = BigEndian::read_u32(&sample[..4]);
+                let counter = LittleEndian::read_u32(&sample[..4]);
                 let nonce =
                     chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
                 chacha20::decrypt(key, &nonce, counter, &[0; 5], &mut buf).unwrap();
