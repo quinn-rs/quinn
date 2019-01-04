@@ -6,10 +6,11 @@ extern crate slog;
 use std::ascii;
 use std::fmt;
 use std::fs;
+use std::io::{self, Seek, SeekFrom};
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
-use std::{io, str};
+use std::str;
 
 use failure::{err_msg, Error, Fail, ResultExt};
 use futures::{Future, Stream};
@@ -100,7 +101,18 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let keys = {
         let mut reader =
             io::BufReader::new(fs::File::open(&options.key).context("failed to read private key")?);
-        pemfile::rsa_private_keys(&mut reader).map_err(|_| err_msg("failed to read private key"))?
+        let rsa_keys = pemfile::rsa_private_keys(&mut reader)
+            .map_err(|_| err_msg("failed to read private key"))?;
+        reader.seek(SeekFrom::Start(0))?;
+        let pkcs8_keys = pemfile::pkcs8_private_keys(&mut reader)
+            .map_err(|_| err_msg("failed to read private key"))?;
+        let mut keys = Vec::new();
+        keys.extend_from_slice(&rsa_keys);
+        keys.extend_from_slice(&pkcs8_keys);
+        if keys.len() == 0 {
+            return Err(err_msg("Couldn't find a private key!"));
+        }
+        keys
     };
     let cert_chain = {
         let mut reader = io::BufReader::new(
