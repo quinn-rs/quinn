@@ -1014,6 +1014,7 @@ impl Connection {
                         self.io.timer_stop(Timer::LossDetection);
                         self.io.timer_stop(Timer::Close);
                         self.io.timer_stop(Timer::Idle);
+                        self.io.timer_stop(Timer::KeyDiscard);
                     }
                     State::Drained
                 }
@@ -2042,6 +2043,8 @@ impl Connection {
     fn close_common(&mut self, now: u64) {
         trace!(self.log, "connection closed");
         self.io.timer_stop(Timer::LossDetection);
+        self.io.timer_stop(Timer::Idle);
+        self.io.timer_stop(Timer::KeyDiscard);
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
