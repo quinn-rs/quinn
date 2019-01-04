@@ -1957,11 +1957,8 @@ impl Connection {
 
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let mut padded = false;
-        if self.side.is_client()
-            && (space_id == SpaceId::Initial || (probe && space_id == SpaceId::Handshake))
-        {
-            // Either this is an initial packet, or the server might be blocked by
-            // anti-amplification measures and need some bytes to continue
+        if self.side.is_client() && space_id == SpaceId::Initial {
+            // Initial-only packets MUST be padded
             buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
             padded = true;
         }
