@@ -141,20 +141,15 @@ impl Endpoint {
         now: u64,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
-        mut data: BytesMut,
+        data: BytesMut,
     ) {
         let datagram_len = data.len();
-        while !data.is_empty() {
+        let mut remaining = Some(data);
+        while let Some(data) = remaining {
             match PartialDecode::new(data, self.config.local_cid_len) {
-                Ok(partial_decode) => {
-                    match self.handle_decode(now, remote, ecn, partial_decode, datagram_len) {
-                        Some(rest) => {
-                            data = rest;
-                        }
-                        None => {
-                            return;
-                        }
-                    }
+                Ok((partial_decode, rest)) => {
+                    remaining = rest;
+                    self.handle_decode(now, remote, ecn, partial_decode, datagram_len);
                 }
                 Err(PacketDecodeError::UnsupportedVersion {
                     source,
@@ -183,7 +178,7 @@ impl Endpoint {
                     return;
                 }
                 Err(e) => {
-                    trace!(self.log, "unable to decode invariant header"; "reason" => %e);
+                    trace!(self.log, "malformed header"; "reason" => %e);
                     return;
                 }
             }
@@ -216,7 +211,7 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
         datagram_len: usize,
-    ) -> Option<BytesMut> {
+    ) {
         //
         // Handle packet on existing connection, if any
         //
@@ -242,8 +237,7 @@ impl Endpoint {
         };
         if let Some(conn_id) = conn {
             let had_1rtt = self.connections[conn_id.0].has_1rtt();
-            let remaining =
-                self.connections[conn_id.0].handle_decode(now, remote, ecn, partial_decode);
+            self.connections[conn_id.0].handle_decode(now, remote, ecn, partial_decode);
             if !had_1rtt
                 && (self.connections[conn_id.0].has_1rtt()
                     || !self.connections[conn_id.0].is_handshaking())
@@ -252,7 +246,7 @@ impl Endpoint {
             }
             self.dirty_conns.insert(conn_id);
             self.eventful_conns.insert(conn_id);
-            return remaining;
+            return;
         }
 
         //
@@ -266,7 +260,7 @@ impl Endpoint {
                 connection = dst_cid
             );
             self.stateless_reset(datagram_len, remote, &dst_cid);
-            return None;
+            return;
         }
 
         if partial_decode.has_long_header() {
@@ -277,28 +271,27 @@ impl Endpoint {
                         "ignoring short initial on {connection}",
                         connection = partial_decode.dst_cid()
                     );
-                    return None;
+                    return;
                 }
 
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 let header_crypto = crypto.header_crypto();
-                return match partial_decode.finish(Some(&header_crypto)) {
-                    Ok((packet, rest)) => {
-                        self.handle_initial(now, remote, ecn, packet, &crypto, &header_crypto);
-                        rest
+                match partial_decode.finish(Some(&header_crypto)) {
+                    Ok(packet) => {
+                        self.handle_initial(now, remote, ecn, packet, &crypto, &header_crypto)
                     }
                     Err(e) => {
                         trace!(self.log, "unable to decode packet"; "reason" => %e);
-                        None
                     }
-                };
+                }
+                return;
             } else {
                 debug!(
                     self.log,
                     "ignoring non-initial packet for unknown connection {connection}",
                     connection = dst_cid
                 );
-                return None;
+                return;
             }
         }
 
@@ -312,7 +305,6 @@ impl Endpoint {
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
         }
-        None
     }
 
     fn stateless_reset(
