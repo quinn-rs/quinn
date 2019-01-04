@@ -6,8 +6,8 @@ mod bitwin;
 mod decode;
 mod encode;
 
-use std::borrow::Cow;
 pub use self::bitwin::BitWindow;
+use std::borrow::Cow;
 
 pub use self::decode::{DecodeIter, Error as HuffmanDecodingError, HpackStringDecode};
 pub use self::encode::{Error as HuffmanEncodingError, HpackStringEncode};

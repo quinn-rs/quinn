@@ -88,10 +88,7 @@ mod test {
         super::encode(size, flags, value, &mut buf);
         assert_eq!(buf, data);
         let mut read = Cursor::new(&buf);
-        assert_eq!(
-            (flags, value),
-            super::decode(size, &mut read).unwrap()
-        );
+        assert_eq!((flags, value), super::decode(size, &mut read).unwrap());
     }
 
     #[test]
