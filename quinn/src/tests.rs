@@ -3,7 +3,6 @@ use super::{
     ServerConfigBuilder,
 };
 use futures::{Future, Stream};
-use rustls::internal::pemfile;
 use slog::{Drain, Logger, KV};
 use std::{
     fmt, fs, io,
@@ -40,17 +39,10 @@ fn echo_dualstack() {
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let log = logger();
     let mut server_config = ServerConfigBuilder::default();
-    let keys = {
-        let mut reader = io::BufReader::new(fs::File::open("../certs/server.rsa").unwrap());
-        pemfile::rsa_private_keys(&mut reader).unwrap()
-    };
-    let cert_chain = {
-        let mut reader = io::BufReader::new(fs::File::open("../certs/server.chain").unwrap());
-        pemfile::certs(&mut reader).unwrap()
-    };
-    server_config
-        .set_certificate(cert_chain, keys[0].clone())
-        .unwrap();
+    let key = crate::PrivateKey::from_pem(&fs::read("../certs/server.rsa").unwrap()).unwrap();
+    let cert_chain =
+        crate::CertificateChain::from_pem(&fs::read("../certs/server.chain").unwrap()).unwrap();
+    server_config.set_certificate(cert_chain, key).unwrap();
 
     let mut server = EndpointBuilder::new(Config {
         max_remote_streams_bidi: 32,
