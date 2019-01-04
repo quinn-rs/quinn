@@ -21,7 +21,8 @@ use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 // This information allows us to fully decode and decrypt the packet.
 pub struct PartialDecode {
     invariant_header: InvariantHeader,
-    buf: io::Cursor<BytesMut>,
+    packet: BytesMut,
+    invariant_end: usize,
 }
 
 impl PartialDecode {
@@ -31,57 +32,14 @@ impl PartialDecode {
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let invariant_header = InvariantHeader::decode(&mut buf, local_cid_len)?;
-        let end = match invariant_header {
-            InvariantHeader::Long {
-                version: VERSION,
-                first,
-                ..
-            } => {
-                let mut buf2 = buf.clone();
-                match LongHeaderType::from_byte(first) {
-                    Err(_) | Ok(LongHeaderType::Retry) => None,
-                    Ok(LongHeaderType::Initial) => {
-                        let token_len = buf2.get_var()?;
-                        if token_len > buf2.remaining() as u64 {
-                            return Err(PacketDecodeError::InvalidHeader(
-                                "token longer than packet",
-                            ));
-                        }
-                        buf2.advance(token_len as usize);
-                        let len = buf2.get_var()?;
-                        if len > buf2.remaining() as u64 {
-                            return Err(PacketDecodeError::InvalidHeader(
-                                "payload longer than packet",
-                            ));
-                        }
-                        Some(buf2.position() + len)
-                    }
-                    Ok(LongHeaderType::Standard(_)) => {
-                        let len = buf2.get_var()?;
-                        if len > buf2.remaining() as u64 {
-                            return Err(PacketDecodeError::InvalidHeader(
-                                "payload longer than packet",
-                            ));
-                        }
-                        Some(buf2.position() + len)
-                    }
-                }
-            }
-            _ => None,
-        };
-        let rest = end.and_then(|end| {
-            if end == buf.get_ref().len() as u64 {
-                None
-            } else {
-                Some(buf.get_mut().split_off(end as usize))
-            }
-        });
+        let split = split_packet(&invariant_header, buf)?;
         Ok((
             Self {
                 invariant_header,
-                buf,
+                packet: split.packet,
+                invariant_end: split.invariant_end,
             },
-            rest,
+            split.rest,
         ))
     }
 
@@ -122,37 +80,33 @@ impl PartialDecode {
     ///
     /// May account for multiple packets.
     pub fn len(&self) -> usize {
-        self.buf.get_ref().len()
+        self.packet.len()
     }
 
-    pub fn finish(self, header_crypto: Option<&HeaderCrypto>) -> Result<Packet, PacketDecodeError> {
-        let Self {
-            invariant_header,
-            mut buf,
-        } = self;
-        Ok(match invariant_header {
+    pub fn finish(
+        mut self,
+        header_crypto: Option<&HeaderCrypto>,
+    ) -> Result<Packet, PacketDecodeError> {
+        let (header, header_data) = match self.invariant_header {
             InvariantHeader::Short { dst_cid, .. } => {
-                if !buf.has_remaining() {
-                    return Err(PacketDecodeError::InvalidHeader(
-                        "header ends before packet number",
-                    ));
-                }
-
-                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                let spin = buf.get_ref()[0] & SPIN_BIT != 0;
-                let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
-                let header_len = buf.position() as usize;
-                let mut bytes = buf.into_inner();
-                Packet {
-                    header: Header::Short {
+                let number = Self::decrypt_header(
+                    &mut self.packet,
+                    self.invariant_end,
+                    header_crypto.unwrap(),
+                )?;
+                let header_data = self
+                    .packet
+                    .split_to(self.invariant_end + number.len())
+                    .freeze();
+                (
+                    Header::Short {
                         dst_cid,
                         number,
-                        spin,
-                        key_phase,
+                        spin: header_data[0] & SPIN_BIT != 0,
+                        key_phase: header_data[0] & KEY_PHASE_BIT != 0,
                     },
-                    header_data: bytes.split_to(header_len).freeze(),
-                    payload: bytes,
-                }
+                    header_data,
+                )
             }
             InvariantHeader::Long {
                 first,
@@ -160,19 +114,14 @@ impl PartialDecode {
                 dst_cid,
                 src_cid,
                 ..
-            } => {
-                let header_len = buf.position() as usize;
-                let mut bytes = buf.into_inner();
-                Packet {
-                    header: Header::VersionNegotiate {
-                        random: first & !LONG_HEADER_FORM,
-                        src_cid,
-                        dst_cid,
-                    },
-                    header_data: bytes.split_to(header_len).freeze(),
-                    payload: bytes,
-                }
-            }
+            } => (
+                Header::VersionNegotiate {
+                    random: first & !LONG_HEADER_FORM,
+                    src_cid,
+                    dst_cid,
+                },
+                self.packet.split_to(self.invariant_end).freeze(),
+            ),
             InvariantHeader::Long {
                 first,
                 version: VERSION,
@@ -182,94 +131,86 @@ impl PartialDecode {
                 LongHeaderType::Retry => {
                     let odcil = first & 0xf;
                     let odcil = if odcil == 0 { 0 } else { (odcil + 3) as usize };
-                    let mut odci_stage = [0; 18];
-                    buf.copy_to_slice(&mut odci_stage[0..odcil]);
-                    let orig_dst_cid = ConnectionId::new(&odci_stage[..odcil]);
-                    let header_len = buf.position() as usize;
-                    let mut bytes = buf.into_inner();
-                    Packet {
-                        header: Header::Retry {
+                    (
+                        Header::Retry {
                             src_cid,
                             dst_cid,
-                            orig_dst_cid,
+                            orig_dst_cid: ConnectionId::new(
+                                &self.packet[self.invariant_end..self.invariant_end + odcil],
+                            ),
                         },
-                        header_data: bytes.split_to(header_len).freeze(),
-                        payload: bytes,
-                    }
+                        self.packet.split_to(self.invariant_end + odcil).freeze(),
+                    )
                 }
                 LongHeaderType::Initial => {
+                    let mut buf = io::Cursor::new(&self.packet[..]);
+                    buf.advance(self.invariant_end);
                     let token_length = buf.get_var()?;
                     if token_length > buf.remaining() as u64 {
                         return Err(PacketDecodeError::InvalidHeader("token longer than packet"));
                     }
                     let token_pos = buf.position() as usize;
                     buf.advance(token_length as usize);
+                    let _payload_len = buf.get_var()?;
+                    let pn_pos = buf.position() as usize;
 
-                    let len = buf.get_var()?;
-                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                    if len < number.len() as u64 {
-                        return Err(PacketDecodeError::InvalidHeader(
-                            "packet number longer than packet",
-                        ));
-                    }
-                    let header_len = buf.position() as usize;
-                    let mut bytes = buf.into_inner();
-                    let header_data = bytes.split_to(header_len).freeze();
-                    let token = header_data.slice(token_pos, token_pos + token_length as usize);
-                    Packet {
-                        header: Header::Initial {
+                    let number =
+                        Self::decrypt_header(&mut self.packet, pn_pos, header_crypto.unwrap())?;
+                    let header_data = self.packet.split_to(pn_pos + number.len()).freeze();
+                    (
+                        Header::Initial {
                             src_cid,
                             dst_cid,
-                            token,
+                            token: header_data.slice(token_pos, token_pos + token_length as usize),
                             number,
                         },
                         header_data,
-                        payload: bytes,
-                    }
+                    )
                 }
                 LongHeaderType::Standard(ty) => {
-                    let len = buf.get_var()?;
-                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                    if len < number.len() as u64 {
-                        return Err(PacketDecodeError::InvalidHeader(
-                            "packet number longer than packet",
-                        ));
-                    }
-                    let header_len = buf.position() as usize;
-                    let mut bytes = buf.into_inner();
-                    Packet {
-                        header: Header::Long {
+                    let mut buf = io::Cursor::new(&self.packet[..]);
+                    buf.advance(self.invariant_end);
+                    let _payload_len = buf.get_var()?;
+                    let pn_pos = buf.position() as usize;
+                    let number =
+                        Self::decrypt_header(&mut self.packet, pn_pos, header_crypto.unwrap())?;
+                    let header_data = self.packet.split_to(pn_pos + number.len()).freeze();
+                    (
+                        Header::Long {
                             ty,
                             src_cid,
                             dst_cid,
                             number,
                         },
-                        header_data: bytes.split_to(header_len).freeze(),
-                        payload: bytes,
-                    }
+                        header_data,
+                    )
                 }
             },
             // InvariantHeader decode checks for unsupported versions
             InvariantHeader::Long { .. } => unreachable!(),
+        };
+
+        Ok(Packet {
+            header,
+            header_data,
+            payload: self.packet,
         })
     }
 
     fn decrypt_header(
-        buf: &mut io::Cursor<BytesMut>,
+        mut packet: &mut BytesMut,
+        pn_offset: usize,
         header_crypto: &HeaderCrypto,
     ) -> Result<PacketNumber, PacketDecodeError> {
-        let packet_length = buf.get_ref().len();
-        let pn_offset = buf.position() as usize;
-        if packet_length < pn_offset + 4 + header_crypto.sample_size() {
+        if packet.len() < pn_offset + 4 + header_crypto.sample_size() {
             return Err(PacketDecodeError::InvalidHeader(
                 "packet too short to extract header protection sample",
             ));
         }
 
-        header_crypto.decrypt(pn_offset, buf.get_mut());
-
-        let len = PacketNumber::decode_len(buf.get_ref()[0]);
-        PacketNumber::decode(len, buf)
+        header_crypto.decrypt(pn_offset, &mut packet);
+        let len = PacketNumber::decode_len(packet[0]);
+        PacketNumber::decode(len, &mut io::Cursor::new(&packet[pn_offset..]))
     }
 }
 
@@ -552,6 +493,56 @@ impl InvariantHeader {
         buf.advance(len);
         cid
     }
+}
+
+struct SplitPacket {
+    packet: BytesMut,
+    invariant_end: usize,
+    rest: Option<BytesMut>,
+}
+
+fn split_packet(
+    invariant_header: &InvariantHeader,
+    mut buf: io::Cursor<BytesMut>,
+) -> Result<SplitPacket, PacketDecodeError> {
+    let invariant_end = buf.position();
+    let payload_len = match *invariant_header {
+        InvariantHeader::Long {
+            version: VERSION,
+            first,
+            ..
+        } => match LongHeaderType::from_byte(first) {
+            Err(_) | Ok(LongHeaderType::Retry) => None,
+            Ok(LongHeaderType::Initial) => {
+                let token_len = buf.get_var()?;
+                if token_len > buf.remaining() as u64 {
+                    return Err(PacketDecodeError::InvalidHeader("token longer than packet"));
+                }
+                buf.advance(token_len as usize);
+                Some(buf.get_var()?)
+            }
+            Ok(LongHeaderType::Standard(_)) => Some(buf.get_var()?),
+        },
+        _ => None,
+    };
+    let header_end = buf.position();
+    let mut bytes = buf.into_inner();
+    let (packet, rest) = if let Some(len) = payload_len {
+        let packet_len = header_end + len;
+        if packet_len > bytes.len() as u64 {
+            return Err(PacketDecodeError::InvalidHeader(
+                "payload longer than packet",
+            ));
+        }
+        (bytes.split_to(packet_len as usize), Some(bytes))
+    } else {
+        (bytes, None)
+    };
+    Ok(SplitPacket {
+        packet,
+        invariant_end: invariant_end as usize,
+        rest,
+    })
 }
 
 // An encoded packet number
