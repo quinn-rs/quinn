@@ -20,25 +20,22 @@ use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
 pub struct PartialDecode {
-    invariant_header: InvariantHeader,
+    plain_header: PlainHeader,
     buf: io::Cursor<BytesMut>,
 }
 
 impl PartialDecode {
     pub fn new(bytes: BytesMut, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
-        let invariant_header = InvariantHeader::decode(&mut buf, local_cid_len)?;
-        Ok(Self {
-            invariant_header,
-            buf,
-        })
+        let plain_header = PlainHeader::decode(&mut buf, local_cid_len)?;
+        Ok(Self { plain_header, buf })
     }
 
     pub fn has_long_header(&self) -> bool {
-        use self::InvariantHeader::*;
-        match self.invariant_header {
-            Long { .. } => true,
+        use self::PlainHeader::*;
+        match self.plain_header {
             Short { .. } => false,
+            _ => true,
         }
     }
 
@@ -47,38 +44,31 @@ impl PartialDecode {
     }
 
     pub fn space(&self) -> Option<SpaceId> {
-        use self::InvariantHeader::*;
-        match self.invariant_header {
-            Short { .. } => Some(SpaceId::Data),
+        use self::PlainHeader::*;
+        match self.plain_header {
+            Initial { .. } => Some(SpaceId::Initial),
             Long {
-                version: VERSION,
-                first,
+                ty: LongType::Handshake,
                 ..
-            } => match LongHeaderType::from_byte(first).ok()? {
-                LongHeaderType::Retry => None,
-                LongHeaderType::Initial => Some(SpaceId::Initial),
-                LongHeaderType::Standard(LongType::Handshake) => Some(SpaceId::Handshake),
-                LongHeaderType::Standard(LongType::ZeroRtt) => Some(SpaceId::Data),
-            },
+            } => Some(SpaceId::Handshake),
+            Long {
+                ty: LongType::ZeroRtt,
+                ..
+            } => Some(SpaceId::Data),
+            Short { .. } => Some(SpaceId::Data),
             _ => None,
         }
     }
 
     pub fn is_0rtt(&self) -> bool {
-        match self.invariant_header {
-            InvariantHeader::Long {
-                version: VERSION,
-                first,
-                ..
-            } => {
-                LongHeaderType::from_byte(first) == Ok(LongHeaderType::Standard(LongType::ZeroRtt))
-            }
+        match self.plain_header {
+            PlainHeader::Long { ty, .. } => ty == LongType::ZeroRtt,
             _ => false,
         }
     }
 
     pub fn dst_cid(&self) -> ConnectionId {
-        self.invariant_header.dst_cid()
+        self.plain_header.dst_cid()
     }
 
     /// Length of data being decoded
@@ -92,20 +82,63 @@ impl PartialDecode {
         self,
         header_crypto: Option<&HeaderCrypto>,
     ) -> Result<(Packet, Option<BytesMut>), PacketDecodeError> {
+        use self::PlainHeader::*;
         let Self {
-            invariant_header,
+            plain_header,
             mut buf,
         } = self;
-        let (payload_len, header, allow_coalesced) = match invariant_header {
-            InvariantHeader::Short { dst_cid, .. } => {
-                if !buf.has_remaining() {
-                    return Err(PacketDecodeError::InvalidHeader(
-                        "header ends before packet number",
-                    ));
-                }
-
+        let (payload_len, header, allow_coalesced) = match plain_header {
+            Initial {
+                dst_cid,
+                src_cid,
+                token,
+                len,
+            } => {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                let spin = buf.get_ref()[0] & SPIN_BIT != 0;
+                (
+                    (len as usize) - number.len(),
+                    Header::Initial {
+                        dst_cid,
+                        src_cid,
+                        token,
+                        number,
+                    },
+                    true,
+                )
+            }
+            Long {
+                ty,
+                dst_cid,
+                src_cid,
+                len,
+            } => {
+                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
+                (
+                    (len as usize) - number.len(),
+                    Header::Long {
+                        ty,
+                        dst_cid,
+                        src_cid,
+                        number,
+                    },
+                    true,
+                )
+            }
+            Retry {
+                dst_cid,
+                src_cid,
+                orig_dst_cid,
+            } => (
+                buf.remaining(),
+                Header::Retry {
+                    dst_cid,
+                    src_cid,
+                    orig_dst_cid,
+                },
+                false,
+            ),
+            Short { spin, dst_cid, .. } => {
+                let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
                 (
                     buf.remaining(),
@@ -118,91 +151,19 @@ impl PartialDecode {
                     false,
                 )
             }
-            InvariantHeader::Long {
-                first,
-                version: 0,
+            VersionNegotiate {
+                random,
                 dst_cid,
                 src_cid,
-                ..
             } => (
                 buf.remaining(),
                 Header::VersionNegotiate {
-                    random: first & !LONG_HEADER_FORM,
+                    random,
                     dst_cid,
                     src_cid,
                 },
                 false,
             ),
-            InvariantHeader::Long {
-                first,
-                version: VERSION,
-                dst_cid,
-                src_cid,
-            } => match LongHeaderType::from_byte(first)? {
-                LongHeaderType::Retry => {
-                    let odcil = first & 0xf;
-                    let odcil = if odcil == 0 { 0 } else { (odcil + 3) as usize };
-                    let mut odci_stage = [0; 18];
-                    buf.copy_to_slice(&mut odci_stage[0..odcil]);
-                    let orig_dst_cid = ConnectionId::new(&odci_stage[..odcil]);
-                    (
-                        buf.remaining(),
-                        Header::Retry {
-                            dst_cid,
-                            src_cid,
-                            orig_dst_cid,
-                        },
-                        false,
-                    )
-                }
-                LongHeaderType::Initial => {
-                    let token_length = buf.get_var()? as usize;
-                    // Could we avoid this alloc/copy somehow?
-                    let mut token = BytesMut::with_capacity(token_length);
-                    token.extend_from_slice(&buf.bytes()[..token_length]);
-                    let token = token.freeze();
-                    buf.advance(token_length);
-
-                    let len = buf.get_var()?;
-                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                    if len < number.len() as u64 {
-                        return Err(PacketDecodeError::InvalidHeader(
-                            "packet number longer than packet",
-                        ));
-                    }
-                    (
-                        (len as usize) - number.len(),
-                        Header::Initial {
-                            dst_cid,
-                            src_cid,
-                            token,
-                            number,
-                        },
-                        true,
-                    )
-                }
-                LongHeaderType::Standard(ty) => {
-                    let len = buf.get_var()?;
-                    let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
-                    if len < number.len() as u64 {
-                        return Err(PacketDecodeError::InvalidHeader(
-                            "packet number longer than packet",
-                        ));
-                    }
-                    (
-                        (len as usize) - number.len(),
-                        Header::Long {
-                            ty,
-                            dst_cid,
-                            src_cid,
-                            number,
-                        },
-                        true,
-                    )
-                }
-            },
-            // InvariantHeader decode checks for unsupported versions
-            InvariantHeader::Long { .. } => unreachable!(),
         };
 
         let header_len = buf.position() as usize;
@@ -464,38 +425,65 @@ impl PartialEncode {
     }
 }
 
-pub enum InvariantHeader {
-    Long {
-        first: u8,
-        version: u32,
+pub enum PlainHeader {
+    Initial {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
+        token: Bytes,
+        len: u64,
+    },
+    Long {
+        ty: LongType,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        len: u64,
+    },
+    Retry {
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        orig_dst_cid: ConnectionId,
     },
     Short {
         first: u8,
+        spin: bool,
         dst_cid: ConnectionId,
+    },
+    VersionNegotiate {
+        random: u8,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
     },
 }
 
-impl InvariantHeader {
+impl PlainHeader {
     fn dst_cid(&self) -> ConnectionId {
-        use self::InvariantHeader::*;
+        use self::PlainHeader::*;
         match self {
+            Initial { dst_cid, .. } => *dst_cid,
             Long { dst_cid, .. } => *dst_cid,
+            Retry { dst_cid, .. } => *dst_cid,
             Short { dst_cid, .. } => *dst_cid,
+            VersionNegotiate { dst_cid, .. } => *dst_cid,
         }
     }
 
     fn decode<R: Buf>(buf: &mut R, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
+            let spin = first & SPIN_BIT != 0;
+
             if buf.remaining() < local_cid_len {
                 return Err(PacketDecodeError::InvalidHeader(
                     "destination connection ID longer than packet",
                 ));
             }
             let dst_cid = Self::get_cid(buf, local_cid_len);
-            Ok(InvariantHeader::Short { first, dst_cid })
+
+            Ok(PlainHeader::Short {
+                first,
+                spin,
+                dst_cid,
+            })
         } else {
             let version = buf.get::<u32>()?;
             let ci_lengths = buf.get::<u8>()?;
@@ -516,19 +504,57 @@ impl InvariantHeader {
             let dst_cid = Self::get_cid(buf, dcil);
             let src_cid = Self::get_cid(buf, scil);
 
-            if version > 0 && version != VERSION {
+            if version == 0 {
+                let random = first & !LONG_HEADER_FORM;
+                return Ok(PlainHeader::VersionNegotiate {
+                    random,
+                    dst_cid,
+                    src_cid,
+                });
+            }
+
+            if version != VERSION {
                 return Err(PacketDecodeError::UnsupportedVersion {
                     source: src_cid,
                     destination: dst_cid,
                 });
             }
 
-            Ok(InvariantHeader::Long {
-                first,
-                version,
-                dst_cid,
-                src_cid,
-            })
+            match LongHeaderType::from_byte(first)? {
+                LongHeaderType::Initial => {
+                    let token_len = buf.get_var()? as usize;
+                    // Could we avoid this alloc/copy somehow?
+                    let mut token = BytesMut::with_capacity(token_len);
+                    token.extend_from_slice(&buf.bytes()[..token_len]);
+                    let token = token.freeze();
+                    buf.advance(token_len);
+
+                    let len = buf.get_var()?;
+                    Ok(PlainHeader::Initial {
+                        dst_cid,
+                        src_cid,
+                        token,
+                        len,
+                    })
+                }
+                LongHeaderType::Retry => {
+                    let odcil = first & 0xf;
+                    let odcil = if odcil == 0 { 0 } else { (odcil + 3) as usize };
+                    let orig_dst_cid = Self::get_cid(buf, odcil);
+
+                    Ok(PlainHeader::Retry {
+                        dst_cid,
+                        src_cid,
+                        orig_dst_cid,
+                    })
+                }
+                LongHeaderType::Standard(ty) => Ok(PlainHeader::Long {
+                    ty,
+                    dst_cid,
+                    src_cid,
+                    len: buf.get_var()?,
+                }),
+            }
         }
     }
 
