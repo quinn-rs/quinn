@@ -9,11 +9,10 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
-use std::{io, str};
+use std::str;
 
-use failure::{err_msg, Error, Fail, ResultExt};
+use failure::{Error, Fail, ResultExt};
 use futures::{Future, Stream};
-use rustls::internal::pemfile;
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::Runtime;
@@ -97,18 +96,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    let keys = {
-        let mut reader =
-            io::BufReader::new(fs::File::open(&options.key).context("failed to read private key")?);
-        pemfile::rsa_private_keys(&mut reader).map_err(|_| err_msg("failed to read private key"))?
-    };
-    let cert_chain = {
-        let mut reader = io::BufReader::new(
-            fs::File::open(&options.cert).context("failed to read private key")?,
-        );
-        pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
-    };
-    server_config.set_certificate(cert_chain, keys[0].clone())?;
+    let key = fs::read(&options.key).context("failed to read private key")?;
+    let key = quinn::PrivateKey::from_pem(&key)?;
+    let cert_chain = fs::read(&options.cert).context("failed to read private key")?;
+    let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
+    server_config.set_certificate(cert_chain, key)?;
 
     let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
         max_remote_streams_bidi: 64,

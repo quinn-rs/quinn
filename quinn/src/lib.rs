@@ -53,6 +53,7 @@ extern crate failure;
 extern crate slog;
 
 mod platform;
+pub mod tls;
 mod udp;
 
 use std::borrow::Cow;
@@ -73,7 +74,7 @@ use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll, Sink};
 use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId};
-use rustls::{Certificate, KeyLogFile, PrivateKey, ProtocolVersion, TLSError};
+use rustls::{KeyLogFile, ProtocolVersion, TLSError};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
@@ -81,6 +82,8 @@ use tokio_timer::Delay;
 pub use crate::quinn::{
     Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
 };
+pub use crate::tls::{CertificateChain, PrivateKey};
+
 use crate::udp::UdpSocket;
 
 #[cfg(test)]
@@ -353,12 +356,12 @@ impl ServerConfigBuilder {
     /// Set the certificate chain that will be presented to clients.
     pub fn set_certificate(
         &mut self,
-        cert_chain: Vec<Certificate>,
+        cert_chain: CertificateChain,
         key: PrivateKey,
     ) -> Result<&mut Self, TLSError> {
         {
             let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
-            tls_server_config.set_single_cert(cert_chain, key)?;
+            tls_server_config.set_single_cert(cert_chain.certs, key.inner)?;
         }
         Ok(self)
     }
