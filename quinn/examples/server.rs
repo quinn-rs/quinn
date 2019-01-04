@@ -98,7 +98,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let key = fs::read(&options.key).context("failed to read private key")?;
     let key = quinn::PrivateKey::from_pem(&key)?;
-    let cert_chain = fs::read(&options.cert).context("failed to read private key")?;
+    let cert_chain = fs::read(&options.cert).context("failed to read certificate chain")?;
     let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
     server_config.set_certificate(cert_chain, key)?;
 
