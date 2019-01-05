@@ -1838,27 +1838,35 @@ impl Connection {
     }
 
     fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
-        let close = mem::replace(&mut self.io.close, false);
-        let space_id = if close {
-            self.highest_space
-        } else if self.state.is_closed() {
-            return None;
-        } else {
-            SpaceId::VALUES
-                .iter()
-                .find(|&&x| {
-                    self.spaces[x as usize]
-                        .as_ref()
-                        .map_or(false, |space| space.can_send())
-                })
-                .cloned()
-                .or_else(|| {
-                    if self.io.probes != 0 {
-                        Some(self.highest_space)
-                    } else {
-                        None
-                    }
-                })?
+        let (space_id, close) = match self.state {
+            State::Draining | State::Drained => {
+                return None;
+            }
+            State::Closed(_) => {
+                if mem::replace(&mut self.io.close, false) {
+                    (self.highest_space, true)
+                } else {
+                    return None;
+                }
+            }
+            _ => {
+                let id = SpaceId::VALUES
+                    .iter()
+                    .find(|&&x| {
+                        self.spaces[x as usize]
+                            .as_ref()
+                            .map_or(false, |space| space.can_send())
+                    })
+                    .cloned()
+                    .or_else(|| {
+                        if self.io.probes != 0 {
+                            Some(self.highest_space)
+                        } else {
+                            None
+                        }
+                    })?;
+                (id, false)
+            }
         };
         let probe = !close && self.io.probes != 0;
         let mut ack_only = self.space(space_id).pending.is_empty();
