@@ -313,7 +313,7 @@ impl Connection {
     }
 
     fn on_ack_received(&mut self, now: u64, space: SpaceId, ack: frame::Ack) {
-        trace!(self.log, "got ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
+        trace!(self.log, "handling ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         let largest_acked_packet = &mut self.space_mut(space).largest_acked_packet;
         let prev_largest = *largest_acked_packet;
@@ -1323,7 +1323,7 @@ impl Connection {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(self.log, "got frame"; "type" => %frame.ty());
+                    trace!(self.log, "got {type}", type=frame.ty());
                 }
             }
             match frame {
@@ -1613,7 +1613,7 @@ impl Connection {
 
         // PING
         if space.pending.ping {
-            trace!(self.log, "ping");
+            trace!(self.log, "PING");
             space.pending.ping = false;
             buf.write(frame::Type::PING);
         }
@@ -1959,6 +1959,7 @@ impl Connection {
 
         if probe && ack_only && !self.state.is_handshake() {
             // Nothing ack-eliciting to send, so we need to make something up
+            trace!(self.log, "PING");
             buf.write(frame::Type::PING);
             ack_only = false;
         }
