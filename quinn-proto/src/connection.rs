@@ -93,19 +93,11 @@ pub struct Connection {
     /// The time at which the next packet will be considered lost based on early transmit or
     /// exceeding the reordering window in time.
     loss_time: u64,
-    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet.
-    /// μs
-    latest_rtt: u64,
-    /// The smoothed RTT of the connection, computed as described in RFC6298. μs
-    smoothed_rtt: u64,
-    /// The RTT variance, computed as described in RFC6298
-    rttvar: u64,
-    /// The minimum RTT seen in the connection, ignoring ack delay.
-    min_rtt: u64,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_ack_eliciting_packet: u64,
     /// The time the most recently sent handshake packet was sent.
     time_of_last_sent_crypto_packet: u64,
+    rtt: RttEstimator,
 
     //
     // Congestion Control
@@ -215,12 +207,9 @@ impl Connection {
             crypto_count: 0,
             pto_count: 0,
             loss_time: 0,
-            latest_rtt: 0,
-            smoothed_rtt: 0,
-            rttvar: 0,
-            min_rtt: u64::max_value(),
             time_of_last_sent_ack_eliciting_packet: 0,
             time_of_last_sent_crypto_packet: 0,
+            rtt: RttEstimator::new(),
 
             in_flight: InFlight::new(),
             congestion_window: config.initial_window,
@@ -337,9 +326,9 @@ impl Connection {
         let largest_acked_time_sent;
         if let Some(info) = self.space(space).sent_packets.get(&ack.largest).cloned() {
             if info.ack_eliciting {
-                self.latest_rtt = now - info.time_sent;
                 let delay = ack.delay << self.params.ack_delay_exponent;
-                self.update_rtt(delay);
+                self.rtt
+                    .update(cmp::min(delay, self.max_ack_delay()), now - info.time_sent);
             }
             largest_acked_time_sent = Some(info.time_sent);
         } else {
@@ -425,26 +414,6 @@ impl Connection {
             Ok(true) => {
                 self.congestion_event(now, largest_sent_time);
             }
-        }
-    }
-
-    fn update_rtt(&mut self, ack_delay: u64) {
-        // min_rtt ignores ack delay.
-        self.min_rtt = cmp::min(self.min_rtt, self.latest_rtt);
-        // Limit ack_delay by max_ack_delay
-        let ack_delay = cmp::min(ack_delay, self.max_ack_delay());
-        // Adjust for ack delay if it's plausible.
-        if self.latest_rtt - self.min_rtt > ack_delay {
-            self.latest_rtt -= ack_delay;
-        }
-        // Based on RFC6298.
-        if self.smoothed_rtt == 0 {
-            self.smoothed_rtt = self.latest_rtt;
-            self.rttvar = self.latest_rtt / 2;
-        } else {
-            let rttvar_sample = (self.smoothed_rtt as i64 - self.latest_rtt as i64).abs() as u64;
-            self.rttvar = (3 * self.rttvar + rttvar_sample) / 4;
-            self.smoothed_rtt = (7 * self.smoothed_rtt + self.latest_rtt) / 8;
         }
     }
 
@@ -595,7 +564,7 @@ impl Connection {
     fn detect_lost_packets(&mut self, now: u64) {
         self.loss_time = 0;
         let mut lost_packets = Vec::<u64>::new();
-        let rtt = cmp::max(self.latest_rtt, self.smoothed_rtt);
+        let rtt = cmp::max(self.rtt.latest, self.rtt.smoothed);
         let loss_delay = rtt + ((rtt * self.config.time_threshold as u64) >> 16);
         let lost_send_time = now.saturating_sub(loss_delay);
 
@@ -659,10 +628,10 @@ impl Connection {
     fn set_loss_detection_timer(&mut self) {
         if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission alarm.
-            let timeout = if self.smoothed_rtt == 0 {
+            let timeout = if self.rtt.smoothed == 0 {
                 2 * self.config.initial_rtt
             } else {
-                2 * self.smoothed_rtt
+                2 * self.rtt.smoothed
             };
             let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u64.pow(self.crypto_count);
             self.io.timer_start(
@@ -684,7 +653,7 @@ impl Connection {
         }
 
         // Calculate PTO duration
-        let timeout = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay();
+        let timeout = self.rtt.smoothed + 4 * self.rtt.var + self.max_ack_delay();
         let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u64.pow(self.pto_count);
         self.io.timer_start(
             Timer::LossDetection,
@@ -694,7 +663,7 @@ impl Connection {
 
     /// Probe Timeout
     fn pto(&self) -> u64 {
-        let computed = self.smoothed_rtt + 4 * self.rttvar + self.max_ack_delay();
+        let computed = self.rtt.smoothed + 4 * self.rtt.var + self.max_ack_delay();
         cmp::max(computed, TIMER_GRANULARITY)
     }
 
@@ -1653,6 +1622,12 @@ impl Connection {
             "migration initiated from {remote}",
             remote = remote
         );
+        if remote.ip() != self.remote.ip() {
+            // Reset rtt/congestion state for new path
+            self.rtt = RttEstimator::new();
+            self.congestion_window = self.config.initial_window;
+            self.ssthresh = u64::max_value();
+        }
         self.prev_remote = Some(mem::replace(&mut self.remote, remote));
         self.remote_validated = false;
 
@@ -3162,5 +3137,47 @@ impl InFlight {
         self.bytes -= packet.size as u64;
         self.crypto -= packet.is_crypto_packet as u64;
         self.ack_eliciting -= packet.ack_eliciting as u64;
+    }
+}
+
+struct RttEstimator {
+    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet.
+    /// μs
+    latest: u64,
+    /// The smoothed RTT of the connection, computed as described in RFC6298. μs
+    smoothed: u64,
+    /// The RTT variance, computed as described in RFC6298
+    var: u64,
+    /// The minimum RTT seen in the connection, ignoring ack delay.
+    min: u64,
+}
+
+impl RttEstimator {
+    fn new() -> Self {
+        Self {
+            latest: 0,
+            smoothed: 0,
+            var: 0,
+            min: u64::max_value(),
+        }
+    }
+
+    fn update(&mut self, ack_delay: u64, rtt: u64) {
+        self.latest = rtt;
+        // min_rtt ignores ack delay.
+        self.min = cmp::min(self.min, self.latest);
+        // Adjust for ack delay if it's plausible.
+        if self.latest - self.min > ack_delay {
+            self.latest -= ack_delay;
+        }
+        // Based on RFC6298.
+        if self.smoothed == 0 {
+            self.smoothed = self.latest;
+            self.var = self.latest / 2;
+        } else {
+            let var_sample = (self.smoothed as i64 - self.latest as i64).abs() as u64;
+            self.var = (3 * self.var + var_sample) / 4;
+            self.smoothed = (7 * self.smoothed + self.latest) / 8;
+        }
     }
 }
