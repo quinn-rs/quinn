@@ -79,8 +79,14 @@ pub struct Connection {
     prev_crypto: Option<PrevCrypto>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
-    /// Whether it's been transmitted
+
+    //
+    // Queued non-retransmittable 1-RTT data
+    //
     path_challenge_pending: bool,
+    ping_pending: bool,
+    /// packet number, token
+    path_response: Option<(u64, u64)>,
 
     //
     // Loss Detection
@@ -202,7 +208,10 @@ impl Connection {
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             path_challenge: None,
+
             path_challenge_pending: false,
+            ping_pending: false,
+            path_response: None,
 
             crypto_count: 0,
             pto_count: 0,
@@ -1426,11 +1435,15 @@ impl Connection {
                     self.state = State::Draining;
                     return Ok(());
                 }
-                Frame::PathChallenge(x) => {
-                    self.space_mut(SpaceId::Data)
-                        .pending
-                        .handle_path_challenge(number, x);
-                }
+                Frame::PathChallenge(token) => match self.path_response {
+                    None => {
+                        self.path_response = Some((number, token));
+                    }
+                    Some((existing, _)) if number > existing => {
+                        self.path_response = Some((number, token));
+                    }
+                    Some(_) => {}
+                },
                 Frame::PathResponse(token) => {
                     if self.path_challenge != Some(token) || remote != self.remote {
                         continue;
@@ -1668,9 +1681,8 @@ impl Connection {
         let max_size = self.mtu as usize - space.crypto.tag_len();
 
         // PING
-        if space.pending.ping {
+        if mem::replace(&mut self.ping_pending, false) {
             trace!(self.log, "PING");
-            space.pending.ping = false;
             buf.write(frame::Type::PING);
         }
 
@@ -1706,7 +1718,7 @@ impl Connection {
         // PATH_RESPONSE
         if buf.len() + 9 < max_size {
             // No need to retransmit these, so we don't save the value after encoding it.
-            if let Some((_, x)) = space.pending.path_response.take() {
+            if let Some((_, x)) = self.path_response.take() {
                 trace!(self.log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
                 buf.write(frame::Type::PATH_RESPONSE);
                 buf.write(x);
@@ -2182,7 +2194,7 @@ impl Connection {
     ///
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self) {
-        self.space_mut(SpaceId::Data).pending.ping = true;
+        self.ping_pending = true;
     }
 
     /// Discard state for a stream if it's fully closed.
@@ -2555,11 +2567,11 @@ impl Connection {
             .expect("tried to access unavailable packet space")
     }
 
-    /// Whether we have 1RTT-specific data to send
+    /// Whether we have non-retransmittable 1-RTT data to send
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.path_challenge_pending
+        self.path_challenge_pending || self.ping_pending || self.path_response.is_some()
     }
 }
 
@@ -2648,15 +2660,13 @@ impl Streams {
     }
 }
 
+/// Retransmittable data queue
 #[derive(Debug, Clone)]
 struct Retransmits {
     max_data: bool,
     max_uni_stream_id: bool,
     max_bi_stream_id: bool,
-    ping: bool,
     stream: VecDeque<frame::Stream>,
-    /// packet number, token
-    path_response: Option<(u64, u64)>,
     rst_stream: Vec<(StreamId, u16)>,
     stop_sending: Vec<(StreamId, u16)>,
     max_stream_data: FnvHashSet<StreamId>,
@@ -2670,27 +2680,13 @@ impl Retransmits {
         !self.max_data
             && !self.max_uni_stream_id
             && !self.max_bi_stream_id
-            && !self.ping
             && self.stream.is_empty()
-            && self.path_response.is_none()
             && self.rst_stream.is_empty()
             && self.stop_sending.is_empty()
             && self.max_stream_data.is_empty()
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
-    }
-
-    fn handle_path_challenge(&mut self, packet: u64, token: u64) {
-        match self.path_response {
-            None => {
-                self.path_response = Some((packet, token));
-            }
-            Some((existing, _)) if packet > existing => {
-                self.path_response = Some((packet, token));
-            }
-            Some(_) => {}
-        }
     }
 }
 
@@ -2700,9 +2696,7 @@ impl Default for Retransmits {
             max_data: false,
             max_uni_stream_id: false,
             max_bi_stream_id: false,
-            ping: false,
             stream: VecDeque::new(),
-            path_response: None,
             rst_stream: Vec::new(),
             stop_sending: Vec::new(),
             max_stream_data: FnvHashSet::default(),
@@ -2714,10 +2708,8 @@ impl Default for Retransmits {
 }
 
 impl ::std::ops::AddAssign for Retransmits {
-    /// Take ownership of retransmittable data from `rhs`; discard the rest.
     fn add_assign(&mut self, rhs: Self) {
         self.max_data |= rhs.max_data;
-        self.ping |= rhs.ping;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
         self.max_bi_stream_id |= rhs.max_bi_stream_id;
         self.stream.extend(rhs.stream.into_iter());
