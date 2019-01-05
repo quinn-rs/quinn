@@ -139,6 +139,14 @@ impl VirtualAddressSpace {
             Some((index - self.dropped - 1) as usize)
         }
     }
+
+    pub fn largest_ref(&self) -> usize {
+        (self.inserted - self.dropped)
+    }
+
+    pub fn total_inserted(&self) -> usize {
+        self.inserted
+    }
 }
 
 #[cfg(test)]
@@ -241,4 +249,12 @@ mod tests {
         assert_eq!(vas.post_base(1), Some(5));
     }
 
+    #[test]
+    fn largest_ref() {
+        let mut vas = VirtualAddressSpace::new();
+        (0..7).for_each(|_| {
+            vas.add();
+        });
+        assert_eq!(vas.largest_ref(), 7);
+    }
 }
