@@ -192,31 +192,35 @@ impl Pair {
     fn drive_client(&mut self) {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
-        for (ecn, packet) in self.client.outbound.drain(..) {
+        for (destination, packet, ecn) in self.client.outbound.drain(..) {
             if packet[0] & packet::LONG_HEADER_FORM == 0 {
                 let spin = packet[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
             if let Some(ref socket) = self.client.socket {
-                socket.send_to(&packet, self.server.addr).unwrap();
+                socket.send_to(&packet, destination).unwrap();
             }
-            self.server
-                .inbound
-                .push_back((self.time + self.latency, ecn, packet));
+            if self.server.addr == destination {
+                self.server
+                    .inbound
+                    .push_back((self.time + self.latency, ecn, packet));
+            }
         }
     }
 
     fn drive_server(&mut self) {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
-        for (ecn, packet) in self.server.outbound.drain(..) {
+        for (destination, packet, ecn) in self.server.outbound.drain(..) {
             if let Some(ref socket) = self.server.socket {
-                socket.send_to(&packet, self.client.addr).unwrap();
+                socket.send_to(&packet, destination).unwrap();
             }
-            self.client
-                .inbound
-                .push_back((self.time + self.latency, ecn, packet));
+            if self.client.addr == destination {
+                self.client
+                    .inbound
+                    .push_back((self.time + self.latency, ecn, packet));
+            }
         }
     }
 
@@ -242,10 +246,10 @@ struct TestEndpoint {
     endpoint: Endpoint,
     addr: SocketAddr,
     socket: Option<UdpSocket>,
-    timers: [u64; 4],
+    timers: [u64; 5],
     conn: Option<ConnectionHandle>,
-    outbound: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
-    delayed: VecDeque<(Option<EcnCodepoint>, Box<[u8]>)>,
+    outbound: VecDeque<(SocketAddr, Box<[u8]>, Option<EcnCodepoint>)>,
+    delayed: VecDeque<(SocketAddr, Box<[u8]>, Option<EcnCodepoint>)>,
     inbound: VecDeque<(u64, Option<EcnCodepoint>, Box<[u8]>)>,
 }
 
@@ -265,7 +269,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            timers: [u64::max_value(); 4],
+            timers: [u64::max_value(); 5],
             conn: None,
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
@@ -303,8 +307,12 @@ impl TestEndpoint {
         }
         while let Some(x) = self.endpoint.poll_io(now) {
             match x {
-                Io::Transmit { packet, ecn, .. } => {
-                    self.outbound.push_back((ecn, packet));
+                Io::Transmit {
+                    destination,
+                    packet,
+                    ecn,
+                } => {
+                    self.outbound.push_back((destination, packet, ecn));
                 }
                 Io::TimerUpdate {
                     timer,
@@ -971,4 +979,21 @@ fn decode_coalesced() {
         .push_back((pair.time, Some(EcnCodepoint::ECT0), coalesced.into()));
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+}
+
+#[test]
+fn migration() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    pair.client.ping(client_conn);
+    pair.drive();
+    assert_matches!(pair.client.poll(), None);
+    assert_eq!(
+        pair.server.connection(server_conn).remote(),
+        pair.client.addr
+    );
 }

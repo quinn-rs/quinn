@@ -957,14 +957,16 @@ pub enum Timer {
     /// When the close timer expires, the connection has been gracefully terminated.
     Close = 2,
     KeyDiscard = 3,
+    PathValidation = 4,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Timer; 4] = [
+    pub(crate) const VALUES: [Timer; 5] = [
         Timer::LossDetection,
         Timer::Idle,
         Timer::Close,
         Timer::KeyDiscard,
+        Timer::PathValidation,
     ];
 }
 
