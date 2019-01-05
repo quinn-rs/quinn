@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -986,7 +986,7 @@ fn migration() {
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
     pair.client.addr = SocketAddr::new(
-        Ipv6Addr::LOCALHOST.into(),
+        Ipv4Addr::new(127, 0, 0, 1).into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     pair.client.ping(client_conn);
