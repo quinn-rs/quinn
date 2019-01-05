@@ -5,6 +5,7 @@ use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 use fnv::{FnvHashMap, FnvHashSet};
+use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
@@ -29,6 +30,7 @@ use crate::{
 pub struct Connection {
     log: Logger,
     config: Arc<Config>,
+    rng: OsRng,
     tls: TlsSession,
     app_closed: bool,
     /// DCID of Initial packet
@@ -37,6 +39,7 @@ pub struct Connection {
     rem_cid: ConnectionId,
     rem_cid_seq: u64,
     remote: SocketAddr,
+    prev_remote: Option<SocketAddr>,
     state: State,
     side: Side,
     mtu: u16,
@@ -74,6 +77,10 @@ pub struct Connection {
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
     prev_crypto: Option<PrevCrypto>,
+    /// Latest PATH_CHALLENGE token issued to the peer along the current path
+    path_challenge: Option<u64>,
+    /// Whether it's been transmitted
+    path_challenge_pending: bool,
 
     //
     // Loss Detection
@@ -124,6 +131,8 @@ pub struct Connection {
     total_sent: u64,
 
     streams: Streams,
+    /// Surplus remote CIDs for future use on new paths
+    rem_cids: Vec<frame::NewConnectionId>,
 }
 
 impl Connection {
@@ -143,6 +152,7 @@ impl Connection {
         } else {
             Side::Server
         };
+        let rng = OsRng::new().expect("failed to construct RNG");
 
         let initial_space = PacketSpace::new(Crypto::new_initial(&init_cid, side));
         let mut streams = FnvHashMap::default();
@@ -166,6 +176,7 @@ impl Connection {
         });
         let mut this = Self {
             log,
+            rng,
             tls,
             app_closed: false,
             init_cid,
@@ -173,6 +184,7 @@ impl Connection {
             rem_cid,
             rem_cid_seq: 0,
             remote,
+            prev_remote: None,
             side,
             state,
             mtu: MIN_MTU,
@@ -197,6 +209,8 @@ impl Connection {
             spaces: [Some(initial_space), None, None],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
+            path_challenge: None,
+            path_challenge_pending: false,
 
             crypto_count: 0,
             pto_count: 0,
@@ -230,6 +244,7 @@ impl Connection {
                 finished: Vec::new(),
             },
             config,
+            rem_cids: Vec::new(),
         };
         if side.is_client() {
             // Kick off the connection
@@ -521,6 +536,15 @@ impl Connection {
                     } else {
                         self.set_key_discard_timer(now);
                     }
+                }
+            }
+            Timer::PathValidation => {
+                debug!(self.log, "path validation failed");
+                self.path_challenge = None;
+                self.path_challenge_pending = false;
+                if let Some(prev) = self.prev_remote.take() {
+                    self.remote = prev;
+                    self.remote_validated = true;
                 }
             }
         }
@@ -924,7 +948,7 @@ impl Connection {
 
         match partial_decode.finish(header_crypto) {
             Ok((packet, rest)) => {
-                self.handle_packet(now, ecn, packet);
+                self.handle_packet(now, remote, ecn, packet);
                 rest
             }
             Err(e) => {
@@ -934,7 +958,13 @@ impl Connection {
         }
     }
 
-    fn handle_packet(&mut self, now: u64, ecn: Option<EcnCodepoint>, mut packet: Packet) {
+    fn handle_packet(
+        &mut self,
+        now: u64,
+        remote: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        mut packet: Packet,
+    ) {
         trace!(
             self.log,
             "connection got {space:?} packet ({len} bytes)",
@@ -997,7 +1027,7 @@ impl Connection {
                             packet.header_data.len() + packet.payload.len(),
                         );
                     }
-                    self.handle_connected_inner(now, number, packet)
+                    self.handle_connected_inner(now, remote, number, packet)
                 }
             }
         };
@@ -1040,6 +1070,7 @@ impl Connection {
     fn handle_connected_inner(
         &mut self,
         now: u64,
+        remote: SocketAddr,
         number: Option<u64>,
         packet: Packet,
     ) -> Result<(), ConnectionError> {
@@ -1224,7 +1255,7 @@ impl Connection {
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => {
-                        self.process_payload(now, number.unwrap(), packet.payload.into())?
+                        self.process_payload(now, remote, number.unwrap(), packet.payload.into())?
                     }
                     _ => self.process_early_payload(now, packet)?,
                 }
@@ -1316,9 +1347,11 @@ impl Connection {
     fn process_payload(
         &mut self,
         now: u64,
+        remote: SocketAddr,
         number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
+        let mut is_probing_packet = true;
         for frame in frame::Iter::new(payload) {
             match frame {
                 Frame::Padding => {}
@@ -1330,6 +1363,15 @@ impl Connection {
                 Frame::Ack(_) | Frame::Padding => {}
                 _ => {
                     self.space_mut(SpaceId::Data).permit_ack_only = true;
+                }
+            }
+            match frame {
+                Frame::Padding
+                | Frame::PathChallenge(_)
+                | Frame::PathResponse(_)
+                | Frame::NewConnectionId(_) => {}
+                _ => {
+                    is_probing_packet = false;
                 }
             }
             match frame {
@@ -1418,11 +1460,16 @@ impl Connection {
                 Frame::PathChallenge(x) => {
                     self.space_mut(SpaceId::Data)
                         .pending
-                        .path_challenge(number, x);
+                        .handle_path_challenge(number, x);
                 }
-                Frame::PathResponse(_) => {
-                    debug!(self.log, "unsolicited PATH_RESPONSE");
-                    return Err(TransportError::PROTOCOL_VIOLATION);
+                Frame::PathResponse(token) => {
+                    if self.path_challenge != Some(token) || remote != self.remote {
+                        continue;
+                    }
+                    trace!(self.log, "path validated");
+                    self.io.timer_stop(Timer::PathValidation);
+                    self.path_challenge = None;
+                    self.remote_validated = true;
                 }
                 Frame::MaxData(bytes) => {
                     let was_blocked = self.blocked();
@@ -1572,7 +1619,10 @@ impl Connection {
                         debug_assert_eq!(self.rem_cid_seq, 0);
                         self.update_rem_cid(frame);
                     } else {
-                        trace!(self.log, "ignoring NEW_CONNECTION_ID (unimplemented)");
+                        // Reasonable limit to bound memory use
+                        if self.rem_cids.len() < 32 {
+                            self.rem_cids.push(frame);
+                        }
                     }
                 }
                 Frame::NewToken { .. } => {
@@ -1581,7 +1631,38 @@ impl Connection {
                 }
             }
         }
+
+        if remote != self.remote && !is_probing_packet {
+            debug_assert!(
+                self.side.is_server(),
+                "packets from unknown remote should be dropped by clients"
+            );
+            self.migrate(remote);
+            // Break linkability, if possible
+            if let Some(cid) = self.rem_cids.pop() {
+                self.update_rem_cid(cid);
+            }
+        }
+
         Ok(())
+    }
+
+    fn migrate(&mut self, remote: SocketAddr) {
+        trace!(
+            self.log,
+            "migration initiated from {remote}",
+            remote = remote
+        );
+        self.prev_remote = Some(mem::replace(&mut self.remote, remote));
+        self.remote_validated = false;
+
+        // Initiate path validation
+        self.io.timer_start(
+            Timer::PathValidation,
+            3 * cmp::max(self.pto(), self.config.initial_rtt),
+        );
+        self.path_challenge = Some(self.rng.gen());
+        self.path_challenge_pending = true;
     }
 
     fn update_rem_cid(&mut self, new: frame::NewConnectionId) {
@@ -1634,6 +1715,18 @@ impl Connection {
         } else {
             RangeSet::new()
         };
+
+        // PATH_CHALLENGE
+        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+            // Transmit challenges with every outgoing frame on an unvalidated path
+            if let Some(token) = self.path_challenge {
+                // But only send a packet solely for that purpose at most once
+                self.path_challenge_pending = false;
+                trace!(self.log, "PATH_CHALLENGE {token:08x}", token = token);
+                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(token);
+            }
+        }
 
         // PATH_RESPONSE
         if buf.len() + 9 < max_size {
@@ -1859,7 +1952,9 @@ impl Connection {
                     })
                     .cloned()
                     .or_else(|| {
-                        if self.io.probes != 0 {
+                        if self.can_send_1rtt() {
+                            Some(SpaceId::Data)
+                        } else if self.io.probes != 0 {
                             Some(self.highest_space)
                         } else {
                             None
@@ -2288,7 +2383,14 @@ impl Connection {
 
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
-            .map_err(|()| None)?;
+            .map_err(|()| {
+                trace!(
+                    self.log,
+                    "decryption failed with packet number {packet}",
+                    packet = number
+                );
+                None
+            })?;
 
         if let Some(ref mut prev) = self.prev_crypto {
             if prev.update_ack_time.is_none() && key_phase == self.key_phase {
@@ -2477,6 +2579,13 @@ impl Connection {
             .as_mut()
             .expect("tried to access unavailable packet space")
     }
+
+    /// Whether we have 1RTT-specific data to send
+    ///
+    /// See also `self.space(SpaceId::Data).can_send()`
+    fn can_send_1rtt(&self) -> bool {
+        self.path_challenge_pending
+    }
 }
 
 pub fn initial_close<R>(
@@ -2597,7 +2706,7 @@ impl Retransmits {
             && self.retire_cids.is_empty()
     }
 
-    fn path_challenge(&mut self, packet: u64, token: u64) {
+    fn handle_path_challenge(&mut self, packet: u64, token: u64) {
         match self.path_response {
             None => {
                 self.path_response = Some((packet, token));
@@ -2874,7 +2983,7 @@ struct IoQueue {
     ///
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
-    timers: [Option<TimerUpdate>; 4],
+    timers: [Option<TimerUpdate>; 5],
     retired_cids: Vec<ConnectionId>,
 }
 
@@ -2883,7 +2992,7 @@ impl IoQueue {
         Self {
             probes: 0,
             close: false,
-            timers: [None; 4],
+            timers: [None; 5],
             retired_cids: Vec::new(),
         }
     }
