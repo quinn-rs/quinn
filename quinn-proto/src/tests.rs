@@ -88,6 +88,7 @@ fn server_config() -> ServerConfig {
     tls_config
         .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
         .unwrap();
+    tls_config.max_early_data_size = 0xffff_ffff;
     ServerConfig {
         tls_config: Arc::new(tls_config),
         ..Default::default()
@@ -106,6 +107,7 @@ fn client_config() -> Arc<ClientConfig> {
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
     tls_client_config.key_log = Arc::new(KeyLogFile::new());
+    tls_client_config.enable_early_data = true;
     Arc::new(tls_client_config)
 }
 
@@ -638,39 +640,42 @@ fn high_latency_handshake() {
     assert!(pair.server.connection(server_conn).using_ecn());
 }
 
-/*
 #[test]
 fn zero_rtt() {
     let mut pair = Pair::default();
-    let (c, _) = pair.connect();
-    let ticket = match pair.client.poll() {
-        Some((conn, Event::NewSessionTicket { ref ticket })) if conn == c => ticket.clone(),
-        e => panic!("unexpected poll result: {:?}", e),
-    };
-    info!(pair.log, "closing"; "ticket size" => ticket.len());
-    pair.client.close(pair.time, c, 42, (&[][..]).into());
-    pair.drive();
-    info!(pair.log, "resuming");
-    let cc = pair
+    let config = client_config();
+
+    // Establish normal connection
+    let client_conn = pair
         .client
-        .connect(
-            pair.server.addr,
-            "localhost",
-        )
+        .connect(pair.server.addr, &config, "localhost")
         .unwrap();
-    let s = pair.client.open(cc, Directionality::Uni).unwrap();
-    const MSG: &[u8] = b"Hello, 0-RTT!";
-    pair.client.write(cc, s, MSG).unwrap();
     pair.drive();
-    assert!(pair.client.get_session_resumed(c));
-    let sc = if let Some(c) = pair.server.accept() {
+    pair.server.accept().unwrap();
+    pair.client.close(pair.time, client_conn, 0, [][..].into());
+    pair.drive();
+
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    info!(pair.log, "resuming session");
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &config, "localhost")
+        .unwrap();
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.drive();
+    let server_conn = if let Some(c) = pair.server.accept() {
         c
     } else {
         panic!("server didn't connect");
     };
-    assert_matches!(pair.server.read_unordered(sc, s), Ok((ref data, 0)) if data == MSG);
+    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
+    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
 }
-*/
 
 #[test]
 fn close_during_handshake() {

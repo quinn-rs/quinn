@@ -52,7 +52,7 @@ pub struct Connection {
     rx_packet_space: SpaceId,
     /// Time at which the above was received
     rx_packet_time: u64,
-    //zero_rtt_crypto: Option<Crypto>,
+    zero_rtt_crypto: Option<CryptoSpace>,
     key_phase: bool,
     params: TransportParameters,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
@@ -202,7 +202,7 @@ impl Connection {
             rx_packet: 0,
             rx_packet_space: SpaceId::Initial,
             rx_packet_time: 0,
-            //zero_rtt_crypto: None,
+            zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::new(&config),
             blocked_streams: FnvHashSet::default(),
@@ -263,6 +263,7 @@ impl Connection {
         if side.is_client() {
             // Kick off the connection
             this.write_tls();
+            this.init_0rtt();
         }
         this
     }
@@ -828,7 +829,35 @@ impl Connection {
         )?;
         self.set_params(params)?;
         self.write_tls();
+        self.init_0rtt();
         Ok(())
+    }
+
+    fn init_0rtt(&mut self) {
+        if self.side.is_client() && self.tls.get_early_secret().is_some() {
+            let params = self
+                .tls
+                .get_quic_transport_parameters()
+                .expect("rustls didn't supply transport parameters with ticket");
+            if let Err(e) = TransportParameters::read(self.side, &mut io::Cursor::new(params))
+                .map_err(Into::into)
+                .and_then(|x| self.set_params(x))
+            {
+                error!(
+                    self.log,
+                    "session ticket had malformed transport parameters: {}", e
+                );
+                return;
+            }
+        }
+        if let Some(secret) = self.tls.get_early_secret() {
+            trace!(self.log, "0-RTT enabled");
+            let packet = Crypto::new_0rtt(secret);
+            self.zero_rtt_crypto = Some(CryptoSpace {
+                header: packet.header_crypto(),
+                packet,
+            });
+        }
     }
 
     fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
@@ -843,7 +872,7 @@ impl Connection {
             trace!(self.log, "read {} TLS bytes", n);
             if let Err(e) = self.tls.read_hs(&buf[..n]) {
                 debug!(self.log, "TLS error: {}", e);
-                return Err(if let Some(alert) = self.tls.take_alert() {
+                return Err(if let Some(alert) = self.tls.get_alert() {
                     TransportError::crypto(alert)
                 } else {
                     TransportError::PROTOCOL_VIOLATION
@@ -927,11 +956,14 @@ impl Connection {
             );
             return None;
         }
-        if partial_decode.is_0rtt() {
-            debug!(self.log, "dropping 0-RTT packet (currently unimplemented)");
-            return None;
-        }
-        let header_crypto = if let Some(space) = partial_decode.space() {
+        let header_crypto = if partial_decode.is_0rtt() {
+            if let Some(ref crypto) = self.zero_rtt_crypto {
+                Some(&crypto.header)
+            } else {
+                debug!(self.log, "dropping unexpected 0-RTT packet");
+                return None;
+            }
+        } else if let Some(space) = partial_decode.space() {
             if let Some(ref crypto) = self.spaces[space as usize].crypto {
                 Some(&crypto.header)
             } else {
@@ -1191,55 +1223,13 @@ impl Connection {
                         self.process_early_payload(now, packet)?;
                         Ok(())
                     }
-                    /*Header::Long {
-                        ty: types::ZERO_RTT,
-                        number,
-                        dst_cid: ref id,
-                        ..
-                    } if self.side.is_server() =>
-                    {
-                        if let Some(ref crypto) = self.zero_rtt_crypto {
-                            if crypto
-                                .decrypt(number as u64, &packet.header_data, &mut packet.payload)
-                                .is_err()
-                            {
-                                debug!(
-                                    self.log,
-                                    "{connection} failed to authenticate 0-RTT packet",
-                                    connection = id.clone()
-                                );
-                                return State::Handshake(state);
-                            }
-                        } else {
-                            debug!(
-                                self.log,
-                                "{connection} ignoring unsupported 0-RTT packet",
-                                connection = id.clone()
-                            );
-                            return State::Handshake(state);
-                        };
-                        self.on_packet_authenticated(ctx, now, number as u64);
-                        match self.process_payload(
-                            ctx,
-                            now,
-                            conn,
-                            number as u64,
-                            packet.payload.into(),
-                            state.tls.get_mut(),
-                        ) {
-                            Err(e) => State::HandshakeFailed(state::HandshakeFailed {
-                                reason: e,
-                                app_closed: false,
-                                alert: None,
-                            }),
-                            Ok(true) => State::Draining(state.into()),
-                            Ok(false) => State::Handshake(state),
-                        }
-                    }*/
                     Header::Long {
                         ty: LongType::ZeroRtt,
                         ..
-                    } => unreachable!("0-RTT is dropped in handle_decode"),
+                    } => {
+                        self.process_payload(now, remote, number.unwrap(), packet.payload.into())?;
+                        Ok(())
+                    }
                     Header::VersionNegotiate { .. } => {
                         let mut payload = io::Cursor::new(&packet.payload[..]);
                         if packet.payload.len() % 4 != 0 {
@@ -1362,6 +1352,7 @@ impl Connection {
         number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
+        let is_0rtt = self.space(SpaceId::Data).crypto.is_none();
         let mut is_probing_packet = true;
         for frame in frame::Iter::new(payload) {
             match frame {
@@ -1395,6 +1386,10 @@ impl Connection {
                     return Err(TransportError::PROTOCOL_VIOLATION);
                 }
                 Frame::Crypto(frame) => {
+                    if is_0rtt {
+                        debug!(self.log, "received CRYPTO in 0-RTT");
+                        return Err(TransportError::PROTOCOL_VIOLATION);
+                    }
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
@@ -1730,7 +1725,22 @@ impl Connection {
     ) -> (Retransmits, RangeSet) {
         let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
-        let max_size = self.mtu as usize - space.crypto.as_ref().unwrap().packet.tag_len();
+        let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
+        let tag_len = space
+            .crypto
+            .as_ref()
+            .unwrap_or_else(|| {
+                debug_assert_eq!(
+                    space_id,
+                    SpaceId::Data,
+                    "tried to send {:?} packet without keys",
+                    space_id
+                );
+                zero_rtt_crypto.unwrap()
+            })
+            .packet
+            .tag_len();
+        let max_size = self.mtu as usize - tag_len;
 
         // PING
         if mem::replace(&mut self.ping_pending, false) {
@@ -1741,7 +1751,7 @@ impl Connection {
         // ACK
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
-            //&& !crypto.is_0rtt() {
+            debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
             let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
@@ -1994,6 +2004,11 @@ impl Connection {
                             Some(SpaceId::Data)
                         } else if self.io.probes != 0 {
                             Some(self.highest_space)
+                        } else if self.zero_rtt_crypto.is_some()
+                            && self.side.is_client()
+                            && (self.space(SpaceId::Data).can_send() || self.can_send_1rtt())
+                        {
+                            Some(SpaceId::Data)
                         } else {
                             None
                         }
@@ -2033,25 +2048,32 @@ impl Connection {
         }
 
         let space = &mut self.spaces[space_id as usize];
-        let number = space.get_tx_number();
+        let exact_number = space.get_tx_number();
         trace!(
             self.log,
             "sending {space:?} packet {number}",
             space = space_id,
-            number = number
+            number = exact_number
         );
+        let number = PacketNumber::new(exact_number, space.largest_acked_packet);
         let header = match space_id {
-            SpaceId::Data => Header::Short {
+            SpaceId::Data if space.crypto.is_some() => Header::Short {
                 dst_cid: self.rem_cid,
-                number: PacketNumber::new(number, space.largest_acked_packet),
+                number,
                 spin: self.spin,
                 key_phase: self.key_phase,
+            },
+            SpaceId::Data => Header::Long {
+                ty: LongType::ZeroRtt,
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                number,
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
                 src_cid: self.handshake_cid,
                 dst_cid: self.rem_cid,
-                number: PacketNumber::new(number, space.largest_acked_packet),
+                number,
             },
             SpaceId::Initial => Header::Initial {
                 src_cid: self.handshake_cid,
@@ -2060,7 +2082,7 @@ impl Connection {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
                     _ => Bytes::new(),
                 },
-                number: PacketNumber::new(number, space.largest_acked_packet),
+                number,
             },
         };
         let mut buf = Vec::new();
@@ -2105,6 +2127,8 @@ impl Connection {
         let space = &mut self.spaces[space_id as usize];
         let crypto = if let Some(ref crypto) = space.crypto {
             crypto
+        } else if space_id == SpaceId::Data {
+            self.zero_rtt_crypto.as_ref().unwrap()
         } else {
             unreachable!("tried to send {:?} packet without keys", space_id);
         };
@@ -2114,10 +2138,7 @@ impl Connection {
             buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
             padded = true;
         }
-        let pn_len = header
-            .number()
-            .expect("next_packet should only send numbered packets")
-            .len();
+        let pn_len = number.len();
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
@@ -2133,7 +2154,7 @@ impl Connection {
         if !header.is_short() {
             set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
         }
-        crypto.packet.encrypt(number, &mut buf, header_len);
+        crypto.packet.encrypt(exact_number, &mut buf, header_len);
         partial_encode.finish(&mut buf, &crypto.header);
 
         if let Some((sent, acks)) = sent {
@@ -2145,7 +2166,7 @@ impl Connection {
             self.on_packet_sent(
                 now,
                 space_id,
-                number,
+                exact_number,
                 SentPacket {
                     acks,
                     time_sent: now,
@@ -2415,8 +2436,10 @@ impl Connection {
         let key_phase = packet.header.key_phase();
 
         let mut crypto_update = None;
-        let crypto = if key_phase == self.key_phase || space != SpaceId::Data {
-            &self.spaces[space as usize].crypto.as_ref().unwrap().packet
+        let crypto = if packet.header.is_0rtt() {
+            &self.zero_rtt_crypto.as_ref().unwrap().packet
+        } else if key_phase == self.key_phase || space != SpaceId::Data {
+            &self.spaces[space as usize].crypto.as_mut().unwrap().packet
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
             if number < crypto.end_packet {
                 Some(crypto)

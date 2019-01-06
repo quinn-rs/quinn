@@ -127,6 +127,18 @@ impl Crypto {
         Self::new(side, digest, cipher, secrets)
     }
 
+    pub fn new_0rtt(secret: &[u8]) -> Self {
+        Self::new(
+            Side::Client, // Meaningless when the secrets are equal
+            &digest::SHA256,
+            &aead::AES_128_GCM,
+            Secrets {
+                server: secret.into(),
+                client: secret.into(),
+            },
+        )
+    }
+
     pub fn new(
         side: Side,
         digest: &'static digest::Algorithm,
