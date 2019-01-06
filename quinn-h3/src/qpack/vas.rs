@@ -125,7 +125,7 @@ impl VirtualAddressSpace {
     }
 
     pub fn post_base(&self, index: RelativeIndex) -> Option<usize> {
-        if self.delta == 0 || self.base + index + 1 >= self.inserted {
+        if self.delta == 0 || self.base + index >= self.inserted {
             None
         } else {
             Some((self.base - self.dropped + index) as usize)
