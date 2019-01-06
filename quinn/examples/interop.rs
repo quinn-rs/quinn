@@ -13,7 +13,7 @@ use std::net::ToSocketAddrs;
 use std::str;
 use std::sync::{Arc, Mutex};
 
-use futures::{Future, Stream};
+use futures::Future;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
@@ -89,7 +89,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut handshake = false;
     let mut stream_data = false;
     let mut close = false;
-    let mut ticket = None;
     let mut resumption = false;
     let mut key_update = false;
     let result = runtime.block_on(
@@ -100,7 +99,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 println!("connected");
                 assert!(state.lock().unwrap().saw_cert);
                 handshake = true;
-                let tickets = conn.session_tickets;
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 let stream_data = &mut stream_data;
@@ -114,16 +112,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     })
                     .map(|()| {
                         close = true;
-                    })
-                    .and_then(|()| {
-                        tickets
-                            .into_future()
-                            .map_err(|(e, _)| e.into())
-                            .map(|(x, _)| {
-                                if let Some(x) = x {
-                                    ticket = Some(x);
-                                }
-                            })
                     })
             })
             .and_then(|_| {

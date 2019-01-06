@@ -154,8 +154,6 @@ struct Pending {
     error: Option<ConnectionError>,
     draining: Option<oneshot::Sender<()>>,
     drained: bool,
-    incoming_session_tickets: VecDeque<Box<[u8]>>,
-    incoming_session_tickets_reader: Option<Task>,
 }
 
 impl Pending {
@@ -173,8 +171,6 @@ impl Pending {
             error: None,
             draining: None,
             drained: false,
-            incoming_session_tickets: VecDeque::new(),
-            incoming_session_tickets_reader: None,
         }
     }
 
@@ -200,9 +196,6 @@ impl Pending {
         }
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(reason.clone()));
-        }
-        if let Some(x) = self.incoming_session_tickets_reader.take() {
-            x.notify();
         }
     }
 }
@@ -639,8 +632,6 @@ pub struct NewClientConnection {
     pub connection: Connection,
     /// The stream of QUIC streams initiated by the client.
     pub incoming: IncomingStreams,
-    /// The stream of session tickets provided by the server.
-    pub session_tickets: IncomingSessionTickets,
 }
 
 impl NewClientConnection {
@@ -648,7 +639,6 @@ impl NewClientConnection {
         Self {
             connection: Connection(conn.clone()),
             incoming: IncomingStreams(conn.clone()),
-            session_tickets: IncomingSessionTickets(conn),
         }
     }
 }
@@ -748,17 +738,6 @@ impl Future for Driver {
                             .remove(&stream)
                             .unwrap()
                             .send(None);
-                    }
-                    NewSessionTicket { ticket } => {
-                        let pending = endpoint.pending.get_mut(&connection).unwrap();
-                        const SESSION_TICKET_BUFFER_SIZE: usize = 16;
-                        if pending.incoming_session_tickets.len() >= SESSION_TICKET_BUFFER_SIZE {
-                            pending.incoming_session_tickets.pop_front();
-                        }
-                        pending.incoming_session_tickets.push_back(ticket);
-                        if let Some(x) = pending.incoming_session_tickets_reader.take() {
-                            x.notify();
-                        }
                     }
                 }
             }
@@ -1522,29 +1501,6 @@ impl FuturesStream for IncomingStreams {
             Err(x.clone())
         } else {
             pending.incoming_streams_reader = Some(task::current());
-            Ok(Async::NotReady)
-        }
-    }
-}
-
-/// A stream of session tickets supplied by the server.
-pub struct IncomingSessionTickets(Rc<ConnectionInner>);
-
-impl FuturesStream for IncomingSessionTickets {
-    type Item = Box<[u8]>;
-    type Error = ConnectionError;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut endpoint = self.0.endpoint.borrow_mut();
-        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
-        if let Some(x) = pending.incoming_session_tickets.pop_front() {
-            return Ok(Async::Ready(Some(x)));
-        }
-        if let Some(ref x) = pending.error {
-            Err(x.clone())
-        } else if pending.drained {
-            return Ok(Async::Ready(None));
-        } else {
-            pending.incoming_session_tickets_reader = Some(task::current());
             Ok(Async::NotReady)
         }
     }

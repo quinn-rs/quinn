@@ -896,13 +896,9 @@ impl From<crypto::TLSError> for EndpointError {
 #[derive(Debug)]
 pub enum Event {
     /// A connection was successfully established.
-    Connected {
-        protocol: Option<String>,
-    },
+    Connected { protocol: Option<String> },
     /// A connection was lost.
-    ConnectionLost {
-        reason: ConnectionError,
-    },
+    ConnectionLost { reason: ConnectionError },
     /// A stream has data or errors waiting to be read
     StreamReadable {
         /// The affected stream
@@ -911,20 +907,11 @@ pub enum Event {
         fresh: bool,
     },
     /// A formerly write-blocked stream might now accept a write
-    StreamWritable {
-        stream: StreamId,
-    },
+    StreamWritable { stream: StreamId },
     /// All data sent on `stream` has been received by the peer
-    StreamFinished {
-        stream: StreamId,
-    },
+    StreamFinished { stream: StreamId },
     /// At least one new stream of a certain directionality may be opened
-    StreamAvailable {
-        directionality: Directionality,
-    },
-    NewSessionTicket {
-        ticket: Box<[u8]>,
-    },
+    StreamAvailable { directionality: Directionality },
 }
 
 impl From<ConnectionError> for Event {
