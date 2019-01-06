@@ -1094,6 +1094,16 @@ impl Connection {
             .connection(self.0.conn)
             .session_resumed()
     }
+
+    // Update traffic keys spontaneously for testing purposes.
+    #[doc(hidden)]
+    pub fn force_key_update(&self) {
+        self.0
+            .endpoint
+            .borrow_mut()
+            .inner
+            .force_key_update(self.0.conn)
+    }
 }
 
 impl Drop for ConnectionInner {

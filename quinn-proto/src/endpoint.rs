@@ -722,6 +722,12 @@ impl Endpoint {
         self.incoming.pop_front()
     }
 
+    #[doc(hidden)]
+    pub fn force_key_update(&mut self, conn: ConnectionHandle) {
+        self.connections[conn.0].force_key_update();
+        self.ping(conn);
+    }
+
     pub fn connection(&self, handle: ConnectionHandle) -> &Connection {
         &self.connections[handle.0]
     }
