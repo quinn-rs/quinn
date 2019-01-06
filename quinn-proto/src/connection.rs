@@ -2326,8 +2326,7 @@ impl Connection {
         Ok(Some(number))
     }
 
-    #[cfg(test)]
-    pub fn initiate_key_update(&mut self) {
+    pub fn force_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
         let update = space.crypto.update(self.side, &self.tls);
         self.update_keys(update, space.next_packet_number, false);

@@ -91,6 +91,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut close = false;
     let mut ticket = None;
     let mut resumption = false;
+    let mut key_update = false;
     let result = runtime.block_on(
         endpoint
             .connect_with(&client_config, &remote, &options.host)?
@@ -134,9 +135,16 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     .map_err(|e| format_err!("failed to connect: {}", e))
                     .and_then(|conn| {
                         resumption = !state.lock().unwrap().saw_cert;
-                        conn.connection
-                            .close(0, b"done")
-                            .map_err(|_| unreachable!())
+                        let conn = conn.connection;
+                        conn.force_key_update();
+                        let stream = conn.open_bi();
+                        stream
+                            .map_err(|e| format_err!("failed to open stream: {}", e))
+                            .and_then(move |stream| get(stream))
+                            .inspect(|_| {
+                                key_update = true;
+                            })
+                            .and_then(move |_| conn.close(0, b"done").map_err(|_| unreachable!()))
                     })
             }),
     );
@@ -180,6 +188,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     if retry {
         print!("S");
+    }
+    if key_update {
+        print!("U");
     }
 
     println!("");

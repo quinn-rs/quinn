@@ -755,7 +755,7 @@ fn key_update() {
         Ok((ref data, 0)) if data == MSG1
     );
 
-    pair.client.connections[client_conn.0].initiate_key_update();
+    pair.client.connections[client_conn.0].force_key_update();
 
     const MSG2: &[u8] = b"hello2";
     pair.client.write(client_conn, s, MSG2).unwrap();
@@ -784,7 +784,7 @@ fn key_update_reordered() {
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
-    pair.client.connections[client_conn.0].initiate_key_update();
+    pair.client.connections[client_conn.0].force_key_update();
     info!(pair.log, "updated keys");
 
     const MSG2: &[u8] = b"two";
