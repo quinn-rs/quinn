@@ -76,7 +76,7 @@ pub struct Connection {
     /// Outgoing spin bit state
     spin: bool,
     /// Packet number spaces: initial, handshake, 1-RTT
-    spaces: [Option<PacketSpace>; 3],
+    spaces: [PacketSpace; 3],
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
@@ -160,7 +160,10 @@ impl Connection {
         };
         let rng = OsRng::new().expect("failed to construct RNG");
 
-        let initial_space = PacketSpace::new(Crypto::new_initial(&init_cid, side));
+        let initial_space = PacketSpace {
+            crypto: Some(CryptoSpace::new(Crypto::new_initial(&init_cid, side))),
+            ..PacketSpace::new()
+        };
         let mut streams = FnvHashMap::default();
         for i in 0..config.stream_window_uni {
             streams.insert(
@@ -214,7 +217,7 @@ impl Connection {
             events: VecDeque::new(),
             cids_issued: 0,
             spin: false,
-            spaces: [Some(initial_space), None, None],
+            spaces: [initial_space, PacketSpace::new(), PacketSpace::new()],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             path_challenge: None,
@@ -522,7 +525,7 @@ impl Connection {
                 self.on_loss_detection_timeout(now);
             }
             Timer::KeyDiscard => {
-                if self.spaces[SpaceId::Handshake as usize].is_some() {
+                if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
                     self.discard_space(SpaceId::Handshake);
                     // Might have a key update to discard too
                     self.set_key_discard_timer(now);
@@ -551,7 +554,7 @@ impl Connection {
     }
 
     fn set_key_discard_timer(&mut self, now: u64) {
-        let time = if self.spaces[SpaceId::Handshake as usize].is_some() {
+        let time = if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
             now + self.pto() * 3
         } else if let Some(ref time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
             time + self.pto() * 3
@@ -565,7 +568,7 @@ impl Connection {
         if self.in_flight.crypto != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
-                if self.spaces[space_id as usize].is_none() {
+                if self.spaces[space_id as usize].crypto.is_none() {
                     continue;
                 }
                 let sent_packets =
@@ -601,7 +604,7 @@ impl Connection {
 
         let mut lost_ack_eliciting = false;
         let mut largest_lost_time = 0;
-        for space in self.spaces.iter_mut().filter_map(|x| x.as_mut()) {
+        for space in self.spaces.iter_mut().filter(|x| x.crypto.is_some()) {
             lost_packets.clear();
             let lost_pn = space
                 .largest_acked_packet
@@ -726,14 +729,14 @@ impl Connection {
             space = space_id,
             packet = packet
         );
-        if self.spaces[SpaceId::Initial as usize].is_some()
+        if self.spaces[SpaceId::Initial as usize].crypto.is_some()
             && space_id == SpaceId::Handshake
             && self.side.is_server()
         {
             // A server stops sending and processing Initial packets when it receives its first Handshake packet.
             self.discard_space(SpaceId::Initial);
         }
-        let space = self.spaces[space_id as usize].as_mut().unwrap();
+        let space = &mut self.spaces[space_id as usize];
         space.pending_acks.insert_one(packet);
         if space.pending_acks.len() > MAX_ACK_BLOCKS {
             space.pending_acks.pop_min();
@@ -801,8 +804,6 @@ impl Connection {
         stream.state = stream::SendState::ResetSent { stop_reason: None };
 
         self.spaces[SpaceId::Data as usize]
-            .as_mut()
-            .unwrap()
             .pending
             .rst_stream
             .push((stream_id, error_code));
@@ -831,7 +832,7 @@ impl Connection {
     }
 
     fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
-        let space = self.spaces[space as usize].as_mut().unwrap();
+        let space = &mut self.spaces[space as usize];
         space.crypto_stream.insert(crypto.offset, &crypto.data);
         let mut buf = [0; 8192];
         loop {
@@ -892,20 +893,21 @@ impl Connection {
         let suite = self.tls.get_negotiated_ciphersuite().unwrap();
         let crypto = Crypto::new(self.side, suite.get_hash(), suite.get_aead_alg(), secrets);
         debug_assert!(
-            self.spaces[space as usize].is_none(),
+            self.spaces[space as usize].crypto.is_none(),
             "already reached packet space {:?}",
             space
         );
         trace!(self.log, "{space:?} keys ready", space = space);
-        self.spaces[space as usize] = Some(PacketSpace::new(crypto));
+        self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
     }
 
     fn discard_space(&mut self, space: SpaceId) {
         trace!(self.log, "discarding {space:?} keys", space = space);
-        let space = self.spaces[space as usize].take().unwrap();
-        for (_, packet) in space.sent_packets {
+        self.space_mut(space).crypto = None;
+        let sent_packets = mem::replace(&mut self.space_mut(space).sent_packets, BTreeMap::new());
+        for (_, packet) in sent_packets.into_iter() {
             self.in_flight.remove(&packet);
         }
     }
@@ -930,8 +932,8 @@ impl Connection {
             return None;
         }
         let header_crypto = if let Some(space) = partial_decode.space() {
-            if let Some(ref space) = self.spaces[space as usize] {
-                Some(&space.header_crypto)
+            if let Some(ref crypto) = self.spaces[space as usize].crypto {
+                Some(&crypto.header)
             } else {
                 debug!(
                     self.log,
@@ -1104,8 +1106,14 @@ impl Connection {
                             &TransportParameters::new(&self.config),
                         )
                         .unwrap();
-                        self.spaces[0] =
-                            Some(PacketSpace::new(Crypto::new_initial(&rem_cid, self.side)));
+                        self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
+                        self.spaces[0] = PacketSpace {
+                            crypto: Some(CryptoSpace::new(Crypto::new_initial(
+                                &rem_cid, self.side,
+                            ))),
+                            ..PacketSpace::new()
+                        };
+
                         self.write_tls();
 
                         self.state = State::Handshake(state::Handshake {
@@ -1720,9 +1728,9 @@ impl Connection {
         space_id: SpaceId,
         buf: &mut Vec<u8>,
     ) -> (Retransmits, RangeSet) {
-        let space = self.spaces[space_id as usize].as_mut().unwrap();
+        let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
-        let max_size = self.mtu as usize - space.crypto.tag_len();
+        let max_size = self.mtu as usize - space.crypto.as_ref().unwrap().packet.tag_len();
 
         // PING
         if mem::replace(&mut self.ping_pending, false) {
@@ -1979,14 +1987,10 @@ impl Connection {
             _ => {
                 let id = SpaceId::VALUES
                     .iter()
-                    .find(|&&x| {
-                        self.spaces[x as usize]
-                            .as_ref()
-                            .map_or(false, |space| space.can_send())
-                    })
+                    .find(|&&x| self.space(x).crypto.is_some() && self.space(x).can_send())
                     .cloned()
                     .or_else(|| {
-                        if self.can_send_1rtt() {
+                        if self.space(SpaceId::Data).crypto.is_some() && self.can_send_1rtt() {
                             Some(SpaceId::Data)
                         } else if self.io.probes != 0 {
                             Some(self.highest_space)
@@ -2016,7 +2020,7 @@ impl Connection {
         //
 
         self.io.probes = self.io.probes.saturating_sub(1);
-        if self.spaces[SpaceId::Initial as usize].is_some()
+        if self.spaces[SpaceId::Initial as usize].crypto.is_some()
             && space_id == SpaceId::Handshake
             && self.side.is_client()
         {
@@ -2028,7 +2032,7 @@ impl Connection {
             prev.update_unacked = false;
         }
 
-        let space = self.spaces[space_id as usize].as_mut().unwrap();
+        let space = &mut self.spaces[space_id as usize];
         let number = space.get_tx_number();
         trace!(
             self.log,
@@ -2065,7 +2069,8 @@ impl Connection {
 
         let (remote, sent) = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
-            let max_len = self.mtu as usize - header_len - space.crypto.tag_len();
+            let max_len =
+                self.mtu as usize - header_len - space.crypto.as_ref().unwrap().packet.tag_len();
             match self.state {
                 State::Closed(state::Closed {
                     reason: state::CloseReason::Application(ref x),
@@ -2097,11 +2102,16 @@ impl Connection {
             ack_only = false;
         }
 
-        let space = self.spaces[space_id as usize].as_mut().unwrap();
+        let space = &mut self.spaces[space_id as usize];
+        let crypto = if let Some(ref crypto) = space.crypto {
+            crypto
+        } else {
+            unreachable!("tried to send {:?} packet without keys", space_id);
+        };
         let mut padded = false;
         if self.side.is_client() && space_id == SpaceId::Initial {
             // Initial-only packets MUST be padded
-            buf.resize(MIN_INITIAL_SIZE - space.crypto.tag_len(), 0);
+            buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
             padded = true;
         }
         let pn_len = header
@@ -2111,9 +2121,9 @@ impl Connection {
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
-        let protected_payload_len = (buf.len() + space.crypto.tag_len()) - header_len;
+        let protected_payload_len = (buf.len() + crypto.packet.tag_len()) - header_len;
         if let Some(padding_minus_one) =
-            (space.header_crypto.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
+            (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
         {
             let padding = padding_minus_one + 1;
             padded = true;
@@ -2121,10 +2131,10 @@ impl Connection {
             buf.resize(buf.len() + padding, 0);
         }
         if !header.is_short() {
-            set_payload_length(&mut buf, header_len, pn_len, space.crypto.tag_len());
+            set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
         }
-        space.crypto.encrypt(number, &mut buf, header_len);
-        partial_encode.finish(&mut buf, &space.header_crypto);
+        crypto.packet.encrypt(number, &mut buf, header_len);
+        partial_encode.finish(&mut buf, &crypto.header);
 
         if let Some((sent, acks)) = sent {
             // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
@@ -2269,7 +2279,7 @@ impl Connection {
 
     /// Permit an additional remote `ty` stream.
     fn alloc_remote_stream(&mut self, ty: Directionality) {
-        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+        let space = &mut self.spaces[SpaceId::Data as usize];
         let (id, stream) = match ty {
             Directionality::Bi => {
                 self.streams.max_remote_bi += 1;
@@ -2312,7 +2322,7 @@ impl Connection {
             .expect("unknown or recv-only stream");
         assert_eq!(ss.state, stream::SendState::Ready);
         ss.state = stream::SendState::DataSent;
-        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+        let space = &mut self.spaces[SpaceId::Data as usize];
         for frame in &mut space.pending.stream {
             if frame.id == id && frame.offset + frame.data.len() as u64 == ss.offset {
                 frame.fin = true;
@@ -2334,7 +2344,7 @@ impl Connection {
         // reduce overhead
         self.local_max_data += buf.len() as u64; // BUG: Don't issue credit for
                                                  // already-received data!
-        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+        let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
             space.pending.max_stream_data.insert(id);
@@ -2348,7 +2358,7 @@ impl Connection {
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
         self.local_max_data += len as u64;
-        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+        let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
             space.pending.max_stream_data.insert(id);
@@ -2370,7 +2380,7 @@ impl Connection {
             .unwrap();
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
-            let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+            let space = &mut self.spaces[SpaceId::Data as usize];
             space.pending.stop_sending.push((id, error_code));
         }
     }
@@ -2406,7 +2416,7 @@ impl Connection {
 
         let mut crypto_update = None;
         let crypto = if key_phase == self.key_phase || space != SpaceId::Data {
-            &self.spaces[space as usize].as_mut().unwrap().crypto
+            &self.spaces[space as usize].crypto.as_ref().unwrap().packet
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
             if number < crypto.end_packet {
                 Some(crypto)
@@ -2418,9 +2428,10 @@ impl Connection {
         } else {
             crypto_update = Some(
                 self.spaces[space as usize]
-                    .as_mut()
-                    .unwrap()
                     .crypto
+                    .as_ref()
+                    .unwrap()
+                    .packet
                     .update(self.side, &self.tls),
             );
             crypto_update.as_ref().unwrap()
@@ -2476,7 +2487,12 @@ impl Connection {
 
     pub fn force_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
-        let update = space.crypto.update(self.side, &self.tls);
+        let update = space
+            .crypto
+            .as_ref()
+            .unwrap()
+            .packet
+            .update(self.side, &self.tls);
         self.update_keys(update, space.next_packet_number, false);
     }
 
@@ -2524,7 +2540,11 @@ impl Connection {
 
     fn update_keys(&mut self, crypto: Crypto, number: u64, remote: bool) {
         let old = mem::replace(
-            &mut self.spaces[SpaceId::Data as usize].as_mut().unwrap().crypto,
+            &mut self.spaces[SpaceId::Data as usize]
+                .crypto
+                .as_mut()
+                .unwrap()
+                .packet,
             crypto,
         );
         self.prev_crypto = Some(PrevCrypto {
@@ -2545,7 +2565,7 @@ impl Connection {
     }
 
     pub fn has_1rtt(&self) -> bool {
-        self.spaces[SpaceId::Data as usize].is_some()
+        self.spaces[SpaceId::Data as usize].crypto.is_some()
     }
 
     pub fn is_drained(&self) -> bool {
@@ -2614,15 +2634,11 @@ impl Connection {
     }
 
     fn space(&self, id: SpaceId) -> &PacketSpace {
-        self.spaces[id as usize]
-            .as_ref()
-            .expect("tried to access unavailable packet space")
+        &self.spaces[id as usize]
     }
 
     fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace {
-        self.spaces[id as usize]
-            .as_mut()
-            .expect("tried to access unavailable packet space")
+        &mut self.spaces[id as usize]
     }
 
     /// Whether we have non-retransmittable 1-RTT data to send
@@ -3047,8 +3063,7 @@ pub enum TimerUpdate {
 }
 
 struct PacketSpace {
-    crypto: Crypto,
-    header_crypto: HeaderCrypto,
+    crypto: Option<CryptoSpace>,
     dedup: Dedup,
 
     /// Data to send
@@ -3080,10 +3095,9 @@ struct PacketSpace {
 }
 
 impl PacketSpace {
-    fn new(crypto: Crypto) -> Self {
+    fn new() -> Self {
         Self {
-            header_crypto: crypto.header_crypto(),
-            crypto,
+            crypto: None,
             dedup: Dedup::new(),
 
             pending: Retransmits::default(),
@@ -3143,6 +3157,20 @@ impl PacketSpace {
         // congestion check obvious.
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
+    }
+}
+
+struct CryptoSpace {
+    packet: Crypto,
+    header: HeaderCrypto,
+}
+
+impl CryptoSpace {
+    pub fn new(packet: Crypto) -> Self {
+        Self {
+            header: packet.header_crypto(),
+            packet,
+        }
     }
 }
 
