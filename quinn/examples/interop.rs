@@ -5,10 +5,13 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 extern crate futures;
+extern crate rustls;
 extern crate slog_term;
 extern crate structopt;
 
 use std::net::ToSocketAddrs;
+use std::str;
+use std::sync::{Arc, Mutex};
 
 use futures::{Future, Stream};
 use structopt::StructOpt;
@@ -51,6 +54,10 @@ fn main() {
     ::std::process::exit(code);
 }
 
+struct State {
+    saw_cert: bool,
+}
+
 fn run(log: Logger, options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
@@ -59,15 +66,23 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut runtime = Runtime::new()?;
 
+    let state = Arc::new(Mutex::new(State { saw_cert: false }));
+
     let mut builder = quinn::Endpoint::new();
-    let mut client_config = quinn::ClientConfigBuilder::new();
-    client_config.accept_insecure_certs(); // Various interop test servers use self-signed certs
-    client_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
-    builder.logger(log.clone());
+    let mut tls_config = rustls::ClientConfig::new();
+    tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+    tls_config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
+    tls_config.alpn_protocols = vec![str::from_utf8(quinn::ALPN_QUIC_HTTP).unwrap().into()];
     if options.keylog {
-        client_config.enable_keylog();
+        tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-    let client_config = client_config.build();
+    let client_config = quinn::ClientConfig {
+        tls_config: Arc::new(tls_config),
+    };
+
+    builder.logger(log.clone());
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -75,12 +90,14 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut stream_data = false;
     let mut close = false;
     let mut ticket = None;
+    let mut resumption = false;
     let result = runtime.block_on(
         endpoint
             .connect_with(&client_config, &remote, &options.host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
                 println!("connected");
+                assert!(state.lock().unwrap().saw_cert);
                 handshake = true;
                 let tickets = conn.session_tickets;
                 let conn = conn.connection;
@@ -106,6 +123,20 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                     ticket = Some(x);
                                 }
                             })
+                    })
+            })
+            .and_then(|_| {
+                println!("attempting resumption");
+                state.lock().unwrap().saw_cert = false;
+                endpoint
+                    .connect_with(&client_config, &remote, &options.host)
+                    .unwrap()
+                    .map_err(|e| format_err!("failed to connect: {}", e))
+                    .and_then(|conn| {
+                        resumption = !state.lock().unwrap().saw_cert;
+                        conn.connection
+                            .close(0, b"done")
+                            .map_err(|_| unreachable!())
                     })
             }),
     );
@@ -134,35 +165,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             println!("failure: {}", e);
         }
     }
-
-    let resumption = false;
-    /*
-    if let Some(ticket) = ticket {
-        println!("attempting 0-RTT");
-        let (conn, established) = endpoint.connect_zero_rtt(
-            &remote,
-            &options.host,
-        )?;
-        let conn = conn.connection;
-        let request = conn
-            .open_bi()
-            .map_err(|e| format_err!("failed to open stream: {}", e))
-            .and_then(|stream| get(stream))
-            .and_then(|data| {
-                println!("read {} bytes, closing", data.len());
-                resumption = conn.session_resumed();
-                conn.close(0, b"done").map_err(|_| unreachable!())
-            });
-        let result = runtime.block_on(
-            established
-                .map_err(|e| format_err!("failed to connect: {}", e))
-                .join(request),
-        );
-        if let Err(e) = result {
-            println!("failure: {}", e);
-        }
-    }
-    */
 
     if handshake {
         print!("VH");
@@ -196,4 +198,18 @@ fn get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> 
                 .map_err(|e| format_err!("failed to read response: {}", e))
         })
         .map(|(_, data)| data)
+}
+
+struct InteropVerifier(Arc<Mutex<State>>);
+impl rustls::ServerCertVerifier for InteropVerifier {
+    fn verify_server_cert(
+        &self,
+        _roots: &rustls::RootCertStore,
+        _presented_certs: &[rustls::Certificate],
+        _dns_name: webpki::DNSNameRef,
+        _ocsp_response: &[u8],
+    ) -> std::result::Result<rustls::ServerCertVerified, rustls::TLSError> {
+        self.0.lock().unwrap().saw_cert = true;
+        Ok(rustls::ServerCertVerified::assertion())
+    }
 }
