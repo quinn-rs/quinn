@@ -405,6 +405,10 @@ impl Header {
         match *self {
             Short { .. } => SpaceId::Data,
             Long {
+                ty: LongType::ZeroRtt,
+                ..
+            } => SpaceId::Data,
+            Long {
                 ty: LongType::Handshake,
                 ..
             } => SpaceId::Handshake,
@@ -422,6 +426,16 @@ impl Header {
     pub fn is_short(&self) -> bool {
         match *self {
             Header::Short { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_0rtt(&self) -> bool {
+        match *self {
+            Header::Long {
+                ty: LongType::ZeroRtt,
+                ..
+            } => true,
             _ => false,
         }
     }
