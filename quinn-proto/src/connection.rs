@@ -2264,7 +2264,7 @@ impl Connection {
         let key_phase = packet.header.key_phase();
 
         let mut crypto_update = None;
-        let crypto = if key_phase == self.key_phase {
+        let crypto = if key_phase == self.key_phase || space != SpaceId::Data {
             &self.spaces[space as usize].as_mut().unwrap().crypto
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
             if number < crypto.end_packet {
@@ -2275,7 +2275,6 @@ impl Connection {
         }) {
             &prev.crypto
         } else {
-            assert_eq!(space, SpaceId::Data);
             crypto_update = Some(
                 self.spaces[space as usize]
                     .as_mut()
