@@ -41,7 +41,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Explicit congestion notification
 - [ ] Migration
 - [ ] 0-RTT data
-- [ ] Session resumption
+- [x] Session resumption
 - [ ] HTTP over QUIC
 
 ## How to start
