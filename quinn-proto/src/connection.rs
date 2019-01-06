@@ -85,8 +85,10 @@ pub struct Connection {
     //
     path_challenge_pending: bool,
     ping_pending: bool,
-    /// packet number, token
-    path_response: Option<(u64, u64)>,
+    /// PATH_RESPONSEs to send on the current path
+    path_response: Option<PathResponse>,
+    /// PATH_RESPONSEs to send on alternate paths, due to path validation probes
+    offpath_responses: Vec<(SocketAddr, u64)>,
 
     //
     // Loss Detection
@@ -212,6 +214,7 @@ impl Connection {
             path_challenge_pending: false,
             ping_pending: false,
             path_response: None,
+            offpath_responses: Vec::new(),
 
             crypto_count: 0,
             pto_count: 0,
@@ -258,10 +261,10 @@ impl Connection {
     /// - an incoming packet is handled
     /// - any timer expires
     pub fn poll_io(&mut self, now: u64) -> Option<Io> {
-        if let Some(packet) = self.next_packet(now) {
+        if let Some((destination, packet)) = self.next_packet(now) {
             self.reset_idle_timeout(now);
             return Some(Io::Transmit {
-                destination: self.remote,
+                destination,
                 ecn: if self.sending_ecn {
                     Some(EcnCodepoint::ECT0)
                 } else {
@@ -1435,15 +1438,22 @@ impl Connection {
                     self.state = State::Draining;
                     return Ok(());
                 }
-                Frame::PathChallenge(token) => match self.path_response {
-                    None => {
-                        self.path_response = Some((number, token));
+                Frame::PathChallenge(token) => {
+                    if remote == self.remote {
+                        if self
+                            .path_response
+                            .as_ref()
+                            .map_or(true, |x| x.packet <= number)
+                        {
+                            self.path_response = Some(PathResponse {
+                                packet: number,
+                                token,
+                            });
+                        }
+                    } else {
+                        self.offpath_responses.push((remote, token));
                     }
-                    Some((existing, _)) if number > existing => {
-                        self.path_response = Some((number, token));
-                    }
-                    Some(_) => {}
-                },
+                }
                 Frame::PathResponse(token) => {
                     if self.path_challenge != Some(token) || remote != self.remote {
                         continue;
@@ -1717,11 +1727,14 @@ impl Connection {
 
         // PATH_RESPONSE
         if buf.len() + 9 < max_size {
-            // No need to retransmit these, so we don't save the value after encoding it.
-            if let Some((_, x)) = self.path_response.take() {
-                trace!(self.log, "PATH_RESPONSE"; "value" => format!("{:08x}", x));
+            if let Some(response) = self.path_response.take() {
+                trace!(
+                    self.log,
+                    "PATH_RESPONSE {token:08x}",
+                    token = response.token
+                );
                 buf.write(frame::Type::PATH_RESPONSE);
-                buf.write(x);
+                buf.write(response.token);
             }
         }
 
@@ -1917,7 +1930,7 @@ impl Connection {
         (sent, acks)
     }
 
-    fn next_packet(&mut self, now: u64) -> Option<Box<[u8]>> {
+    fn next_packet(&mut self, now: u64) -> Option<(SocketAddr, Box<[u8]>)> {
         let (space_id, close) = match self.state {
             State::Draining | State::Drained => {
                 return None;
@@ -2022,7 +2035,7 @@ impl Connection {
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len();
 
-        let sent = if close {
+        let (remote, sent) = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
             let max_len = self.mtu as usize - header_len - space.crypto.tag_len();
             match self.state {
@@ -2034,9 +2047,19 @@ impl Connection {
                 }) => x.encode(&mut buf, max_len),
                 _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
             }
-            None
+            (self.remote, None)
+        } else if let Some((remote, token)) = self.offpath_responses.pop() {
+            // For simplicity's sake, we don't bother trying to batch together or deduplicate path
+            // validation probes.
+            trace!(self.log, "PATH_RESPONSE {token:08x}", token = token);
+            buf.write(frame::Type::PATH_RESPONSE);
+            buf.write(token);
+            (remote, None)
         } else {
-            Some(self.populate_packet(now, space_id, &mut buf))
+            (
+                self.remote,
+                Some(self.populate_packet(now, space_id, &mut buf)),
+            )
         };
 
         if probe && ack_only && !self.state.is_handshake() {
@@ -2103,7 +2126,7 @@ impl Connection {
         trace!(self.log, "{len} bytes", len = buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
-        Some(buf.into())
+        Some((remote, buf.into()))
     }
 
     /// Close a connection immediately
@@ -2571,7 +2594,10 @@ impl Connection {
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.path_challenge_pending || self.ping_pending || self.path_response.is_some()
+        self.path_challenge_pending
+            || self.ping_pending
+            || self.path_response.is_some()
+            || !self.offpath_responses.is_empty()
     }
 }
 
@@ -3172,4 +3198,10 @@ impl RttEstimator {
             self.smoothed = (7 * self.smoothed + self.latest) / 8;
         }
     }
+}
+
+struct PathResponse {
+    /// The packet number the corresponding PATH_CHALLENGE was received in
+    packet: u64,
+    token: u64,
 }
