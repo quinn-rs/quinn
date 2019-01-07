@@ -177,10 +177,7 @@ mod tests {
      */
     #[test]
     fn test_static_table_index_is_0_based() {
-        assert_eq!(
-            StaticTable::get(0),
-            Ok(&HeaderField::new(":authority", ""))
-        );
+        assert_eq!(StaticTable::get(0), Ok(&HeaderField::new(":authority", "")));
     }
 
     #[test]
