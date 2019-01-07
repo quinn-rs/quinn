@@ -66,8 +66,8 @@ impl Decoder {
         while buf.has_remaining() {
             let first = buf.bytes()[0];
             let field = match first {
+                // 4.5.2. Indexed Header Field
                 x if x & 0b1000_0000 != 0 => {
-                    // 4.5.2. Indexed Header Field
                     let (flags, index) = prefix_int::decode(6, buf)?;
                     if flags & 0b01 != 0 {
                         StaticTable::get(index)?.clone()
@@ -75,14 +75,14 @@ impl Decoder {
                         self.table.get(self.vas.relative(index)?)?.clone()
                     }
                 }
+                // 4.5.3. Indexed Header Field With Post-Base Index
                 x if x & 0b1111_0000 == 0b0001_0000 => {
-                    // 4.5.3. Indexed Header Field With Post-Base Index
                     let (_, postbase_index) = prefix_int::decode(4, buf)?;
                     let index = self.vas.post_base(postbase_index)?;
                     self.table.get(index)?.clone()
                 }
+                // 4.5.4. Literal Header Field With Name Reference
                 x if x & 0b1100_0000 == 0b0100_0000 => {
-                    // 4.5.4. Literal Header Field With Name Reference
                     let (flags, index) = prefix_int::decode(4, buf)?;
 
                     let field = if flags & 0b0001 != 0 {
@@ -93,20 +93,18 @@ impl Decoder {
 
                     field.with_value(prefix_string::decode(8, buf)?)
                 }
+                // 4.5.5. Literal Header Field With Post-Base Name Reference
                 x if x & 0b1111_0000 == 0 => {
-                    // 4.5.5. Literal Header Field With Post-Base Name Reference
                     let (_flags, postbase_index) = prefix_int::decode(3, buf)?.into();
                     let index = self.vas.post_base(postbase_index)?;
                     let field = self.table.get(index)?.clone();
                     field.with_value(prefix_string::decode(8, buf)?)
                 }
-                x if x & 0b1110_0000 == 0b0010_0000 => {
-                    // 4.5.6. Literal Header Field Without Name Reference
-                    HeaderField {
-                        name: prefix_string::decode(4, buf)?.into(),
-                        value: prefix_string::decode(8, buf)?.into(),
-                    }
-                }
+                // 4.5.6. Literal Header Field Without Name Reference
+                x if x & 0b1110_0000 == 0b0010_0000 => HeaderField {
+                    name: prefix_string::decode(4, buf)?.into(),
+                    value: prefix_string::decode(8, buf)?.into(),
+                },
                 _ => return Err(Error::UnknownPrefix),
             };
             fields.push(field);
@@ -141,10 +139,33 @@ impl Decoder {
         while buf.has_remaining() {
             let first = buf.bytes()[0];
             match first {
-                x if x & 128 == 128 => self.read_name_insert_by_ref(buf)?,
-                x if x & 64 == 64 => self.read_name_insert(buf)?,
-                x if x & 32 == 32 => self.read_table_size_update(buf)?,
-                x if x & 0xE0 == 0 => self.read_duplicate_entry(buf)?,
+                // 4.3.1. Insert With Name Reference
+                x if x & 0b1000_0000 != 0 => {
+                    let (flags, name_index) = prefix_int::decode(6, buf)?;
+                    let field = if flags & 0b01 != 0 {
+                        StaticTable::get(name_index)?
+                    } else {
+                        self.table.get(self.vas.relative(name_index)?)?
+                    };
+                    self.put_field(field.with_value(prefix_string::decode(8, buf)?));
+                }
+                // 4.3.2. Insert Without Name Reference
+                x if x & 0b0100_0000 == 0b0100_0000 => {
+                    let name = prefix_string::decode(6, buf)?;
+                    let value = prefix_string::decode(8, buf)?;
+                    self.put_field(HeaderField::new(name, value));
+                }
+                // 4.3.3. Duplicate
+                x if x & 0b1110_0000 == 0 => {
+                    let (_, dup_index) = prefix_int::decode(5, buf)?;
+                    let field = self.table.get(self.vas.relative(dup_index)?)?;
+                    self.put_field(field.clone());
+                }
+                // 4.3.4. Dynamic Table Size Update
+                x if x & 0b0010_0000 == 0b0010_0000 => {
+                    let (_, size) = prefix_int::decode(5, buf)?;
+                    self.vas.drop_many(self.table.set_max_mem_size(size)?);
+                }
                 _ => return Err(Error::UnknownPrefix),
             }
         }
@@ -152,72 +173,12 @@ impl Decoder {
         Ok(())
     }
 
-    pub fn relative_field(&self, index: usize) -> Result<&HeaderField, Error> {
-        Ok(self.table.get(self.vas.relative(index)?)?)
-    }
-
     pub fn put_field(&mut self, field: HeaderField) {
         let (is_added, dropped) = self.table.put_field(field);
-
         if is_added {
             self.vas.add();
         }
         self.vas.drop_many(dropped);
-    }
-
-    fn resize_table(&mut self, size: usize) -> Result<(), Error> {
-        self.table
-            .set_max_mem_size(size)
-            .map(|x| {
-                self.vas.drop_many(x);
-            })
-            .map_err(|_| Error::BadMaximumDynamicTableSize)
-    }
-
-    // TODO remove this when base index is modifiable via `feed_stream`
-    pub fn temp_set_base_index(&mut self, base: usize) {
-        self.vas.set_base_index(base);
-    }
-
-    fn read_name_insert_by_ref<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        let (flags, name_index) = prefix_int::decode(6, buf)?;
-        let value = prefix_string::decode(8, buf)?;
-
-        let field = if flags & 0b01 != 0 {
-            StaticTable::get(name_index)?
-        } else {
-            self.relative_field(name_index)?
-        };
-
-        self.put_field(HeaderField {
-            name: field.name.clone(),
-            value: Cow::Owned(value),
-        });
-
-        Ok(())
-    }
-
-    fn read_name_insert<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        let name = prefix_string::decode(6, buf)?;
-        let value = prefix_string::decode(8, buf)?;
-        self.put_field(HeaderField::new(name, value));
-        Ok(())
-    }
-
-    fn read_table_size_update<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        let (_, size) = prefix_int::decode(5, buf)?;
-        self.resize_table(size)
-    }
-
-    fn read_duplicate_entry<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        let (_, dup_index) = prefix_int::decode(5, buf)?;
-
-        let field = self
-            .relative_field(dup_index)?;
-
-        self.put_field(field.clone());
-
-        Ok(())
     }
 }
 
@@ -266,8 +227,6 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
-        let text = "serial value";
-
         let bytes = vec![
             // code, from static, name index
             128 | 64 | 1,
@@ -289,17 +248,14 @@ mod tests {
         ];
 
         let mut decoder = Decoder::new();
-        let model_field = StaticTable::get(1).map(|x| x.clone());
-        let expected_field =
-            HeaderField::new(model_field.expect("field exists at name index").name, text);
-
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed_stream(&mut cursor);
-        assert_eq!(res, Ok(()));
+        assert!(decoder.feed_stream(&mut cursor).is_ok());
 
-        decoder.temp_set_base_index(1);
-        let field = decoder.relative_field(0);
-        assert_eq!(field, Ok(&expected_field));
+        decoder.vas.set_base_index(1);
+        assert_eq!(
+            decoder.table.get(decoder.vas.relative(0).unwrap()),
+            Ok(&StaticTable::get(1).unwrap().with_value("serial value"))
+        );
     }
 
     /**
@@ -355,7 +311,10 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed_stream(&mut cursor);
-        assert_eq!(res, Err(Error::InvalidIndex(vas::Error::BadRelativeIndex(3000))));
+        assert_eq!(
+            res,
+            Err(Error::InvalidIndex(vas::Error::BadRelativeIndex(3000)))
+        );
     }
 
     /**
@@ -364,9 +323,6 @@ mod tests {
      */
     #[test]
     fn test_insert_field_without_name_ref() {
-        let key = "key";
-        let value = "value";
-
         let bytes = vec![
             // code, not huffman, string size
             64 | 0 | 3,
@@ -385,15 +341,14 @@ mod tests {
         ];
 
         let mut decoder = Decoder::new();
-        let expected_field = HeaderField::new(key, value);
-
         let mut cursor = Cursor::new(&bytes);
-        let res = decoder.feed_stream(&mut cursor);
-        assert_eq!(res, Ok(()));
+        assert!(decoder.feed_stream(&mut cursor).is_ok());
 
-        decoder.temp_set_base_index(1);
-        let field = decoder.relative_field(0);
-        assert_eq!(field, Ok(&expected_field));
+        decoder.vas.set_base_index(1);
+        assert_eq!(
+            decoder.table.get(decoder.vas.relative(0).unwrap()),
+            Ok(&HeaderField::new("key", "value"))
+        );
     }
 
     /**
@@ -412,7 +367,7 @@ mod tests {
         let mut decoder = Decoder::new();
         decoder.put_field(HeaderField::new("", ""));
         decoder.put_field(HeaderField::new("", ""));
-        decoder.temp_set_base_index(2);
+        decoder.vas.set_base_index(2);
         assert_eq!(decoder.table.count(), 2);
 
         let mut cursor = Cursor::new(&bytes);
