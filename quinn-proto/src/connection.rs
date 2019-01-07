@@ -949,9 +949,10 @@ impl Connection {
     ) {
         trace!(
             self.log,
-            "connection got {space:?} packet ({len} bytes)",
+            "got {space:?} packet ({len} bytes) from {remote}",
             space = packet.header.space(),
-            len = packet.payload.len() + packet.header_data.len()
+            len = packet.payload.len() + packet.header_data.len(),
+            remote = remote,
         );
         let was_closed = self.state.is_closed();
 
@@ -1594,6 +1595,12 @@ impl Connection {
                         return Err(TransportError::PROTOCOL_VIOLATION);
                     }
                     if let Some(old) = self.loc_cids.remove(&sequence) {
+                        trace!(
+                            self.log,
+                            "peer retired CID {sequence}: {id}",
+                            sequence = sequence,
+                            id = old
+                        );
                         self.io.retired_cids.push(old);
                     }
                 }
@@ -2124,7 +2131,12 @@ impl Connection {
             );
         }
 
-        trace!(self.log, "{len} bytes", len = buf.len());
+        trace!(
+            self.log,
+            "{len} bytes to {remote}",
+            len = buf.len(),
+            remote = remote
+        );
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
         Some((remote, buf.into()))

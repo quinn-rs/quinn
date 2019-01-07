@@ -322,7 +322,11 @@ impl Endpoint {
             return;
         }
 
-        debug!(self.log, "sending stateless reset");
+        debug!(
+            self.log,
+            "sending stateless reset to {remote}",
+            remote = remote
+        );
         let mut buf = Vec::<u8>::new();
         let padding_len = self.rng.gen_range(
             MIN_PADDING_LEN,
