@@ -101,10 +101,8 @@ impl Decoder {
                     // 4.5.4. Literal Header Field With Name Reference
                     let (flags, index) = prefix_int::decode(4, buf)?;
 
-                    let mut field = if flags & 0b0001 != 0 {
-                        StaticTable::get(index)
-                            .ok_or(Error::BadAbsoluteIndex(index))?
-                            .clone()
+                    let field = if flags & 0b0001 != 0 {
+                        StaticTable::get(index).ok_or(Error::BadAbsoluteIndex(index))?
                     } else {
                         let absolute = self
                             .vas
@@ -113,11 +111,9 @@ impl Decoder {
                         self.table
                             .get(absolute)
                             .ok_or(Error::BadAbsoluteIndex(index))?
-                            .clone()
                     };
 
-                    field.value = prefix_string::decode(8, buf)?.into();
-                    field
+                    field.with_value(prefix_string::decode(8, buf)?)
                 }
                 x if x & 0b1111_0000 == 0 => {
                     // 4.5.5. Literal Header Field With Post-Base Name Reference
@@ -126,13 +122,12 @@ impl Decoder {
                         .vas
                         .post_base(postbase_index)
                         .ok_or(Error::BadPostBaseIndex(postbase_index))?;
-                    let mut field = self
+                    let field = self
                         .table
                         .get(index)
                         .ok_or(Error::BadAbsoluteIndex(index))?
                         .clone();
-                    field.value = prefix_string::decode(8, buf)?.into();
-                    field
+                    field.with_value(prefix_string::decode(8, buf)?)
                 }
                 x if x & 0b1110_0000 == 0b0010_0000 => {
                     // 4.5.6. Literal Header Field Without Name Reference
@@ -568,14 +563,15 @@ mod tests {
         prefix_int::encode(4, 0b0101, 18, &mut buf); // static  :method GET
         prefix_string::encode(8, 0, b"PUT", &mut buf).unwrap();
 
-        let mut foo1_val = foo1.clone();
-        foo1_val.value = b"new bar1".to_vec().into();
-        let mut get_val = StaticTable::get(18).unwrap().clone();
-        get_val.value = b"PUT".to_vec().into();
-
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[foo1_val, get_val])
+        assert_eq!(
+            headers,
+            &[
+                foo1.with_value("new bar1"),
+                StaticTable::get(18).unwrap().with_value("PUT")
+            ]
+        )
     }
 
     #[test]
@@ -599,12 +595,9 @@ mod tests {
         prefix_int::encode(3, 0b00000, 0, &mut buf); // post base foo3
         prefix_string::encode(8, 0, b"new bar3", &mut buf).unwrap();
 
-        let mut foo3_val = foo3.clone();
-        foo3_val.value = b"new bar3".to_vec().into();
-
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[foo3_val]);
+        assert_eq!(headers, &[foo3.with_value("new bar3")]);
     }
 
     #[test]

@@ -31,6 +31,16 @@ impl HeaderField {
     pub fn mem_size(&self) -> usize {
         self.name.len() + self.value.len() + ESTIMATED_OVERHEAD_BYTES
     }
+
+    pub fn with_value<T>(&self, value: T) -> Self
+    where
+        T: Into<Vec<u8>>,
+    {
+        Self {
+            name: self.name.to_owned(),
+            value: Cow::Owned(value.into()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -53,4 +63,18 @@ mod tests {
         assert_eq!(field.mem_size(), 4 + 5 + 32);
     }
 
+    #[test]
+    fn with_value() {
+        let field = HeaderField {
+            name: Cow::Borrowed(b"Name"),
+            value: Cow::Borrowed(b"Value"),
+        };
+        assert_eq!(
+            field.with_value("New value"),
+            HeaderField {
+                name: Cow::Borrowed(b"Name"),
+                value: Cow::Borrowed(b"New value"),
+            }
+        );
+    }
 }
