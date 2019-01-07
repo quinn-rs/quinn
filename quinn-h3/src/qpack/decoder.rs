@@ -6,8 +6,8 @@ use bytes::Buf;
 use std::borrow::Cow;
 use std::io::Cursor;
 
-use super::table::{DynamicTable, HeaderField, StaticTable};
-use super::vas::VirtualAddressSpace;
+use super::table::{dynamic, static_, DynamicTable, HeaderField, StaticTable};
+use super::vas::{self, VirtualAddressSpace};
 
 use super::prefix_int;
 use super::prefix_string;
@@ -17,12 +17,11 @@ pub enum Error {
     InvalidInteger(prefix_int::Error),
     InvalidString(prefix_string::Error),
     BadMaximumDynamicTableSize,
-    BadNameIndexOnDynamicTable,
+    BadNameIndexOnDynamicTable(usize),
     BadNameIndexOnStaticTable,
     BadDuplicateIndex,
-    BadPostBaseIndex(usize),
-    BadAbsoluteIndex(usize),
-    BadRelativeIndex(usize),
+    InvalidIndex(vas::Error),
+    InvalidStaticIndex(usize),
     UnknownPrefix,
     MissingRefs,
 }
@@ -71,46 +70,25 @@ impl Decoder {
                     // 4.5.2. Indexed Header Field
                     let (flags, index) = prefix_int::decode(6, buf)?;
                     if flags & 0b01 != 0 {
-                        StaticTable::get(index)
-                            .ok_or(Error::BadAbsoluteIndex(index))?
-                            .clone()
+                        StaticTable::get(index)?.clone()
                     } else {
-                        let absolute = self
-                            .vas
-                            .relative(index)
-                            .ok_or(Error::BadRelativeIndex(index))?;
-                        self.table
-                            .get(absolute)
-                            .ok_or(Error::BadAbsoluteIndex(index))?
-                            .clone()
+                        self.table.get(self.vas.relative(index)?)?.clone()
                     }
                 }
                 x if x & 0b1111_0000 == 0b0001_0000 => {
                     // 4.5.3. Indexed Header Field With Post-Base Index
                     let (_, postbase_index) = prefix_int::decode(4, buf)?;
-                    let index = self
-                        .vas
-                        .post_base(postbase_index)
-                        .ok_or(Error::BadPostBaseIndex(postbase_index))?;
-                    self.table
-                        .get(index)
-                        .ok_or(Error::BadAbsoluteIndex(index))?
-                        .clone()
+                    let index = self.vas.post_base(postbase_index)?;
+                    self.table.get(index)?.clone()
                 }
                 x if x & 0b1100_0000 == 0b0100_0000 => {
                     // 4.5.4. Literal Header Field With Name Reference
                     let (flags, index) = prefix_int::decode(4, buf)?;
 
                     let field = if flags & 0b0001 != 0 {
-                        StaticTable::get(index).ok_or(Error::BadAbsoluteIndex(index))?
+                        StaticTable::get(index)?
                     } else {
-                        let absolute = self
-                            .vas
-                            .relative(index)
-                            .ok_or(Error::BadRelativeIndex(index))?;
-                        self.table
-                            .get(absolute)
-                            .ok_or(Error::BadAbsoluteIndex(index))?
+                        self.table.get(self.vas.relative(index)?)?
                     };
 
                     field.with_value(prefix_string::decode(8, buf)?)
@@ -118,15 +96,8 @@ impl Decoder {
                 x if x & 0b1111_0000 == 0 => {
                     // 4.5.5. Literal Header Field With Post-Base Name Reference
                     let (_flags, postbase_index) = prefix_int::decode(3, buf)?.into();
-                    let index = self
-                        .vas
-                        .post_base(postbase_index)
-                        .ok_or(Error::BadPostBaseIndex(postbase_index))?;
-                    let field = self
-                        .table
-                        .get(index)
-                        .ok_or(Error::BadAbsoluteIndex(index))?
-                        .clone();
+                    let index = self.vas.post_base(postbase_index)?;
+                    let field = self.table.get(index)?.clone();
                     field.with_value(prefix_string::decode(8, buf)?)
                 }
                 x if x & 0b1110_0000 == 0b0010_0000 => {
@@ -181,8 +152,8 @@ impl Decoder {
         Ok(())
     }
 
-    pub fn relative_field(&self, index: usize) -> Option<&HeaderField> {
-        self.vas.relative(index).and_then(|x| self.table.get(x))
+    pub fn relative_field(&self, index: usize) -> Result<&HeaderField, Error> {
+        Ok(self.table.get(self.vas.relative(index)?)?)
     }
 
     pub fn put_field(&mut self, field: HeaderField) {
@@ -213,10 +184,9 @@ impl Decoder {
         let value = prefix_string::decode(8, buf)?;
 
         let field = if flags & 0b01 != 0 {
-            StaticTable::get(name_index).ok_or(Error::BadNameIndexOnStaticTable)?
+            StaticTable::get(name_index)?
         } else {
-            self.relative_field(name_index)
-                .ok_or(Error::BadNameIndexOnDynamicTable)?
+            self.relative_field(name_index)?
         };
 
         self.put_field(HeaderField {
@@ -243,8 +213,7 @@ impl Decoder {
         let (_, dup_index) = prefix_int::decode(5, buf)?;
 
         let field = self
-            .relative_field(dup_index)
-            .ok_or(Error::BadDuplicateIndex)?;
+            .relative_field(dup_index)?;
 
         self.put_field(field.clone());
 
@@ -264,6 +233,29 @@ impl From<prefix_string::Error> for Error {
     }
 }
 
+impl From<vas::Error> for Error {
+    fn from(e: vas::Error) -> Self {
+        Error::InvalidIndex(e)
+    }
+}
+
+impl From<static_::Error> for Error {
+    fn from(e: static_::Error) -> Self {
+        match e {
+            static_::Error::Unknown(i) => Error::InvalidStaticIndex(i),
+        }
+    }
+}
+
+impl From<dynamic::ErrorKind> for Error {
+    fn from(e: dynamic::ErrorKind) -> Self {
+        match e {
+            dynamic::ErrorKind::MaximumTableSizeTooLarge => Error::BadMaximumDynamicTableSize,
+            dynamic::ErrorKind::BadIndex(i) => Error::BadNameIndexOnDynamicTable(i),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,7 +266,6 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
-        let name_index = 1u8;
         let text = "serial value";
 
         let bytes = vec![
@@ -298,7 +289,7 @@ mod tests {
         ];
 
         let mut decoder = Decoder::new();
-        let model_field = StaticTable::get(name_index as usize).map(|x| x.clone());
+        let model_field = StaticTable::get(1).map(|x| x.clone());
         let expected_field =
             HeaderField::new(model_field.expect("field exists at name index").name, text);
 
@@ -308,7 +299,7 @@ mod tests {
 
         decoder.temp_set_base_index(1);
         let field = decoder.relative_field(0);
-        assert_eq!(field, Some(&expected_field));
+        assert_eq!(field, Ok(&expected_field));
     }
 
     /**
@@ -336,7 +327,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed_stream(&mut cursor);
-        assert_eq!(res, Err(Error::BadNameIndexOnStaticTable));
+        assert_eq!(res, Err(Error::InvalidStaticIndex(3000)));
     }
 
     /**
@@ -364,7 +355,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&bytes);
         let res = decoder.feed_stream(&mut cursor);
-        assert_eq!(res, Err(Error::BadNameIndexOnDynamicTable));
+        assert_eq!(res, Err(Error::InvalidIndex(vas::Error::BadRelativeIndex(3000))));
     }
 
     /**
@@ -402,7 +393,7 @@ mod tests {
 
         decoder.temp_set_base_index(1);
         let field = decoder.relative_field(0);
-        assert_eq!(field, Some(&expected_field));
+        assert_eq!(field, Ok(&expected_field));
     }
 
     /**

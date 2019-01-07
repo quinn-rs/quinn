@@ -74,6 +74,13 @@
 pub type RelativeIndex = usize;
 pub type AbsoluteIndex = usize;
 
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    BadRelativeIndex(usize),
+    BadAbsoluteIndex(usize),
+    BadPostbaseIndex(usize),
+}
+
 #[derive(Debug)]
 pub struct VirtualAddressSpace {
     inserted: usize,
@@ -116,27 +123,27 @@ impl VirtualAddressSpace {
         self.delta -= count;
     }
 
-    pub fn relative(&self, index: RelativeIndex) -> Option<usize> {
+    pub fn relative(&self, index: RelativeIndex) -> Result<usize, Error> {
         if self.delta == 0 || index > self.base || self.base - index <= self.dropped {
-            None
+            Err(Error::BadRelativeIndex(index))
         } else {
-            Some((self.base - index - 1) as usize)
+            Ok(self.base - index - 1)
         }
     }
 
-    pub fn post_base(&self, index: RelativeIndex) -> Option<usize> {
+    pub fn post_base(&self, index: RelativeIndex) -> Result<usize, Error> {
         if self.delta == 0 || self.base + index >= self.inserted {
-            None
+            Err(Error::BadPostbaseIndex(index))
         } else {
-            Some((self.base - self.dropped + index) as usize)
+            Ok(self.base - self.dropped + index)
         }
     }
 
-    pub fn absolute(&self, index: AbsoluteIndex) -> Option<usize> {
+    pub fn absolute(&self, index: AbsoluteIndex) -> Result<usize, Error> {
         if index == 0 || index <= self.dropped || index > self.inserted {
-            None
+            Err(Error::BadAbsoluteIndex(index))
         } else {
-            Some((index - self.dropped - 1) as usize)
+            Ok(index - self.dropped - 1)
         }
     }
 
@@ -159,14 +166,14 @@ mod tests {
     fn test_no_relative_index_when_empty() {
         let vas = VirtualAddressSpace::new();
         let res = vas.relative(0);
-        assert_eq!(res, None);
+        assert_eq!(res, Err(Error::BadRelativeIndex(0)));
     }
 
     #[test]
     fn test_no_absolute_index_when_empty() {
         let vas = VirtualAddressSpace::new();
         let res = vas.absolute(1);
-        assert_eq!(res, None);
+        assert_eq!(res, Err(Error::BadAbsoluteIndex(1)));
     }
 
     proptest! {
@@ -179,8 +186,8 @@ mod tests {
             (1..*count).for_each(|_| { vas.add(); });
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), Some(0), "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Some(0), "{:?}", vas);
+            assert_eq!(vas.relative(count - 1), Ok(0), "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
 
         #[test]
@@ -193,8 +200,8 @@ mod tests {
             (0..*count - 1).for_each(|_| vas.drop());
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), None, "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), None, "{:?}", vas);
+            assert_eq!(vas.relative(count - 1), Err(Error::BadRelativeIndex(count - 1)), "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Err(Error::BadAbsoluteIndex(abs_index)), "{:?}", vas);
         }
 
         #[test]
@@ -206,9 +213,9 @@ mod tests {
             let abs_index = vas.add();
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Some((count - 1) as usize),
+            assert_eq!(vas.relative(0), Ok(count - 1),
                        "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Some((count - 1) as usize),
+            assert_eq!(vas.absolute(abs_index), Ok(count - 1),
                        "{:?}", vas);
         }
 
@@ -222,9 +229,9 @@ mod tests {
             (0..*count - 1).for_each(|_| { vas.drop(); });
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Some((count - 1) as usize),
+            assert_eq!(vas.relative(0), Ok(count - 1),
                        "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Some(0), "{:?}", vas);
+            assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
     }
 
@@ -246,7 +253,7 @@ mod tests {
         });
 
         vas.set_base_index(4);
-        assert_eq!(vas.post_base(1), Some(5));
+        assert_eq!(vas.post_base(1), Ok(5));
     }
 
     #[test]
