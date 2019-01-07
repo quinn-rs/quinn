@@ -140,14 +140,19 @@ lazy_static! {
             .collect();
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    Unknown(usize),
+}
+
 pub struct StaticTable {}
 
 impl StaticTable {
-    pub fn get(index: usize) -> Option<&'static HeaderField> {
-        if index > Self::count() - 1 {
-            return None;
+    pub fn get(index: usize) -> Result<&'static HeaderField, Error> {
+        match PREDEFINED_HEADERS.get(index) {
+            Some(f) => Ok(f),
+            None => Err(Error::Unknown(index)),
         }
-        PREDEFINED_HEADERS.get(index)
     }
 
     pub fn count() -> usize {
@@ -174,7 +179,7 @@ mod tests {
     fn test_static_table_index_is_0_based() {
         assert_eq!(
             StaticTable::get(0),
-            Some(&HeaderField::new(":authority", ""))
+            Ok(&HeaderField::new(":authority", ""))
         );
     }
 
@@ -187,13 +192,13 @@ mod tests {
     fn test_static_table_can_get_field() {
         assert_eq!(
             StaticTable::get(98),
-            Some(&HeaderField::new("x-frame-options", "sameorigin"))
+            Ok(&HeaderField::new("x-frame-options", "sameorigin"))
         );
     }
 
     #[test]
     fn invalid_index() {
-        assert_eq!(StaticTable::get(99), None);
+        assert_eq!(StaticTable::get(99), Err(Error::Unknown(99)));
     }
 
     #[test]

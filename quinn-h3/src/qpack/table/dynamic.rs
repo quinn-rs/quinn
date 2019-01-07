@@ -21,6 +21,7 @@ pub const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 #[derive(Debug, PartialEq)]
 pub enum ErrorKind {
     MaximumTableSizeTooLarge,
+    BadIndex(usize),
 }
 
 pub struct DynamicTable {
@@ -100,8 +101,11 @@ impl DynamicTable {
         self.curr_mem_size
     }
 
-    pub fn get(&self, index: usize) -> Option<&HeaderField> {
-        self.fields.get(index)
+    pub fn get(&self, index: usize) -> Result<&HeaderField, ErrorKind> {
+        match self.fields.get(index) {
+            Some(f) => Ok(f),
+            None => Err(ErrorKind::BadIndex(index)),
+        }
     }
 
     pub fn count(&self) -> usize {
@@ -145,7 +149,7 @@ mod tests {
      *  to use for the dynamic table.  In HTTP/QUIC, this value is determined
      *  by the SETTINGS_HEADER_TABLE_SIZE setting (see Section 4.2.5.2 of
      *  [QUIC-HTTP])."
-     *  
+     *
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-4
      * "SETTINGS_HEADER_TABLE_SIZE (0x1):  An integer with a maximum value of
      *   2^30 - 1.  The default value is 4,096 bytes.  See (todo: reference
@@ -318,9 +322,9 @@ mod tests {
 
         table.put_field(HeaderField::new("Name-C", "Value-C"));
 
-        assert_eq!(table.get(0), Some(&HeaderField::new("Name-B", "Value-B")));
-        assert_eq!(table.get(1), Some(&HeaderField::new("Name-C", "Value-C")));
-        assert_eq!(table.get(2), None);
+        assert_eq!(table.get(0), Ok(&HeaderField::new("Name-B", "Value-B")));
+        assert_eq!(table.get(1), Ok(&HeaderField::new("Name-C", "Value-C")));
+        assert_eq!(table.get(2), Err(ErrorKind::BadIndex(2)));
     }
 
 }
