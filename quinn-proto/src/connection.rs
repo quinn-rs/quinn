@@ -1120,7 +1120,7 @@ impl Connection {
                         ..
                     } => {
                         if rem_cid != self.rem_handshake_cid {
-                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
+                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_handshake_cid, actual = rem_cid);
                             return Ok(());
                         }
 
@@ -1177,7 +1177,7 @@ impl Connection {
                             state.rem_cid_set = true;
                             self.state = State::Handshake(state);
                         } else if rem_cid != self.rem_handshake_cid {
-                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
+                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_handshake_cid, actual = rem_cid);
                             return Ok(());
                         }
                         self.process_early_payload(now, packet)?;
