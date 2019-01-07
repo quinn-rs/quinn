@@ -1630,7 +1630,7 @@ impl Connection {
                 self.side.is_server(),
                 "packets from unknown remote should be dropped by clients"
             );
-            self.migrate(remote);
+            self.migrate(now, remote);
             // Break linkability, if possible
             if let Some(cid) = self.rem_cids.pop() {
                 self.update_rem_cid(cid);
@@ -1640,7 +1640,7 @@ impl Connection {
         Ok(())
     }
 
-    fn migrate(&mut self, remote: SocketAddr) {
+    fn migrate(&mut self, now: u64, remote: SocketAddr) {
         trace!(
             self.log,
             "migration initiated from {remote}",
@@ -1658,7 +1658,7 @@ impl Connection {
         // Initiate path validation
         self.io.timer_start(
             Timer::PathValidation,
-            3 * cmp::max(self.pto(), self.config.initial_rtt),
+            now + 3 * cmp::max(self.pto(), 2 * self.config.initial_rtt),
         );
         self.path_challenge = Some(self.rng.gen());
         self.path_challenge_pending = true;
