@@ -979,6 +979,7 @@ fn decode_coalesced() {
         .push_back((pair.time, Some(EcnCodepoint::ECT0), coalesced.into()));
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
 }
 
 #[test]

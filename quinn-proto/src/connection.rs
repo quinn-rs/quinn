@@ -552,6 +552,7 @@ impl Connection {
                 }
                 let sent_packets =
                     mem::replace(&mut self.space_mut(space_id).sent_packets, BTreeMap::new());
+                self.lost_packets += sent_packets.len() as u64;
                 for (_, packet) in sent_packets {
                     self.in_flight.remove(&packet);
                     self.space_mut(space_id).pending += packet.retransmits;
@@ -604,10 +605,10 @@ impl Connection {
                     largest_lost_time,
                     space.sent_packets[&largest_lost].time_sent,
                 );
+                self.lost_packets += lost_packets.len() as u64;
                 for packet in &lost_packets {
                     let info = space.sent_packets.remove(&packet).unwrap();
                     self.in_flight.remove(&info);
-                    self.lost_packets += 1;
                     space.pending += info.retransmits;
                 }
                 // Don't apply congestion penalty for lost ack-only packets
