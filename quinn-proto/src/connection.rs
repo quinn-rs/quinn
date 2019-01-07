@@ -36,6 +36,8 @@ pub struct Connection {
     /// DCID of Initial packet
     pub(crate) init_cid: ConnectionId,
     loc_cids: HashMap<u64, ConnectionId>,
+    /// The CID we initially chose, for use during the handshake
+    handshake_cid: ConnectionId,
     rem_cid: ConnectionId,
     rem_cid_seq: u64,
     remote: SocketAddr,
@@ -181,6 +183,7 @@ impl Connection {
             app_closed: false,
             init_cid,
             loc_cids,
+            handshake_cid: loc_cid,
             rem_cid,
             rem_cid_seq: 0,
             remote,
@@ -2002,12 +2005,6 @@ impl Connection {
             prev.update_unacked = false;
         }
 
-        // SCID must be consistent through the handshake, even if we've issued new CIDs in 1-RTT; an
-        // earlier Handshake packet might have gotten lost.
-        let src_cid = *self
-            .loc_cids
-            .get(&0)
-            .unwrap_or_else(|| self.loc_cids.values().next().unwrap());
         let space = self.spaces[space_id as usize].as_mut().unwrap();
         let number = space.get_tx_number();
         trace!(
@@ -2025,12 +2022,12 @@ impl Connection {
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
-                src_cid,
+                src_cid: self.handshake_cid,
                 dst_cid: self.rem_cid,
                 number: PacketNumber::new(number, space.largest_acked_packet),
             },
             SpaceId::Initial => Header::Initial {
-                src_cid,
+                src_cid: self.handshake_cid,
                 dst_cid: self.rem_cid,
                 token: match self.state {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
