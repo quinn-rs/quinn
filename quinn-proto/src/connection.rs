@@ -39,6 +39,8 @@ pub struct Connection {
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
     rem_cid: ConnectionId,
+    /// The CID the peer initially chose, for use during the handshake
+    rem_handshake_cid: ConnectionId,
     rem_cid_seq: u64,
     remote: SocketAddr,
     prev_remote: Option<SocketAddr>,
@@ -185,6 +187,7 @@ impl Connection {
             loc_cids,
             handshake_cid: loc_cid,
             rem_cid,
+            rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
             remote,
             prev_remote: None,
@@ -1078,6 +1081,7 @@ impl Connection {
                         trace!(self.log, "retrying with CID {rem_cid}", rem_cid = rem_cid);
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
+                        self.rem_handshake_cid = rem_cid;
                         self.on_packet_acked(SpaceId::Initial, 0);
 
                         // Reset to initial state
@@ -1103,7 +1107,7 @@ impl Connection {
                         src_cid: rem_cid,
                         ..
                     } => {
-                        if rem_cid != self.rem_cid {
+                        if rem_cid != self.rem_handshake_cid {
                             debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
                             return Ok(());
                         }
@@ -1157,9 +1161,10 @@ impl Connection {
                             );
                             let mut state = state.clone();
                             self.rem_cid = rem_cid;
+                            self.rem_handshake_cid = rem_cid;
                             state.rem_cid_set = true;
                             self.state = State::Handshake(state);
-                        } else if rem_cid != self.rem_cid {
+                        } else if rem_cid != self.rem_handshake_cid {
                             debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_cid, actual = rem_cid);
                             return Ok(());
                         }
