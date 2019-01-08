@@ -2245,33 +2245,7 @@ impl Connection {
                 if e.get().is_closed() {
                     e.remove_entry();
                     if id.initiator() != self.side {
-                        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
-                        Some(match id.directionality() {
-                            Directionality::Uni => {
-                                self.streams.max_remote_uni += 1;
-                                space.pending.max_uni_stream_id = true;
-                                (
-                                    StreamId::new(
-                                        !self.side,
-                                        Directionality::Uni,
-                                        self.streams.max_remote_uni - 1,
-                                    ),
-                                    stream::Recv::new(self.config.stream_receive_window).into(),
-                                )
-                            }
-                            Directionality::Bi => {
-                                self.streams.max_remote_bi += 1;
-                                space.pending.max_bi_stream_id = true;
-                                (
-                                    StreamId::new(
-                                        !self.side,
-                                        Directionality::Bi,
-                                        self.streams.max_remote_bi - 1,
-                                    ),
-                                    Stream::new_bi(self.config.stream_receive_window as u64),
-                                )
-                            }
-                        })
+                        Some(id.directionality())
                     } else {
                         None
                     }
@@ -2280,9 +2254,41 @@ impl Connection {
                 }
             }
         };
-        if let Some((id, stream)) = new {
-            self.streams.streams.insert(id, stream);
+        if let Some(ty) = new {
+            self.alloc_remote_stream(ty);
         }
+    }
+
+    /// Permit an additional remote `ty` stream.
+    fn alloc_remote_stream(&mut self, ty: Directionality) {
+        let space = self.spaces[SpaceId::Data as usize].as_mut().unwrap();
+        let (id, stream) = match ty {
+            Directionality::Bi => {
+                self.streams.max_remote_bi += 1;
+                space.pending.max_bi_stream_id = true;
+                (
+                    StreamId::new(
+                        !self.side,
+                        Directionality::Bi,
+                        self.streams.max_remote_bi - 1,
+                    ),
+                    Stream::new_bi(self.config.stream_receive_window as u64),
+                )
+            }
+            Directionality::Uni => {
+                self.streams.max_remote_uni += 1;
+                space.pending.max_uni_stream_id = true;
+                (
+                    StreamId::new(
+                        !self.side,
+                        Directionality::Uni,
+                        self.streams.max_remote_uni - 1,
+                    ),
+                    stream::Recv::new(self.config.stream_receive_window).into(),
+                )
+            }
+        };
+        self.streams.streams.insert(id, stream);
     }
 
     pub fn finish(&mut self, id: StreamId) {
