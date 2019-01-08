@@ -233,28 +233,12 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
-        let bytes = vec![
-            // code, from static, name index
-            128 | 64 | 1,
-            // not huffman, string size
-            0 | 12,
-            // bytes
-            's' as u8,
-            'e' as u8,
-            'r' as u8,
-            'i' as u8,
-            'a' as u8,
-            'l' as u8,
-            ' ' as u8,
-            'v' as u8,
-            'a' as u8,
-            'l' as u8,
-            'u' as u8,
-            'e' as u8,
-        ];
+        let mut buf = vec![];
+        prefix_int::encode(6, 0b11, 1, &mut buf);
+        prefix_string::encode(8, 0, b"serial value", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&bytes);
+        let mut cursor = Cursor::new(&buf);
         assert!(decoder.feed_stream(&mut cursor).is_ok());
 
         decoder.vas.set_base_index(1);
@@ -270,24 +254,12 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_wrong_name_index_from_static_table() {
+        let mut buf = vec![];
+        prefix_int::encode(6, 0b11, 3000, &mut buf);
+        prefix_string::encode(8, 0, b"", &mut buf).unwrap();
+
         let mut decoder = Decoder::new();
-
-        // NOTE this are the values encoded
-        let _name_index = 3000;
-        let _text = "";
-
-        let bytes = vec![
-            // code, from static, name index
-            128 | 64 | 63,
-            // name index (variable length encoding)
-            128 | 121,
-            // name index (variable length encoding, end)
-            22,
-            // not huffman, string size
-            0 | 0,
-        ];
-
-        let mut cursor = Cursor::new(&bytes);
+        let mut cursor = Cursor::new(&buf);
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Err(Error::InvalidStaticIndex(3000)));
     }
@@ -298,24 +270,12 @@ mod tests {
      */
     #[test]
     fn test_insert_field_with_wrong_name_index_from_dynamic_table() {
+        let mut buf = vec![];
+        prefix_int::encode(6, 0b10, 3000, &mut buf);
+        prefix_string::encode(8, 0, b"", &mut buf).unwrap();
+
         let mut decoder = Decoder::new();
-
-        // NOTE this are the values encoded
-        let _name_index = 3000;
-        let _text = "";
-
-        let bytes = vec![
-            // code, not from static, name index
-            128 | 0 | 63,
-            // name index (variable length encoding)
-            128 | 121,
-            // name index (variable length encoding, end)
-            22,
-            // not huffman, string size
-            0 | 0,
-        ];
-
-        let mut cursor = Cursor::new(&bytes);
+        let mut cursor = Cursor::new(&buf);
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(
             res,
@@ -329,25 +289,12 @@ mod tests {
      */
     #[test]
     fn test_insert_field_without_name_ref() {
-        let bytes = vec![
-            // code, not huffman, string size
-            64 | 0 | 3,
-            // bytes
-            'k' as u8,
-            'e' as u8,
-            'y' as u8,
-            // not huffman, string size
-            0 | 5,
-            // bytes
-            'v' as u8,
-            'a' as u8,
-            'l' as u8,
-            'u' as u8,
-            'e' as u8,
-        ];
+        let mut buf = vec![];
+        prefix_string::encode(6, 0b01, b"key", &mut buf).unwrap();
+        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&bytes);
+        let mut cursor = Cursor::new(&buf);
         assert!(decoder.feed_stream(&mut cursor).is_ok());
 
         decoder.vas.set_base_index(1);
@@ -359,24 +306,20 @@ mod tests {
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
-     * 3.3.3.  Duplicate
+     * 4.3.3.  Duplicate
      */
     #[test]
     fn test_duplicate_field() {
-        let _index = 1;
-
-        let bytes = vec![
-            // code, index
-            0 | 1,
-        ];
-
         let mut decoder = Decoder::new();
         decoder.put_field(HeaderField::new("", ""));
         decoder.put_field(HeaderField::new("", ""));
         decoder.vas.set_base_index(2);
         assert_eq!(decoder.table.count(), 2);
 
-        let mut cursor = Cursor::new(&bytes);
+        let mut buf = vec![];
+        prefix_int::encode(5, 0, 1, &mut buf);
+
+        let mut cursor = Cursor::new(&buf);
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
@@ -385,22 +328,20 @@ mod tests {
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
-     * 3.3.4.  Dynamic Table Size Update
+     * 4.3.4.  Dynamic Table Size Update
      */
     #[test]
     fn test_dynamic_table_size_update() {
-        let mut decoder = Decoder::new();
-        let bytes = vec![
-            32 | 25, // 0b001 message code, size
-        ];
-        let expected_size = 25;
+        let mut buf = vec![];
+        prefix_int::encode(5, 0b001, 25, &mut buf);
 
-        let mut cursor = Cursor::new(&bytes);
+        let mut cursor = Cursor::new(&buf);
+        let mut decoder = Decoder::new();
         let res = decoder.feed_stream(&mut cursor);
         assert_eq!(res, Ok(()));
 
         let actual_max_size = decoder.table.max_mem_size();
-        assert_eq!(actual_max_size, expected_size);
+        assert_eq!(actual_max_size, 25);
     }
 
     #[test]
@@ -421,6 +362,22 @@ mod tests {
         assert_eq!(decoder.decode_header(&mut read), Err(Error::MissingRefs));
     }
 
+    fn build_decoder(n_field: usize, max_table_size: usize) -> (Decoder, usize) {
+        let mut decoder = Decoder::new();
+        let max_entries = max_table_size / 32;
+        decoder.table.set_max_mem_size(max_table_size).unwrap();
+
+        for i in 0..n_field {
+            decoder.put_field(HeaderField::new(format!("foo{}", i + 1), "bar"));
+        }
+
+        (decoder, max_entries)
+    }
+
+    fn field(n: usize) -> HeaderField {
+        HeaderField::new(format!("foo{}", n), "bar")
+    }
+
     // Largest Reference
     //   Base Index = 2
     //       |
@@ -433,16 +390,10 @@ mod tests {
 
     #[test]
     fn decode_indexed_header_field() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo2.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        let (mut decoder, max_entries) = build_decoder(2, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
         prefix_int::encode(6, 0b10, 0, &mut buf); // foo2
@@ -453,7 +404,7 @@ mod tests {
         let headers = decoder.decode_header(&mut read).unwrap();
         assert_eq!(
             headers,
-            &[foo2, foo1, StaticTable::get(18).unwrap().clone()]
+            &[field(2), field(1), StaticTable::get(18).unwrap().clone()]
         )
     }
 
@@ -471,20 +422,10 @@ mod tests {
 
     #[test]
     fn decode_post_base_indexed() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
-        let foo3 = HeaderField::new(b"foo3".to_vec(), b"bar3".to_vec());
-        let foo4 = HeaderField::new(b"foo4".to_vec(), b"bar4".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo2.clone());
-        decoder.put_field(foo3.clone());
-        decoder.put_field(foo4.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        let (mut decoder, max_entries) = build_decoder(4, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
         prefix_int::encode(6, 0b10, 0, &mut buf); // relative foo2
@@ -493,21 +434,15 @@ mod tests {
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[foo2, foo3, foo4])
+        assert_eq!(headers, &[field(2), field(3), field(4)])
     }
 
     #[test]
     fn decode_name_ref_header_field() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo2.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        let (mut decoder, max_entries) = build_decoder(2, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
         prefix_int::encode(4, 0b0100, 1, &mut buf); // foo1
@@ -520,7 +455,7 @@ mod tests {
         assert_eq!(
             headers,
             &[
-                foo1.with_value("new bar1"),
+                field(1).with_value("new bar1"),
                 StaticTable::get(18).unwrap().with_value("PUT")
             ]
         )
@@ -528,20 +463,10 @@ mod tests {
 
     #[test]
     fn decode_post_base_name_ref_header_field() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
-        let foo3 = HeaderField::new(b"foo3".to_vec(), b"bar3".to_vec());
-        let foo4 = HeaderField::new(b"foo4".to_vec(), b"bar4".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo2.clone());
-        decoder.put_field(foo3.clone());
-        decoder.put_field(foo4.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        let (mut decoder, max_entries) = build_decoder(4, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
         prefix_int::encode(3, 0b00000, 0, &mut buf); // post base foo3
@@ -549,7 +474,7 @@ mod tests {
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[foo3.with_value("new bar3")]);
+        assert_eq!(headers, &[field(3).with_value("new bar3")]);
     }
 
     #[test]
@@ -582,21 +507,10 @@ mod tests {
 
     #[test]
     fn decode_single_pass_encoded() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
-        let foo3 = HeaderField::new(b"foo3".to_vec(), b"bar3".to_vec());
-        let foo4 = HeaderField::new(b"foo4".to_vec(), b"bar4".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo2.clone());
-        decoder.put_field(foo3.clone());
-        decoder.put_field(foo4.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
-        decoder.table.set_max_mem_size(4242 * 31).unwrap();
+        let (mut decoder, max_entries) = build_decoder(4, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (4 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (4 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 1, 3, &mut buf); // base index negative = 0
         prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo1
@@ -606,21 +520,15 @@ mod tests {
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[foo1, foo2, foo3, foo4])
+        assert_eq!(headers, &[field(1), field(2), field(3), field(4)]);
     }
 
     #[test]
     fn base_index_too_small() {
-        let mut decoder = Decoder::new();
-        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
-        decoder.put_field(foo1.clone());
-        decoder.put_field(foo1.clone());
-
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
-        decoder.table.set_max_mem_size(4242 * 31).unwrap();
+        let (mut decoder, max_entries) = build_decoder(2, 4242 * 31);
 
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 1, 2, &mut buf); // base index negative = 0
 
@@ -633,30 +541,23 @@ mod tests {
 
     #[test]
     fn largest_ref_greater_than_max_entries() {
-        let mut decoder = Decoder::new();
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
-        decoder.table.set_max_mem_size(4242 * 31).unwrap();
-
-        for i in 0..MAX_ENTRIES + 10 {
-            decoder.put_field(HeaderField::new(format!("foo{}", i + 1), "bar"));
-        }
-
+        let (mut decoder, max_entries) = build_decoder(((4242 * 31) / 32) + 10, 4242 * 31);
         let mut buf = vec![];
 
         // Pre-base relative reference
-        let encoded_largest_ref = ((MAX_ENTRIES + 5) % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = ((max_entries + 5) % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 4114
         prefix_int::encode(6, 0b10, 10, &mut buf); // relative: 4114 - 10 - 1
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(headers, &[HeaderField::new("foo4104", "bar")]);
+        assert_eq!(headers, &[field(4104)]);
 
         let mut buf = vec![];
 
         // Post-base reference
-        let encoded_largest_ref = ((MAX_ENTRIES + 10) % (2 * MAX_ENTRIES)) + 1;
+        let encoded_largest_ref = ((max_entries + 10) % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 1, 4, &mut buf); // base index = 4114
         prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo4115
@@ -664,12 +565,6 @@ mod tests {
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
-        assert_eq!(
-            headers,
-            &[
-                HeaderField::new("foo4115", "bar"),
-                HeaderField::new("foo4119", "bar")
-            ]
-        );
+        assert_eq!(headers, &[field(4115), field(4119)]);
     }
 }
