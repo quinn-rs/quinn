@@ -2,7 +2,7 @@
 // TODO remove allow dead code
 #![allow(dead_code)]
 
-use bytes::Buf;
+use bytes::{Buf, BufMut};
 use std::borrow::Cow;
 use std::io::Cursor;
 
@@ -141,45 +141,55 @@ impl Decoder {
     }
 
     // The receiving side of encoder stream
-    pub fn feed_stream<T: Buf>(&mut self, buf: &mut T) -> Result<(), Error> {
-        while buf.has_remaining() {
-            let first = buf.bytes()[0];
+    pub fn on_encoder_recv<R: Buf, W: BufMut>(
+        &mut self,
+        read: &mut R,
+        write: &mut W,
+    ) -> Result<(), Error> {
+        let inserted_on_start = self.vas.total_inserted();
+
+        while read.has_remaining() {
+            let first = read.bytes()[0];
             match first {
                 // 4.3.1. Insert With Name Reference
                 x if x & 0b1000_0000 != 0 => {
-                    let (flags, name_index) = prefix_int::decode(6, buf)?;
+                    let (flags, name_index) = prefix_int::decode(6, read)?;
                     let field = if flags & 0b01 != 0 {
                         StaticTable::get(name_index)?
                     } else {
                         self.table.get(self.vas.relative(name_index)?)?
                     };
-                    self.put_field(field.with_value(prefix_string::decode(8, buf)?));
+                    self.put_field(field.with_value(prefix_string::decode(8, read)?));
                 }
                 // 4.3.2. Insert Without Name Reference
                 x if x & 0b0100_0000 == 0b0100_0000 => {
-                    let name = prefix_string::decode(6, buf)?;
-                    let value = prefix_string::decode(8, buf)?;
+                    let name = prefix_string::decode(6, read)?;
+                    let value = prefix_string::decode(8, read)?;
                     self.put_field(HeaderField::new(name, value));
                 }
                 // 4.3.3. Duplicate
                 x if x & 0b1110_0000 == 0 => {
-                    let (_, dup_index) = prefix_int::decode(5, buf)?;
+                    let (_, dup_index) = prefix_int::decode(5, read)?;
                     let field = self.table.get(self.vas.relative(dup_index)?)?;
                     self.put_field(field.clone());
                 }
                 // 4.3.4. Dynamic Table Size Update
                 x if x & 0b0010_0000 == 0b0010_0000 => {
-                    let (_, size) = prefix_int::decode(5, buf)?;
+                    let (_, size) = prefix_int::decode(5, read)?;
                     self.vas.drop_many(self.table.set_max_mem_size(size)?);
                 }
                 _ => return Err(Error::UnknownPrefix),
             }
         }
 
+        if self.vas.total_inserted() != inserted_on_start {
+            prefix_int::encode(6, 0, self.vas.total_inserted() - inserted_on_start, write);
+        }
+
         Ok(())
     }
 
-    pub fn put_field(&mut self, field: HeaderField) {
+    fn put_field(&mut self, field: HeaderField) {
         let (is_added, dropped) = self.table.put_field(field);
         if is_added {
             self.vas.add();
@@ -238,14 +248,18 @@ mod tests {
         prefix_string::encode(8, 0, b"serial value", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&buf);
-        assert!(decoder.feed_stream(&mut cursor).is_ok());
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
+        assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
 
         decoder.vas.set_base_index(1);
         assert_eq!(
             decoder.table.get(decoder.vas.relative(0).unwrap()),
             Ok(&StaticTable::get(1).unwrap().with_value("serial value"))
         );
+
+        let mut dec_cursor = Cursor::new(&dec);
+        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
     }
 
     /**
@@ -259,8 +273,9 @@ mod tests {
         prefix_string::encode(8, 0, b"", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&buf);
-        let res = decoder.feed_stream(&mut cursor);
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
+        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
         assert_eq!(res, Err(Error::InvalidStaticIndex(3000)));
     }
 
@@ -275,12 +290,15 @@ mod tests {
         prefix_string::encode(8, 0, b"", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&buf);
-        let res = decoder.feed_stream(&mut cursor);
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
+        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
         assert_eq!(
             res,
             Err(Error::InvalidIndex(vas::Error::BadRelativeIndex(3000)))
         );
+
+        assert!(dec.is_empty());
     }
 
     /**
@@ -294,14 +312,18 @@ mod tests {
         prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
 
         let mut decoder = Decoder::new();
-        let mut cursor = Cursor::new(&buf);
-        assert!(decoder.feed_stream(&mut cursor).is_ok());
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
+        assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
 
         decoder.vas.set_base_index(1);
         assert_eq!(
             decoder.table.get(decoder.vas.relative(0).unwrap()),
             Ok(&HeaderField::new("key", "value"))
         );
+
+        let mut dec_cursor = Cursor::new(&dec);
+        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
     }
 
     /**
@@ -319,11 +341,15 @@ mod tests {
         let mut buf = vec![];
         prefix_int::encode(5, 0, 1, &mut buf);
 
-        let mut cursor = Cursor::new(&buf);
-        let res = decoder.feed_stream(&mut cursor);
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
+        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
         assert_eq!(res, Ok(()));
 
         assert_eq!(decoder.table.count(), 3);
+
+        let mut dec_cursor = Cursor::new(&dec);
+        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
     }
 
     /**
@@ -335,13 +361,15 @@ mod tests {
         let mut buf = vec![];
         prefix_int::encode(5, 0b001, 25, &mut buf);
 
-        let mut cursor = Cursor::new(&buf);
+        let mut enc = Cursor::new(&buf);
+        let mut dec = vec![];
         let mut decoder = Decoder::new();
-        let res = decoder.feed_stream(&mut cursor);
+        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
         assert_eq!(res, Ok(()));
 
         let actual_max_size = decoder.table.max_mem_size();
         assert_eq!(actual_max_size, 25);
+        assert!(dec.is_empty());
     }
 
     #[test]
