@@ -2638,11 +2638,6 @@ impl Connection {
         self.tls.get_sni_hostname()
     }
 
-    /// Whether a previous session was successfully resumed by this connection
-    pub fn session_resumed(&self) -> bool {
-        false // TODO: fixme?
-    }
-
     /// Total number of outgoing packets that have been deemed lost
     pub fn lost_packets(&self) -> u64 {
         self.lost_packets

@@ -1017,16 +1017,6 @@ impl Connection {
             .map(|x| x.into())
     }
 
-    /// Whether the cryptographic session was resumed
-    pub fn session_resumed(&self) -> bool {
-        self.0
-            .endpoint
-            .borrow()
-            .inner
-            .connection(self.0.conn)
-            .session_resumed()
-    }
-
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
