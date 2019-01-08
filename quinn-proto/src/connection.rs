@@ -1178,19 +1178,21 @@ impl Connection {
                             return Ok(());
                         }
 
-                        let params = self
-                            .tls
-                            .get_quic_transport_parameters()
-                            .ok_or_else(|| {
-                                debug!(self.log, "remote didn't send transport params");
-                                ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
-                            })
-                            .and_then(|x| {
-                                TransportParameters::read(self.side, &mut io::Cursor::new(x))
-                                    .map_err(Into::into)
-                            })?;
-                        self.set_params(params)?;
                         if self.side.is_client() {
+                            // Client-only beceause server params were set from the client's Initial
+                            let params = self
+                                .tls
+                                .get_quic_transport_parameters()
+                                .ok_or_else(|| {
+                                    debug!(self.log, "remote didn't send transport params");
+                                    ConnectionError::from(TransportError::PROTOCOL_VIOLATION)
+                                })
+                                .and_then(|x| {
+                                    TransportParameters::read(self.side, &mut io::Cursor::new(x))
+                                        .map_err(Into::into)
+                                })?;
+                            self.set_params(params)?;
+
                             // Server applications don't see connections until the handshake
                             // completes, so this would be redundant.
                             self.events.push_back(Event::Connected {
