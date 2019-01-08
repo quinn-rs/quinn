@@ -84,11 +84,15 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                     stream
                         .map_err(|_| ())
                         .and_then(move |stream| {
-                            tokio::io::write_all(stream, b"foo".to_vec()).map_err(|_| ())
+                            tokio::io::write_all(stream, b"foo".to_vec())
+                                .map_err(|e| panic!("write: {}", e))
                         })
-                        .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|_| ()))
+                        .and_then(|(stream, _)| {
+                            tokio::io::shutdown(stream).map_err(|e| panic!("finish: {}", e))
+                        })
                         .and_then(move |stream| {
-                            read_to_end(stream, usize::max_value()).map_err(|_| ())
+                            read_to_end(stream, usize::max_value())
+                                .map_err(|e| panic!("read: {}", e))
                         })
                         .and_then(move |(_, data)| {
                             assert_eq!(&data[..], b"foo");
