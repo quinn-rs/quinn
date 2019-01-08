@@ -138,7 +138,7 @@ pub struct Recv {
     /// reads
     pub unordered: bool,
     pub assembler: Assembler,
-    /// Whether the application is aware of this stream yet
+    /// Whether the application has been notified of this stream yet
     pub fresh: bool,
 }
 
