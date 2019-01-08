@@ -737,18 +737,34 @@ impl Endpoint {
     }
 }
 
-/// Parameters governing the core QUIC state machine.
+/// Parameters governing the core QUIC state machine
 pub struct Config {
-    /// Maximum number of peer-initiated bidirectional streams that may exist at one time.
-    pub max_remote_streams_bidi: u64,
-    /// Maximum number of peer-initiated  unidirectional streams that may exist at one time.
-    pub max_remote_streams_uni: u64,
+    /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
+    /// accepted locally
+    ///
+    /// Must be nonzero for the peer to open any bidirectional streams.
+    ///
+    /// Any number of streams may be in flight concurrently. However, to ensure predictable resource
+    /// use, the number of streams which the peer has initiated but which the local application has
+    /// not yet accepted will be kept below this threshold.
+    ///
+    /// Because it takes at least one round trip for an endpoint to open a new stream and be
+    /// notified of its peer's flow control updates, this imposes a hard upper bound on the number
+    /// of streams that may be opened per round-trip. In other words, this should be set to at least
+    /// the desired number of streams opened per unit time, multiplied by the round trip time.
+    ///
+    /// Note that worst-case memory use is directly proportional to `stream_window_bidi *
+    /// stream_receive_window`.
+    pub stream_window_bidi: u64,
+    /// Variant of `stream_window_bidi` affecting unidirectional streams
+    pub stream_window_uni: u64,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
     /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
     /// own idle timeout. 0 for none.
     pub idle_timeout: u64,
-    /// Maximum number of bytes the peer may transmit on any one stream before becoming blocked.
+    /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
+    /// before becoming blocked.
     ///
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Setting this smaller than `receive_window` helps ensure that a single
@@ -815,8 +831,8 @@ impl Default for Config {
         rand::thread_rng().fill_bytes(&mut reset_value);
 
         Self {
-            max_remote_streams_bidi: 0,
-            max_remote_streams_uni: 0,
+            stream_window_bidi: 0,
+            stream_window_uni: 0,
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
