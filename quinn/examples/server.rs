@@ -102,10 +102,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
     server_config.set_certificate(cert_chain, key)?;
 
-    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
-        stream_window_bidi: 64,
-        ..Default::default()
-    });
+    let mut endpoint = quinn::Endpoint::new();
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 

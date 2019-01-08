@@ -73,10 +73,7 @@ struct Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        let mut server = Config::default();
-        server.stream_window_uni = 32;
-        server.stream_window_bidi = 32;
-        Pair::new(server, Default::default(), server_config())
+        Pair::new(Default::default(), Default::default(), server_config())
     }
 }
 
@@ -458,8 +455,6 @@ fn server_stateless_reset() {
 
     let server = Config {
         reset_key,
-        stream_window_bidi: 32,
-        stream_window_uni: 32,
         ..Config::default()
     };
 
