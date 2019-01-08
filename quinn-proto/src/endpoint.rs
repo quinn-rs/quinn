@@ -744,6 +744,13 @@ impl Endpoint {
 }
 
 /// Parameters governing the core QUIC state machine
+///
+/// This should be tuned to suit the application. In particular, window sizes for streams, stream
+/// data, and overall connection data should be set differently depending on the expected round trip
+/// time, link capacity, memory availability, and rate of stream creation. The default configuration
+/// is tuned for a 100Mbps link with a 100ms round trip time, with remote endpoints opening at most
+/// 320 new streams per second. Applications which do not require remotely-initiated streams should
+/// set the stream windows to zero.
 pub struct Config {
     /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
     /// accepted locally
