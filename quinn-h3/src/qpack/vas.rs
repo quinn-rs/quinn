@@ -127,7 +127,7 @@ impl VirtualAddressSpace {
         if self.delta == 0 || index > self.base || self.base - index <= self.dropped {
             Err(Error::BadRelativeIndex(index))
         } else {
-            Ok(self.base - index - 1)
+            Ok(self.base - self.dropped - index - 1)
         }
     }
 
@@ -213,7 +213,7 @@ mod tests {
             let abs_index = vas.add();
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Ok(count - 1),
+            assert_eq!(vas.relative(0), Ok(count -1),
                        "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Ok(count - 1),
                        "{:?}", vas);
@@ -229,7 +229,7 @@ mod tests {
             (0..*count - 1).for_each(|_| { vas.drop(); });
 
             vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Ok(count - 1),
+            assert_eq!(vas.relative(0), Ok(0),
                        "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }

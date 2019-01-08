@@ -24,6 +24,7 @@ pub enum Error {
     InvalidStaticIndex(usize),
     UnknownPrefix,
     MissingRefs,
+    BadBaseIndex(isize),
 }
 
 pub struct Decoder {
@@ -45,7 +46,7 @@ impl Decoder {
         let (sign, encoded_base_index) = prefix_int::decode(7, buf)?;
         let remote_largest_ref = self.largest_ref(encoded_largest_ref);
 
-        if remote_largest_ref > self.vas.largest_ref() {
+        if remote_largest_ref > self.vas.total_inserted() {
             // TODO here the header block cannot be decoded because it contains references to
             //      dynamic table entries that have not been recieved yet. It should be saved
             //      and then be decoded when the missing dynamic entries arrive on encoder
@@ -57,8 +58,13 @@ impl Decoder {
             self.vas
                 .set_base_index(remote_largest_ref + encoded_base_index);
         } else {
+            if encoded_base_index > remote_largest_ref - 1 {
+                return Err(Error::BadBaseIndex(
+                    remote_largest_ref as isize - encoded_base_index as isize - 1,
+                ));
+            }
             self.vas
-                .set_base_index(remote_largest_ref - encoded_base_index);
+                .set_base_index(remote_largest_ref - encoded_base_index - 1);
         }
 
         let mut fields = Vec::new();
@@ -559,6 +565,111 @@ mod tests {
         assert_eq!(
             headers,
             &[HeaderField::new(b"foo".to_vec(), b"bar".to_vec())]
+        );
+    }
+
+    // Largest Reference = 4
+    //  |            Base Index = 0
+    //  |                |
+    // foo4 foo3  foo2  foo1
+    // +---+-----+-----+-----+
+    // | 4 |  3  |  2  |  1  |  Absolute Index
+    // +---+-----+-----+-----+
+    //                          Relative Index
+    // +---+-----+-----+-----+
+    // | 2 |   2 |  1  |  0  |  Post-Base Index
+    // +---+-----+-----+-----+
+
+    #[test]
+    fn decode_single_pass_encoded() {
+        let mut decoder = Decoder::new();
+        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
+        let foo2 = HeaderField::new(b"foo2".to_vec(), b"bar2".to_vec());
+        let foo3 = HeaderField::new(b"foo3".to_vec(), b"bar3".to_vec());
+        let foo4 = HeaderField::new(b"foo4".to_vec(), b"bar4".to_vec());
+        decoder.put_field(foo1.clone());
+        decoder.put_field(foo2.clone());
+        decoder.put_field(foo3.clone());
+        decoder.put_field(foo4.clone());
+
+        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        decoder.table.set_max_mem_size(4242 * 31).unwrap();
+
+        let mut buf = vec![];
+        let encoded_largest_ref = (4 % (2 * MAX_ENTRIES)) + 1;
+        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
+        prefix_int::encode(7, 1, 3, &mut buf); // base index negative = 0
+        prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo1
+        prefix_int::encode(4, 0b0001, 1, &mut buf); // post base foo2
+        prefix_int::encode(4, 0b0001, 2, &mut buf); // post base foo3
+        prefix_int::encode(4, 0b0001, 3, &mut buf); // post base foo4
+
+        let mut read = Cursor::new(&buf);
+        let headers = decoder.decode_header(&mut read).unwrap();
+        assert_eq!(headers, &[foo1, foo2, foo3, foo4])
+    }
+
+    #[test]
+    fn base_index_too_small() {
+        let mut decoder = Decoder::new();
+        let foo1 = HeaderField::new(b"foo1".to_vec(), b"bar1".to_vec());
+        decoder.put_field(foo1.clone());
+        decoder.put_field(foo1.clone());
+
+        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        decoder.table.set_max_mem_size(4242 * 31).unwrap();
+
+        let mut buf = vec![];
+        let encoded_largest_ref = (2 % (2 * MAX_ENTRIES)) + 1;
+        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
+        prefix_int::encode(7, 1, 2, &mut buf); // base index negative = 0
+
+        let mut read = Cursor::new(&buf);
+        assert_eq!(
+            decoder.decode_header(&mut read),
+            Err(Error::BadBaseIndex(-1))
+        );
+    }
+
+    #[test]
+    fn largest_ref_greater_than_max_entries() {
+        let mut decoder = Decoder::new();
+        const MAX_ENTRIES: usize = (4242 * 31) / 32;
+        decoder.table.set_max_mem_size(4242 * 31).unwrap();
+
+        for i in 0..MAX_ENTRIES + 10 {
+            decoder.put_field(HeaderField::new(format!("foo{}", i + 1), "bar"));
+        }
+
+        let mut buf = vec![];
+
+        // Pre-base relative reference
+        let encoded_largest_ref = ((MAX_ENTRIES + 5) % (2 * MAX_ENTRIES)) + 1;
+        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
+        prefix_int::encode(7, 0, 0, &mut buf); // base index = 4114
+        prefix_int::encode(6, 0b10, 10, &mut buf); // relative: 4114 - 10 - 1
+
+        let mut read = Cursor::new(&buf);
+        let headers = decoder.decode_header(&mut read).unwrap();
+        assert_eq!(headers, &[HeaderField::new("foo4104", "bar")]);
+
+        let mut buf = vec![];
+
+        // Post-base reference
+        let encoded_largest_ref = ((MAX_ENTRIES + 10) % (2 * MAX_ENTRIES)) + 1;
+        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
+        prefix_int::encode(7, 1, 4, &mut buf); // base index = 4114
+        prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo4115
+        prefix_int::encode(4, 0b0001, 4, &mut buf); // post base foo4119
+
+        let mut read = Cursor::new(&buf);
+        let headers = decoder.decode_header(&mut read).unwrap();
+        assert_eq!(
+            headers,
+            &[
+                HeaderField::new("foo4115", "bar"),
+                HeaderField::new("foo4119", "bar")
+            ]
         );
     }
 }
