@@ -1076,10 +1076,9 @@ impl Connection {
                 ConnectionError::Reset => {
                     if !self.state.is_drained() {
                         debug!(self.log, "got stateless reset");
-                        self.io.timer_stop(Timer::LossDetection);
-                        self.io.timer_stop(Timer::Close);
-                        self.io.timer_stop(Timer::Idle);
-                        self.io.timer_stop(Timer::KeyDiscard);
+                        for &timer in &Timer::VALUES {
+                            self.io.timer_stop(timer);
+                        }
                     }
                     State::Drained
                 }
@@ -2220,6 +2219,7 @@ impl Connection {
         self.io.timer_stop(Timer::LossDetection);
         self.io.timer_stop(Timer::Idle);
         self.io.timer_stop(Timer::KeyDiscard);
+        self.io.timer_stop(Timer::PathValidation);
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
