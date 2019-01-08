@@ -83,6 +83,8 @@ pub struct Connection {
     prev_crypto: Option<PrevCrypto>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
+    /// Whether the remote endpoint has opened any streams the application doesn't know about yet
+    stream_opened: bool,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -216,6 +218,7 @@ impl Connection {
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             path_challenge: None,
+            stream_opened: false,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -249,6 +252,7 @@ impl Connection {
                 max_remote_uni: config.stream_window_uni,
                 max_remote_bi: config.stream_window_bidi,
                 finished: Vec::new(),
+                incoming: VecDeque::new(),
             },
             config,
             rem_cids: Vec::new(),
@@ -299,7 +303,15 @@ impl Connection {
     /// - an incoming packet is handled, or
     /// - the idle timer expires
     pub fn poll(&mut self) -> Option<Event> {
-        self.events.pop_front()
+        if mem::replace(&mut self.stream_opened, false) {
+            return Some(Event::StreamOpened);
+        }
+
+        if let Some(x) = self.events.pop_front() {
+            return Some(x);
+        }
+
+        None
     }
 
     fn on_packet_sent(&mut self, now: u64, space: SpaceId, packet_number: u64, packet: SentPacket) {
@@ -1422,11 +1434,13 @@ impl Connection {
                         }
                     }
 
-                    let fresh = mem::replace(&mut rs.fresh, false);
-                    self.events.push_back(Event::StreamReadable {
-                        stream: frame.id,
-                        fresh,
-                    });
+                    if mem::replace(&mut rs.fresh, false) {
+                        self.stream_opened = self.streams.incoming.is_empty();
+                        self.streams.incoming.push_back(frame.id);
+                    } else {
+                        self.events
+                            .push_back(Event::StreamReadable { stream: frame.id });
+                    }
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
@@ -1554,8 +1568,12 @@ impl Connection {
                         }
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
-                    self.events
-                        .push_back(Event::StreamReadable { stream: id, fresh });
+                    if fresh {
+                        self.stream_opened = self.streams.incoming.is_empty();
+                        self.streams.incoming.push_back(id);
+                    } else {
+                        self.events.push_back(Event::StreamReadable { stream: id });
+                    }
                 }
                 Frame::DataBlocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -2239,23 +2257,13 @@ impl Connection {
     ///
     /// Called when one side of a stream transitions to a closed state
     pub fn maybe_cleanup(&mut self, id: StreamId) {
-        let new = match self.streams.streams.entry(id) {
+        match self.streams.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
                     e.remove_entry();
-                    if id.initiator() != self.side {
-                        Some(id.directionality())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
                 }
             }
-        };
-        if let Some(ty) = new {
-            self.alloc_remote_stream(ty);
         }
     }
 
@@ -2289,6 +2297,12 @@ impl Connection {
             }
         };
         self.streams.streams.insert(id, stream);
+    }
+
+    pub fn accept(&mut self) -> Option<StreamId> {
+        let id = self.streams.incoming.pop_front()?;
+        self.alloc_remote_stream(id.directionality());
+        Some(id)
     }
 
     pub fn finish(&mut self, id: StreamId) {
@@ -2668,6 +2682,7 @@ struct Streams {
     max_remote_bi: u64,
 
     finished: Vec<StreamId>,
+    incoming: VecDeque<StreamId>,
 }
 
 impl Streams {

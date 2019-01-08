@@ -726,6 +726,12 @@ impl Endpoint {
         self.incoming.pop_front()
     }
 
+    pub fn accept_stream(&mut self, conn: ConnectionHandle) -> Option<StreamId> {
+        let id = self.connections[conn.0].accept()?;
+        self.dirty_conns.insert(conn);
+        Some(id)
+    }
+
     #[doc(hidden)]
     pub fn force_key_update(&mut self, conn: ConnectionHandle) {
         self.connections[conn.0].force_key_update();
@@ -919,13 +925,10 @@ pub enum Event {
     Connected { protocol: Option<String> },
     /// A connection was lost.
     ConnectionLost { reason: ConnectionError },
-    /// A stream has data or errors waiting to be read
-    StreamReadable {
-        /// The affected stream
-        stream: StreamId,
-        /// Whether this is the first event on the stream
-        fresh: bool,
-    },
+    /// One or more new streams has been opened and is readable
+    StreamOpened,
+    /// An existing stream has data or errors waiting to be read
+    StreamReadable { stream: StreamId },
     /// A formerly write-blocked stream might now accept a write
     StreamWritable { stream: StreamId },
     /// All data sent on `stream` has been received by the peer

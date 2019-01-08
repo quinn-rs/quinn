@@ -529,7 +529,8 @@ fn finish_stream() {
 
     assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
     assert_matches!(pair.client.poll(), None);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
@@ -554,8 +555,9 @@ fn reset_stream() {
     pair.client.reset(client_conn, s, ERROR);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -579,8 +581,9 @@ fn stop_stream() {
     pair.server.stop_sending(server_conn, s, ERROR);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -717,7 +720,8 @@ fn stream_id_backpressure() {
     pair.drive();
     assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
     assert_matches!(pair.client.poll(), None);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
         Err(ReadError::Finished)
@@ -735,7 +739,8 @@ fn stream_id_backpressure() {
     pair.client.finish(client_conn, s);
     pair.drive();
     // Make sure the server actually processes data on the newly-available stream
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -756,7 +761,8 @@ fn key_update() {
     pair.client.write(client_conn, s, MSG1).unwrap();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -769,7 +775,7 @@ fn key_update() {
     pair.client.write(client_conn, s, MSG2).unwrap();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
@@ -801,8 +807,9 @@ fn key_update_reordered() {
     pair.client.finish_delay();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: true })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream, fresh: false })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),

@@ -148,7 +148,6 @@ struct Pending {
     uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     cancel_timers: [Option<oneshot::Sender<()>>; 5],
-    incoming_streams: VecDeque<StreamId>,
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
@@ -165,7 +164,6 @@ impl Pending {
             uni_opening: VecDeque::new(),
             bi_opening: VecDeque::new(),
             cancel_timers: [None, None, None, None, None],
-            incoming_streams: VecDeque::new(),
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
@@ -702,16 +700,16 @@ impl Future for Driver {
                             writer.notify();
                         }
                     }
-                    StreamReadable { stream, fresh } => {
+                    StreamOpened => {
+                        let pending = endpoint.pending.get_mut(&connection).unwrap();
+                        if let Some(x) = pending.incoming_streams_reader.take() {
+                            x.notify();
+                        }
+                    }
+                    StreamReadable { stream } => {
                         let pending = endpoint.pending.get_mut(&connection).unwrap();
                         if let Some(reader) = pending.blocked_readers.remove(&stream) {
                             reader.notify();
-                        }
-                        if fresh {
-                            pending.incoming_streams.push_back(stream);
-                            if let Some(x) = pending.incoming_streams_reader.take() {
-                                x.notify();
-                            }
                         }
                     }
                     StreamAvailable { directionality } => {
@@ -1487,8 +1485,7 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut endpoint = self.0.endpoint.borrow_mut();
-        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
-        if let Some(x) = pending.incoming_streams.pop_front() {
+        if let Some(x) = endpoint.inner.accept_stream(self.0.conn) {
             let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
@@ -1497,6 +1494,7 @@ impl FuturesStream for IncomingStreams {
             };
             return Ok(Async::Ready(Some(stream)));
         }
+        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
         if let Some(ref x) = pending.error {
             Err(x.clone())
         } else {
