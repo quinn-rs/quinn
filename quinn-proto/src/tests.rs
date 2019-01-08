@@ -675,6 +675,8 @@ fn zero_rtt() {
     };
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
+
+    // TODO: Test rejected 0-RTT
 }
 
 #[test]

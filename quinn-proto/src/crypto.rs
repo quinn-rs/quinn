@@ -58,6 +58,14 @@ impl TlsSession {
             TlsSession::Server(ref session) => session.get_sni_hostname(),
         }
     }
+
+    pub fn as_client(&self) -> &ClientSession {
+        if let TlsSession::Client(ref session) = *self {
+            session
+        } else {
+            panic!("not a client");
+        }
+    }
 }
 
 impl Deref for TlsSession {

@@ -85,6 +85,7 @@ pub struct Connection {
     path_challenge: Option<u64>,
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet
     stream_opened: bool,
+    accepted_0rtt: bool,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -222,6 +223,7 @@ impl Connection {
             prev_crypto: None,
             path_challenge: None,
             stream_opened: false,
+            accepted_0rtt: false,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -1192,6 +1194,14 @@ impl Connection {
                                         .map_err(Into::into)
                                 })?;
                             self.set_params(params)?;
+
+                            if self.has_0rtt() {
+                                if !self.tls.as_client().is_early_data_accepted() {
+                                    self.reject_0rtt();
+                                } else {
+                                    self.accepted_0rtt = true;
+                                }
+                            }
 
                             // Server applications don't see connections until the handshake
                             // completes, so this would be redundant.
@@ -2589,6 +2599,14 @@ impl Connection {
         self.state.is_closed()
     }
 
+    pub fn accepted_0rtt(&self) -> bool {
+        self.accepted_0rtt
+    }
+
+    pub fn has_0rtt(&self) -> bool {
+        self.zero_rtt_crypto.is_some()
+    }
+
     pub fn has_1rtt(&self) -> bool {
         self.spaces[SpaceId::Data as usize].crypto.is_some()
     }
@@ -2669,6 +2687,30 @@ impl Connection {
             || self.ping_pending
             || self.path_response.is_some()
             || !self.offpath_responses.is_empty()
+    }
+
+    /// Reset state to account for 0-RTT being ignored by the server
+    fn reject_0rtt(&mut self) {
+        debug_assert!(self.side.is_client());
+        debug!(self.log, "0-RTT rejected");
+        self.accepted_0rtt = false;
+        // Reset all outgoing streams
+        for (id, stream) in &mut self.streams.streams {
+            if id.initiator() != self.side {
+                continue;
+            }
+            *stream.send_mut().unwrap() = stream::Send::new();
+        }
+        // Discard 0-RTT packets
+        let sent_packets = mem::replace(
+            &mut self.space_mut(SpaceId::Data).sent_packets,
+            BTreeMap::new(),
+        );
+        for (_, packet) in sent_packets {
+            self.in_flight.remove(&packet);
+        }
+        self.data_sent = 0;
+        self.blocked_streams.clear();
     }
 }
 
