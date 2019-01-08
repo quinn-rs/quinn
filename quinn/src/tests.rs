@@ -45,7 +45,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     server_config.set_certificate(cert_chain, key).unwrap();
 
     let mut server = EndpointBuilder::new(Config {
-        max_remote_streams_bidi: 32,
+        stream_window_bidi: 32,
         ..Config::default()
     });
     server.logger(log.clone());

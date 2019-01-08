@@ -103,7 +103,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     server_config.set_certificate(cert_chain, key)?;
 
     let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
-        max_remote_streams_bidi: 64,
+        stream_window_bidi: 64,
         ..Default::default()
     });
     endpoint.logger(log.clone());

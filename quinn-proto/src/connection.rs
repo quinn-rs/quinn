@@ -160,13 +160,13 @@ impl Connection {
 
         let initial_space = PacketSpace::new(Crypto::new_initial(&init_cid, side));
         let mut streams = FnvHashMap::default();
-        for i in 0..config.max_remote_streams_uni {
+        for i in 0..config.stream_window_uni {
             streams.insert(
                 StreamId::new(!side, Directionality::Uni, u64::from(i)),
                 stream::Recv::new(u64::from(config.stream_receive_window)).into(),
             );
         }
-        for i in 0..config.max_remote_streams_bidi {
+        for i in 0..config.stream_window_bidi {
             streams.insert(
                 StreamId::new(!side, Directionality::Bi, i as u64),
                 Stream::new_bi(config.stream_receive_window as u64),
@@ -246,8 +246,8 @@ impl Connection {
                 next_bi: 0,
                 max_uni: 0,
                 max_bi: 0,
-                max_remote_uni: config.max_remote_streams_uni as u64,
-                max_remote_bi: config.max_remote_streams_bidi as u64,
+                max_remote_uni: config.stream_window_uni,
+                max_remote_bi: config.stream_window_bidi,
                 finished: Vec::new(),
             },
             config,
