@@ -837,8 +837,8 @@ impl Default for Config {
         rand::thread_rng().fill_bytes(&mut reset_value);
 
         Self {
-            stream_window_bidi: 0,
-            stream_window_uni: 0,
+            stream_window_bidi: 32,
+            stream_window_uni: 32,
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
