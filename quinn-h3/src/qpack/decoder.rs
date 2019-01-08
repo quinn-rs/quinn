@@ -25,6 +25,7 @@ pub enum Error {
     UnknownPrefix,
     MissingRefs,
     BadBaseIndex(isize),
+    UnexpectedEnd,
 }
 
 pub struct Decoder {
@@ -149,43 +150,54 @@ impl Decoder {
         let inserted_on_start = self.vas.total_inserted();
 
         while read.has_remaining() {
-            let first = read.bytes()[0];
-            match first {
-                // 4.3.1. Insert With Name Reference
-                x if x & 0b1000_0000 != 0 => {
-                    let (flags, name_index) = prefix_int::decode(6, read)?;
-                    let field = if flags & 0b01 != 0 {
-                        StaticTable::get(name_index)?
-                    } else {
-                        self.table.get(self.vas.relative(name_index)?)?
-                    };
-                    self.put_field(field.with_value(prefix_string::decode(8, read)?));
-                }
-                // 4.3.2. Insert Without Name Reference
-                x if x & 0b0100_0000 == 0b0100_0000 => {
-                    let name = prefix_string::decode(6, read)?;
-                    let value = prefix_string::decode(8, read)?;
-                    self.put_field(HeaderField::new(name, value));
-                }
-                // 4.3.3. Duplicate
-                x if x & 0b1110_0000 == 0 => {
-                    let (_, dup_index) = prefix_int::decode(5, read)?;
-                    let field = self.table.get(self.vas.relative(dup_index)?)?;
-                    self.put_field(field.clone());
-                }
-                // 4.3.4. Dynamic Table Size Update
-                x if x & 0b0010_0000 == 0b0010_0000 => {
-                    let (_, size) = prefix_int::decode(5, read)?;
-                    self.vas.drop_many(self.table.set_max_mem_size(size)?);
-                }
-                _ => return Err(Error::UnknownPrefix),
+            let mut buf = Cursor::new(read.bytes());
+            match self.parse_instruction(&mut buf) {
+                Err(Error::UnexpectedEnd) => break,
+                Err(e) => return Err(e),
+                _ => (),
             }
+            read.advance(buf.position() as usize);
         }
 
         if self.vas.total_inserted() != inserted_on_start {
             prefix_int::encode(6, 0, self.vas.total_inserted() - inserted_on_start, write);
         }
 
+        Ok(())
+    }
+
+    fn parse_instruction<R: Buf>(&mut self, buf: &mut R) -> Result<(), Error> {
+        let first = buf.bytes()[0];
+        match first {
+            // 4.3.1. Insert With Name Reference
+            x if x & 0b1000_0000 != 0 => {
+                let (flags, name_index) = prefix_int::decode(6, buf)?;
+                let field = if flags & 0b01 != 0 {
+                    StaticTable::get(name_index)?
+                } else {
+                    self.table.get(self.vas.relative(name_index)?)?
+                };
+                self.put_field(field.with_value(prefix_string::decode(8, buf)?));
+            }
+            // 4.3.2. Insert Without Name Reference
+            x if x & 0b0100_0000 == 0b0100_0000 => {
+                let name = prefix_string::decode(6, buf)?;
+                let value = prefix_string::decode(8, buf)?;
+                self.put_field(HeaderField::new(name, value));
+            }
+            // 4.3.3. Duplicate
+            x if x & 0b1110_0000 == 0 => {
+                let (_, dup_index) = prefix_int::decode(5, buf)?;
+                let field = self.table.get(self.vas.relative(dup_index)?)?;
+                self.put_field(field.clone());
+            }
+            // 4.3.4. Dynamic Table Size Update
+            x if x & 0b0010_0000 == 0b0010_0000 => {
+                let (_, size) = prefix_int::decode(5, buf)?;
+                self.vas.drop_many(self.table.set_max_mem_size(size)?);
+            }
+            _ => return Err(Error::UnknownPrefix),
+        }
         Ok(())
     }
 
@@ -200,13 +212,19 @@ impl Decoder {
 
 impl From<prefix_int::Error> for Error {
     fn from(e: prefix_int::Error) -> Self {
-        Error::InvalidInteger(e)
+        match e {
+            prefix_int::Error::UnexpectedEnd => Error::UnexpectedEnd,
+            e => Error::InvalidInteger(e),
+        }
     }
 }
 
 impl From<prefix_string::Error> for Error {
     fn from(e: prefix_string::Error) -> Self {
-        Error::InvalidString(e)
+        match e {
+            prefix_string::Error::UnexpectedEnd => Error::UnexpectedEnd,
+            e => Error::InvalidString(e),
+        }
     }
 }
 
@@ -370,6 +388,40 @@ mod tests {
         let actual_max_size = decoder.table.max_mem_size();
         assert_eq!(actual_max_size, 25);
         assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn enc_recv_accepts_truncated_messages() {
+        let mut buf = vec![];
+        prefix_string::encode(6, 0b01, b"keyfoobarbaz", &mut buf).unwrap();
+        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
+
+        let mut decoder = Decoder::new();
+
+        // cut in middle of the first int
+        let mut enc = Cursor::new(&buf[..2]);
+        let mut dec = vec![];
+        assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
+        assert_eq!(enc.position(), 0);
+
+        // cut the last byte of the 2nd string
+        let mut enc = Cursor::new(&buf[..buf.len() - 1]);
+        let mut dec = vec![];
+        assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
+        assert_eq!(enc.position(), 0);
+
+        prefix_string::encode(6, 0b01, b"keyfoobarbaz2", &mut buf).unwrap();
+        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
+
+        // the first valid field is inserted and buf is left at the first byte of incomplete string
+        let mut enc = Cursor::new(&buf[..buf.len() - 1]);
+        let mut dec = vec![];
+        assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
+        assert_eq!(enc.position(), 15);
+        assert_eq!(decoder.table.count(), 1);
+
+        let mut dec_cursor = Cursor::new(&dec);
+        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
     }
 
     #[test]
