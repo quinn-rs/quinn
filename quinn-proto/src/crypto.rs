@@ -394,9 +394,7 @@ pub fn hkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
 
 fn initial_secret(conn_id: &ConnectionId) -> SigningKey {
     let key = SigningKey::new(&digest::SHA256, &INITIAL_SALT);
-    let mut buf = Vec::with_capacity(8);
-    buf.put_slice(conn_id);
-    hkdf::extract(&key, &buf)
+    hkdf::extract(&key, conn_id)
 }
 
 const INITIAL_SALT: [u8; 20] = [
