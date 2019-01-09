@@ -781,8 +781,7 @@ pub struct Config {
     pub stream_window_uni: u64,
     /// Maximum duration of inactivity to accept before timing out the connection (s).
     ///
-    /// Maximum value is 600 seconds. The actual value used is the minimum of this and the peer's
-    /// own idle timeout. 0 for none.
+    /// The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
     pub idle_timeout: u64,
     /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
     /// before becoming blocked.
@@ -814,11 +813,15 @@ pub struct Config {
     /// The RTT used before an RTT sample is taken (μs)
     pub initial_rtt: u64,
 
-    /// The default max packet size used for calculating default and minimum congestion windows.
+    /// The max packet size that was used for calculating default and minimum congestion windows.
     pub max_datagram_size: u64,
     /// Default limit on the amount of outstanding data in bytes.
+    ///
+    /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14600))`
     pub initial_window: u64,
     /// Default minimum congestion window.
+    ///
+    /// Recommended value: `2 * max_datagram_size`.
     pub minimum_window: u64,
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
     pub loss_reduction_factor: u16,
