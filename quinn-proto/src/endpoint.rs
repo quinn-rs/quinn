@@ -323,14 +323,16 @@ impl Endpoint {
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 23;
-        /// Minimum total length for a stateless reset packet
-        const MIN_LEN: usize = 1 + MIN_PADDING_LEN + RESET_TOKEN_SIZE;
 
-        // Prevent amplification attacks and reset loops
-        if inciting_dgram_len <= MIN_LEN {
-            debug!(self.log, "ignoring unexpected {len} byte packet: not larger than minimum stateless reset size", len=inciting_dgram_len);
-            return;
-        }
+        // Prevent amplification attacks and reset loops by ensuring we pad to at most 1 byte
+        // smaller than the inciting packet.
+        let max_padding_len = match inciting_dgram_len.checked_sub(RESET_TOKEN_SIZE) {
+            Some(headroom) if headroom > MIN_PADDING_LEN => headroom,
+            _ => {
+                debug!(self.log, "ignoring unexpected {len} byte packet: not larger than minimum stateless reset size", len=inciting_dgram_len);
+                return;
+            }
+        };
 
         debug!(
             self.log,
@@ -338,12 +340,8 @@ impl Endpoint {
             remote = remote
         );
         let mut buf = Vec::<u8>::new();
-        let padding_len = self.rng.gen_range(
-            MIN_PADDING_LEN,
-            // Padded packet must be smaller than the inciting packet
-            inciting_dgram_len - (MIN_LEN - MIN_PADDING_LEN),
-        );
-        buf.reserve_exact(1 + padding_len + RESET_TOKEN_SIZE);
+        let padding_len = self.rng.gen_range(MIN_PADDING_LEN, max_padding_len);
+        buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
