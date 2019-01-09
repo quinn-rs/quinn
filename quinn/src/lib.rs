@@ -249,7 +249,7 @@ impl<'a> EndpointBuilder<'a> {
         let reactor = if let Some(x) = self.reactor {
             Cow::Borrowed(x)
         } else {
-            Cow::Owned(tokio_reactor::Handle::current())
+            Cow::Owned(tokio_reactor::Handle::default())
         };
         let addr = socket.local_addr().map_err(Error::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(Error::Socket)?;
