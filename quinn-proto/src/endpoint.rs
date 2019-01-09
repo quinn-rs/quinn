@@ -229,7 +229,15 @@ impl Endpoint {
                 None
             };
             conn.or_else(|| self.connection_ids_initial.get(&dst_cid))
-                .or_else(|| self.connection_remotes.get(&remote))
+                .or_else(|| {
+                    // If CIDs are in use, only stateless resets (which use short headers) will
+                    // legitimately have unknown CIDs.
+                    if self.config.local_cid_len == 0 || !partial_decode.has_long_header() {
+                        self.connection_remotes.get(&remote)
+                    } else {
+                        None
+                    }
+                })
                 .cloned()
         };
         if let Some(conn_id) = conn {
