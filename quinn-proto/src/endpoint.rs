@@ -122,6 +122,7 @@ impl Endpoint {
                         connection::Io::RetireConnectionId { connection_id } => {
                             self.connection_ids.remove(&connection_id);
                             let new_cid = self.new_cid();
+                            self.connection_ids.insert(new_cid, conn);
                             self.connections[conn.0].issue_cid(new_cid);
                             continue;
                         }
@@ -202,6 +203,7 @@ impl Endpoint {
             // We've already issued one CID as part of the normal handshake process.
             for _ in 1..LOCAL_CID_COUNT {
                 let cid = self.new_cid();
+                self.connection_ids.insert(cid, conn);
                 self.connections[conn.0].issue_cid(cid);
             }
         }
