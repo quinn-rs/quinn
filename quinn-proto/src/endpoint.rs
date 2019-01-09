@@ -498,6 +498,30 @@ impl Endpoint {
             return;
         }
 
+        if dst_cid.len() < 8
+            && (!self.server_config.as_ref().unwrap().use_stateless_retry
+                || dst_cid.len() != self.config.local_cid_len)
+        {
+            debug!(
+                self.log,
+                "rejecting connection due to invalid DCID length {len}",
+                len = dst_cid.len()
+            );
+            self.io.push_back(Io::Transmit {
+                destination: remote,
+                ecn: None,
+                packet: initial_close(
+                    crypto,
+                    header_crypto,
+                    &src_cid,
+                    &temp_loc_cid,
+                    0,
+                    TransportError::PROTOCOL_VIOLATION,
+                ),
+            });
+            return;
+        }
+
         let mut retry_cid = None;
         if self.server_config.as_ref().unwrap().use_stateless_retry {
             if let Some((token_dst_cid, token_issued)) = self
@@ -554,7 +578,9 @@ impl Endpoint {
                 },
             )
             .unwrap();
-        self.connection_ids_initial.insert(dst_cid, conn);
+        if dst_cid.len() != 0 {
+            self.connection_ids_initial.insert(dst_cid, conn);
+        }
         match self.connections[conn.0].handle_initial(now, ecn, packet_number as u64, packet) {
             Ok(()) => {
                 self.incoming_handshakes += 1;
