@@ -56,8 +56,8 @@ For some cases, including peer-to-peer, trust-on-first-use, deliberately
 insecure applications, or any case where servers are not identified by domain
 name, this isn't practical. Arbitrary certificate validation logic can be
 implemented by enabling the `dangerous_configuration` feature of `rustls` and
-constructing a quinn `ClientConfig` with an overridden certificate verifier by
-hand. 
+constructing a Quinn `ClientConfig` with an overridden certificate verifier by
+hand.
 
 When operating your own certificate authority doesn't make sense, [rcgen][rcgen]
 can be used to generate self-signed certificates on demand. To support
