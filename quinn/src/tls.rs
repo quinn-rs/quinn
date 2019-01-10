@@ -4,7 +4,23 @@ use std::fmt;
 
 use rustls::{self, internal::pemfile};
 
+/// A single TLS certificate
+#[derive(Debug, Clone)]
+pub struct Certificate {
+    pub(crate) inner: rustls::Certificate,
+}
+
+impl Certificate {
+    /// Parse a DER-formatted certificate
+    pub fn from_der(der: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            inner: rustls::Certificate(der.to_vec()),
+        })
+    }
+}
+
 /// A chain of signed TLS certificates ending the one to be used by a server
+#[derive(Debug, Clone)]
 pub struct CertificateChain {
     pub(crate) certs: Vec<rustls::Certificate>,
 }
@@ -22,9 +38,26 @@ impl CertificateChain {
                 .map_err(|()| ParseError("malformed certificate chain"))?,
         })
     }
+
+    /// Construct a certificate chain from a list of certificates
+    pub fn from_certs(certs: impl IntoIterator<Item = Certificate>) -> Self {
+        certs.into_iter().collect()
+    }
+}
+
+impl std::iter::FromIterator<Certificate> for CertificateChain {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = Certificate>,
+    {
+        CertificateChain {
+            certs: iter.into_iter().map(|x| x.inner).collect(),
+        }
+    }
 }
 
 /// The private key of a TLS certificate to be used by a server
+#[derive(Debug, Clone)]
 pub struct PrivateKey {
     pub(crate) inner: rustls::PrivateKey,
 }
@@ -48,6 +81,13 @@ impl PrivateKey {
             return Ok(Self { inner: x });
         }
         Err(ParseError("no private key found"))
+    }
+
+    /// Parse a DER-encoded (binary) private key
+    pub fn from_der(der: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            inner: rustls::PrivateKey(der.to_vec()),
+        })
     }
 }
 

@@ -82,7 +82,7 @@ use tokio_timer::Delay;
 pub use crate::quinn::{
     Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
 };
-pub use crate::tls::{CertificateChain, PrivateKey};
+pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
 use crate::udp::UdpSocket;
 
@@ -401,10 +401,11 @@ impl ClientConfigBuilder {
     }
 
     /// Add a trusted certificate authority.
-    pub fn add_certificate_authority(&mut self, der: &[u8]) -> Result<&mut Self, Error> {
+    pub fn add_certificate_authority(&mut self, cert: Certificate) -> Result<&mut Self, Error> {
         {
-            let anchor =
-                webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(der))?;
+            let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
+                untrusted::Input::from(&cert.inner.0),
+            )?;
             self.config
                 .root_store
                 .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
