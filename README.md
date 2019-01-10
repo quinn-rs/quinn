@@ -44,27 +44,39 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Session resumption
 - [ ] HTTP over QUIC
 
-## How to start
+## Certificates
 
-The server [currently always requires][insecure] certificates to be supplied. 
-Example certificates are included in the repository for test purposes.
-The client must be configured to trust the test certificate authority unless the
-client is built with the `dangerous_configuration` feature and passed
-`--accept-insecure-certs`.
+By default, Quinn clients validate the cryptographic identity of servers they
+connect to. This prevents an active, on-path attacker from intercepting
+messages, but requires trusting some certificate authority. For many purposes,
+this can be accomplished by using certificates from [Let's Encrypt][letsencrypt]
+for servers, and invoking
+`ClientConfigBuilder::add_default_certificate_authorities` on clients.
+
+For some cases, including peer-to-peer, trust-on-first-use, deliberately
+insecure applications, or any case where servers are not identified by domain
+name, this isn't practical. Arbitrary certificate validation logic can be
+implemented by enabling the `dangerous_configuration` feature of `rustls` and
+constructing a quinn `ClientConfig` with an overridden certificate verifier by
+hand. 
+
+When operating your own certificate authority doesn't make sense, [rcgen][rcgen]
+can be used to generate self-signed certificates on demand. To support
+trust-on-first-use, servers that automatically generate self-signed certificates
+should write their generated certificate to persistent storage and reuse it on
+future runs.
+
+## Running the Examples
 
 ```sh
-$ cargo run --example server -- --cert ./certs/server.chain --key ./certs/server.rsa ./
-$ cargo run --example client -- --ca ./certs/ca.der https://localhost:4433/Cargo.toml
+$ cargo run --example server ./
+$ cargo run --example client https://localhost:4433/Cargo.toml
 ```
 
-In the above example, the server will run on localhost and serve the "." folder to
-the client. The client will request the "Cargo.toml" file.  
-
-To run the example client/server across a network you need to update the 
-`certs/openssl.cnf` file and change the `DNS.3` entry to suit the DNS name  of the 
-server, and then regenerate the certificates using the `certs/generate.sh` script.  
-For real-world use, a certificate signed by a legitimate CA is recommended when 
-possible.
+This launches a HTTP 0.9 server on the loopback address serving the current
+working directory, with the client fetching `./Cargo.toml`. By default, the
+server generates a self-signed certificate and stores it to disk, where the
+client will automatically find and trust it.
 
 ## Development
 
@@ -83,4 +95,5 @@ the variable.
 [slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
-[insecure]: https://github.com/djc/quinn/issues/58
+[letsencrypt]: https://letsencrypt.org/
+[rcgen]: https://crates.io/crates/rcgen
