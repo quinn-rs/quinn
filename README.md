@@ -50,8 +50,7 @@ By default, Quinn clients validate the cryptographic identity of servers they
 connect to. This prevents an active, on-path attacker from intercepting
 messages, but requires trusting some certificate authority. For many purposes,
 this can be accomplished by using certificates from [Let's Encrypt][letsencrypt]
-for servers, and invoking
-`ClientConfigBuilder::add_default_certificate_authorities` on clients.
+for servers, and relying on the default configuration for clients.
 
 For some cases, including peer-to-peer, trust-on-first-use, deliberately
 insecure applications, or any case where servers are not identified by domain
