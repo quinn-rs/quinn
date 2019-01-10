@@ -10,8 +10,8 @@ slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
-rustls = { git = "https://github.com/Ralith/rustls.git", rev = "b4b9b1b8e080129c418bddb2e110ee1780b16793", features = ["dangerous_configuration"] }
+rustls = { git = "https://github.com/Ralith/rustls.git", rev = "6cb47566ee1a2bb480bfd18243be5f02fd355360", features = ["dangerous_configuration"] }
 failure = "0.1"
 slog = "2.2"
 futures = "0.1.21"
-webpki = "0.18"
+webpki = "0.19"

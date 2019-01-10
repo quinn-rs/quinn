@@ -26,16 +26,16 @@ fnv = "1.0.6"
 futures = "0.1.21"
 quinn-proto = { path = "../quinn-proto", version = "0.1.0" }
 rand = "0.6"
-rustls = { git = "https://github.com/Ralith/rustls.git", rev = "4e771422a8dbd5459c523a1f1b3be0772e813d07", features = ["quic"] }
+rustls = { git = "https://github.com/Ralith/rustls.git", rev = "6cb47566ee1a2bb480bfd18243be5f02fd355360", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-udp = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
 untrusted = "0.6.2"
-webpki = "0.18"
-webpki-roots = "0.15"
-ct-logs = "0.4.0"
+webpki = "0.19"
+webpki-roots = "0.16"
+ct-logs = "0.5"
 libc = "0.2.46"
 mio = "0.6"
 
@@ -45,7 +45,7 @@ structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
 url = "1.7"
-rcgen = "0.1"
+rcgen = "0.2"
 directories = "1.0.2"
 
 [[example]]
