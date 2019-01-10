@@ -9,6 +9,11 @@ use std::io::Cursor;
 use super::table::{dynamic, static_, DynamicTable, HeaderField, StaticTable};
 use super::vas::{self, VirtualAddressSpace};
 
+use super::stream::{
+    Duplicate, DynamicTableSizeUpdate, Error as StreamError, InsertWithNameRef,
+    InsertWithoutNameRef, InstructionType, TableSizeSync,
+};
+
 use super::prefix_int;
 use super::prefix_string;
 
@@ -149,55 +154,22 @@ impl Decoder {
     ) -> Result<(), Error> {
         let inserted_on_start = self.vas.total_inserted();
 
-        while read.has_remaining() {
-            let mut buf = Cursor::new(read.bytes());
-            match self.parse_instruction(&mut buf) {
-                Err(Error::UnexpectedEnd) => break,
-                Err(e) => return Err(e),
-                _ => (),
+        while let Some(instruction) = self.parse_instruction(read)? {
+            match instruction {
+                Instruction::Insert(field) => self.put_field(field),
+                Instruction::TableSizeUpdate(size) => {
+                    self.table.set_max_mem_size(size)?;
+                }
             }
-            read.advance(buf.position() as usize);
         }
 
         if self.vas.total_inserted() != inserted_on_start {
-            prefix_int::encode(6, 0, self.vas.total_inserted() - inserted_on_start, write);
+            TableSizeSync {
+                insert_count: self.vas.total_inserted() - inserted_on_start,
+            }
+            .encode(write);
         }
 
-        Ok(())
-    }
-
-    fn parse_instruction<R: Buf>(&mut self, buf: &mut R) -> Result<(), Error> {
-        let first = buf.bytes()[0];
-        match first {
-            // 4.3.1. Insert With Name Reference
-            x if x & 0b1000_0000 != 0 => {
-                let (flags, name_index) = prefix_int::decode(6, buf)?;
-                let field = if flags & 0b01 != 0 {
-                    StaticTable::get(name_index)?
-                } else {
-                    self.table.get(self.vas.relative(name_index)?)?
-                };
-                self.put_field(field.with_value(prefix_string::decode(8, buf)?));
-            }
-            // 4.3.2. Insert Without Name Reference
-            x if x & 0b0100_0000 == 0b0100_0000 => {
-                let name = prefix_string::decode(6, buf)?;
-                let value = prefix_string::decode(8, buf)?;
-                self.put_field(HeaderField::new(name, value));
-            }
-            // 4.3.3. Duplicate
-            x if x & 0b1110_0000 == 0 => {
-                let (_, dup_index) = prefix_int::decode(5, buf)?;
-                let field = self.table.get(self.vas.relative(dup_index)?)?;
-                self.put_field(field.clone());
-            }
-            // 4.3.4. Dynamic Table Size Update
-            x if x & 0b0010_0000 == 0b0010_0000 => {
-                let (_, size) = prefix_int::decode(5, buf)?;
-                self.vas.drop_many(self.table.set_max_mem_size(size)?);
-            }
-            _ => return Err(Error::UnknownPrefix),
-        }
         Ok(())
     }
 
@@ -208,6 +180,49 @@ impl Decoder {
         }
         self.vas.drop_many(dropped);
     }
+
+    fn parse_instruction<R: Buf>(&self, read: &mut R) -> Result<Option<Instruction>, Error> {
+        if read.remaining() < 1 {
+            return Ok(None);
+        }
+
+        let mut buf = Cursor::new(read.bytes());
+        let first = buf.bytes()[0];
+        let instruction = match InstructionType::decode(first) {
+            InstructionType::Unknown => return Err(Error::UnknownPrefix),
+            InstructionType::DynamicTableSizeUpdate => DynamicTableSizeUpdate::decode(&mut buf)?
+                .map(|x| Instruction::TableSizeUpdate(x.size)),
+            InstructionType::InsertWithoutNameRef => InsertWithoutNameRef::decode(&mut buf)?
+                .map(|x| Instruction::Insert(HeaderField::new(x.name, x.value))),
+            InstructionType::Duplicate => match Duplicate::decode(&mut buf)? {
+                Some(Duplicate { index }) => Some(Instruction::Insert(
+                    self.table.get(self.vas.relative(index)?)?.clone(),
+                )),
+                None => None,
+            },
+            InstructionType::InsertWithNameRef => match InsertWithNameRef::decode(&mut buf)? {
+                Some(InsertWithNameRef::Static { index, value }) => Some(Instruction::Insert(
+                    StaticTable::get(index)?.with_value(value),
+                )),
+                Some(InsertWithNameRef::Dynamic { index, value }) => Some(Instruction::Insert(
+                    self.table.get(self.vas.relative(index)?)?.with_value(value),
+                )),
+                None => None,
+            },
+        };
+
+        if instruction.is_some() {
+            read.advance(buf.position() as usize);
+        }
+
+        Ok(instruction)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Instruction {
+    Insert(HeaderField),
+    TableSizeUpdate(usize),
 }
 
 impl From<prefix_int::Error> for Error {
@@ -251,6 +266,16 @@ impl From<dynamic::ErrorKind> for Error {
     }
 }
 
+impl From<StreamError> for Error {
+    fn from(e: StreamError) -> Self {
+        match e {
+            StreamError::InvalidInteger(x) => Error::InvalidInteger(x),
+            StreamError::InvalidString(x) => Error::InvalidString(x),
+            StreamError::InvalidPrefix => Error::UnknownPrefix,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,9 +287,9 @@ mod tests {
     #[test]
     fn test_insert_field_with_name_ref_into_dynamic_table() {
         let mut buf = vec![];
-        prefix_int::encode(6, 0b11, 1, &mut buf);
-        prefix_string::encode(8, 0, b"serial value", &mut buf).unwrap();
-
+        InsertWithNameRef::new_static(1, "serial value")
+            .encode(&mut buf)
+            .unwrap();
         let mut decoder = Decoder::new();
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
@@ -277,7 +302,10 @@ mod tests {
         );
 
         let mut dec_cursor = Cursor::new(&dec);
-        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
+        assert_eq!(
+            TableSizeSync::decode(&mut dec_cursor),
+            Ok(Some(TableSizeSync { insert_count: 1 }))
+        );
     }
 
     /**
@@ -287,13 +315,11 @@ mod tests {
     #[test]
     fn test_insert_field_with_wrong_name_index_from_static_table() {
         let mut buf = vec![];
-        prefix_int::encode(6, 0b11, 3000, &mut buf);
-        prefix_string::encode(8, 0, b"", &mut buf).unwrap();
-
-        let mut decoder = Decoder::new();
+        InsertWithNameRef::new_static(3000, "")
+            .encode(&mut buf)
+            .unwrap();
         let mut enc = Cursor::new(&buf);
-        let mut dec = vec![];
-        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
+        let res = Decoder::new().on_encoder_recv(&mut enc, &mut vec![]);
         assert_eq!(res, Err(Error::InvalidStaticIndex(3000)));
     }
 
@@ -304,13 +330,12 @@ mod tests {
     #[test]
     fn test_insert_field_with_wrong_name_index_from_dynamic_table() {
         let mut buf = vec![];
-        prefix_int::encode(6, 0b10, 3000, &mut buf);
-        prefix_string::encode(8, 0, b"", &mut buf).unwrap();
-
-        let mut decoder = Decoder::new();
+        InsertWithNameRef::new_dynamic(3000, "")
+            .encode(&mut buf)
+            .unwrap();
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
-        let res = decoder.on_encoder_recv(&mut enc, &mut dec);
+        let res = Decoder::new().on_encoder_recv(&mut enc, &mut dec);
         assert_eq!(
             res,
             Err(Error::InvalidIndex(vas::Error::BadRelativeIndex(3000)))
@@ -326,8 +351,9 @@ mod tests {
     #[test]
     fn test_insert_field_without_name_ref() {
         let mut buf = vec![];
-        prefix_string::encode(6, 0b01, b"key", &mut buf).unwrap();
-        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
+        InsertWithoutNameRef::new("key", "value")
+            .encode(&mut buf)
+            .unwrap();
 
         let mut decoder = Decoder::new();
         let mut enc = Cursor::new(&buf);
@@ -341,7 +367,10 @@ mod tests {
         );
 
         let mut dec_cursor = Cursor::new(&dec);
-        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
+        assert_eq!(
+            TableSizeSync::decode(&mut dec_cursor),
+            Ok(Some(TableSizeSync { insert_count: 1 }))
+        );
     }
 
     /**
@@ -357,7 +386,7 @@ mod tests {
         assert_eq!(decoder.table.count(), 2);
 
         let mut buf = vec![];
-        prefix_int::encode(5, 0, 1, &mut buf);
+        Duplicate { index: 1 }.encode(&mut buf);
 
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
@@ -367,7 +396,10 @@ mod tests {
         assert_eq!(decoder.table.count(), 3);
 
         let mut dec_cursor = Cursor::new(&dec);
-        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1)));
+        assert_eq!(
+            TableSizeSync::decode(&mut dec_cursor),
+            Ok(Some(TableSizeSync { insert_count: 1 }))
+        );
     }
 
     /**
@@ -377,7 +409,7 @@ mod tests {
     #[test]
     fn test_dynamic_table_size_update() {
         let mut buf = vec![];
-        prefix_int::encode(5, 0b001, 25, &mut buf);
+        DynamicTableSizeUpdate { size: 25 }.encode(&mut buf);
 
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
@@ -391,13 +423,26 @@ mod tests {
     }
 
     #[test]
+    fn enc_recv_buf_too_short() {
+        let mut buf = vec![];
+        {
+            let mut enc = Cursor::new(&buf);
+            assert_eq!(Decoder::new().parse_instruction(&mut enc), Ok(None));
+        }
+
+        buf.push(0b1000_0000);
+        let mut enc = Cursor::new(&buf);
+        assert_eq!(Decoder::new().parse_instruction(&mut enc), Ok(None));
+    }
+
+    #[test]
     fn enc_recv_accepts_truncated_messages() {
         let mut buf = vec![];
-        prefix_string::encode(6, 0b01, b"keyfoobarbaz", &mut buf).unwrap();
-        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
+        InsertWithoutNameRef::new("keyfoobarbaz", "value")
+            .encode(&mut buf)
+            .unwrap();
 
         let mut decoder = Decoder::new();
-
         // cut in middle of the first int
         let mut enc = Cursor::new(&buf[..2]);
         let mut dec = vec![];
@@ -410,8 +455,9 @@ mod tests {
         assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
         assert_eq!(enc.position(), 0);
 
-        prefix_string::encode(6, 0b01, b"keyfoobarbaz2", &mut buf).unwrap();
-        prefix_string::encode(8, 0, b"value", &mut buf).unwrap();
+        InsertWithoutNameRef::new("keyfoobarbaz2", "value")
+            .encode(&mut buf)
+            .unwrap();
 
         // the first valid field is inserted and buf is left at the first byte of incomplete string
         let mut enc = Cursor::new(&buf[..buf.len() - 1]);

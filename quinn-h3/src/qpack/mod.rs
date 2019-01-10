@@ -28,3 +28,5 @@ pub mod vas;
 
 pub mod prefix_int;
 pub mod prefix_string;
+
+mod stream;
