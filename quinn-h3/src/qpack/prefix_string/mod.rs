@@ -60,7 +60,10 @@ impl From<HuffmanEncodingError> for Error {
 
 impl From<IntegerError> for Error {
     fn from(error: IntegerError) -> Self {
-        Error::Integer(error)
+        match error {
+            IntegerError::UnexpectedEnd => Error::UnexpectedEnd,
+            e => Error::Integer(e),
+        }
     }
 }
 
