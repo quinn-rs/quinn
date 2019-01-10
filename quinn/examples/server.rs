@@ -3,13 +3,10 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 
-use std::ascii;
-use std::fmt;
-use std::fs;
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
-use std::str;
+use std::{ascii, fmt, fs, io, str};
 
 use failure::{Error, Fail, ResultExt};
 use futures::{Future, Stream};
@@ -53,16 +50,16 @@ struct Opt {
     #[structopt(parse(from_os_str))]
     root: PathBuf,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key")]
-    key: PathBuf,
+    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
+    key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert")]
-    cert: PathBuf,
+    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
+    cert: Option<PathBuf>,
     /// Enable stateless retries
     #[structopt(long = "stateless-retry")]
     stateless_retry: bool,
     /// Address to listen on
-    #[structopt(long = "listen", default_value = "[::]:4433")]
+    #[structopt(long = "listen", default_value = "[::1]:4433")]
     listen: SocketAddr,
 }
 
@@ -96,11 +93,37 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    let key = fs::read(&options.key).context("failed to read private key")?;
-    let key = quinn::PrivateKey::from_pem(&key)?;
-    let cert_chain = fs::read(&options.cert).context("failed to read certificate chain")?;
-    let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
-    server_config.set_certificate(cert_chain, key)?;
+    if let (Some(ref key), Some(ref cert)) = (options.key, options.cert) {
+        let key = fs::read(key).context("failed to read private key")?;
+        let key = quinn::PrivateKey::from_pem(&key)?;
+        let cert_chain = fs::read(cert).context("failed to read certificate chain")?;
+        let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
+        server_config.set_certificate(cert_chain, key)?;
+    } else {
+        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let path = dirs.data_local_dir();
+        let cert_path = path.join("cert.der");
+        let key_path = path.join("key.der");
+        let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
+            Ok(x) => x,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                info!(log, "generating self-signed certificates");
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+                let key = cert.serialize_private_key_der();
+                let cert = cert.serialize_der();
+                fs::create_dir_all(&path).context("failed to create certificate directory")?;
+                fs::write(&cert_path, &cert).context("failed to write certificate")?;
+                fs::write(&key_path, &key).context("failed to write private key")?;
+                (cert, key)
+            }
+            Err(e) => {
+                bail!("failed to read certificate: {}", e);
+            }
+        };
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert = quinn::Certificate::from_der(&cert)?;
+        server_config.set_certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
+    }
 
     let mut endpoint = quinn::Endpoint::new();
     endpoint.logger(log.clone());
