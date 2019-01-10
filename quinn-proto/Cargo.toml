@@ -32,7 +32,7 @@ ring = "0.13"
 rustls = { git = "https://github.com/Ralith/rustls.git", rev = "b4b9b1b8e080129c418bddb2e110ee1780b16793", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
-webpki = "0.18"
+webpki = "0.19"
 aes = "0.3"
 block-modes = "0.3"
 
