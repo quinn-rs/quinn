@@ -19,9 +19,6 @@ codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
 travis-ci = { repository = "djc/quinn" }
 
-[features]
-dangerous_configuration = ["quinn-proto/dangerous_configuration"]
-
 [dependencies]
 bytes = "0.4.7"
 failure = "0.1"
@@ -54,7 +51,6 @@ name = "server"
 
 [[example]]
 name = "interop"
-required-features = ["dangerous_configuration"]
 
 [[example]]
 name = "client"
