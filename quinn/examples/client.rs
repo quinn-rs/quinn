@@ -94,7 +94,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         client_config.enable_keylog();
     }
     if let Some(ca_path) = options.ca {
-        client_config.add_certificate_authority(&fs::read(&ca_path)?)?;
+        client_config
+            .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
     }
     #[cfg(feature = "dangerous_configuration")]
     {

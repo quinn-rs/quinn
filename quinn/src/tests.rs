@@ -56,7 +56,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
 
     let mut client_config = ClientConfigBuilder::default();
     client_config
-        .add_certificate_authority(&fs::read("../certs/ca.der").unwrap())
+        .add_certificate_authority(
+            crate::Certificate::from_der(&fs::read("../certs/ca.der").unwrap()).unwrap(),
+        )
         .unwrap();
     let mut client = Endpoint::new();
     client.logger(log.clone());
