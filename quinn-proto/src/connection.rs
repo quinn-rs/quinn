@@ -2635,7 +2635,7 @@ impl Connection {
     }
 
     pub fn protocol(&self) -> Option<&[u8]> {
-        self.tls.get_alpn_protocol().map(|p| p.as_bytes())
+        self.tls.get_alpn_protocol()
     }
 
     /// The number of bytes of packets containing retransmittable frames that have not been

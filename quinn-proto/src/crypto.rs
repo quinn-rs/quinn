@@ -9,7 +9,7 @@ use block_modes::block_padding::ZeroPadding;
 use block_modes::{BlockMode, Ecb};
 use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
 use orion::hazardous::stream::chacha20;
-use ring::aead;
+use ring::aead::{self, Aad, Nonce};
 use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
@@ -200,7 +200,9 @@ impl Crypto {
         buf.extend(tag);
 
         let (header, payload) = buf.split_at_mut(header_len);
-        aead::seal_in_place(&key, &*nonce, header, payload, cipher.tag_len()).unwrap();
+        let header = Aad::from(header);
+        let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
+        aead::seal_in_place(&key, nonce, header, payload, cipher.tag_len()).unwrap();
     }
 
     pub fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
@@ -219,7 +221,9 @@ impl Crypto {
         self.write_nonce(&iv, packet, nonce);
         let payload_len = payload.len();
 
-        aead::open_in_place(&key, &*nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
+        let header = Aad::from(header);
+        let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
+        aead::open_in_place(&key, nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
         payload.split_off(payload_len - cipher.tag_len());
         Ok(())
     }
