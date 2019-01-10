@@ -119,13 +119,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             )?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
-                eprintln!("connected at {}", duration_secs(&start.elapsed()));
+                eprintln!("connected at {:?}", start.elapsed());
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| {
-                        eprintln!("stream opened at {}", duration_secs(&start.elapsed()));
                         tokio::io::write_all(stream, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
                     })
@@ -135,20 +134,17 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     })
                     .and_then(move |stream| {
                         let response_start = Instant::now();
-                        eprintln!(
-                            "request sent at {}",
-                            duration_secs(&(response_start - start))
-                        );
+                        eprintln!("request sent at {:?}", response_start - start);
                         quinn::read_to_end(stream, usize::max_value())
                             .map_err(|e| format_err!("failed to read response: {}", e))
                             .map(move |x| (x, response_start))
                     })
                     .and_then(move |((_, data), response_start)| {
-                        let seconds = duration_secs(&response_start.elapsed());
+                        let duration = response_start.elapsed();
                         eprintln!(
-                            "response received in {} - {} KiB/s",
-                            seconds,
-                            data.len() as f32 / (seconds * 1024.0)
+                            "response received in {:?} - {} KiB/s",
+                            duration,
+                            data.len() as f32 / (duration_secs(&duration) * 1024.0)
                         );
                         io::stdout().write_all(&data).unwrap();
                         io::stdout().flush().unwrap();
