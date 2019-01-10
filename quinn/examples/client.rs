@@ -19,8 +19,6 @@ use url::Url;
 type Result<T> = std::result::Result<T, Error>;
 
 /// HTTP/0.9 over QUIC client
-///
-/// Build with the dangerous_configuration feature to support connecting to servers with invalid certificates.
 #[derive(StructOpt, Debug)]
 #[structopt(name = "client")]
 struct Opt {
@@ -33,11 +31,6 @@ struct Opt {
     /// Custom certificate authority to trust, in DER format
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
-
-    /// Accept invalid (e.g. self-signed) TLS certificates
-    #[cfg(feature = "dangerous_configuration")]
-    #[structopt(long = "accept-insecure-certs")]
-    accept_insecure_certs: bool,
     /*
     /// file to read/write session tickets to
     #[structopt(long = "session-cache", parse(from_os_str))]
@@ -96,12 +89,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     if let Some(ca_path) = options.ca {
         client_config
             .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
-    }
-    #[cfg(feature = "dangerous_configuration")]
-    {
-        if options.accept_insecure_certs {
-            client_config.accept_insecure_certs();
-        }
     }
 
     endpoint.default_client_config(client_config.build());

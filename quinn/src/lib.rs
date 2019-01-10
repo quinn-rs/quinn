@@ -402,6 +402,10 @@ impl ClientConfigBuilder {
     }
 
     /// Add a trusted certificate authority.
+    ///
+    /// For more advanced/less secure certificate verification, construct a [`ClientConfig`]
+    /// manually and use rustls's `dangerous_configuration` feature to override the certificate
+    /// verifier.
     pub fn add_certificate_authority(&mut self, cert: Certificate) -> Result<&mut Self, Error> {
         {
             let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
@@ -440,36 +444,6 @@ impl ClientConfigBuilder {
         ClientConfig {
             tls_config: Arc::new(self.config),
         }
-    }
-
-    /// DANGEROUS - Connect even if the server presents an invalid certificate.
-    ///
-    /// Restricted by the `dangerous_configuration` feature. Use with care.
-    ///
-    /// This allows connecting to servers whose certificates aren't signed by a trusted authority, e.g. servers using
-    /// self-signed certificates. This allows an attacker to impersonate the server and therefore read and modify
-    /// traffic, but is useful for applications where trust is not expected or is enforced by external means.
-    ///
-    /// Convenience method for specifying a custom `ServerCertVerifier` in the TLS configuration.
-    #[cfg(feature = "dangerous_configuration")]
-    pub fn accept_insecure_certs(&mut self) -> &mut Self {
-        struct NullVerifier;
-        impl rustls::ServerCertVerifier for NullVerifier {
-            fn verify_server_cert(
-                &self,
-                _roots: &rustls::RootCertStore,
-                _presented_certs: &[rustls::Certificate],
-                _dns_name: webpki::DNSNameRef,
-                _ocsp_response: &[u8],
-            ) -> Result<rustls::ServerCertVerified, TLSError> {
-                Ok(rustls::ServerCertVerified::assertion())
-            }
-        }
-
-        self.config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(NullVerifier));
-        self
     }
 }
 
