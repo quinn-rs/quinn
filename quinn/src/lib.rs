@@ -396,6 +396,7 @@ impl ClientConfigBuilder {
         config
             .root_store
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config.ct_logs = Some(&ct_logs::LOGS);
         config.versions = vec![ProtocolVersion::TLSv1_3];
         Self { config }
     }
