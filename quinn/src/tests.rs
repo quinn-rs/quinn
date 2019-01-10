@@ -5,7 +5,7 @@ use super::{
 use futures::{Future, Stream};
 use slog::{Drain, Logger, KV};
 use std::{
-    fmt, fs, io,
+    fmt, io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     str,
 };
@@ -39,9 +39,10 @@ fn echo_dualstack() {
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let log = logger();
     let mut server_config = ServerConfigBuilder::default();
-    let key = crate::PrivateKey::from_pem(&fs::read("../certs/server.rsa").unwrap()).unwrap();
-    let cert_chain =
-        crate::CertificateChain::from_pem(&fs::read("../certs/server.chain").unwrap()).unwrap();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+    let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+    let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
+    let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
     server_config.set_certificate(cert_chain, key).unwrap();
 
     let mut server = EndpointBuilder::new(Config {
@@ -55,11 +56,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let (_, server_driver, server_incoming) = server.from_socket(server_sock).unwrap();
 
     let mut client_config = ClientConfigBuilder::default();
-    client_config
-        .add_certificate_authority(
-            crate::Certificate::from_der(&fs::read("../certs/ca.der").unwrap()).unwrap(),
-        )
-        .unwrap();
+    client_config.add_certificate_authority(cert).unwrap();
     let mut client = Endpoint::new();
     client.logger(log.clone());
     client.default_client_config(client_config.build());
