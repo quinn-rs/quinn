@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{env, fmt, fs, mem, str};
+use std::{env, fmt, mem, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
@@ -12,7 +12,7 @@ use rand::RngCore;
 use ring::digest;
 use ring::hmac::SigningKey;
 use rustls::internal::msgs::enums::AlertDescription;
-use rustls::{internal::pemfile, KeyLogFile, ProtocolVersion};
+use rustls::{KeyLogFile, ProtocolVersion};
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
@@ -57,6 +57,8 @@ fn logger() -> Logger {
 lazy_static! {
     static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
+    static ref CERTIFICATE: rcgen::Certificate =
+        rcgen::generate_simple_self_signed(vec!["localhost".into()]);
 }
 
 struct Pair {
@@ -78,22 +80,14 @@ impl Default for Pair {
 }
 
 fn server_config() -> ServerConfig {
-    let certs = {
-        let f =
-            fs::File::open("../certs/server.chain").expect("cannot open '../certs/server.chain'");
-        let mut reader = io::BufReader::new(f);
-        pemfile::certs(&mut reader).expect("cannot read certificates")
-    };
-
-    let keys = {
-        let f = fs::File::open("../certs/server.rsa").expect("cannot open '../certs/server.rsa'");
-        let mut reader = io::BufReader::new(f);
-        pemfile::rsa_private_keys(&mut reader).expect("cannot read private keys")
-    };
+    let key = CERTIFICATE.serialize_private_key_der();
+    let cert = CERTIFICATE.serialize_der();
 
     let mut tls_config = crypto::build_server_config();
     tls_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    tls_config.set_single_cert(certs, keys[0].clone()).unwrap();
+    tls_config
+        .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
+        .unwrap();
     ServerConfig {
         tls_config: Arc::new(tls_config),
         ..Default::default()
@@ -101,11 +95,8 @@ fn server_config() -> ServerConfig {
 }
 
 fn client_config() -> Arc<ClientConfig> {
-    let mut f = fs::File::open("../certs/ca.der").expect("cannot open '../certs/ca.der'");
-    let mut bytes = Vec::new();
-    f.read_to_end(&mut bytes).expect("error while reading");
-
-    let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&bytes)).unwrap();
+    let cert = CERTIFICATE.serialize_der();
+    let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
     let anchor_vec = vec![anchor];
 
     let mut tls_client_config = ClientConfig::new();
