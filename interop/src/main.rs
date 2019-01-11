@@ -1,14 +1,3 @@
-extern crate quinn;
-extern crate tokio;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate slog;
-extern crate futures;
-extern crate rustls;
-extern crate slog_term;
-extern crate structopt;
-
 use std::net::ToSocketAddrs;
 use std::str;
 use std::sync::{Arc, Mutex};
@@ -17,8 +6,8 @@ use futures::Future;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
-use failure::Error;
-use slog::{Drain, Logger};
+use failure::{format_err, Error};
+use slog::{o, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 
