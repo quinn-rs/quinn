@@ -9,10 +9,15 @@ use std::io::Cursor;
 use super::table::{dynamic, static_, DynamicTable, HeaderField, StaticTable};
 use super::vas::{self, VirtualAddressSpace};
 
-use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, Error as StreamError, InsertWithNameRef,
-    InsertWithoutNameRef, InstructionType, TableSizeSync,
+use super::bloc::{
+    HeaderBlocField, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+    LiteralWithPostBaseNameRef,
 };
+use super::stream::{
+    Duplicate, DynamicTableSizeUpdate, InsertWithNameRef, InsertWithoutNameRef, InstructionType,
+    TableSizeSync,
+};
+use super::ParseError;
 
 use super::prefix_int;
 use super::prefix_string;
@@ -76,53 +81,44 @@ impl Decoder {
         let mut fields = Vec::new();
 
         while buf.has_remaining() {
-            let first = buf.bytes()[0];
-            let field = match first {
-                // 4.5.2. Indexed Header Field
-                x if x & 0b1000_0000 != 0 => {
-                    let (flags, index) = prefix_int::decode(6, buf)?;
-                    if flags & 0b01 != 0 {
-                        StaticTable::get(index)?.clone()
-                    } else {
-                        self.table.get(self.vas.relative(index)?)?.clone()
-                    }
-                }
-                // 4.5.3. Indexed Header Field With Post-Base Index
-                x if x & 0b1111_0000 == 0b0001_0000 => {
-                    let (_, postbase_index) = prefix_int::decode(4, buf)?;
-                    let index = self.vas.post_base(postbase_index)?;
-                    self.table.get(index)?.clone()
-                }
-                // 4.5.4. Literal Header Field With Name Reference
-                x if x & 0b1100_0000 == 0b0100_0000 => {
-                    let (flags, index) = prefix_int::decode(4, buf)?;
-
-                    let field = if flags & 0b0001 != 0 {
-                        StaticTable::get(index)?
-                    } else {
-                        self.table.get(self.vas.relative(index)?)?
-                    };
-
-                    field.with_value(prefix_string::decode(8, buf)?)
-                }
-                // 4.5.5. Literal Header Field With Post-Base Name Reference
-                x if x & 0b1111_0000 == 0 => {
-                    let (_flags, postbase_index) = prefix_int::decode(3, buf)?.into();
-                    let index = self.vas.post_base(postbase_index)?;
-                    let field = self.table.get(index)?.clone();
-                    field.with_value(prefix_string::decode(8, buf)?)
-                }
-                // 4.5.6. Literal Header Field Without Name Reference
-                x if x & 0b1110_0000 == 0b0010_0000 => HeaderField {
-                    name: prefix_string::decode(4, buf)?.into(),
-                    value: prefix_string::decode(8, buf)?.into(),
-                },
-                _ => return Err(Error::UnknownPrefix),
-            };
-            fields.push(field);
+            fields.push(self.parse_header_field(buf)?);
         }
 
         Ok(fields)
+    }
+
+    fn parse_header_field<R: Buf>(&self, buf: &mut R) -> Result<HeaderField, Error> {
+        let first = buf.bytes()[0];
+        let field = match HeaderBlocField::decode(first) {
+            HeaderBlocField::Indexed => match Indexed::decode(buf)? {
+                Indexed::Static(index) => StaticTable::get(index)?.clone(),
+                Indexed::Dynamic(index) => self.table.get(self.vas.relative(index)?)?.clone(),
+            },
+            HeaderBlocField::IndexedWithPostBase => {
+                let postbase = IndexedWithPostBase::decode(buf)?;
+                let index = self.vas.post_base(postbase.0)?;
+                self.table.get(index)?.clone()
+            }
+            HeaderBlocField::LiteralWithNameRef => match LiteralWithNameRef::decode(buf)? {
+                LiteralWithNameRef::Static { index, value } => {
+                    StaticTable::get(index)?.with_value(value)
+                }
+                LiteralWithNameRef::Dynamic { index, value } => {
+                    self.table.get(self.vas.relative(index)?)?.with_value(value)
+                }
+            },
+            HeaderBlocField::LiteralWithPostBaseNameRef => {
+                let literal = LiteralWithPostBaseNameRef::decode(buf)?;
+                let index = self.vas.post_base(literal.index)?;
+                self.table.get(index)?.with_value(literal.value)
+            }
+            HeaderBlocField::Literal => {
+                let literal = Literal::decode(buf)?;
+                HeaderField::new(literal.name, literal.value)
+            }
+            _ => return Err(Error::UnknownPrefix),
+        };
+        Ok(field)
     }
 
     fn largest_ref(&self, bloc_largest_ref: usize) -> usize {
@@ -266,12 +262,12 @@ impl From<dynamic::ErrorKind> for Error {
     }
 }
 
-impl From<StreamError> for Error {
-    fn from(e: StreamError) -> Self {
+impl From<ParseError> for Error {
+    fn from(e: ParseError) -> Self {
         match e {
-            StreamError::InvalidInteger(x) => Error::InvalidInteger(x),
-            StreamError::InvalidString(x) => Error::InvalidString(x),
-            StreamError::InvalidPrefix => Error::UnknownPrefix,
+            ParseError::InvalidInteger(x) => Error::InvalidInteger(x),
+            ParseError::InvalidString(x) => Error::InvalidString(x),
+            ParseError::InvalidPrefix => Error::UnknownPrefix,
         }
     }
 }
@@ -522,9 +518,9 @@ mod tests {
         let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
-        prefix_int::encode(6, 0b10, 0, &mut buf); // foo2
-        prefix_int::encode(6, 0b10, 1, &mut buf); // foo1
-        prefix_int::encode(6, 0b11, 18, &mut buf); // static  :method GET
+        Indexed::Dynamic(0).encode(&mut buf);
+        Indexed::Dynamic(1).encode(&mut buf);
+        Indexed::Static(18).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -554,9 +550,9 @@ mod tests {
         let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
-        prefix_int::encode(6, 0b10, 0, &mut buf); // relative foo2
-        prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo3
-        prefix_int::encode(4, 0b0001, 1, &mut buf); // post base foo4
+        Indexed::Dynamic(0).encode(&mut buf);
+        IndexedWithPostBase(0).encode(&mut buf);
+        IndexedWithPostBase(1).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -571,10 +567,12 @@ mod tests {
         let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
-        prefix_int::encode(4, 0b0100, 1, &mut buf); // foo1
-        prefix_string::encode(8, 0, b"new bar1", &mut buf).unwrap();
-        prefix_int::encode(4, 0b0101, 18, &mut buf); // static  :method GET
-        prefix_string::encode(8, 0, b"PUT", &mut buf).unwrap();
+        LiteralWithNameRef::new_dynamic(1, "new bar1")
+            .encode(&mut buf)
+            .unwrap();
+        LiteralWithNameRef::new_static(18, "PUT")
+            .encode(&mut buf)
+            .unwrap();
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -595,8 +593,9 @@ mod tests {
         let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
-        prefix_int::encode(3, 0b00000, 0, &mut buf); // post base foo3
-        prefix_string::encode(8, 0, b"new bar3", &mut buf).unwrap();
+        LiteralWithPostBaseNameRef::new(0, "new bar3")
+            .encode(&mut buf)
+            .unwrap();
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -608,8 +607,7 @@ mod tests {
         let mut buf = vec![];
         prefix_int::encode(8, 0, 0, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf);
-        prefix_string::encode(4, 0b0010, b"foo", &mut buf).unwrap();
-        prefix_string::encode(8, 0, b"bar", &mut buf).unwrap();
+        Literal::new("foo", "bar").encode(&mut buf).unwrap();
 
         let mut read = Cursor::new(&buf);
         let headers = Decoder::new().decode_header(&mut read).unwrap();
@@ -639,10 +637,10 @@ mod tests {
         let encoded_largest_ref = (4 % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 1, 3, &mut buf); // base index negative = 0
-        prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo1
-        prefix_int::encode(4, 0b0001, 1, &mut buf); // post base foo2
-        prefix_int::encode(4, 0b0001, 2, &mut buf); // post base foo3
-        prefix_int::encode(4, 0b0001, 3, &mut buf); // post base foo4
+        IndexedWithPostBase(0).encode(&mut buf);
+        IndexedWithPostBase(1).encode(&mut buf);
+        IndexedWithPostBase(2).encode(&mut buf);
+        IndexedWithPostBase(3).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -674,7 +672,7 @@ mod tests {
         let encoded_largest_ref = ((max_entries + 5) % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 0, 0, &mut buf); // base index = 4114
-        prefix_int::encode(6, 0b10, 10, &mut buf); // relative: 4114 - 10 - 1
+        Indexed::Dynamic(10).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();
@@ -686,8 +684,8 @@ mod tests {
         let encoded_largest_ref = ((max_entries + 10) % (2 * max_entries)) + 1;
         prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
         prefix_int::encode(7, 1, 4, &mut buf); // base index = 4114
-        prefix_int::encode(4, 0b0001, 0, &mut buf); // post base foo4115
-        prefix_int::encode(4, 0b0001, 4, &mut buf); // post base foo4119
+        IndexedWithPostBase(0).encode(&mut buf);
+        IndexedWithPostBase(4).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decoder.decode_header(&mut read).unwrap();

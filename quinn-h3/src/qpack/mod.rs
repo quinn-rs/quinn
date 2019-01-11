@@ -29,4 +29,28 @@ pub mod vas;
 pub mod prefix_int;
 pub mod prefix_string;
 
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    InvalidInteger(prefix_int::Error),
+    InvalidString(prefix_string::Error),
+    InvalidPrefix,
+}
+
+impl From<prefix_int::Error> for ParseError {
+    fn from(e: prefix_int::Error) -> Self {
+        match e {
+            e => ParseError::InvalidInteger(e),
+        }
+    }
+}
+
+impl From<prefix_string::Error> for ParseError {
+    fn from(e: prefix_string::Error) -> Self {
+        match e {
+            e => ParseError::InvalidString(e),
+        }
+    }
+}
+
+mod bloc;
 mod stream;
