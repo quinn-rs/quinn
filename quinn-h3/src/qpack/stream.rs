@@ -5,13 +5,7 @@ use std::io::Cursor;
 use super::prefix_int::{self, Error as IntError};
 use super::prefix_string::{self, Error as StringError};
 use super::table::field::HeaderField;
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    InvalidInteger(prefix_int::Error),
-    InvalidString(prefix_string::Error),
-    InvalidPrefix,
-}
+use super::ParseError;
 
 pub enum InstructionType {
     InsertWithNameRef,
@@ -58,10 +52,10 @@ impl InsertWithNameRef {
         }
     }
 
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, Error> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let (flags, index) = match prefix_int::decode(6, buf) {
             Ok((f, x)) if f & 0b10 == 0b10 => (f, x),
-            Ok((_, _)) => return Err(Error::InvalidPrefix),
+            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -108,7 +102,7 @@ impl InsertWithoutNameRef {
         }
     }
 
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, Error> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let name = match prefix_string::decode(6, buf) {
             Ok(x) => x,
             Err(StringError::UnexpectedEnd) => return Ok(None),
@@ -135,10 +129,10 @@ pub struct Duplicate {
 }
 
 impl Duplicate {
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, Error> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let index = match prefix_int::decode(5, buf) {
             Ok((0, x)) => x,
-            Ok((_, _)) => return Err(Error::InvalidPrefix),
+            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -156,10 +150,10 @@ pub struct DynamicTableSizeUpdate {
 }
 
 impl DynamicTableSizeUpdate {
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, Error> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let size = match prefix_int::decode(5, buf) {
             Ok((0b001, x)) => x,
-            Ok((_, _)) => return Err(Error::InvalidPrefix),
+            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -177,10 +171,10 @@ pub struct TableSizeSync {
 }
 
 impl TableSizeSync {
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, Error> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let insert_count = match prefix_int::decode(6, buf) {
             Ok((0b00, x)) => x,
-            Ok((_, _)) => return Err(Error::InvalidPrefix),
+            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -189,22 +183,6 @@ impl TableSizeSync {
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         prefix_int::encode(6, 0b00, self.insert_count, buf);
-    }
-}
-
-impl From<prefix_int::Error> for Error {
-    fn from(e: prefix_int::Error) -> Self {
-        match e {
-            e => Error::InvalidInteger(e),
-        }
-    }
-}
-
-impl From<prefix_string::Error> for Error {
-    fn from(e: prefix_string::Error) -> Self {
-        match e {
-            e => Error::InvalidString(e),
-        }
     }
 }
 
