@@ -52,7 +52,4 @@ directories = "1.0.2"
 name = "server"
 
 [[example]]
-name = "interop"
-
-[[example]]
 name = "client"
