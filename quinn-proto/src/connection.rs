@@ -1368,6 +1368,15 @@ impl Connection {
                     trace!(self.log, "got {type}", type=frame.ty());
                 }
             }
+            if is_0rtt {
+                match frame {
+                    Frame::Padding | Frame::Stream { .. } => {}
+                    _ => {
+                        debug!(self.log, "illegal 0-RTT frame");
+                        return Err(TransportError::PROTOCOL_VIOLATION);
+                    }
+                }
+            }
             match frame {
                 Frame::Ack(_) | Frame::Padding => {}
                 _ => {
