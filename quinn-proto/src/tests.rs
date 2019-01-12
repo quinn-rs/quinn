@@ -677,8 +677,52 @@ fn zero_rtt() {
     };
     assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
+}
 
-    // TODO: Test rejected 0-RTT
+#[test]
+fn zero_rtt_rejection() {
+    let mut pair = Pair::default();
+    let mut config = client_config();
+
+    // Establish normal connection
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &config, "localhost")
+        .unwrap();
+    pair.drive();
+    pair.server.accept().unwrap();
+    pair.client.close(pair.time, client_conn, 0, [][..].into());
+    pair.drive();
+
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    // Changing protocols invalidates 0-RTT
+    Arc::get_mut(&mut config)
+        .unwrap()
+        .set_protocols(&["foo".into()]);
+    info!(pair.log, "resuming session");
+    let client_conn = pair
+        .client
+        .connect(pair.server.addr, &config, "localhost")
+        .unwrap();
+    assert!(pair.client.connection(client_conn).has_0rtt());
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.drive();
+    assert!(!pair.client.connection(client_conn).accepted_0rtt());
+    let server_conn = if let Some(c) = pair.server.accept() {
+        c
+    } else {
+        panic!("server didn't connect");
+    };
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Blocked)
+    );
+    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
 }
 
 #[test]
