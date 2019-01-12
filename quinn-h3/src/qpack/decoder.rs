@@ -65,38 +65,36 @@ impl Decoder {
             return Err(Error::MissingRefs);
         }
 
-        if sign == 0 {
-            self.vas
-                .set_base_index(remote_largest_ref + encoded_base_index);
+        let base = if sign == 0 {
+            remote_largest_ref + encoded_base_index
         } else {
             if encoded_base_index > remote_largest_ref - 1 {
                 return Err(Error::BadBaseIndex(
                     remote_largest_ref as isize - encoded_base_index as isize - 1,
                 ));
             }
-            self.vas
-                .set_base_index(remote_largest_ref - encoded_base_index - 1);
-        }
+            remote_largest_ref - encoded_base_index - 1
+        };
 
         let mut fields = Vec::new();
 
         while buf.has_remaining() {
-            fields.push(self.parse_header_field(buf)?);
+            fields.push(self.parse_header_field(base, buf)?);
         }
 
         Ok(fields)
     }
 
-    fn parse_header_field<R: Buf>(&self, buf: &mut R) -> Result<HeaderField, Error> {
+    fn parse_header_field<R: Buf>(&self, base: usize, buf: &mut R) -> Result<HeaderField, Error> {
         let first = buf.bytes()[0];
         let field = match HeaderBlocField::decode(first) {
             HeaderBlocField::Indexed => match Indexed::decode(buf)? {
                 Indexed::Static(index) => StaticTable::get(index)?.clone(),
-                Indexed::Dynamic(index) => self.table.get(self.vas.relative(index)?)?.clone(),
+                Indexed::Dynamic(index) => self.table.get(self.vas.relative_base(base, index)?)?.clone(),
             },
             HeaderBlocField::IndexedWithPostBase => {
                 let postbase = IndexedWithPostBase::decode(buf)?;
-                let index = self.vas.post_base(postbase.0)?;
+                let index = self.vas.post_base(base, postbase.0)?;
                 self.table.get(index)?.clone()
             }
             HeaderBlocField::LiteralWithNameRef => match LiteralWithNameRef::decode(buf)? {
@@ -104,12 +102,12 @@ impl Decoder {
                     StaticTable::get(index)?.with_value(value)
                 }
                 LiteralWithNameRef::Dynamic { index, value } => {
-                    self.table.get(self.vas.relative(index)?)?.with_value(value)
+                    self.table.get(self.vas.relative_base(base, index)?)?.with_value(value)
                 }
             },
             HeaderBlocField::LiteralWithPostBaseNameRef => {
                 let literal = LiteralWithPostBaseNameRef::decode(buf)?;
-                let index = self.vas.post_base(literal.index)?;
+                let index = self.vas.post_base(base, literal.index)?;
                 self.table.get(index)?.with_value(literal.value)
             }
             HeaderBlocField::Literal => {
@@ -160,6 +158,7 @@ impl Decoder {
         }
 
         if self.vas.total_inserted() != inserted_on_start {
+            //TODO RENAME
             TableSizeSync {
                 insert_count: self.vas.total_inserted() - inserted_on_start,
             }
@@ -291,9 +290,8 @@ mod tests {
         let mut dec = vec![];
         assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
 
-        decoder.vas.set_base_index(1);
         assert_eq!(
-            decoder.table.get(decoder.vas.relative(0).unwrap()),
+            decoder.table.get(decoder.vas.relative_base(1, 0).unwrap()),
             Ok(&StaticTable::get(1).unwrap().with_value("serial value"))
         );
 
@@ -356,9 +354,8 @@ mod tests {
         let mut dec = vec![];
         assert!(decoder.on_encoder_recv(&mut enc, &mut dec).is_ok());
 
-        decoder.vas.set_base_index(1);
         assert_eq!(
-            decoder.table.get(decoder.vas.relative(0).unwrap()),
+            decoder.table.get(decoder.vas.relative_base(1, 0).unwrap()),
             Ok(&HeaderField::new("key", "value"))
         );
 
@@ -378,7 +375,6 @@ mod tests {
         let mut decoder = Decoder::new();
         decoder.put_field(HeaderField::new("", ""));
         decoder.put_field(HeaderField::new("", ""));
-        decoder.vas.set_base_index(2);
         assert_eq!(decoder.table.count(), 2);
 
         let mut buf = vec![];

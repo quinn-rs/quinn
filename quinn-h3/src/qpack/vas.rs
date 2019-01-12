@@ -86,7 +86,6 @@ pub struct VirtualAddressSpace {
     inserted: usize,
     dropped: usize,
     delta: usize,
-    base: usize,
 }
 
 impl VirtualAddressSpace {
@@ -95,12 +94,7 @@ impl VirtualAddressSpace {
             inserted: 0,
             dropped: 0,
             delta: 0,
-            base: 0,
         }
-    }
-
-    pub fn set_base_index(&mut self, base: AbsoluteIndex) {
-        self.base = base;
     }
 
     pub fn add(&mut self) -> AbsoluteIndex {
@@ -124,18 +118,26 @@ impl VirtualAddressSpace {
     }
 
     pub fn relative(&self, index: RelativeIndex) -> Result<usize, Error> {
-        if self.delta == 0 || index > self.base || self.base - index <= self.dropped {
+        if self.delta == 0 || self.inserted - index <= self.dropped {
             Err(Error::BadRelativeIndex(index))
         } else {
-            Ok(self.base - self.dropped - index - 1)
+            Ok(self.inserted - self.dropped - index - 1)
         }
     }
 
-    pub fn post_base(&self, index: RelativeIndex) -> Result<usize, Error> {
-        if self.delta == 0 || self.base + index >= self.inserted {
+    pub fn relative_base(&self, base: usize, index: RelativeIndex) -> Result<usize, Error> {
+        if self.delta == 0 || index > base || base - index <= self.dropped {
+            Err(Error::BadRelativeIndex(index))
+        } else {
+            Ok(base - self.dropped - index - 1)
+        }
+    }
+
+    pub fn post_base(&self, base: usize, index: RelativeIndex) -> Result<usize, Error> {
+        if self.delta == 0 || base + index >= self.inserted {
             Err(Error::BadPostbaseIndex(index))
         } else {
-            Ok(self.base - self.dropped + index)
+            Ok(base - self.dropped + index)
         }
     }
 
@@ -165,7 +167,7 @@ mod tests {
     #[test]
     fn test_no_relative_index_when_empty() {
         let vas = VirtualAddressSpace::new();
-        let res = vas.relative(0);
+        let res = vas.relative_base(0, 0);
         assert_eq!(res, Err(Error::BadRelativeIndex(0)));
     }
 
@@ -185,8 +187,7 @@ mod tests {
             let abs_index = vas.add();
             (1..*count).for_each(|_| { vas.add(); });
 
-            vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), Ok(0), "{:?}", vas);
+            assert_eq!(vas.relative_base(*count, count - 1), Ok(0), "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
 
@@ -199,8 +200,7 @@ mod tests {
             (1..*count).for_each(|_| { vas.add(); });
             (0..*count - 1).for_each(|_| vas.drop());
 
-            vas.set_base_index(*count);
-            assert_eq!(vas.relative(count - 1), Err(Error::BadRelativeIndex(count - 1)), "{:?}", vas);
+            assert_eq!(vas.relative_base(*count, count - 1), Err(Error::BadRelativeIndex(count - 1)), "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Err(Error::BadAbsoluteIndex(abs_index)), "{:?}", vas);
         }
 
@@ -212,8 +212,7 @@ mod tests {
             (1..*count).for_each(|_| { vas.add(); });
             let abs_index = vas.add();
 
-            vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Ok(count -1),
+            assert_eq!(vas.relative_base(*count, 0), Ok(count -1),
                        "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Ok(count - 1),
                        "{:?}", vas);
@@ -228,8 +227,7 @@ mod tests {
             let abs_index = vas.add();
             (0..*count - 1).for_each(|_| { vas.drop(); });
 
-            vas.set_base_index(*count);
-            assert_eq!(vas.relative(0), Ok(0),
+            assert_eq!(vas.relative_base(*count, 0), Ok(0),
                        "{:?}", vas);
             assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
@@ -252,8 +250,7 @@ mod tests {
             vas.add();
         });
 
-        vas.set_base_index(4);
-        assert_eq!(vas.post_base(1), Ok(5));
+        assert_eq!(vas.post_base(4, 1), Ok(5));
     }
 
     #[test]
@@ -263,5 +260,19 @@ mod tests {
             vas.add();
         });
         assert_eq!(vas.largest_ref(), 7);
+    }
+
+    #[test]
+    fn relative() {
+        let mut vas = VirtualAddressSpace::new();
+
+        (0..7).for_each(|_| {
+            vas.add();
+        });
+
+        assert_eq!(vas.relative(0), Ok(6));
+        assert_eq!(vas.relative(1), Ok(5));
+        assert_eq!(vas.relative(6), Ok(0));
+        assert_eq!(vas.relative(7), Err(Error::BadRelativeIndex(7)));
     }
 }
