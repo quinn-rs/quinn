@@ -394,6 +394,11 @@ impl Assembler {
             self.written[bit / 8] &= !(1 << (7 - bit % 8));
         }
     }
+
+    /// Current position in the stream
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
 }
 
 #[cfg(test)]
