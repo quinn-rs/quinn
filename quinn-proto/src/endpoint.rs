@@ -86,11 +86,11 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        while let Some(&conn) = self.eventful_conns.iter().next() {
-            if let Some(e) = self.connections[conn.0].poll() {
-                return Some((conn, e));
+        while let Some(&ch) = self.eventful_conns.iter().next() {
+            if let Some(e) = self.connections[ch.0].poll() {
+                return Some((ch, e));
             }
-            self.eventful_conns.remove(&conn);
+            self.eventful_conns.remove(&ch);
         }
         None
     }
@@ -101,9 +101,9 @@ impl Endpoint {
             return Some(x);
         }
         loop {
-            let &conn = self.dirty_conns.iter().next()?;
+            let &ch = self.dirty_conns.iter().next()?;
             loop {
-                if let Some(io) = self.connections[conn.0].poll_io(now) {
+                if let Some(io) = self.connections[ch.0].poll_io(now) {
                     return Some(match io {
                         connection::Io::Transmit {
                             destination,
@@ -115,20 +115,20 @@ impl Endpoint {
                             packet,
                         },
                         connection::Io::TimerUpdate { timer, update } => Io::TimerUpdate {
-                            connection: conn,
+                            connection: ch,
                             timer,
                             update,
                         },
                         connection::Io::RetireConnectionId { connection_id } => {
                             self.connection_ids.remove(&connection_id);
                             let new_cid = self.new_cid();
-                            self.connection_ids.insert(new_cid, conn);
-                            self.connections[conn.0].issue_cid(new_cid);
+                            self.connection_ids.insert(new_cid, ch);
+                            self.connections[ch.0].issue_cid(new_cid);
                             continue;
                         }
                     });
                 } else {
-                    self.dirty_conns.remove(&conn);
+                    self.dirty_conns.remove(&ch);
                     break;
                 }
             }
@@ -186,20 +186,20 @@ impl Endpoint {
     }
 
     /// Connection is either ready to accept data or failed.
-    fn conn_ready(&mut self, conn: ConnectionHandle) {
-        if self.connections[conn.0].side().is_server() {
+    fn conn_ready(&mut self, ch: ConnectionHandle) {
+        if self.connections[ch.0].side().is_server() {
             self.incoming_handshakes -= 1;
-            self.incoming.push_back(conn);
+            self.incoming.push_back(ch);
         }
-        if self.config.local_cid_len != 0 && !self.connections[conn.0].is_closed() {
+        if self.config.local_cid_len != 0 && !self.connections[ch.0].is_closed() {
             /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
             /// connection IDs
             const LOCAL_CID_COUNT: usize = 8;
             // We've already issued one CID as part of the normal handshake process.
             for _ in 1..LOCAL_CID_COUNT {
                 let cid = self.new_cid();
-                self.connection_ids.insert(cid, conn);
-                self.connections[conn.0].issue_cid(cid);
+                self.connection_ids.insert(cid, ch);
+                self.connections[ch.0].issue_cid(cid);
             }
         }
     }
@@ -217,13 +217,13 @@ impl Endpoint {
         //
 
         let dst_cid = partial_decode.dst_cid();
-        let conn = {
-            let conn = if self.config.local_cid_len > 0 {
+        let known_ch = {
+            let ch = if self.config.local_cid_len > 0 {
                 self.connection_ids.get(&dst_cid)
             } else {
                 None
             };
-            conn.or_else(|| self.connection_ids_initial.get(&dst_cid))
+            ch.or_else(|| self.connection_ids_initial.get(&dst_cid))
                 .or_else(|| {
                     // If CIDs are in use, only stateless resets (which use short headers) will
                     // legitimately have unknown CIDs.
@@ -235,17 +235,16 @@ impl Endpoint {
                 })
                 .cloned()
         };
-        if let Some(conn_id) = conn {
-            let had_1rtt = self.connections[conn_id.0].has_1rtt();
-            self.connections[conn_id.0].handle_decode(now, remote, ecn, partial_decode);
+        if let Some(ch) = known_ch {
+            let had_1rtt = self.connections[ch.0].has_1rtt();
+            self.connections[ch.0].handle_decode(now, remote, ecn, partial_decode);
             if !had_1rtt
-                && (self.connections[conn_id.0].has_1rtt()
-                    || !self.connections[conn_id.0].is_handshaking())
+                && (self.connections[ch.0].has_1rtt() || !self.connections[ch.0].is_handshaking())
             {
-                self.conn_ready(conn_id);
+                self.conn_ready(ch);
             }
-            self.dirty_conns.insert(conn_id);
-            self.eventful_conns.insert(conn_id);
+            self.dirty_conns.insert(ch);
+            self.eventful_conns.insert(ch);
             return;
         }
 
@@ -357,7 +356,7 @@ impl Endpoint {
     ) -> Result<ConnectionHandle, ConnectError> {
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
-        let conn = self.add_connection(
+        let ch = self.add_connection(
             remote_id,
             remote_id,
             remote,
@@ -366,8 +365,8 @@ impl Endpoint {
                 server_name: server_name.into(),
             }),
         )?;
-        self.dirty_conns.insert(conn);
-        Ok(conn)
+        self.dirty_conns.insert(ch);
+        Ok(ch)
     }
 
     fn new_cid(&mut self) -> ConnectionId {
@@ -416,7 +415,7 @@ impl Endpoint {
         let remote_validated = self.server_config.as_ref().map_or(false, |cfg| {
             cfg.use_stateless_retry && client_config.is_none()
         });
-        let conn = self.connections.insert(Connection::new(
+        let id = self.connections.insert(Connection::new(
             self.log.new(o!("connection" => local_id)),
             Arc::clone(&self.config),
             initial_id,
@@ -427,13 +426,13 @@ impl Endpoint {
             tls,
             remote_validated,
         ));
-        let conn = ConnectionHandle(conn);
+        let ch = ConnectionHandle(id);
 
         if self.config.local_cid_len > 0 {
-            self.connection_ids.insert(local_id, conn);
+            self.connection_ids.insert(local_id, ch);
         }
-        self.connection_remotes.insert(remote, conn);
-        Ok(conn)
+        self.connection_remotes.insert(remote, ch);
+        Ok(ch)
     }
 
     fn handle_initial(
@@ -560,7 +559,7 @@ impl Endpoint {
             }
         }
 
-        let conn = self
+        let ch = self
             .add_connection(
                 dst_cid,
                 src_cid,
@@ -571,19 +570,19 @@ impl Endpoint {
             )
             .unwrap();
         if dst_cid.len() != 0 {
-            self.connection_ids_initial.insert(dst_cid, conn);
+            self.connection_ids_initial.insert(dst_cid, ch);
         }
-        match self.connections[conn.0].handle_initial(now, ecn, packet_number as u64, packet) {
+        match self.connections[ch.0].handle_initial(now, ecn, packet_number as u64, packet) {
             Ok(()) => {
                 self.incoming_handshakes += 1;
-                self.dirty_conns.insert(conn);
-                if self.connections[conn.0].has_1rtt() {
-                    self.conn_ready(conn);
+                self.dirty_conns.insert(ch);
+                if self.connections[ch.0].has_1rtt() {
+                    self.conn_ready(ch);
                 }
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.forget(conn);
+                self.forget(ch);
                 self.io.push_back(Io::Transmit {
                     destination: remote,
                     ecn: None,
@@ -593,33 +592,33 @@ impl Endpoint {
         }
     }
 
-    fn forget(&mut self, conn: ConnectionHandle) {
-        if self.connections[conn.0].side().is_server() {
+    fn forget(&mut self, ch: ConnectionHandle) {
+        if self.connections[ch.0].side().is_server() {
             self.connection_ids_initial
-                .remove(&self.connections[conn.0].init_cid);
+                .remove(&self.connections[ch.0].init_cid);
         }
         if self.config.local_cid_len > 0 {
-            for cid in self.connections[conn.0].loc_cids() {
+            for cid in self.connections[ch.0].loc_cids() {
                 self.connection_ids.remove(cid);
             }
         }
         self.connection_remotes
-            .remove(&self.connections[conn.0].remote());
-        self.dirty_conns.remove(&conn);
-        self.eventful_conns.remove(&conn);
-        self.connections.remove(conn.0);
+            .remove(&self.connections[ch.0].remote());
+        self.dirty_conns.remove(&ch);
+        self.eventful_conns.remove(&ch);
+        self.connections.remove(ch.0);
     }
 
     /// Handle a timer expiring
-    pub fn timeout(&mut self, now: u64, conn: ConnectionHandle, timer: Timer) {
-        if self.connections[conn.0].timeout(now, timer) {
-            self.forget(conn);
+    pub fn timeout(&mut self, now: u64, ch: ConnectionHandle, timer: Timer) {
+        if self.connections[ch.0].timeout(now, timer) {
+            self.forget(ch);
             return;
         }
         if let Timer::Idle = timer {
-            self.eventful_conns.insert(conn);
+            self.eventful_conns.insert(ch);
         }
-        self.dirty_conns.insert(conn);
+        self.dirty_conns.insert(ch);
     }
 
     /// Transmit data on a stream
@@ -630,12 +629,12 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn write(
         &mut self,
-        conn: ConnectionHandle,
+        ch: ConnectionHandle,
         stream: StreamId,
         data: &[u8],
     ) -> Result<usize, WriteError> {
-        let result = self.connections[conn.0].write(stream, data);
-        self.dirty_conns.insert(conn);
+        let result = self.connections[ch.0].write(stream, data);
+        self.dirty_conns.insert(ch);
         result
     }
 
@@ -646,9 +645,9 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a stream that does not have an active outgoing channel
-    pub fn finish(&mut self, conn: ConnectionHandle, stream: StreamId) {
-        self.connections[conn.0].finish(stream);
-        self.dirty_conns.insert(conn);
+    pub fn finish(&mut self, ch: ConnectionHandle, stream: StreamId) {
+        self.connections[ch.0].finish(stream);
+        self.dirty_conns.insert(ch);
     }
 
     /// Read data from a stream
@@ -660,14 +659,14 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active incoming channel
     pub fn read(
         &mut self,
-        conn: ConnectionHandle,
+        ch: ConnectionHandle,
         stream: StreamId,
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
-        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
-        match self.connections[conn.0].read(stream, buf) {
+        self.dirty_conns.insert(ch); // May need to send flow control frames after reading
+        match self.connections[ch.0].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[ch.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -688,13 +687,13 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active incoming channel
     pub fn read_unordered(
         &mut self,
-        conn: ConnectionHandle,
+        ch: ConnectionHandle,
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
-        self.dirty_conns.insert(conn); // May need to send flow control frames after reading
-        match self.connections[conn.0].read_unordered(stream) {
+        self.dirty_conns.insert(ch); // May need to send flow control frames after reading
+        match self.connections[ch.0].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[conn.0].maybe_cleanup(stream);
+                self.connections[ch.0].maybe_cleanup(stream);
                 x
             }
             x => x,
@@ -705,67 +704,67 @@ impl Endpoint {
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[conn.0].reset(stream, error_code);
-        self.dirty_conns.insert(conn);
+    pub fn reset(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
+        self.connections[ch.0].reset(stream, error_code);
+        self.dirty_conns.insert(ch);
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
     ///
     /// # Panics
     /// - when applied to a stream that has not begun receiving data
-    pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[conn.0].stop_sending(stream, error_code);
-        self.dirty_conns.insert(conn);
+    pub fn stop_sending(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
+        self.connections[ch.0].stop_sending(stream, error_code);
+        self.dirty_conns.insert(ch);
     }
 
     /// Create a new stream
     ///
     /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint
     /// are already open.
-    pub fn open(&mut self, conn: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[conn.0].open(direction)
+    pub fn open(&mut self, ch: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
+        self.connections[ch.0].open(direction)
     }
 
     /// Ping the remote endpoint
     ///
     /// Useful for preventing an otherwise idle connection from timing out.
-    pub fn ping(&mut self, conn: ConnectionHandle) {
-        self.connections[conn.0].ping();
-        self.dirty_conns.insert(conn);
+    pub fn ping(&mut self, ch: ConnectionHandle) {
+        self.connections[ch.0].ping();
+        self.dirty_conns.insert(ch);
     }
 
     /// Close a connection immediately
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: u64, conn: ConnectionHandle, error_code: u16, reason: Bytes) {
-        if self.connections[conn.0].is_drained() {
-            self.forget(conn);
+    pub fn close(&mut self, now: u64, ch: ConnectionHandle, error_code: u16, reason: Bytes) {
+        if self.connections[ch.0].is_drained() {
+            self.forget(ch);
             return;
         }
-        self.connections[conn.0].close(now, error_code, reason);
-        self.dirty_conns.insert(conn);
+        self.connections[ch.0].close(now, error_code, reason);
+        self.dirty_conns.insert(ch);
     }
 
     pub fn accept(&mut self) -> Option<ConnectionHandle> {
         self.incoming.pop_front()
     }
 
-    pub fn accept_stream(&mut self, conn: ConnectionHandle) -> Option<StreamId> {
-        let id = self.connections[conn.0].accept()?;
-        self.dirty_conns.insert(conn);
+    pub fn accept_stream(&mut self, ch: ConnectionHandle) -> Option<StreamId> {
+        let id = self.connections[ch.0].accept()?;
+        self.dirty_conns.insert(ch);
         Some(id)
     }
 
     #[doc(hidden)]
-    pub fn force_key_update(&mut self, conn: ConnectionHandle) {
-        self.connections[conn.0].force_key_update();
-        self.ping(conn);
+    pub fn force_key_update(&mut self, ch: ConnectionHandle) {
+        self.connections[ch.0].force_key_update();
+        self.ping(ch);
     }
 
-    pub fn connection(&self, handle: ConnectionHandle) -> &Connection {
-        &self.connections[handle.0]
+    pub fn connection(&self, ch: ConnectionHandle) -> &Connection {
+        &self.connections[ch.0]
     }
 }
 

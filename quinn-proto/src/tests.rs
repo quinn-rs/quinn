@@ -216,18 +216,18 @@ impl Pair {
 
     fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let client_conn = self
+        let client_ch = self
             .client
             .connect(self.server.addr, &client_config(), "localhost")
             .unwrap();
         self.drive();
-        let server_conn = if let Some(c) = self.server.accept() {
+        let server_ch = if let Some(c) = self.server.accept() {
             c
         } else {
             panic!("server didn't connect");
         };
-        assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
-        (client_conn, server_conn)
+        assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_ch);
+        (client_ch, server_ch)
     }
 }
 
@@ -407,14 +407,14 @@ fn version_negotiate() {
 #[test]
 fn lifecycle() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.client.poll(), None);
-    assert!(pair.client.connection(client_conn).using_ecn());
-    assert!(pair.server.connection(server_conn).using_ecn());
+    assert!(pair.client.connection(client_ch).using_ecn());
+    assert!(pair.server.connection(server_ch).using_ecn());
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
-    pair.client.close(pair.time, client_conn, 42, REASON.into());
+    pair.client.close(pair.time, client_ch, 42, REASON.into());
     pair.drive();
     assert!(pair.spins > 0);
     assert_matches!(pair.server.poll(),
@@ -452,7 +452,7 @@ fn server_stateless_reset() {
     };
 
     let mut pair = Pair::new(server, Config::default(), server_config());
-    let (client_conn, _) = pair.connect();
+    let (client_ch, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("side" => "Server")),
         Config {
@@ -464,10 +464,10 @@ fn server_stateless_reset() {
     .unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
     pair.client
-        .close(pair.time, client_conn, 42, (&[0xab; 128][..]).into());
+        .close(pair.time, client_ch, 42, (&[0xab; 128][..]).into());
     info!(pair.log, "resetting");
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == client_ch);
 }
 
 #[test]
@@ -485,7 +485,7 @@ fn client_stateless_reset() {
     };
 
     let mut pair = Pair::new(Config::default(), client, server_config());
-    let (_, server_conn) = pair.connect();
+    let (_, server_ch) = pair.connect();
     pair.client.endpoint = Endpoint::new(
         pair.log.new(o!("side" => "Client")),
         Config {
@@ -497,32 +497,32 @@ fn client_stateless_reset() {
     .unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server
-        .close(pair.time, server_conn, 42, (&[0xab; 128][..]).into());
+        .close(pair.time, server_ch, 42, (&[0xab; 128][..]).into());
     info!(pair.log, "resetting");
     pair.drive();
-    assert_matches!(pair.server.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == server_conn);
+    assert_matches!(pair.server.poll(), Some((conn, Event::ConnectionLost { reason: ConnectionError::Reset })) if conn == server_ch);
 }
 
 #[test]
 fn finish_stream() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
-    pair.client.write(client_conn, s, MSG).unwrap();
-    pair.client.finish(client_conn, s);
+    pair.client.write(client_ch, s, MSG).unwrap();
+    pair.client.finish(client_ch, s);
     pair.drive();
 
-    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_ch && stream == s);
     assert_matches!(pair.client.poll(), None);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
+    assert_matches!(pair.server.read_unordered(server_ch, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Err(ReadError::Finished)
     );
 }
@@ -530,24 +530,24 @@ fn finish_stream() {
 #[test]
 fn reset_stream() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
-    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.client.write(client_ch, s, MSG).unwrap();
     pair.drive();
 
     info!(pair.log, "resetting stream");
     const ERROR: u16 = 42;
-    pair.client.reset(client_conn, s, ERROR);
+    pair.client.reset(client_ch, s, ERROR);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_ch && stream == s);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Err(ReadError::Reset { error_code: ERROR })
     );
     assert_matches!(pair.client.poll(), None);
@@ -556,28 +556,28 @@ fn reset_stream() {
 #[test]
 fn stop_stream() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
     const MSG: &[u8] = b"hello";
-    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.client.write(client_ch, s, MSG).unwrap();
     pair.drive();
 
     info!(pair.log, "stopping stream");
     const ERROR: u16 = 42;
-    pair.server.stop_sending(server_conn, s, ERROR);
+    pair.server.stop_sending(server_ch, s, ERROR);
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_ch && stream == s);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Err(ReadError::Reset { error_code: ERROR })
     );
 
     assert_matches!(
-        pair.client.write(client_conn, s, b"foo"),
+        pair.client.write(client_ch, s, b"foo"),
         Err(WriteError::Stopped { error_code: ERROR })
     );
 }
@@ -590,7 +590,7 @@ fn reject_self_signed_cert() {
 
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &Arc::new(client_config), "localhost")
         .unwrap();
@@ -598,18 +598,18 @@ fn reject_self_signed_cert() {
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
                         error_code
-                    }})) if conn == client_conn && error_code == TransportError::crypto(AlertDescription::BadCertificate));
+                    }})) if conn == client_ch && error_code == TransportError::crypto(AlertDescription::BadCertificate));
 }
 
 #[test]
 fn congestion() {
     let mut pair = Pair::default();
-    let (client_conn, _) = pair.connect();
+    let (client_ch, _) = pair.connect();
 
-    let initial_congestion_state = pair.client.connection(client_conn).congestion_state();
-    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    let initial_congestion_state = pair.client.connection(client_ch).congestion_state();
+    let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
     loop {
-        match pair.client.write(client_conn, s, &[42; 1024]) {
+        match pair.client.write(client_ch, s, &[42; 1024]) {
             Ok(n) => {
                 assert!(n <= 1024);
                 pair.drive_client();
@@ -623,19 +623,19 @@ fn congestion() {
         }
     }
     pair.drive();
-    assert!(pair.client.connection(client_conn).congestion_state() >= initial_congestion_state);
-    pair.client.write(client_conn, s, &[42; 1024]).unwrap();
+    assert!(pair.client.connection(client_ch).congestion_state() >= initial_congestion_state);
+    pair.client.write(client_ch, s, &[42; 1024]).unwrap();
 }
 
 #[test]
 fn high_latency_handshake() {
     let mut pair = Pair::default();
     pair.latency = 200 * 1000;
-    let (client_conn, server_conn) = pair.connect();
-    assert_eq!(pair.client.connection(client_conn).bytes_in_flight(), 0);
-    assert_eq!(pair.server.connection(server_conn).bytes_in_flight(), 0);
-    assert!(pair.client.connection(client_conn).using_ecn());
-    assert!(pair.server.connection(server_conn).using_ecn());
+    let (client_ch, server_ch) = pair.connect();
+    assert_eq!(pair.client.connection(client_ch).bytes_in_flight(), 0);
+    assert_eq!(pair.server.connection(server_ch).bytes_in_flight(), 0);
+    assert!(pair.client.connection(client_ch).using_ecn());
+    assert!(pair.server.connection(server_ch).using_ecn());
 }
 
 #[test]
@@ -644,13 +644,13 @@ fn zero_rtt() {
     let config = client_config();
 
     // Establish normal connection
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &config, "localhost")
         .unwrap();
     pair.drive();
     pair.server.accept().unwrap();
-    pair.client.close(pair.time, client_conn, 0, [][..].into());
+    pair.client.close(pair.time, client_ch, 0, [][..].into());
     pair.drive();
 
     pair.client.addr = SocketAddr::new(
@@ -658,23 +658,23 @@ fn zero_rtt() {
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!(pair.log, "resuming session");
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &config, "localhost")
         .unwrap();
-    assert!(pair.client.connection(client_conn).has_0rtt());
-    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    assert!(pair.client.connection(client_ch).has_0rtt());
+    let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
-    pair.client.write(client_conn, s, MSG).unwrap();
+    pair.client.write(client_ch, s, MSG).unwrap();
     pair.drive();
-    assert!(pair.client.connection(client_conn).accepted_0rtt());
-    let server_conn = if let Some(c) = pair.server.accept() {
+    assert!(pair.client.connection(client_ch).accepted_0rtt());
+    let server_ch = if let Some(c) = pair.server.accept() {
         c
     } else {
         panic!("server didn't connect");
     };
-    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
-    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
+    assert_matches!(pair.server.read_unordered(server_ch, s), Ok((ref data, 0)) if data == MSG);
+    assert_eq!(pair.client.connection(client_ch).lost_packets(), 0);
 }
 
 #[test]
@@ -737,46 +737,46 @@ fn stream_id_backpressure() {
         ..Config::default()
     };
     let mut pair = Pair::new(server, Default::default(), server_config());
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
 
     let s = pair
         .client
-        .open(client_conn, Directionality::Uni)
+        .open(client_ch, Directionality::Uni)
         .expect("couldn't open first stream");
     assert_eq!(
-        pair.client.open(client_conn, Directionality::Uni),
+        pair.client.open(client_ch, Directionality::Uni),
         None,
         "only one stream is permitted at a time"
     );
     // Close the first stream to make room for the second
-    pair.client.finish(client_conn, s);
+    pair.client.finish(client_ch, s);
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_conn && stream == s);
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamFinished { stream })) if conn == client_ch && stream == s);
     assert_matches!(pair.client.poll(), None);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Err(ReadError::Finished)
     );
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::StreamAvailable { directionality: Directionality::Uni })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::StreamAvailable { directionality: Directionality::Uni })) if conn == client_ch);
     assert_matches!(pair.client.poll(), None);
 
     // Try opening the second stream again, now that we've made room
     let s = pair
         .client
-        .open(client_conn, Directionality::Uni)
+        .open(client_ch, Directionality::Uni)
         .expect("didn't get stream id budget");
-    pair.client.finish(client_conn, s);
+    pair.client.finish(client_ch, s);
     pair.drive();
     // Make sure the server actually processes data on the newly-available stream
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Err(ReadError::Finished)
     );
 }
@@ -784,34 +784,34 @@ fn stream_id_backpressure() {
 #[test]
 fn key_update() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
     let s = pair
         .client
-        .open(client_conn, Directionality::Bi)
+        .open(client_ch, Directionality::Bi)
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"hello1";
-    pair.client.write(client_conn, s, MSG1).unwrap();
+    pair.client.write(client_ch, s, MSG1).unwrap();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Ok((ref data, 0)) if data == MSG1
     );
 
-    pair.client.connections[client_conn.0].force_key_update();
+    pair.client.connections[client_ch.0].force_key_update();
 
     const MSG2: &[u8] = b"hello2";
-    pair.client.write(client_conn, s, MSG2).unwrap();
+    pair.client.write(client_ch, s, MSG2).unwrap();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_ch && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Ok((ref data, 6)) if data == MSG2
     );
 }
@@ -819,65 +819,65 @@ fn key_update() {
 #[test]
 fn key_update_reordered() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
     let s = pair
         .client
-        .open(client_conn, Directionality::Bi)
+        .open(client_ch, Directionality::Bi)
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"1";
-    pair.client.write(client_conn, s, MSG1).unwrap();
+    pair.client.write(client_ch, s, MSG1).unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
-    pair.client.connections[client_conn.0].force_key_update();
+    pair.client.connections[client_ch.0].force_key_update();
     info!(pair.log, "updated keys");
 
     const MSG2: &[u8] = b"two";
-    pair.client.write(client_conn, s, MSG2).unwrap();
+    pair.client.write(client_ch, s, MSG2).unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     pair.client.finish_delay();
     pair.drive();
 
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
-    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
-    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
+    assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_ch && stream == s);
     assert_matches!(pair.server.poll(), None);
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Ok((ref data, 1)) if data == MSG2
     );
     assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+        pair.server.read_unordered(server_ch, s),
         Ok((ref data, 0)) if data == MSG1
     );
 
-    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
+    assert_eq!(pair.client.connection(client_ch).lost_packets(), 0);
 }
 
 #[test]
 fn initial_retransmit() {
     let mut pair = Pair::default();
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &client_config(), "localhost")
         .unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     pair.client.outbound.clear(); // Drop initial
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_ch);
 }
 
 #[test]
 fn instant_close() {
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &client_config(), "localhost")
         .unwrap();
-    pair.client.close(pair.time, client_conn, 0, Bytes::new());
+    pair.client.close(pair.time, client_ch, 0, Bytes::new());
     pair.drive();
     assert_matches!(pair.client.poll(), None);
     assert_matches!(pair.server.poll(), None);
@@ -887,13 +887,13 @@ fn instant_close() {
 fn instant_close_2() {
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &client_config(), "localhost")
         .unwrap();
     // Unlike `instant_close`, the server sees a valid Initial packet first.
     pair.drive_client();
-    pair.client.close(pair.time, client_conn, 42, Bytes::new());
+    pair.client.close(pair.time, client_ch, 42, Bytes::new());
     pair.drive();
     assert_matches!(pair.client.poll(), None);
     assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
@@ -904,10 +904,10 @@ fn instant_close_2() {
 #[test]
 fn idle_timeout() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
-    pair.client.ping(client_conn);
-    while !pair.client.connection(client_conn).is_closed()
-        || !pair.server.connection(server_conn).is_closed()
+    let (client_ch, server_ch) = pair.connect();
+    pair.client.ping(client_ch);
+    while !pair.client.connection(client_ch).is_closed()
+        || !pair.server.connection(server_ch).is_closed()
     {
         pair.step();
         pair.client.inbound.clear();
@@ -970,7 +970,7 @@ fn server_busy() {
 #[test]
 fn server_hs_retransmit() {
     let mut pair = Pair::default();
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &client_config(), "localhost")
         .unwrap();
@@ -993,7 +993,7 @@ fn server_hs_retransmit() {
         pair.client.inbound.drain(..);
     }
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_ch);
 }
 
 #[test]
@@ -1001,7 +1001,7 @@ fn decode_coalesced() {
     // We can't currently generate coalesced packets natively, but we must support decoding
     // them. Hack around the problem by manually concatenating the server's first flight.
     let mut pair = Pair::default();
-    let client_conn = pair
+    let client_ch = pair
         .client
         .connect(pair.server.addr, &client_config(), "localhost")
         .unwrap();
@@ -1018,25 +1018,22 @@ fn decode_coalesced() {
         .inbound
         .push_back((pair.time, Some(EcnCodepoint::ECT0), coalesced.into()));
     pair.drive();
-    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_conn);
-    assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
+    assert_matches!(pair.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_ch);
+    assert_eq!(pair.client.connection(client_ch).lost_packets(), 0);
 }
 
 #[test]
 fn migration() {
     let mut pair = Pair::default();
-    let (client_conn, server_conn) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
     pair.client.addr = SocketAddr::new(
         Ipv4Addr::new(127, 0, 0, 1).into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
-    pair.client.ping(client_conn);
+    pair.client.ping(client_ch);
     pair.drive();
     assert_matches!(pair.client.poll(), None);
-    assert_eq!(
-        pair.server.connection(server_conn).remote(),
-        pair.client.addr
-    );
+    assert_eq!(pair.server.connection(server_ch).remote(), pair.client.addr);
 }
 
 fn test_flow_control(config: Config, window_size: usize) {
