@@ -664,10 +664,12 @@ fn zero_rtt() {
         .client
         .connect(pair.server.addr, &config, "localhost")
         .unwrap();
+    assert!(pair.client.connection(client_conn).has_0rtt());
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
     pair.client.write(client_conn, s, MSG).unwrap();
     pair.drive();
+    assert!(pair.client.connection(client_conn).accepted_0rtt());
     let server_conn = if let Some(c) = pair.server.accept() {
         c
     } else {
