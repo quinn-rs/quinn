@@ -1351,7 +1351,7 @@ impl Connection {
                     return Ok(());
                 }
                 _ => {
-                    debug!(self.log, "unexpected frame type in handshake"; "type" => %frame.ty());
+                    debug!(self.log, "illegal {type} frame in handshake", type=frame.ty());
                     return Err(TransportError::PROTOCOL_VIOLATION);
                 }
             }
