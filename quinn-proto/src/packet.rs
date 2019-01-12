@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt, io, str};
+use std::{cmp::Ordering, fmt, io, ops::Range, str};
 
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use rand::Rng;
@@ -101,18 +101,33 @@ impl PartialDecode {
             plain_header,
             mut buf,
         } = self;
+
+        if let Initial {
+            dst_cid,
+            src_cid,
+            token_pos,
+            ..
+        } = plain_header
+        {
+            let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
+            let header_len = buf.position() as usize;
+            let mut bytes = buf.into_inner();
+
+            let header_data = bytes.split_to(header_len).freeze();
+            let token = header_data.slice(token_pos.start, token_pos.end);
+            return Ok(Packet {
+                header: Header::Initial {
+                    dst_cid,
+                    src_cid,
+                    token,
+                    number,
+                },
+                header_data,
+                payload: bytes,
+            });
+        }
+
         let header = match plain_header {
-            Initial {
-                dst_cid,
-                src_cid,
-                token,
-                ..
-            } => Header::Initial {
-                dst_cid,
-                src_cid,
-                token,
-                number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
-            },
             Long {
                 ty,
                 dst_cid,
@@ -152,6 +167,7 @@ impl PartialDecode {
                 dst_cid,
                 src_cid,
             },
+            Initial { .. } => unreachable!(),
         };
 
         let header_len = buf.position() as usize;
@@ -406,7 +422,7 @@ pub enum PlainHeader {
     Initial {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
-        token: Bytes,
+        token_pos: Range<usize>,
         len: u64,
     },
     Long {
@@ -452,7 +468,10 @@ impl PlainHeader {
         }
     }
 
-    fn decode<R: Buf>(buf: &mut R, local_cid_len: usize) -> Result<Self, PacketDecodeError> {
+    fn decode(
+        buf: &mut io::Cursor<BytesMut>,
+        local_cid_len: usize,
+    ) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
@@ -508,17 +527,14 @@ impl PlainHeader {
             match LongHeaderType::from_byte(first)? {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
-                    // Could we avoid this alloc/copy somehow?
-                    let mut token = BytesMut::with_capacity(token_len);
-                    token.extend_from_slice(&buf.bytes()[..token_len]);
-                    let token = token.freeze();
+                    let token_start = buf.position() as usize;
                     buf.advance(token_len);
 
                     let len = buf.get_var()?;
                     Ok(PlainHeader::Initial {
                         dst_cid,
                         src_cid,
-                        token,
+                        token_pos: token_start..token_start + token_len,
                         len,
                     })
                 }
