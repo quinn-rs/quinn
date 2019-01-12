@@ -291,7 +291,7 @@ impl Endpoint {
         };
         let conn = ConnectionInner {
             endpoint: self.inner.clone(),
-            conn: handle,
+            handle,
             side: Side::Client,
         };
         Ok((recv, conn))
@@ -310,7 +310,7 @@ impl NewConnection {
     fn new(endpoint: Rc<RefCell<EndpointInner>>, handle: quinn::ConnectionHandle) -> Self {
         let conn = Rc::new(ConnectionInner {
             endpoint,
-            conn: handle,
+            handle,
             side: Side::Server,
         });
         NewConnection {
@@ -365,13 +365,13 @@ impl Future for Driver {
                     }
                 }
             }
-            while let Some((connection, event)) = endpoint.inner.poll() {
+            while let Some((ch, event)) = endpoint.inner.poll() {
                 use crate::quinn::Event::*;
                 match event {
                     Connected { .. } => {
                         let _ = endpoint
                             .pending
-                            .get_mut(&connection)
+                            .get_mut(&ch)
                             .unwrap()
                             .connecting
                             .take()
@@ -381,14 +381,14 @@ impl Future for Driver {
                     ConnectionLost { reason } => {
                         // HACK HACK HACK: Handshake currently emits ConnectionLost, which means we might not know about
                         // this connection yet. This should probably be made more consistent.
-                        if let Some(x) = endpoint.pending.get_mut(&connection) {
+                        if let Some(x) = endpoint.pending.get_mut(&ch) {
                             x.fail(reason);
                         }
                     }
                     StreamWritable { stream } => {
                         if let Some(writer) = endpoint
                             .pending
-                            .get_mut(&connection)
+                            .get_mut(&ch)
                             .unwrap()
                             .blocked_writers
                             .remove(&stream)
@@ -397,28 +397,28 @@ impl Future for Driver {
                         }
                     }
                     StreamOpened => {
-                        let pending = endpoint.pending.get_mut(&connection).unwrap();
+                        let pending = endpoint.pending.get_mut(&ch).unwrap();
                         if let Some(x) = pending.incoming_streams_reader.take() {
                             x.notify();
                         }
                     }
                     StreamReadable { stream } => {
-                        let pending = endpoint.pending.get_mut(&connection).unwrap();
+                        let pending = endpoint.pending.get_mut(&ch).unwrap();
                         if let Some(reader) = pending.blocked_readers.remove(&stream) {
                             reader.notify();
                         }
                     }
                     StreamAvailable { directionality } => {
-                        let pending = endpoint.pending.get_mut(&connection).unwrap();
+                        let pending = endpoint.pending.get_mut(&ch).unwrap();
                         let queue = match directionality {
                             Directionality::Uni => &mut pending.uni_opening,
                             Directionality::Bi => &mut pending.bi_opening,
                         };
-                        while let Some(ch) = queue.pop_front() {
-                            if let Some(id) = endpoint.inner.open(connection, directionality) {
-                                let _ = ch.send(Ok(id));
+                        while let Some(connection) = queue.pop_front() {
+                            if let Some(id) = endpoint.inner.open(ch, directionality) {
+                                let _ = connection.send(Ok(id));
                             } else {
-                                queue.push_front(ch);
+                                queue.push_front(connection);
                                 break;
                             }
                         }
@@ -426,7 +426,7 @@ impl Future for Driver {
                     StreamFinished { stream } => {
                         let _ = endpoint
                             .pending
-                            .get_mut(&connection)
+                            .get_mut(&ch)
                             .unwrap()
                             .finishing
                             .remove(&stream)
@@ -483,27 +483,27 @@ impl Future for Driver {
                         }
                     }
                     TimerUpdate {
-                        connection,
+                        connection: ch,
                         timer: timer @ quinn::Timer::Close,
                         update: quinn::TimerUpdate::Start(time),
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
                         endpoint.timers.push(Timer {
-                            conn: connection,
+                            ch,
                             ty: timer,
                             delay: Delay::new(instant),
                             cancel: None,
                         });
                     }
                     TimerUpdate {
-                        connection,
+                        connection: ch,
                         timer,
                         update: quinn::TimerUpdate::Start(time),
                     } => {
                         // Loss detection and idle timers start before the connection is established
                         let pending = endpoint
                             .pending
-                            .entry(connection)
+                            .entry(ch)
                             .or_insert_with(|| Pending::new(None));
                         let cancel = &mut pending.cancel_timers[timer as usize];
                         let instant = endpoint.epoch + duration_micros(time);
@@ -514,20 +514,20 @@ impl Future for Driver {
                         *cancel = Some(send);
                         trace!(endpoint.log, "timer start"; "timer" => ?timer, "time" => ?duration_micros(time));
                         endpoint.timers.push(Timer {
-                            conn: connection,
+                            ch,
                             ty: timer,
                             delay: Delay::new(instant),
                             cancel: Some(recv),
                         });
                     }
                     TimerUpdate {
-                        connection,
+                        connection: ch,
                         timer,
                         update: quinn::TimerUpdate::Stop,
                     } => {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
-                        if let Some(pending) = endpoint.pending.get_mut(&connection) {
+                        if let Some(pending) = endpoint.pending.get_mut(&ch) {
                             if let Some(x) = pending.cancel_timers[timer as usize].take() {
                                 let _ = x.send(());
                             }
@@ -552,12 +552,12 @@ impl Future for Driver {
             let mut fired = false;
             loop {
                 match endpoint.timers.poll() {
-                    Ok(Async::Ready(Some(Some((conn, timer))))) => {
+                    Ok(Async::Ready(Some(Some((ch, timer))))) => {
                         trace!(endpoint.log, "timeout"; "timer" => ?timer);
-                        endpoint.inner.timeout(now, conn, timer);
+                        endpoint.inner.timeout(now, ch, timer);
                         if timer == quinn::Timer::Close {
                             // Connection drained
-                            if let Some(x) = endpoint.pending.get_mut(&conn).and_then(|p| {
+                            if let Some(x) = endpoint.pending.get_mut(&ch).and_then(|p| {
                                 p.drained = true;
                                 p.draining.take()
                             }) {
@@ -584,8 +584,8 @@ impl Future for Driver {
 impl Drop for Driver {
     fn drop(&mut self) {
         let mut endpoint = self.0.borrow_mut();
-        for connection in endpoint.pending.values_mut() {
-            connection.fail(ConnectionError::TransportError {
+        for ch in endpoint.pending.values_mut() {
+            ch.fail(ConnectionError::TransportError {
                 error_code: quinn::TransportError::INTERNAL_ERROR,
             });
         }
@@ -601,7 +601,7 @@ fn micros_from(x: Duration) -> u64 {
 
 struct ConnectionInner {
     endpoint: Rc<RefCell<EndpointInner>>,
-    conn: ConnectionHandle,
+    handle: ConnectionHandle,
     side: Side,
 }
 
@@ -620,10 +620,10 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.borrow_mut();
-            if let Some(x) = endpoint.inner.open(self.0.conn, Directionality::Uni) {
+            if let Some(x) = endpoint.inner.open(self.0.handle, Directionality::Uni) {
                 let _ = send.send(Ok(x));
             } else {
-                let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+                let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
                 pending.uni_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more streams
             }
@@ -639,10 +639,10 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut endpoint = self.0.endpoint.borrow_mut();
-            if let Some(x) = endpoint.inner.open(self.0.conn, Directionality::Bi) {
+            if let Some(x) = endpoint.inner.open(self.0.handle, Directionality::Bi) {
                 let _ = send.send(Ok(x));
             } else {
-                let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+                let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
                 pending.bi_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more streams
             }
@@ -671,7 +671,7 @@ impl Connection {
         {
             let endpoint = &mut *self.0.endpoint.borrow_mut();
 
-            let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+            let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
             assert!(
                 pending.draining.is_none(),
                 "a connection can only be closed once"
@@ -680,7 +680,7 @@ impl Connection {
 
             endpoint.inner.close(
                 micros_from(endpoint.epoch.elapsed()),
-                self.0.conn,
+                self.0.handle,
                 error_code,
                 reason.into(),
             );
@@ -699,7 +699,7 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .connection(self.0.conn)
+            .connection(self.0.handle)
             .remote()
     }
 
@@ -709,7 +709,7 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .connection(self.0.conn)
+            .connection(self.0.handle)
             .loc_cids()
             .cloned()
             .collect::<Vec<_>>()
@@ -721,7 +721,7 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .connection(self.0.conn)
+            .connection(self.0.handle)
             .rem_cid()
     }
 
@@ -731,7 +731,7 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .connection(self.0.conn)
+            .connection(self.0.handle)
             .protocol()
             .map(|x| x.into())
     }
@@ -743,18 +743,18 @@ impl Connection {
             .endpoint
             .borrow_mut()
             .inner
-            .force_key_update(self.0.conn)
+            .force_key_update(self.0.handle)
     }
 }
 
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.borrow_mut();
-        if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.conn) {
+        if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.handle) {
             if pending.get().draining.is_none() && !pending.get().drained {
                 endpoint.inner.close(
                     micros_from(endpoint.epoch.elapsed()),
-                    self.conn,
+                    self.handle,
                     0,
                     (&[][..]).into(),
                 );
@@ -856,10 +856,10 @@ impl Write for BiStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         let mut endpoint = self.conn.endpoint.borrow_mut();
         use crate::quinn::WriteError::*;
-        let n = match endpoint.inner.write(self.conn.conn, self.stream, buf) {
+        let n = match endpoint.inner.write(self.conn.handle, self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
-                let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
+                let pending = endpoint.pending.get_mut(&self.conn.handle).unwrap();
                 if let Some(ref x) = pending.error {
                     return Err(WriteError::ConnectionClosed(x.clone()));
                 }
@@ -877,12 +877,12 @@ impl Write for BiStream {
     fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
         let mut endpoint = self.conn.endpoint.borrow_mut();
         if self.finishing.is_none() {
-            endpoint.inner.finish(self.conn.conn, self.stream);
+            endpoint.inner.finish(self.conn.handle, self.stream);
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
             endpoint
                 .pending
-                .get_mut(&self.conn.conn)
+                .get_mut(&self.conn.handle)
                 .unwrap()
                 .finishing
                 .insert(self.stream, send);
@@ -903,7 +903,7 @@ impl Write for BiStream {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         endpoint
             .inner
-            .reset(self.conn.conn, self.stream, error_code);
+            .reset(self.conn.handle, self.stream, error_code);
         endpoint.notify();
     }
 }
@@ -912,8 +912,8 @@ impl Read for BiStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         use crate::quinn::ReadError::*;
-        let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
-        match endpoint.inner.read_unordered(self.conn.conn, self.stream) {
+        let pending = endpoint.pending.get_mut(&self.conn.handle).unwrap();
+        match endpoint.inner.read_unordered(self.conn.handle, self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
             Err(Blocked) => {
                 if let Some(ref x) = pending.error {
@@ -936,8 +936,8 @@ impl Read for BiStream {
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         use crate::quinn::ReadError::*;
-        let pending = endpoint.pending.get_mut(&self.conn.conn).unwrap();
-        match endpoint.inner.read(self.conn.conn, self.stream, buf) {
+        let pending = endpoint.pending.get_mut(&self.conn.handle).unwrap();
+        match endpoint.inner.read(self.conn.handle, self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
             Err(Blocked) => {
                 if let Some(ref x) = pending.error {
@@ -961,7 +961,7 @@ impl Read for BiStream {
         let endpoint = &mut *self.conn.endpoint.borrow_mut();
         endpoint
             .inner
-            .stop_sending(self.conn.conn, self.stream, error_code);
+            .stop_sending(self.conn.handle, self.stream, error_code);
         endpoint.notify();
         self.recvd = true;
     }
@@ -1008,10 +1008,12 @@ impl Drop for BiStream {
             Directionality::Uni => (ours, !ours),
         };
         if send && !self.finished {
-            endpoint.inner.reset(self.conn.conn, self.stream, 0);
+            endpoint.inner.reset(self.conn.handle, self.stream, 0);
         }
         if recv && !self.recvd {
-            endpoint.inner.stop_sending(self.conn.conn, self.stream, 0);
+            endpoint
+                .inner
+                .stop_sending(self.conn.handle, self.stream, 0);
         }
         endpoint.notify();
     }
@@ -1131,7 +1133,7 @@ pub enum ReadError {
 }
 
 struct Timer {
-    conn: ConnectionHandle,
+    ch: ConnectionHandle,
     ty: quinn::Timer,
     delay: Delay,
     cancel: Option<oneshot::Receiver<()>>,
@@ -1150,7 +1152,7 @@ impl Future for Timer {
         match self.delay.poll() {
             Err(e) => panic!("unexpected timer error: {}", e),
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(())) => Ok(Async::Ready(Some((self.conn, self.ty)))),
+            Ok(Async::Ready(())) => Ok(Async::Ready(Some((self.ch, self.ty)))),
         }
     }
 }
@@ -1171,7 +1173,7 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut endpoint = self.0.endpoint.borrow_mut();
-        if let Some(x) = endpoint.inner.accept_stream(self.0.conn) {
+        if let Some(x) = endpoint.inner.accept_stream(self.0.handle) {
             let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
@@ -1180,7 +1182,7 @@ impl FuturesStream for IncomingStreams {
             };
             return Ok(Async::Ready(Some(stream)));
         }
-        let pending = endpoint.pending.get_mut(&self.0.conn).unwrap();
+        let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
         if let Some(ref x) = pending.error {
             Err(x.clone())
         } else {
