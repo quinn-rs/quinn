@@ -6,7 +6,9 @@ pub mod field;
 pub use self::field::HeaderField;
 
 pub mod dynamic;
-pub use self::dynamic::{DynamicTable, ErrorKind};
+pub use self::dynamic::{
+    DynamicTable, DynamicTableDecoder, DynamicTableInserter, Error as DynamicTableError,
+};
 
 pub mod static_;
 pub use self::static_::StaticTable;

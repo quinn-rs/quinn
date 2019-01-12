@@ -2,9 +2,11 @@
 // TODO remove allow dead code
 #![allow(dead_code)]
 
-use std::collections::VecDeque;
+use std::borrow::Cow;
+use std::collections::{HashMap, VecDeque};
 
 use super::field::HeaderField;
+use crate::qpack::vas::{self, VirtualAddressSpace};
 
 /**
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
@@ -19,15 +21,104 @@ pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
 pub const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 
 #[derive(Debug, PartialEq)]
-pub enum ErrorKind {
-    MaximumTableSizeTooLarge,
+pub enum Error {
+    BadRelativeIndex(usize),
+    BadPostbaseIndex(usize),
     BadIndex(usize),
+    MaxTableSizeReached,
+    MaximumTableSizeTooLarge,
 }
 
 pub struct DynamicTable {
     fields: VecDeque<HeaderField>,
     curr_mem_size: usize,
     mem_limit: usize,
+    vas: VirtualAddressSpace,
+}
+
+pub struct DynamicTableDecoder<'a> {
+    table: &'a DynamicTable,
+    base: usize,
+}
+
+impl<'a> DynamicTableDecoder<'a> {
+    pub fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+        let real_index = self.table.vas.relative_base(self.base, index)?;
+        self.table
+            .fields
+            .get(real_index)
+            .ok_or(Error::BadIndex(real_index))
+    }
+
+    pub fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
+        let real_index = self.table.vas.post_base(self.base, index)?;
+        self.table
+            .fields
+            .get(real_index)
+            .ok_or(Error::BadIndex(real_index))
+    }
+}
+
+pub struct DynamicTableInserter<'a> {
+    table: &'a mut DynamicTable,
+}
+
+impl<'a> DynamicTableInserter<'a> {
+    pub fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
+        let at_most = if field.mem_size() <= self.table.mem_limit {
+            self.table.mem_limit - field.mem_size()
+        } else {
+            0
+        };
+        let dropped = self.table.shrink_to(at_most);
+
+        let available = self.table.mem_limit - self.table.curr_mem_size;
+        let can_add = field.mem_size() <= available;
+        if !can_add {
+            return Err(Error::MaxTableSizeReached);
+        }
+
+        self.table.curr_mem_size += field.mem_size();
+        self.table.fields.push_back(field);
+        self.table.vas.add();
+        self.table.vas.drop_many(dropped);
+
+        Ok(())
+    }
+
+    pub fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+        let real_index = self.table.vas.relative(index)?;
+        self.table
+            .fields
+            .get(real_index)
+            .ok_or(Error::BadIndex(real_index))
+    }
+
+    /**
+     * @returns Number of fields removed by resizing
+     */
+    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, Error> {
+        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
+            return Err(Error::MaximumTableSizeTooLarge);
+        }
+
+        self.table.mem_limit = size;
+        Ok(self.table.shrink_to(size))
+    }
+
+    pub fn total_inserted(&self) -> usize {
+        self.table.vas.total_inserted()
+    }
+}
+
+impl From<vas::Error> for Error {
+    fn from(e: vas::Error) -> Self {
+        match e {
+            vas::Error::BadRelativeIndex(e) => Error::BadRelativeIndex(e),
+            vas::Error::BadPostbaseIndex(e) => Error::BadPostbaseIndex(e),
+            vas::Error::BadAbsoluteIndex(e) => Error::BadIndex(e),
+        }
+    }
 }
 
 impl DynamicTable {
@@ -36,37 +127,28 @@ impl DynamicTable {
             fields: VecDeque::new(),
             curr_mem_size: 0,
             mem_limit: SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
+            vas: VirtualAddressSpace::new(),
         }
     }
 
-    /**
-     * @returns Flag to test if field is really in the table, \
-     * Number of fields removed to have enough space for the field
-     */
-    pub fn put_field(&mut self, field: HeaderField) -> (bool, usize) {
-        let at_most = if field.mem_size() <= self.mem_limit {
-            self.mem_limit - field.mem_size()
-        } else {
-            0
-        };
-        let dropped = self.shrink_to(at_most);
+    pub fn decoder<'a>(&'a self, base: usize) -> DynamicTableDecoder<'a> {
+        DynamicTableDecoder { table: self, base }
+    }
 
-        let available = self.mem_limit - self.curr_mem_size;
-        let can_add = field.mem_size() <= available;
-        if can_add {
-            self.curr_mem_size += field.mem_size();
-            self.fields.push_back(field);
-        }
+    pub fn inserter<'a>(&'a mut self) -> DynamicTableInserter<'a> {
+        DynamicTableInserter { table: self }
+    }
 
-        (can_add, dropped)
+    pub fn total_inserted(&self) -> usize {
+        self.vas.total_inserted()
     }
 
     /**
      * @returns Number of fields removed by resizing
      */
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, ErrorKind> {
+    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, Error> {
         if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
-            return Err(ErrorKind::MaximumTableSizeTooLarge);
+            return Err(Error::MaximumTableSizeTooLarge);
         }
 
         self.mem_limit = size;
@@ -97,14 +179,10 @@ impl DynamicTable {
         self.mem_limit
     }
 
-    pub fn mem_size(&self) -> usize {
-        self.curr_mem_size
-    }
-
-    pub fn get(&self, index: usize) -> Result<&HeaderField, ErrorKind> {
+    pub fn get(&self, index: usize) -> Result<&HeaderField, Error> {
         match self.fields.get(index) {
             Some(f) => Ok(f),
-            None => Err(ErrorKind::BadIndex(index)),
+            None => Err(Error::BadIndex(index)),
         }
     }
 
@@ -112,6 +190,17 @@ impl DynamicTable {
         self.fields.len()
     }
 }
+
+// pub enum DynamicNameLookup {
+//     Relative(usize),
+//     PostBase(usize),
+//     NotFound,
+// }
+
+// pub enum DynamicInsertionResult {
+//     Inserted { postbase: usize, absolute: usize },
+//     InsertedWithNameRef { postbase: usize, absolute: usize },
+// }
 
 #[cfg(test)]
 mod tests {
@@ -135,10 +224,10 @@ mod tests {
 
         for pair in fields.iter() {
             let field = HeaderField::new(pair.0, pair.1);
-            table.put_field(field);
+            table.inserter().put_field(field).unwrap();
         }
 
-        assert_eq!(table.mem_size(), table_size);
+        assert_eq!(table.curr_mem_size, table_size);
     }
 
     // Test on maximum table size
@@ -173,7 +262,7 @@ mod tests {
         let mut table = DynamicTable::new();
         let invalid_size = SETTINGS_HEADER_TABLE_SIZE_MAX + 10;
         let res_change = table.set_max_mem_size(invalid_size);
-        assert_eq!(res_change, Err(ErrorKind::MaximumTableSizeTooLarge));
+        assert_eq!(res_change, Err(Error::MaximumTableSizeTooLarge));
     }
 
     /**
@@ -216,8 +305,14 @@ mod tests {
     #[test]
     fn test_table_supports_duplicated_entries() {
         let mut table = DynamicTable::new();
-        table.put_field(HeaderField::new("Name", "Value"));
-        table.put_field(HeaderField::new("Name", "Value"));
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name", "Value"))
+            .unwrap();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name", "Value"))
+            .unwrap();
         assert_eq!(table.count(), 2);
     }
 
@@ -228,9 +323,11 @@ mod tests {
     fn test_add_field_fitting_free_space() {
         let mut table = DynamicTable::new();
 
-        let (added, _) = table.put_field(HeaderField::new("Name", "Value"));
-        assert_eq!(added, true);
-        assert_eq!(table.count(), 1);
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name", "Value"))
+            .unwrap();
+        assert_eq!(table.fields.len(), 1);
     }
 
     /** functional test */
@@ -239,8 +336,8 @@ mod tests {
         let mut table = DynamicTable::new();
 
         let field = HeaderField::new("Name", "Value");
-        table.put_field(field.clone());
-        assert_eq!(table.mem_size(), field.mem_size());
+        table.inserter().put_field(field.clone()).unwrap();
+        assert_eq!(table.curr_mem_size, field.mem_size());
     }
 
     /**
@@ -254,17 +351,25 @@ mod tests {
     fn test_add_field_drop_older_fields_to_have_enough_space() {
         let mut table = DynamicTable::new();
 
-        table.put_field(HeaderField::new("Name-A", "Value-A"));
-        table.put_field(HeaderField::new("Name-B", "Value-B"));
-        let perfect_size = table.mem_size();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-A", "Value-A"))
+            .unwrap();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-B", "Value-B"))
+            .unwrap();
+        let perfect_size = table.curr_mem_size;
         assert!(table.set_max_mem_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
-        let (added, dropped) = table.put_field(field);
+        table.inserter().put_field(field).unwrap();
 
-        assert_eq!(added, true);
-        assert_eq!(dropped, 2);
-        assert_eq!(table.count(), 1);
+        assert_eq!(table.fields.len(), 1);
+        assert_eq!(
+            table.fields.get(0),
+            Some(&HeaderField::new("Name-Large", "Value-Large"))
+        );
     }
 
     /**
@@ -277,16 +382,18 @@ mod tests {
     fn test_try_add_field_larger_than_maximum_size() {
         let mut table = DynamicTable::new();
 
-        table.put_field(HeaderField::new("Name-A", "Value-A"));
-        let perfect_size = table.mem_size();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-A", "Value-A"))
+            .unwrap();
+        let perfect_size = table.curr_mem_size;
         assert!(table.set_max_mem_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
-        let (added, dropped) = table.put_field(field);
-
-        assert_eq!(added, false);
-        assert_eq!(dropped, 1);
-        assert_eq!(table.count(), 0);
+        assert_eq!(
+            table.inserter().put_field(field),
+            Err(Error::MaxTableSizeReached)
+        );
     }
 
     // Test on entry eviction
@@ -301,8 +408,14 @@ mod tests {
     fn test_set_maximum_table_size_to_zero_clear_entries() {
         let mut table = DynamicTable::new();
 
-        table.put_field(HeaderField::new("Name", "Value"));
-        table.put_field(HeaderField::new("Name", "Value"));
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name", "Value"))
+            .unwrap();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name", "Value"))
+            .unwrap();
         assert_eq!(table.count(), 2);
 
         let were_dropped = table.set_max_mem_size(0);
@@ -315,16 +428,25 @@ mod tests {
     fn test_eviction_is_fifo() {
         let mut table = DynamicTable::new();
 
-        table.put_field(HeaderField::new("Name-A", "Value-A"));
-        table.put_field(HeaderField::new("Name-B", "Value-B"));
-        let perfect_size = table.mem_size();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-A", "Value-A"))
+            .unwrap();
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-B", "Value-B"))
+            .unwrap();
+        let perfect_size = table.curr_mem_size;
         assert!(table.set_max_mem_size(perfect_size).is_ok());
 
-        table.put_field(HeaderField::new("Name-C", "Value-C"));
+        table
+            .inserter()
+            .put_field(HeaderField::new("Name-C", "Value-C"))
+            .unwrap();
 
         assert_eq!(table.get(0), Ok(&HeaderField::new("Name-B", "Value-B")));
         assert_eq!(table.get(1), Ok(&HeaderField::new("Name-C", "Value-C")));
-        assert_eq!(table.get(2), Err(ErrorKind::BadIndex(2)));
+        assert_eq!(table.get(2), Err(Error::BadIndex(2)));
     }
 
 }
