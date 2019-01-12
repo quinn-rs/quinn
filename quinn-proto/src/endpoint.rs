@@ -801,7 +801,7 @@ pub struct Config {
     /// the desired number of streams opened per unit time, multiplied by the round trip time.
     ///
     /// Note that worst-case memory use is directly proportional to `stream_window_bidi *
-    /// stream_receive_window`.
+    /// stream_receive_window`, with an upper bound proportional to `receive_window`.
     pub stream_window_bidi: u64,
     /// Variant of `stream_window_bidi` affecting unidirectional streams
     pub stream_window_uni: u64,
