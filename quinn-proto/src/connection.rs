@@ -863,6 +863,25 @@ impl Connection {
     }
 
     fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
+        let expected = if !self.state.is_handshake() {
+            SpaceId::Data
+        } else if self.highest_space == SpaceId::Initial {
+            SpaceId::Initial
+        } else {
+            SpaceId::Handshake
+        };
+        if space < expected
+            && crypto.offset + crypto.data.len() as u64 > self.space(space).crypto_stream.offset()
+        {
+            warn!(
+                self.log,
+                "received new {actual:?} CRYPTO data when expecting {expected:?}",
+                actual = space,
+                expected = expected
+            );
+            return Err(TransportError::PROTOCOL_VIOLATION);
+        }
+
         let space = &mut self.spaces[space as usize];
         space.crypto_stream.insert(crypto.offset, &crypto.data);
         let mut buf = [0; 8192];
