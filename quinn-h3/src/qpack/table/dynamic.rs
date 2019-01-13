@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 
 use super::field::HeaderField;
@@ -27,13 +28,6 @@ pub enum Error {
     BadIndex(usize),
     MaxTableSizeReached,
     MaximumTableSizeTooLarge,
-}
-
-pub struct DynamicTable {
-    fields: VecDeque<HeaderField>,
-    curr_mem_size: usize,
-    mem_limit: usize,
-    vas: VirtualAddressSpace,
 }
 
 pub struct DynamicTableDecoder<'a> {
@@ -65,24 +59,7 @@ pub struct DynamicTableInserter<'a> {
 
 impl<'a> DynamicTableInserter<'a> {
     pub fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
-        let at_most = if field.mem_size() <= self.table.mem_limit {
-            self.table.mem_limit - field.mem_size()
-        } else {
-            0
-        };
-        let dropped = self.table.shrink_to(at_most);
-
-        let available = self.table.mem_limit - self.table.curr_mem_size;
-        let can_add = field.mem_size() <= available;
-        if !can_add {
-            return Err(Error::MaxTableSizeReached);
-        }
-
-        self.table.curr_mem_size += field.mem_size();
-        self.table.fields.push_back(field);
-        self.table.vas.add();
-        self.table.vas.drop_many(dropped);
-
+        self.table.put_field(field)?;
         Ok(())
     }
 
@@ -111,14 +88,133 @@ impl<'a> DynamicTableInserter<'a> {
     }
 }
 
-impl From<vas::Error> for Error {
-    fn from(e: vas::Error) -> Self {
-        match e {
-            vas::Error::BadRelativeIndex(e) => Error::BadRelativeIndex(e),
-            vas::Error::BadPostbaseIndex(e) => Error::BadPostbaseIndex(e),
-            vas::Error::BadAbsoluteIndex(e) => Error::BadIndex(e),
+pub struct DynamicTableEncoder<'a> {
+    table: &'a mut DynamicTable,
+    base: usize,
+}
+
+impl<'a> DynamicTableEncoder<'a> {
+    pub fn find(&self, field: &HeaderField) -> DynamicLookupResult {
+        self.lookup_result(
+            self.table
+                .field_map
+                .as_ref()
+                .unwrap()
+                .get(field)
+                .map(|x| *x),
+        )
+    }
+
+    fn find_name(&self, name: &[u8]) -> DynamicLookupResult {
+        self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).map(|x| *x))
+    }
+
+    fn lookup_result(&self, abolute: Option<usize>) -> DynamicLookupResult {
+        match abolute {
+            Some(absolute) if absolute <= self.base => DynamicLookupResult::Relative {
+                index: self.base - absolute,
+                absolute,
+            },
+            Some(absolute) if absolute > self.base => DynamicLookupResult::PostBase {
+                index: absolute - self.base,
+                absolute,
+            },
+            _ => DynamicLookupResult::NotFound,
         }
     }
+
+    fn can_insert(&mut self, field: &HeaderField) -> bool {
+        let lower_bound = if field.mem_size() <= self.table.mem_limit {
+            self.table.mem_limit - field.mem_size()
+        } else {
+            0
+        };
+        let mut hypothetic_mem_size = self.table.curr_mem_size;
+
+        while !self.table.fields.is_empty() && self.table.curr_mem_size > lower_bound {
+            hypothetic_mem_size -= field.mem_size();
+        }
+
+        field.mem_size() <= self.table.mem_limit - hypothetic_mem_size
+    }
+
+    fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+        let index = self.table.put_field(field.clone())?;
+
+        let name_map = self.table.name_map.as_mut().unwrap();
+        let field_map = self.table.field_map.as_mut().unwrap();
+
+        match field_map.entry(field.clone()) {
+            Entry::Occupied(mut e) => {
+                let ref_index = e.insert(index);
+                name_map
+                    .entry(field.name.clone())
+                    .and_modify(|i| *i = index);
+
+                return Ok(DynamicInsertionResult::Duplicated {
+                    relative: index - ref_index - 1,
+                    postbase: index - self.base - 1,
+                    absolute: index,
+                });
+            }
+            Entry::Vacant(e) => {
+                e.insert(index);
+            }
+        }
+
+        let result = match name_map.entry(field.name.clone()) {
+            Entry::Occupied(mut e) => {
+                let ref_index = e.insert(index);
+                DynamicInsertionResult::InsertedWithNameRef {
+                    postbase: index - self.base - 1,
+                    relative: index - ref_index - 1,
+                    absolute: index,
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(index);
+                DynamicInsertionResult::Inserted {
+                    postbase: index - self.base - 1,
+                    absolute: index,
+                }
+            }
+        };
+        Ok(result)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum DynamicLookupResult {
+    Relative { index: usize, absolute: usize },
+    PostBase { index: usize, absolute: usize },
+    NotFound,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum DynamicInsertionResult {
+    Inserted {
+        postbase: usize,
+        absolute: usize,
+    },
+    Duplicated {
+        relative: usize,
+        postbase: usize,
+        absolute: usize,
+    },
+    InsertedWithNameRef {
+        postbase: usize,
+        relative: usize,
+        absolute: usize,
+    },
+}
+
+pub struct DynamicTable {
+    fields: VecDeque<HeaderField>,
+    curr_mem_size: usize,
+    mem_limit: usize,
+    vas: VirtualAddressSpace,
+    field_map: Option<HashMap<HeaderField, usize>>,
+    name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
 }
 
 impl DynamicTable {
@@ -128,6 +224,8 @@ impl DynamicTable {
             curr_mem_size: 0,
             mem_limit: SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
             vas: VirtualAddressSpace::new(),
+            name_map: None,
+            field_map: None,
         }
     }
 
@@ -137,6 +235,34 @@ impl DynamicTable {
 
     pub fn inserter<'a>(&'a mut self) -> DynamicTableInserter<'a> {
         DynamicTableInserter { table: self }
+    }
+
+    pub fn encoder<'a>(&'a mut self) -> DynamicTableEncoder<'a> {
+        // TODO maintain tracking data and update maps instead of recontructing them
+        if self.name_map.is_none() {
+            self.name_map = Some(
+                self.fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| (field.name.clone(), idx + 1))
+                    .collect(),
+            );
+        }
+
+        if self.field_map.is_none() {
+            // TODO here Rc<HeaderField> might be useful ?
+            self.field_map = Some(
+                self.fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| (field.clone(), idx + 1))
+                    .collect(),
+            );
+        }
+        DynamicTableEncoder {
+            base: self.vas.largest_ref(),
+            table: self,
+        }
     }
 
     pub fn total_inserted(&self) -> usize {
@@ -155,12 +281,28 @@ impl DynamicTable {
         Ok(self.shrink_to(size))
     }
 
-    /**
-     * https://tools.ietf.org/html/rfc7541
-     * 4.4.  Entry Eviction When Adding New Entries
-     *
-     * @returns Number of fields removed
-     */
+    fn put_field(&mut self, field: HeaderField) -> Result<usize, Error> {
+        let at_most = if field.mem_size() <= self.mem_limit {
+            self.mem_limit - field.mem_size()
+        } else {
+            0
+        };
+        let dropped = self.shrink_to(at_most);
+
+        let available = self.mem_limit - self.curr_mem_size;
+        let can_add = field.mem_size() <= available;
+        if !can_add {
+            return Err(Error::MaxTableSizeReached);
+        }
+
+        self.curr_mem_size += field.mem_size();
+        self.fields.push_back(field);
+        let absolute = self.vas.add();
+        self.vas.drop_many(dropped);
+
+        Ok(absolute)
+    }
+
     fn shrink_to(&mut self, lower_bound: usize) -> usize {
         let initial = self.fields.len();
 
@@ -191,16 +333,15 @@ impl DynamicTable {
     }
 }
 
-// pub enum DynamicNameLookup {
-//     Relative(usize),
-//     PostBase(usize),
-//     NotFound,
-// }
-
-// pub enum DynamicInsertionResult {
-//     Inserted { postbase: usize, absolute: usize },
-//     InsertedWithNameRef { postbase: usize, absolute: usize },
-// }
+impl From<vas::Error> for Error {
+    fn from(e: vas::Error) -> Self {
+        match e {
+            vas::Error::BadRelativeIndex(e) => Error::BadRelativeIndex(e),
+            vas::Error::BadPostbaseIndex(e) => Error::BadPostbaseIndex(e),
+            vas::Error::BadAbsoluteIndex(e) => Error::BadIndex(e),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -396,7 +537,12 @@ mod tests {
         );
     }
 
-    // Test on entry eviction
+    fn insert_fields(table: &mut DynamicTable, fields: Vec<HeaderField>) {
+        let mut inserter = table.inserter();
+        for field in fields {
+            inserter.put_field(field).unwrap();
+        }
+    }
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
@@ -407,15 +553,13 @@ mod tests {
     #[test]
     fn test_set_maximum_table_size_to_zero_clear_entries() {
         let mut table = DynamicTable::new();
-
-        table
-            .inserter()
-            .put_field(HeaderField::new("Name", "Value"))
-            .unwrap();
-        table
-            .inserter()
-            .put_field(HeaderField::new("Name", "Value"))
-            .unwrap();
+        insert_fields(
+            &mut table,
+            vec![
+                HeaderField::new("Name", "Value"),
+                HeaderField::new("Name", "Value"),
+            ],
+        );
         assert_eq!(table.count(), 2);
 
         let were_dropped = table.set_max_mem_size(0);
@@ -428,25 +572,183 @@ mod tests {
     fn test_eviction_is_fifo() {
         let mut table = DynamicTable::new();
 
-        table
-            .inserter()
-            .put_field(HeaderField::new("Name-A", "Value-A"))
-            .unwrap();
-        table
-            .inserter()
-            .put_field(HeaderField::new("Name-B", "Value-B"))
-            .unwrap();
+        insert_fields(
+            &mut table,
+            vec![
+                HeaderField::new("Name-A", "Value-A"),
+                HeaderField::new("Name-B", "Value-B"),
+            ],
+        );
         let perfect_size = table.curr_mem_size;
         assert!(table.set_max_mem_size(perfect_size).is_ok());
 
-        table
-            .inserter()
-            .put_field(HeaderField::new("Name-C", "Value-C"))
-            .unwrap();
+        insert_fields(&mut table, vec![HeaderField::new("Name-C", "Value-C")]);
 
         assert_eq!(table.get(0), Ok(&HeaderField::new("Name-B", "Value-B")));
         assert_eq!(table.get(1), Ok(&HeaderField::new("Name-C", "Value-C")));
         assert_eq!(table.get(2), Err(Error::BadIndex(2)));
     }
 
+    #[test]
+    fn encoder_build() {
+        let mut table = DynamicTable::new();
+        let field_a = HeaderField::new("Name-A", "Value-A");
+        let field_b = HeaderField::new("Name-B", "Value-B");
+        insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
+
+        let encoder = table.encoder();
+        assert_eq!(encoder.base, 2);
+        let name_map = encoder.table.name_map.as_ref().unwrap();
+        let field_map = encoder.table.field_map.as_ref().unwrap();
+        assert_eq!(name_map.len(), 2);
+        assert_eq!(field_map.len(), 2);
+        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(1));
+        assert_eq!(name_map.get(&field_b.name).map(|x| *x), Some(2));
+        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(1));
+        assert_eq!(field_map.get(&field_b).map(|x| *x), Some(2));
+    }
+
+    #[test]
+    fn encoder_find_relative() {
+        let mut table = DynamicTable::new();
+        let field_a = HeaderField::new("Name-A", "Value-A");
+        let field_b = HeaderField::new("Name-B", "Value-B");
+        insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
+
+        let encoder = table.encoder();
+        assert_eq!(
+            encoder.find(&field_a),
+            DynamicLookupResult::Relative {
+                index: 1,
+                absolute: 1
+            }
+        );
+        assert_eq!(
+            encoder.find(&field_b),
+            DynamicLookupResult::Relative {
+                index: 0,
+                absolute: 2
+            }
+        );
+        assert_eq!(
+            encoder.find(&HeaderField::new("Name-C", "Value-C")),
+            DynamicLookupResult::NotFound
+        );
+        assert_eq!(
+            encoder.find_name(&field_a.name),
+            DynamicLookupResult::Relative {
+                index: 1,
+                absolute: 1
+            }
+        );
+        assert_eq!(
+            encoder.find_name(&field_b.name),
+            DynamicLookupResult::Relative {
+                index: 0,
+                absolute: 2
+            }
+        );
+        assert_eq!(
+            encoder.find_name(&b"Name-C"[..]),
+            DynamicLookupResult::NotFound
+        );
+    }
+
+    #[test]
+    fn encoder_insert() {
+        let mut table = DynamicTable::new();
+        let field_a = HeaderField::new("Name-A", "Value-A");
+        let field_b = HeaderField::new("Name-B", "Value-B");
+        insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
+
+        let mut encoder = table.encoder();
+        assert_eq!(
+            encoder.insert(&field_a),
+            Ok(DynamicInsertionResult::Duplicated {
+                postbase: 0,
+                relative: 1,
+                absolute: 3
+            })
+        );
+        assert_eq!(
+            encoder.insert(&field_b.with_value("New Value-B")),
+            Ok(DynamicInsertionResult::InsertedWithNameRef {
+                postbase: 1,
+                relative: 1,
+                absolute: 4,
+            })
+        );
+        assert_eq!(
+            encoder.insert(&field_b.with_value("Newer Value-B")),
+            Ok(DynamicInsertionResult::InsertedWithNameRef {
+                postbase: 2,
+                relative: 0,
+                absolute: 5,
+            })
+        );
+
+        let field_c = HeaderField::new("Name-C", "Value-C");
+        assert_eq!(
+            encoder.insert(&field_c),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 3,
+                absolute: 6,
+            })
+        );
+
+        assert_eq!(encoder.table.fields.len(), 6);
+        let name_map = encoder.table.name_map.as_ref().unwrap();
+        let field_map = encoder.table.field_map.as_ref().unwrap();
+
+        assert_eq!(
+            encoder.table.fields,
+            &[
+                field_a.clone(),
+                field_b.clone(),
+                field_a.clone(),
+                field_b.with_value("New Value-B"),
+                field_b.with_value("Newer Value-B"),
+                field_c
+            ]
+        );
+        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(3));
+        assert_eq!(name_map.get(&field_b.name).map(|x| *x), Some(5));
+        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(3));
+        assert_eq!(field_map.get(&field_b).map(|x| *x), Some(2));
+    }
+
+    #[test]
+    fn encode_insert_in_empty() {
+        let mut table = DynamicTable::new();
+        let field_a = HeaderField::new("Name-A", "Value-A");
+
+        let mut encoder = table.encoder();
+        assert_eq!(
+            encoder.insert(&field_a),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 0,
+                absolute: 1,
+            })
+        );
+
+        assert_eq!(encoder.table.fields.len(), 1);
+        let name_map = encoder.table.name_map.as_ref().unwrap();
+        let field_map = encoder.table.field_map.as_ref().unwrap();
+        assert_eq!(encoder.table.fields, &[field_a.clone()]);
+        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(1));
+        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(1));
+    }
+
+    #[test]
+    fn encode_cannot_insert() {
+        let mut table = DynamicTable::new();
+        table.set_max_mem_size(31).unwrap();
+        let field = HeaderField::new("Name-A", "Value-A");
+
+        let mut encoder = table.encoder();
+        assert!(!encoder.can_insert(&field));
+        assert_eq!(encoder.insert(&field), Err(Error::MaxTableSizeReached));
+
+        assert_eq!(encoder.table.fields.len(), 0);
+    }
 }
