@@ -29,7 +29,6 @@ rand = "0.6"
 rustls = { git = "https://github.com/Ralith/rustls.git", rev = "6cb47566ee1a2bb480bfd18243be5f02fd355360", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
-tokio-udp = "0.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
 untrusted = "0.6.2"
