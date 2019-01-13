@@ -942,6 +942,7 @@ impl Default for ServerConfig {
     }
 }
 
+/// Errors in the configuration of an endpoint
 #[derive(Debug, Fail)]
 pub enum EndpointError {
     #[fail(display = "failed to configure TLS: {}", _0)]

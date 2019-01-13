@@ -318,10 +318,15 @@ impl HeaderCrypto {
     }
 }
 
+/// Errors in the parameters being used to create a new connection
+///
+/// These arise before any I/O has been performed.
 #[derive(Debug, Fail)]
 pub enum ConnectError {
+    /// The domain name supplied was malformed
     #[fail(display = "invalid DNS name: {}", _0)]
     InvalidDnsName(String),
+    /// The TLS configuration was invalid
     #[fail(display = "TLS error: {}", _0)]
     Tls(TLSError),
 }
