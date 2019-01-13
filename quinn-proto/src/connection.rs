@@ -3094,13 +3094,9 @@ pub enum Io {
         packet: Box<[u8]>,
     },
     /// Stop or (re)start a timer
-    TimerUpdate {
-        timer: Timer,
-        update: TimerUpdate,
-    },
-    RetireConnectionId {
-        connection_id: ConnectionId,
-    },
+    TimerUpdate { timer: Timer, update: TimerUpdate },
+    /// Stop routing `connection_id` to this `Connection`
+    RetireConnectionId { connection_id: ConnectionId },
 }
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
