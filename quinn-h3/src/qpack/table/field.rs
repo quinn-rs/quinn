@@ -10,7 +10,7 @@ use std::borrow::Cow;
  */
 pub const ESTIMATED_OVERHEAD_BYTES: usize = 32;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub struct HeaderField {
     pub name: Cow<'static, [u8]>,
     pub value: Cow<'static, [u8]>,

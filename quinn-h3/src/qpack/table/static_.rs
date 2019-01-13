@@ -7,6 +7,34 @@ use std::collections::HashMap;
 
 use super::field::HeaderField;
 
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    Unknown(usize),
+}
+
+pub struct StaticTable {}
+
+impl StaticTable {
+    pub fn get(index: usize) -> Result<&'static HeaderField, Error> {
+        match PREDEFINED_HEADERS.get(index) {
+            Some(f) => Ok(f),
+            None => Err(Error::Unknown(index)),
+        }
+    }
+
+    pub fn count() -> usize {
+        PREDEFINED_HEADERS.len()
+    }
+
+    pub fn find(field: &HeaderField) -> Option<usize> {
+        PREDEFINED_HEADERS_MAP.get(field).map(|i| *i)
+    }
+
+    pub fn find_name(name: &[u8]) -> Option<usize> {
+        PREDEFINED_HEADERS_NAME_MAP.get(name).map(|i| *i)
+    }
+}
+
 #[allow(unused_macros)]
 macro_rules! decl_fields {
     [ $( ($key:expr, $value:expr) ),* ] => {
@@ -132,36 +160,16 @@ const PREDEFINED_HEADERS: [HeaderField; 99] = decl_fields![
 ];
 
 lazy_static! {
-    static ref PREDEFINED_HEADERS_MAP: HashMap<Cow<'static, [u8]>, (usize, &'static HeaderField)> =
-        PREDEFINED_HEADERS
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| (field.name.clone(), (idx, field)))
-            .collect();
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    Unknown(usize),
-}
-
-pub struct StaticTable {}
-
-impl StaticTable {
-    pub fn get(index: usize) -> Result<&'static HeaderField, Error> {
-        match PREDEFINED_HEADERS.get(index) {
-            Some(f) => Ok(f),
-            None => Err(Error::Unknown(index)),
-        }
-    }
-
-    pub fn count() -> usize {
-        PREDEFINED_HEADERS.len()
-    }
-
-    pub fn find(name: &[u8]) -> Option<&'static (usize, &'static HeaderField)> {
-        PREDEFINED_HEADERS_MAP.get(name)
-    }
+    static ref PREDEFINED_HEADERS_NAME_MAP: HashMap<Cow<'static, [u8]>, usize> = PREDEFINED_HEADERS
+        .iter()
+        .enumerate()
+        .map(|(idx, field)| (field.name.clone(), idx))
+        .collect();
+    static ref PREDEFINED_HEADERS_MAP: HashMap<&'static HeaderField, usize> = PREDEFINED_HEADERS
+        .iter()
+        .enumerate()
+        .map(|(idx, field)| (field, idx))
+        .collect();
 }
 
 #[cfg(test)]
@@ -200,10 +208,16 @@ mod tests {
 
     #[test]
     fn find_by_name() {
+        assert_eq!(StaticTable::find_name(b"last-modified"), Some(10usize));
+        assert_eq!(StaticTable::find_name(b"does-not-exist"), None);
+    }
+
+    #[test]
+    fn find() {
         assert_eq!(
-            StaticTable::find(b"last-modified"),
-            Some(&(10usize, &HeaderField::new("last-modified", "")))
+            StaticTable::find(&HeaderField::new(":method", "GET")),
+            Some(17usize)
         );
-        assert_eq!(StaticTable::find(b"does-not-exist"), None);
+        assert_eq!(StaticTable::find(&HeaderField::new("foo", "bar")), None);
     }
 }
