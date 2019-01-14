@@ -105,7 +105,7 @@ impl<'a> DynamicTableEncoder<'a> {
         )
     }
 
-    fn find_name(&self, name: &[u8]) -> DynamicLookupResult {
+    pub fn find_name(&self, name: &[u8]) -> DynamicLookupResult {
         self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).map(|x| *x))
     }
 
@@ -123,7 +123,7 @@ impl<'a> DynamicTableEncoder<'a> {
         }
     }
 
-    fn can_insert(&mut self, field: &HeaderField) -> bool {
+    pub fn can_insert(&mut self, field: &HeaderField) -> bool {
         let lower_bound = if field.mem_size() <= self.table.mem_limit {
             self.table.mem_limit - field.mem_size()
         } else {
@@ -138,7 +138,32 @@ impl<'a> DynamicTableEncoder<'a> {
         field.mem_size() <= self.table.mem_limit - hypothetic_mem_size
     }
 
-    fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+    pub fn insert_static(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+        let index = self.table.put_field(field.clone())?;
+
+        let field_map = self.table.field_map.as_mut().unwrap();
+
+        let result = match field_map.entry(field.clone()) {
+            Entry::Occupied(mut e) => {
+                let ref_index = e.insert(index);
+                DynamicInsertionResult::Duplicated {
+                    relative: index - ref_index - 1,
+                    postbase: index - self.base - 1,
+                    absolute: index,
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(index);
+                DynamicInsertionResult::Inserted {
+                    postbase: index - self.base - 1,
+                    absolute: index,
+                }
+            }
+        };
+        Ok(result)
+    }
+
+    pub fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
         let index = self.table.put_field(field.clone())?;
 
         let name_map = self.table.name_map.as_mut().unwrap();
@@ -346,6 +371,7 @@ impl From<vas::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::qpack::table::static_::StaticTable;
 
     // Test on table size
 
@@ -715,6 +741,18 @@ mod tests {
         assert_eq!(name_map.get(&field_b.name).map(|x| *x), Some(5));
         assert_eq!(field_map.get(&field_a).map(|x| *x), Some(3));
         assert_eq!(field_map.get(&field_b).map(|x| *x), Some(2));
+        assert_eq!(
+            field_map
+                .get(&field_b.with_value("New Value-B"))
+                .map(|x| *x),
+            Some(4)
+        );
+        assert_eq!(
+            field_map
+                .get(&field_b.with_value("Newer Value-B"))
+                .map(|x| *x),
+            Some(5)
+        );
     }
 
     #[test]
@@ -750,5 +788,31 @@ mod tests {
         assert_eq!(encoder.insert(&field), Err(Error::MaxTableSizeReached));
 
         assert_eq!(encoder.table.fields.len(), 0);
+    }
+
+    #[test]
+    fn insert_static() {
+        let mut table = DynamicTable::new();
+        let field = HeaderField::new(":method", "Value-A");
+        table.inserter().put_field(field.clone()).unwrap();
+
+        assert_eq!(StaticTable::find_name(&field.name), Some(21));
+        let mut encoder = table.encoder();
+        assert_eq!(
+            encoder.insert_static(&field),
+            Ok(DynamicInsertionResult::Duplicated {
+                relative: 0,
+                postbase: 0,
+                absolute: 2
+            })
+        );
+        assert_eq!(
+            encoder.insert_static(&field.with_value("Value-B")),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 1,
+                absolute: 3
+            })
+        );
+        assert_eq!(encoder.table.fields.len(), 3);
     }
 }
