@@ -124,9 +124,7 @@ impl InsertWithoutNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Duplicate {
-    pub index: usize,
-}
+pub struct Duplicate(pub usize);
 
 impl Duplicate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -136,11 +134,11 @@ impl Duplicate {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(Duplicate { index }))
+        Ok(Some(Duplicate(index)))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        prefix_int::encode(5, 0, self.index, buf);
+        prefix_int::encode(5, 0, self.0, buf);
     }
 }
 
@@ -213,7 +211,7 @@ mod test {
 
     #[test]
     fn insert_duplicate() {
-        let instruction = Duplicate { index: 42 };
+        let instruction = Duplicate(42);
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);

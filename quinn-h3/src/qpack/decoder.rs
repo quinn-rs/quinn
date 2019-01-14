@@ -160,9 +160,7 @@ fn parse_instruction<R: Buf>(
         InstructionType::InsertWithoutNameRef => InsertWithoutNameRef::decode(&mut buf)?
             .map(|x| Instruction::Insert(HeaderField::new(x.name, x.value))),
         InstructionType::Duplicate => match Duplicate::decode(&mut buf)? {
-            Some(Duplicate { index }) => {
-                Some(Instruction::Insert(table.get_relative(index)?.clone()))
-            }
+            Some(Duplicate(index)) => Some(Instruction::Insert(table.get_relative(index)?.clone())),
             None => None,
         },
         InstructionType::InsertWithNameRef => match InsertWithNameRef::decode(&mut buf)? {
@@ -378,7 +376,7 @@ mod tests {
         assert_eq!(table.count(), 2);
 
         let mut buf = vec![];
-        Duplicate { index: 1 }.encode(&mut buf);
+        Duplicate(1).encode(&mut buf);
 
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
