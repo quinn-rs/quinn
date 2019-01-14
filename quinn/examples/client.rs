@@ -1,3 +1,4 @@
+#![feature(await_macro, async_await, futures_api)]
 #[macro_use]
 extern crate failure;
 #[macro_use]
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use failure::Error;
-use futures::Future;
+use futures::{FutureExt, TryFutureExt};
 use slog::{Drain, Logger};
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
@@ -96,7 +97,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let (endpoint, driver, _) = endpoint.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
-    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)).compat());
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -107,51 +108,37 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .map_or_else(|| url.host_str(), |x| Some(&x))
         .ok_or(format_err!("no hostname specified"))?;
     runtime.block_on(
-        endpoint
-            .connect(&remote, &host)?
-            .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(move |conn| {
-                eprintln!("connected at {:?}", start.elapsed());
-                let conn = conn.connection;
-                let stream = conn.open_bi();
-                stream
-                    .map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |stream| {
-                        if rebind {
-                            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                            let addr = socket.local_addr().unwrap();
-                            eprintln!("rebinding to {}", addr);
-                            endpoint
-                                .rebind(socket, &tokio_reactor::Handle::default())
-                                .expect("rebind failed");
-                        }
-                        tokio::io::write_all(stream, request.as_bytes().to_owned())
-                            .map_err(|e| format_err!("failed to send request: {}", e))
-                    })
-                    .and_then(|(stream, _)| {
-                        tokio::io::shutdown(stream)
-                            .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                    })
-                    .and_then(move |stream| {
-                        let response_start = Instant::now();
-                        eprintln!("request sent at {:?}", response_start - start);
-                        quinn::read_to_end(stream, usize::max_value())
-                            .map_err(|e| format_err!("failed to read response: {}", e))
-                            .map(move |x| (x, response_start))
-                    })
-                    .and_then(move |((_, data), response_start)| {
-                        let duration = response_start.elapsed();
-                        eprintln!(
-                            "response received in {:?} - {} KiB/s",
-                            duration,
-                            data.len() as f32 / (duration_secs(&duration) * 1024.0)
-                        );
-                        io::stdout().write_all(&data).unwrap();
-                        io::stdout().flush().unwrap();
-                        conn.close(0, b"done").map_err(|_| unreachable!())
-                    })
-                    .map(|()| eprintln!("drained"))
-            }),
+        async move {
+            let hs = endpoint.connect(&remote, &host)?;
+            let (conn, _) = await!(hs.establish())?;
+            eprintln!("connected at {:?}", start.elapsed());
+            let mut stream = await!(conn.open_bi())?;
+            if rebind {
+                let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+                let addr = socket.local_addr().unwrap();
+                eprintln!("rebinding to {}", addr);
+                endpoint
+                    .rebind(socket, &tokio_reactor::Handle::default())
+                    .expect("rebind failed");
+            }
+            await!(stream.send.write_all(request.as_bytes()))?;
+            await!(stream.send.finish())?;
+            let response_start = Instant::now();
+            eprintln!("request sent at {:?}", response_start - start);
+            let response = await!(stream.recv.read_to_end(usize::max_value()))?;
+            let duration = response_start.elapsed();
+            eprintln!(
+                "response received in {:?} - {} KiB/s",
+                duration,
+                response.len() as f32 / (duration_secs(&duration) * 1024.0)
+            );
+            io::stdout().write_all(&response).unwrap();
+            io::stdout().flush().unwrap();
+            await!(conn.close(0, b"done"));
+            std::result::Result::<(), Error>::Ok(())
+        }
+            .boxed()
+            .compat(),
     )?;
 
     Ok(())

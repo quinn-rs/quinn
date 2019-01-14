@@ -24,7 +24,7 @@ mod transport_parameters;
 pub mod varint;
 
 mod connection;
-pub use crate::connection::{ConnectionError, TimerSetting, TimerUpdate};
+pub use crate::connection::{Connection, ConnectionError, TimerSetting, TimerUpdate};
 
 mod crypto;
 pub use crate::crypto::{ClientConfig, TokenKey};

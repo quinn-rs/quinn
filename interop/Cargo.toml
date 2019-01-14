@@ -17,7 +17,7 @@ tokio-reactor = "0.1"
 rustls = { version = "0.15", features = ["dangerous_configuration"] }
 failure = "0.1"
 slog = "2.2"
-futures = "0.1.21"
+futures-preview = { version = "0.3.0-alpha.11", features = ["compat"] }
 webpki = "0.19"
 
 [[bin]]

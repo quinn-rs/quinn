@@ -1,13 +1,14 @@
+#![feature(await_macro, async_await, futures_api)]
 use std::net::ToSocketAddrs;
 use std::sync::{Arc, Mutex};
 
-use futures::Future;
+use futures::{FutureExt, TryFutureExt};
 use quinn_h3::qpack;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
 use bytes::BytesMut;
-use failure::{format_err, Error};
+use failure::{format_err, Error, ResultExt};
 use quinn_h3::frame::{HeadersFrame, HttpFrame, SettingsFrame};
 use quinn_h3::StreamType;
 use slog::{o, warn, Drain, Logger};
@@ -83,7 +84,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     builder.logger(log.clone());
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
-    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)).compat());
 
     let mut handshake = false;
     let mut stream_data = false;
@@ -91,67 +92,44 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut resumption = false;
     let mut key_update = false;
     let mut rebinding = false;
-    let endpoint = &endpoint;
-    let result = runtime.block_on(
-        endpoint
-            .connect_with(&client_config, &remote, host)?
-            .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|conn| {
-                println!("connected");
-                assert!(state.lock().unwrap().saw_cert);
-                handshake = true;
-                let conn = conn.connection;
-                let stream = conn.open_bi();
-                let stream_data = &mut stream_data;
-                stream
-                    .map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |stream| get(stream))
-                    .and_then(move |data| {
-                        println!("read {} bytes, closing", data.len());
-                        *stream_data = true;
-                        conn.close(0, b"done").map_err(|_| unreachable!())
-                    })
-                    .map(|()| {
-                        close = true;
-                    })
-            })
-            .and_then(|_| {
-                println!("attempting resumption");
-                state.lock().unwrap().saw_cert = false;
-                endpoint
-                    .connect_with(&client_config, &remote, host)
-                    .unwrap()
-                    .map_err(|e| format_err!("failed to connect: {}", e))
-                    .and_then(|conn| {
-                        resumption = !state.lock().unwrap().saw_cert;
-                        let conn = conn.connection;
-                        conn.force_key_update();
-                        let stream = conn.open_bi();
-                        let stream2 = conn.open_bi();
-                        let rebinding = &mut rebinding;
-                        stream
-                            .map_err(|e| format_err!("failed to open stream: {}", e))
-                            .and_then(move |stream| get(stream))
-                            .inspect(|_| {
-                                key_update = true;
-                            })
-                            .and_then(move |_| {
-                                let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                                let addr = socket.local_addr().unwrap();
-                                println!("rebinding to {}", addr);
-                                endpoint
-                                    .rebind(socket, &tokio_reactor::Handle::default())
-                                    .expect("rebind failed");
-                                stream2
-                                    .map_err(|e| format_err!("failed to open stream: {}", e))
-                                    .and_then(move |stream| get(stream))
-                            })
-                            .and_then(move |_| {
-                                *rebinding = true;
-                                conn.close(0, b"done").map_err(|_| unreachable!())
-                            })
-                    })
-            }),
+    let result: Result<()> = runtime.block_on(
+        async {
+            let conn = endpoint.connect_with(&client_config, &remote, host)?;
+            let (conn, _) = await!(conn.establish()).context("failed to connect")?;
+            println!("connected");
+            assert!(state.lock().unwrap().saw_cert);
+            handshake = true;
+            let stream = await!(conn.open_bi()).context("failed to open stream")?;
+            let data = await!(get(stream)).context("request failed")?;
+            println!("read {} bytes, closing", data.len());
+            stream_data = true;
+            await!(conn.close(0, b"done"));
+            close = true;
+
+            println!("attempting resumption");
+            state.lock().unwrap().saw_cert = false;
+            let conn = endpoint.connect_with(&client_config, &remote, &options.host)?;
+            let (conn, _) = await!(conn.establish()).context("failed to connect")?;
+            resumption = !state.lock().unwrap().saw_cert;
+            println!("updating keys");
+            conn.force_key_update();
+            let stream = await!(conn.open_bi()).context("failed to open stream")?;
+            await!(get(stream)).context("request failed")?;
+            key_update = true;
+            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+            let addr = socket.local_addr().unwrap();
+            println!("rebinding to {}", addr);
+            endpoint
+                .rebind(socket, &tokio_reactor::Handle::default())
+                .expect("rebind failed");
+            let stream = await!(conn.open_bi()).context("failed to open stream")?;
+            await!(get(stream)).context("request failed")?;
+            rebinding = true;
+            await!(conn.close(0, b"done"));
+            Ok(())
+        }
+            .boxed()
+            .compat(),
     );
     if let Err(e) = result {
         println!("failure: {}", e);
@@ -164,15 +142,16 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .to_socket_addrs()?
             .next()
             .ok_or(format_err!("couldn't resolve to an address"))?;
-        let result = runtime.block_on(
-            endpoint
-                .connect_with(&client_config, &remote, host)?
-                .and_then(|conn| {
-                    retry = true;
-                    conn.connection
-                        .close(0, b"done")
-                        .map_err(|_| unreachable!())
-                }),
+        let result: Result<()> = runtime.block_on(
+            async {
+                let conn = endpoint.connect_with(&client_config, &remote, host)?;
+                let (conn, _) = await!(conn.establish()).context("failed to connect")?;
+                retry = true;
+                await!(conn.close(0, b"done"));
+                Ok(())
+            }
+                .boxed()
+                .compat(),
         );
         if let Err(e) = result {
             println!("failure: {}", e);
@@ -191,42 +170,34 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
 
     let mut h3 = false;
-    let result = runtime.block_on(
-        endpoint
-            .connect_with(&h3_client_config, &remote, host)?
-            .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|conn| {
-                let conn = conn.connection;
-                let control_stream = conn.open_uni();
-                let control_fut = control_stream
-                    .map_err(|e| format_err!("failed to open control stream: {}", e))
-                    .and_then(move |stream| {
-                        let mut buf = BytesMut::new();
-                        StreamType::CONTROL.encode(&mut buf);
-                        HttpFrame::Settings(SettingsFrame {
-                            max_header_list_size: 4096,
-                            num_placeholders: 0,
-                        })
-                        .encode(&mut buf);
-                        tokio::io::write_all(stream, buf)
-                            .map_err(|e| format_err!("failed to send Settings frame: {}", e))
-                            .and_then(move |(_, _)| futures::future::ok(()))
-                    });
+    let result: Result<()> = runtime.block_on(
+        async {
+            let conn = endpoint.connect_with(&h3_client_config, &remote, host)?;
+            let (conn, _) = await!(conn.establish()).context("failed to connect")?;
+            let mut control_stream =
+                await!(conn.open_uni()).context("failed to open control stream")?;
+            let mut buf = BytesMut::new();
+            StreamType::CONTROL.encode(&mut buf);
+            HttpFrame::Settings(SettingsFrame {
+                max_header_list_size: 4096,
+                num_placeholders: 0,
+            })
+            .encode(&mut buf);
+            await!(control_stream.write_all(&buf)).context("failed to send Settings frame")?;
 
-                let req_stream = conn.open_bi();
-                let req_fut = req_stream
-                    .map_err(|e| format_err!("failed to open request stream: {}", e))
-                    .and_then(|req_stream| h3_get(req_stream))
-                    .and_then(move |data| {
-                        println!(
-                            "read {} bytes: \n\n{}\n\n closing",
-                            data.len(),
-                            String::from_utf8_lossy(&data)
-                        );
-                        conn.close(0, b"done").map_err(|_| unreachable!())
-                    });
-                control_fut.and_then(|_| req_fut).map(|_| h3 = true)
-            }),
+            let req_stream = await!(conn.open_bi()).context("failed to open request stream")?;
+            let data = await!(h3_get(req_stream))?;
+            println!(
+                "read {} bytes: \n\n{}\n\n closing",
+                data.len(),
+                String::from_utf8_lossy(&data)
+            );
+            await!(conn.close(0, b"done"));
+            h3 = true;
+            Ok(())
+        }
+            .boxed()
+            .compat(),
     );
     if let Err(e) = result {
         println!("failure: {}", e);
@@ -262,7 +233,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn h3_get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
+async fn h3_get(mut stream: quinn::BiStream) -> Result<Box<[u8]>> {
     let header = [
         (":method", "GET"),
         (":path", "/"),
@@ -288,13 +259,9 @@ fn h3_get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Erro
     })
     .encode(&mut buf);
 
-    tokio::io::write_all(stream, buf)
-        .map_err(|e| format_err!("failed to send Request frame: {}", e))
-        .and_then(|(stream, _)| {
-            quinn::read_to_end(stream, usize::max_value())
-                .map_err(|e| format_err!("failed to send Request frame: {}", e))
-        })
-        .and_then(move |(_, data)| h3_resp(&table, data))
+    await!(stream.send.write_all(&buf))?;
+    let data = await!(stream.recv.read_to_end(usize::max_value()))?;
+    h3_resp(&table, data)
 }
 
 fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
@@ -320,17 +287,10 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
     }
 }
 
-fn get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
-    tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned())
-        .map_err(|e| format_err!("failed to send request: {}", e))
-        .and_then(|(stream, _)| {
-            tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e))
-        })
-        .and_then(move |stream| {
-            quinn::read_to_end(stream, usize::max_value())
-                .map_err(|e| format_err!("failed to read response: {}", e))
-        })
-        .map(|(_, data)| data)
+async fn get(mut stream: quinn::BiStream) -> Result<Box<[u8]>> {
+    await!(stream.send.write_all(b"GET /index.html\r\n")).context("writing request")?;
+    await!(stream.send.finish()).context("finishing stream")?;
+    Ok(await!(stream.recv.read_to_end(usize::max_value())).context("reading response")?)
 }
 
 struct InteropVerifier(Arc<Mutex<State>>);

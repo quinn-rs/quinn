@@ -1,3 +1,4 @@
+#![feature(await_macro, async_await, futures_api)]
 #[macro_use]
 extern crate failure;
 #[macro_use]
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use std::{ascii, fmt, fs, io, str};
 
 use failure::{Error, Fail, ResultExt};
-use futures::{Future, Stream};
+use futures::{FutureExt, StreamExt, TryFutureExt};
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::Runtime;
@@ -150,80 +151,91 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         bail!("root path does not exist");
     }
 
-    let (_, driver, incoming) = endpoint.bind(options.listen)?;
+    let (_, driver, mut incoming) = endpoint.bind(options.listen)?;
     let mut runtime = Runtime::new()?;
-    runtime.spawn(incoming.for_each(move |conn| {
-        handle_connection(&root, &log, conn);
-        Ok(())
-    }));
-    runtime.block_on(driver)?;
+    runtime.spawn(
+        async move {
+            while let Some(hs) = await!(incoming.next()) {
+                tokio_current_thread::spawn(
+                    handle_connection(root.clone(), log.clone(), hs)
+                        .map(|()| Ok(()))
+                        .boxed()
+                        .compat(),
+                )
+            }
+            Ok(())
+        }
+            .boxed()
+            .compat(),
+    );
+    runtime.block_on(driver.compat())?;
 
     Ok(())
 }
 
-fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
-    let quinn::NewConnection {
-        incoming,
-        connection,
-    } = conn;
-    let log = log.clone();
+async fn handle_connection(root: Rc<PathBuf>, log: Logger, conn: quinn::Handshake) {
+    info!(
+        log,
+        "connection incoming from {remote}",
+        remote = conn.remote_address()
+    );
+    let (connection, mut incoming) = match await!(conn.establish()) {
+        Ok((c, i)) => (c, i),
+        Err(e) => {
+            warn!(log, "handshake failed: {}", e);
+            return;
+        }
+    };
     info!(log, "got connection";
           "remote_id" => %connection.remote_id(),
-          "address" => %connection.remote_address(),
           "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
-    let log2 = log.clone();
-    let root = root.clone();
-
     // Each stream initiated by the client constitutes a new request.
-    tokio_current_thread::spawn(
-        incoming
-            .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
-            .for_each(move |stream| {
-                handle_request(&root, &log, stream);
+    while let Some(stream) = await!(incoming.next()) {
+        let log = log.clone();
+        let root = root.clone();
+        tokio_current_thread::spawn(
+            async move {
+                if let Err(e) = await!(handle_request(&root, &log, stream)) {
+                    warn!(log, "request failed: {}", e.pretty());
+                }
                 Ok(())
-            }),
-    );
+            }
+                .boxed()
+                .compat(),
+        );
+    }
 }
 
-fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
-    let stream = match stream {
+async fn handle_request<'a>(
+    root: &'a PathBuf,
+    log: &'a Logger,
+    stream: quinn::NewStream,
+) -> Result<()> {
+    let mut stream = match stream {
         quinn::NewStream::Bi(stream) => stream,
         quinn::NewStream::Uni(_) => unreachable!("disabled by endpoint configuration"),
     };
-    let root = root.clone();
-    let log = log.clone();
-    let log2 = log.clone();
-    let log3 = log.clone();
 
-    tokio_current_thread::spawn(
-        quinn::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
-            .map_err(|e| format_err!("failed reading request: {}", e))
-            .and_then(move |(stream, req)| {
-                let mut escaped = String::new();
-                for &x in &req[..] {
-                    let part = ascii::escape_default(x).collect::<Vec<_>>();
-                    escaped.push_str(str::from_utf8(&part).unwrap());
-                }
-                info!(log, "got request"; "content" => escaped);
-                // Execute the request
-                let resp = process_get(&root, &req).unwrap_or_else(move |e| {
-                    error!(log, "failed to process request"; "reason" => %e.pretty());
-                    format!("failed to process request: {}\n", e.pretty())
-                        .into_bytes()
-                        .into()
-                });
-                // Write the response
-                tokio::io::write_all(stream, resp)
-                    .map_err(|e| format_err!("failed to send response: {}", e))
-            })
-            // Gracefully terminate the stream
-            .and_then(|(stream, _)| {
-                tokio::io::shutdown(stream)
-                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-            })
-            .map(move |_| info!(log3, "request complete"))
-            .map_err(move |e| error!(log2, "request failed"; "reason" => %e.pretty())),
-    )
+    let req = await!(stream.recv.read_to_end(64 * 1024)).context("reading request")?;
+    let mut escaped = String::new();
+    for &x in &req[..] {
+        let part = ascii::escape_default(x).collect::<Vec<_>>();
+        escaped.push_str(str::from_utf8(&part).unwrap());
+    }
+    info!(log, "got request"; "content" => escaped);
+    // Execute the request
+    let resp = process_get(&root, &req).unwrap_or_else(|e| {
+        error!(log, "failed to process request"; "reason" => %e.pretty());
+        format!("failed to process request: {}\n", e.pretty())
+            .into_bytes()
+            .into()
+    });
+    // Write the response
+    await!(stream.send.write_all(&resp)).context("sending response")?;
+    await!(stream.send.finish()).context("sending response")?;
+    info!(log, "request complete");
+
+    Ok(())
 }
 
 fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
