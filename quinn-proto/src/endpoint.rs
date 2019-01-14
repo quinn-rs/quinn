@@ -959,7 +959,7 @@ impl From<crypto::TLSError> for EndpointError {
 #[derive(Debug)]
 pub enum Event {
     /// A connection was successfully established.
-    Connected { protocol: Option<Vec<u8>> },
+    Connected,
     /// A connection was lost.
     ConnectionLost { reason: ConnectionError },
     /// One or more new streams has been opened and is readable

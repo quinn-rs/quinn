@@ -1220,9 +1220,7 @@ impl Connection {
 
                             // Server applications don't see connections until the handshake
                             // completes, so this would be redundant.
-                            self.events.push_back(Event::Connected {
-                                protocol: self.tls.get_alpn_protocol().map(|x| x.into()),
-                            });
+                            self.events.push_back(Event::Connected);
                         }
                         self.state = State::Established;
                         trace!(self.log, "established");
