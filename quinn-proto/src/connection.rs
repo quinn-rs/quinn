@@ -1649,7 +1649,7 @@ impl Connection {
                             "got STOP_SENDING on invalid stream {stream}",
                             stream = id
                         );
-                        return Err(TransportError::PROTOCOL_VIOLATION);
+                        return Err(TransportError::STREAM_STATE_ERROR);
                     }
                     self.reset(id, error_code);
                     self.streams.get_send_mut(id).unwrap().state = stream::SendState::ResetSent {
@@ -2409,7 +2409,10 @@ impl Connection {
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let rs = self.streams.get_recv_mut(id).unwrap();
+        let rs = self
+            .streams
+            .get_recv_mut(id)
+            .expect("not an open recv stream");
         let (buf, len) = rs.read_unordered()?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
@@ -2424,7 +2427,10 @@ impl Connection {
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let rs = self.streams.get_recv_mut(id).unwrap();
+        let rs = self
+            .streams
+            .get_recv_mut(id)
+            .expect("not an open recv stream");
         let len = rs.read(buf)?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
@@ -2440,7 +2446,7 @@ impl Connection {
     pub fn stop_sending(&mut self, id: StreamId, error_code: u16) {
         assert!(
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
-            "only streams supporting incoming data may be reset"
+            "only streams supporting incoming data may be stopped"
         );
         let stream = self
             .streams
