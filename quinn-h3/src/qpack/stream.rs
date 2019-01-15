@@ -55,7 +55,7 @@ impl InsertWithNameRef {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let (flags, index) = match prefix_int::decode(6, buf) {
             Ok((f, x)) if f & 0b10 == 0b10 => (f, x),
-            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -130,7 +130,7 @@ impl Duplicate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let index = match prefix_int::decode(5, buf) {
             Ok((0, x)) => x,
-            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -151,7 +151,7 @@ impl DynamicTableSizeUpdate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let size = match prefix_int::decode(5, buf) {
             Ok((0b001, x)) => x,
-            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
@@ -172,7 +172,7 @@ impl TableSizeSync {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let insert_count = match prefix_int::decode(6, buf) {
             Ok((0b00, x)) => x,
-            Ok((_, _)) => return Err(ParseError::InvalidPrefix),
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
