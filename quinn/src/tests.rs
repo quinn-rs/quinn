@@ -22,14 +22,17 @@ fn drop_server() {
     mem::drop(streams);
     match runtime.block_on(
         async {
-            let mut stream = await!(client.open_uni())?;
+            let mut stream =
+                await!(client.open_uni()).map_err(crate::FinishError::ConnectionLost)?;
             await!(stream.finish())
         }
             .boxed()
             .compat(),
     ) {
         Ok(_) => panic!("unexpected success"),
-        Err(crate::ConnectionError::ApplicationClosed { .. }) => {}
+        Err(crate::FinishError::ConnectionLost(crate::ConnectionError::ApplicationClosed {
+            ..
+        })) => {}
         Err(e) => panic!("{}", e),
     }
 }

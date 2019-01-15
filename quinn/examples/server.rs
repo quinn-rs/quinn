@@ -93,6 +93,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
+    server_config.zero_rtt(true);
 
     if options.keylog {
         server_config.enable_keylog();

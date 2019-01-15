@@ -165,6 +165,16 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Whether to accept 0-RTT data from clients
+    ///
+    /// 0-RTT allows application data to be transmitted without waiting for the handshake to
+    /// complete, but might be replayed by attackers.
+    pub fn zero_rtt(&mut self, enabled: bool) -> &mut Self {
+        Arc::make_mut(&mut self.config.tls_config).max_early_data_size =
+            enabled as u32 * 0xffffffff;
+        self
+    }
+
     /// Set the certificate chain that will be presented to clients.
     pub fn certificate(
         &mut self,

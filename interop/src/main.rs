@@ -74,6 +74,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
     tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_HTTP.into()];
+    tls_config.enable_early_data = true;
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
@@ -92,6 +93,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut resumption = false;
     let mut key_update = false;
     let mut rebinding = false;
+    let mut zero_rtt = false;
     let result: Result<()> = runtime.block_on(
         async {
             let conn = endpoint.connect_with(&client_config, &remote, host)?;
@@ -109,7 +111,23 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             println!("attempting resumption");
             state.lock().unwrap().saw_cert = false;
             let conn = endpoint.connect_with(&client_config, &remote, &options.host)?;
-            let (conn, _) = await!(conn.establish()).context("failed to connect")?;
+            let conn = match conn.into_zero_rtt() {
+                Ok((conn, _)) => {
+                    let stream = await!(conn.open_bi()).context("failed to open 0-RTT stream")?;
+                    if !conn.is_handshaking() {
+                        println!("0-RTT stream budget too low");
+                    } else if let Err(e) = await!(get(stream)) {
+                        println!("0-RTT failed: {}", e);
+                    } else {
+                        zero_rtt = true;
+                    }
+                    conn
+                }
+                Err(conn) => {
+                    println!("0-RTT not offered");
+                    await!(conn.establish()).context("failed to connect")?.0
+                }
+            };
             resumption = !state.lock().unwrap().saw_cert;
             println!("updating keys");
             conn.force_key_update();
@@ -215,6 +233,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     if resumption {
         print!("R");
     }
+    if zero_rtt {
+        print!("Z");
+    }
     if retry {
         print!("S");
     }
@@ -288,10 +309,12 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
 }
 
 async fn get(mut stream: quinn::BiStream) -> Result<Box<[u8]>> {
-    await!(stream.send.write_all(b"GET /index.html\r\n")).context("writing request")?;
+    await!(stream.send.write_all(REQUEST)).context("writing request")?;
     await!(stream.send.finish()).context("finishing stream")?;
     Ok(await!(stream.recv.read_to_end(usize::max_value())).context("reading response")?)
 }
+
+const REQUEST: &[u8] = b"GET /index.html\r\n";
 
 struct InteropVerifier(Arc<Mutex<State>>);
 impl rustls::ServerCertVerifier for InteropVerifier {
