@@ -66,7 +66,6 @@ impl Endpoint {
             log,
             rng,
             io: VecDeque::new(),
-            // session_ticket_buffer,
             incoming: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
@@ -713,7 +712,7 @@ impl Endpoint {
     /// Instruct the peer to abandon transmitting data on a stream
     ///
     /// # Panics
-    /// - when applied to a stream that has not begin receiving data
+    /// - when applied to a stream that has not begun receiving data
     pub fn stop_sending(&mut self, conn: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[conn.0].stop_sending(stream, error_code);
         self.dirty_conns.insert(conn);
@@ -961,6 +960,8 @@ pub enum Event {
     /// A connection was successfully established.
     Connected,
     /// A connection was lost.
+    ///
+    /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
     ConnectionLost { reason: ConnectionError },
     /// One or more new streams has been opened and is readable
     StreamOpened,
