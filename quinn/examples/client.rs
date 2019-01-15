@@ -31,11 +31,6 @@ struct Opt {
     /// Custom certificate authority to trust, in DER format
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
-    /*
-    /// file to read/write session tickets to
-    #[structopt(long = "session-cache", parse(from_os_str))]
-    session_cache: Option<PathBuf>,
-    */
 }
 
 fn main() {
@@ -63,21 +58,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .to_socket_addrs()?
         .next()
         .ok_or(format_err!("couldn't resolve to an address"))?;
-
-    /*
-    let ticket;
-    if let Some(path) = options.session_cache.take() {
-        ticket = match fs::read(&path) {
-            Ok(x) => Some(x),
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => {
-                return Err(e.into());
-            }
-        };
-    } else {
-        ticket = None;
-    }
-    */
 
     let mut endpoint = quinn::Endpoint::new();
     let mut client_config = quinn::ClientConfigBuilder::new();
