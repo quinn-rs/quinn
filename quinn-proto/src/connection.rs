@@ -1208,6 +1208,22 @@ impl Connection {
                                     TransportParameters::read(self.side, &mut io::Cursor::new(x))
                                         .map_err(Into::into)
                                 })?;
+                            if self.has_0rtt()
+                                && (params.initial_max_data < self.params.initial_max_data
+                                    || params.initial_max_stream_data_bidi_local
+                                        < self.params.initial_max_stream_data_bidi_local
+                                    || params.initial_max_stream_data_bidi_remote
+                                        < self.params.initial_max_stream_data_bidi_remote
+                                    || params.initial_max_stream_data_uni
+                                        < self.params.initial_max_stream_data_uni
+                                    || params.initial_max_streams_bidi
+                                        < self.params.initial_max_streams_bidi
+                                    || params.initial_max_streams_uni
+                                        < self.params.initial_max_streams_uni)
+                            {
+                                debug!(self.log, "server reduced flow-control window wrt. 0-RTT");
+                                return Err(TransportError::PROTOCOL_VIOLATION.into());
+                            }
                             self.set_params(params)?;
 
                             if self.has_0rtt() {
