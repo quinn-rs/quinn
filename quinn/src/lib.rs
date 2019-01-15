@@ -262,13 +262,9 @@ impl Future for Driver {
                             .unwrap()
                             .connecting
                             .take()
-                            .expect("got Connected event for unknown connection")
-                            .send(None);
+                            .map(|chan| chan.send(None));
                     }
                     ConnectionLost { reason } => {
-                        // HACK HACK HACK: Handshake currently emits ConnectionLost, which means
-                        // we might not know about this connection yet. This should probably be
-                        // made more consistent.
                         if let Some(x) = endpoint.pending.get_mut(&ch) {
                             x.fail(reason);
                         }
@@ -321,8 +317,35 @@ impl Future for Driver {
                             .unwrap()
                             .send(None);
                     }
+                    Handshaking => {
+                        endpoint.pending.insert(ch, Pending::new(None));
+                        match endpoint.incoming.poll_ready() {
+                            Ok(Async::Ready(())) => {
+                                endpoint
+                                    .incoming
+                                    .start_send(NewConnection::new(self.0.clone(), ch))
+                                    .unwrap();
+                                endpoint.inner.accept();
+                            }
+                            _ => {
+                                endpoint.buffered_incoming.push_back(ch);
+                            }
+                        }
+                    }
                 }
             }
+            while let Ok(Async::Ready(())) = endpoint.incoming.poll_ready() {
+                if let Some(ch) = endpoint.buffered_incoming.pop_front() {
+                    endpoint
+                        .incoming
+                        .start_send(NewConnection::new(self.0.clone(), ch))
+                        .unwrap();
+                    endpoint.inner.accept();
+                } else {
+                    break;
+                }
+            }
+            let _ = endpoint.incoming.poll_complete();
             let mut blocked = false;
             while !endpoint.outgoing.is_empty() {
                 {
@@ -388,11 +411,7 @@ impl Future for Driver {
                         timer,
                         update: quinn::TimerUpdate::Start(time),
                     } => {
-                        // Loss detection and idle timers start before the connection is established
-                        let pending = endpoint
-                            .pending
-                            .entry(ch)
-                            .or_insert_with(|| Pending::new(None));
+                        let pending = endpoint.pending.get_mut(&ch).unwrap();
                         let cancel = &mut pending.cancel_timers[timer as usize];
                         let instant = endpoint.epoch + duration_micros(time);
                         if let Some(cancel) = cancel.take() {
@@ -423,20 +442,6 @@ impl Future for Driver {
                     }
                 }
             }
-            while let Ok(Async::Ready(_)) = endpoint.incoming.poll_ready() {
-                if let Some(x) = endpoint.inner.accept() {
-                    if endpoint
-                        .incoming
-                        .start_send(NewConnection::new(self.0.clone(), x))
-                        .is_err()
-                    {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            let _ = endpoint.incoming.poll_complete();
             let mut fired = false;
             loop {
                 match endpoint.timers.poll() {
@@ -489,6 +494,7 @@ struct EndpointInner {
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
     timers: FuturesUnordered<Timer>,
+    buffered_incoming: VecDeque<ConnectionHandle>,
     incoming: futures::sync::mpsc::Sender<NewConnection>,
     driver: Option<Task>,
     ipv6: bool,
