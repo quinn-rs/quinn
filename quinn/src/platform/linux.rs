@@ -100,11 +100,17 @@ impl super::UdpExt for UdpSocket {
                 ecn,
             );
         }
-        let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
-        if n == -1 {
-            return Err(io::Error::last_os_error());
+        loop {
+            let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            return Ok(n as usize);
         }
-        Ok(n as usize)
     }
 
     fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
@@ -123,10 +129,17 @@ impl super::UdpExt for UdpSocket {
             msg_controllen: CMSG_LEN as _,
             msg_flags: 0,
         };
-        let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
-        if n == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        let n = loop {
+            let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            break n;
+        };
         let ecn_bits = if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
             match (cmsg.cmsg_level, cmsg.cmsg_type) {
                 (libc::IPPROTO_IP, libc::IP_TOS) => unsafe { cmsg::decode::<u8>(cmsg) },
