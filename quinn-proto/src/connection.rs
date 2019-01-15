@@ -1344,14 +1344,23 @@ impl Connection {
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
-                    match frame {
-                        Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
-                            trace!(self.log, "draining");
-                            self.state = State::Draining;
-                            return Ok(());
+                    let peer_reason = match frame {
+                        Frame::ApplicationClose(reason) => {
+                            ConnectionError::ApplicationClosed { reason }
                         }
-                        _ => {}
-                    }
+                        Frame::ConnectionClose(reason) => {
+                            ConnectionError::ConnectionClosed { reason }
+                        }
+                        _ => {
+                            continue;
+                        }
+                    };
+                    self.events.push_back(Event::ConnectionLost {
+                        reason: peer_reason,
+                    });
+                    trace!(self.log, "draining");
+                    self.state = State::Draining;
+                    return Ok(());
                 }
                 Ok(())
             }

@@ -450,11 +450,11 @@ impl Future for Driver {
                         endpoint.inner.timeout(now, ch, timer);
                         if timer == quinn::Timer::Close {
                             // Connection drained
-                            if let Some(x) = endpoint.pending.get_mut(&ch).and_then(|p| {
+                            if let Some(p) = endpoint.pending.get_mut(&ch) {
                                 p.drained = true;
-                                p.draining.take()
-                            }) {
-                                let _ = x.send(());
+                                if let Some(x) = p.closing.take() {
+                                    let _ = x.send(());
+                                }
                             }
                         }
                         fired = true;
@@ -519,7 +519,7 @@ struct Pending {
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
-    draining: Option<oneshot::Sender<()>>,
+    closing: Option<oneshot::Sender<()>>,
     drained: bool,
 }
 
@@ -535,7 +535,7 @@ impl Pending {
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
-            draining: None,
+            closing: None,
             drained: false,
         }
     }
@@ -678,10 +678,10 @@ impl Connection {
 
             let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
             assert!(
-                pending.draining.is_none(),
+                pending.closing.is_none(),
                 "a connection can only be closed once"
             );
-            pending.draining = Some(send);
+            pending.closing = Some(send);
 
             endpoint.inner.close(
                 micros_from(endpoint.epoch.elapsed()),
@@ -762,7 +762,7 @@ impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.borrow_mut();
         if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.handle) {
-            if pending.get().draining.is_none() && !pending.get().drained {
+            if pending.get().closing.is_none() && !pending.get().drained {
                 endpoint.inner.close(
                     micros_from(endpoint.epoch.elapsed()),
                     self.handle,
