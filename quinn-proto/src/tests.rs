@@ -221,12 +221,9 @@ impl Pair {
             .connect(self.server.addr, &client_config(), "localhost")
             .unwrap();
         self.drive();
-        let server_ch = if let Some(c) = self.server.accept() {
-            c
-        } else {
-            panic!("server didn't connect");
-        };
-        assert_matches!(self.client.poll(), Some((conn, Event::Connected { .. })) if conn == client_ch);
+        let server_ch = self.server.assert_accept();
+        assert_matches!(self.client.poll(), Some((ch, Event::Connected { .. })) if ch == client_ch);
+        assert_matches!(self.server.poll(), Some((ch, Event::Connected { .. })) if ch == server_ch);
         (client_ch, server_ch)
     }
 }
@@ -353,6 +350,15 @@ impl TestEndpoint {
 
     fn finish_delay(&mut self) {
         self.outbound.extend(self.delayed.drain(..));
+    }
+
+    fn assert_accept(&mut self) -> ConnectionHandle {
+        if let Some((c, Event::Handshaking)) = self.poll() {
+            self.accept();
+            c
+        } else {
+            panic!("server didn't connect");
+        }
     }
 }
 
@@ -649,7 +655,7 @@ fn zero_rtt() {
         .connect(pair.server.addr, &config, "localhost")
         .unwrap();
     pair.drive();
-    pair.server.accept().unwrap();
+    pair.server.assert_accept();
     pair.client.close(pair.time, client_ch, 0, [][..].into());
     pair.drive();
 
@@ -668,11 +674,7 @@ fn zero_rtt() {
     pair.client.write(client_ch, s, MSG).unwrap();
     pair.drive();
     assert!(pair.client.connection(client_ch).accepted_0rtt());
-    let server_ch = if let Some(c) = pair.server.accept() {
-        c
-    } else {
-        panic!("server didn't connect");
-    };
+    let server_ch = pair.server.assert_accept();
     assert_matches!(pair.server.read_unordered(server_ch, s), Ok((ref data, 0)) if data == MSG);
     assert_eq!(pair.client.connection(client_ch).lost_packets(), 0);
 }
@@ -688,7 +690,7 @@ fn zero_rtt_rejection() {
         .connect(pair.server.addr, &config, "localhost")
         .unwrap();
     pair.drive();
-    pair.server.accept().unwrap();
+    pair.server.assert_accept();
     pair.client.close(pair.time, client_conn, 0, [][..].into());
     pair.drive();
 
@@ -707,11 +709,7 @@ fn zero_rtt_rejection() {
     pair.client.write(client_conn, s, MSG).unwrap();
     pair.drive();
     assert!(!pair.client.connection(client_conn).accepted_0rtt());
-    let server_conn = if let Some(c) = pair.server.accept() {
-        c
-    } else {
-        panic!("server didn't connect");
-    };
+    let server_conn = pair.server.assert_accept();
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
         Err(ReadError::Blocked)
@@ -896,6 +894,7 @@ fn instant_close_2() {
     pair.client.close(pair.time, client_ch, 42, Bytes::new());
     pair.drive();
     assert_matches!(pair.client.poll(), None);
+    pair.server.assert_accept();
     assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
         reason: ApplicationClose { error_code: 42, ref reason }
     }})) if reason.is_empty());

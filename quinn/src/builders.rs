@@ -70,6 +70,7 @@ impl<'a> EndpointBuilder<'a> {
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
             timers: FuturesUnordered::new(),
+            buffered_incoming: VecDeque::new(),
             incoming: send,
             driver: None,
             ipv6: addr.is_ipv6(),
