@@ -43,7 +43,7 @@ impl Indexed {
         match prefix_int::decode(6, buf)? {
             (0b11, i) => Ok(Indexed::Static(i)),
             (0b10, i) => Ok(Indexed::Dynamic(i)),
-            _ => Err(ParseError::InvalidPrefix),
+            (f, i) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
@@ -62,7 +62,7 @@ impl IndexedWithPostBase {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         match prefix_int::decode(4, buf)? {
             (0b0001, i) => Ok(IndexedWithPostBase(i)),
-            _ => Err(ParseError::InvalidPrefix),
+            (f, _) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
@@ -102,7 +102,7 @@ impl LiteralWithNameRef {
                 i,
                 prefix_string::decode(8, buf)?,
             )),
-            _ => Err(ParseError::InvalidPrefix),
+            (f, _) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
@@ -141,7 +141,7 @@ impl LiteralWithPostBaseNameRef {
                 i,
                 prefix_string::decode(8, buf)?,
             )),
-            _ => Err(ParseError::InvalidPrefix),
+            (f, _) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
@@ -167,8 +167,10 @@ impl Literal {
     }
 
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
-        if buf.remaining() > 0 && buf.bytes()[0] & 0b1110_0000 != 0b0010_0000 {
-            return Err(ParseError::InvalidPrefix);
+        if buf.remaining() < 1 {
+            return Err(ParseError::InvalidInteger(prefix_int::Error::UnexpectedEnd));
+        } else if buf.bytes()[0] & 0b1110_0000 != 0b0010_0000 {
+            return Err(ParseError::InvalidPrefix(buf.bytes()[0]));
         }
         Ok(Literal::new(
             prefix_string::decode(4, buf)?,

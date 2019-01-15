@@ -33,7 +33,7 @@ pub mod prefix_string;
 pub enum ParseError {
     InvalidInteger(prefix_int::Error),
     InvalidString(prefix_string::Error),
-    InvalidPrefix,
+    InvalidPrefix(u8),
 }
 
 impl From<prefix_int::Error> for ParseError {

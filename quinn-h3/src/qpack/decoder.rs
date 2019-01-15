@@ -251,7 +251,7 @@ impl From<ParseError> for Error {
         match e {
             ParseError::InvalidInteger(x) => Error::InvalidInteger(x),
             ParseError::InvalidString(x) => Error::InvalidString(x),
-            ParseError::InvalidPrefix => Error::UnknownPrefix,
+            ParseError::InvalidPrefix(_) => Error::UnknownPrefix,
         }
     }
 }
