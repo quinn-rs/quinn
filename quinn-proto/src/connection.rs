@@ -713,7 +713,7 @@ impl Connection {
         spin: bool,
         size: usize,
     ) {
-        self.remote_validated |= space_id == SpaceId::Handshake;
+        self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
         self.total_recvd = self.total_recvd.wrapping_add(size as u64);
         self.reset_idle_timeout(now);
         self.receiving_ecn |= ecn.is_some();
