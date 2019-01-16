@@ -24,7 +24,7 @@ pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 pub mod table;
 
 pub mod decoder;
-pub mod vas;
+pub mod encoder;
 
 pub mod prefix_int;
 pub mod prefix_string;
@@ -34,6 +34,7 @@ pub enum ParseError {
     InvalidInteger(prefix_int::Error),
     InvalidString(prefix_string::Error),
     InvalidPrefix(u8),
+    InvalidBase(isize),
 }
 
 impl From<prefix_int::Error> for ParseError {
@@ -54,3 +55,4 @@ impl From<prefix_string::Error> for ParseError {
 
 mod bloc;
 mod stream;
+mod vas;

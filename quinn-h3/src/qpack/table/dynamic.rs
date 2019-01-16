@@ -116,7 +116,7 @@ impl<'a> DynamicTableEncoder<'a> {
                 absolute,
             },
             Some(absolute) if absolute > self.base => DynamicLookupResult::PostBase {
-                index: absolute - self.base,
+                index: absolute - self.base - 1,
                 absolute,
             },
             _ => DynamicLookupResult::NotFound,
@@ -131,7 +131,10 @@ impl<'a> DynamicTableEncoder<'a> {
         };
         let mut hypothetic_mem_size = self.table.curr_mem_size;
 
-        while !self.table.fields.is_empty() && self.table.curr_mem_size > lower_bound {
+        while !self.table.fields.is_empty()
+            && self.table.curr_mem_size > lower_bound
+            && hypothetic_mem_size >= field.mem_size()
+        {
             hypothetic_mem_size -= field.mem_size();
         }
 
@@ -205,6 +208,18 @@ impl<'a> DynamicTableEncoder<'a> {
             }
         };
         Ok(result)
+    }
+
+    pub fn max_mem_size(&self) -> usize {
+        self.table.mem_limit
+    }
+
+    pub fn base(&self) -> usize {
+        self.base
+    }
+
+    pub fn total_inserted(&self) -> usize {
+        self.table.total_inserted()
     }
 }
 
