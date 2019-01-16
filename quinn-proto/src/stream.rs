@@ -171,18 +171,7 @@ impl Recv {
             self.bytes_read += n as u64;
             Ok(n)
         } else {
-            match self.state {
-                RecvState::ResetRecvd { error_code, .. } => {
-                    self.state = RecvState::Closed;
-                    Err(ReadError::Reset { error_code })
-                }
-                RecvState::Closed => unreachable!(),
-                RecvState::Recv { .. } => Err(ReadError::Blocked),
-                RecvState::DataRecvd { .. } => {
-                    self.state = RecvState::Closed;
-                    Err(ReadError::Finished)
-                }
-            }
+            Err(self.read_blocked())
         }
     }
 
@@ -195,17 +184,21 @@ impl Recv {
             self.bytes_read += x.0.len() as u64;
             Ok(x)
         } else {
-            match self.state {
-                RecvState::ResetRecvd { error_code, .. } => {
-                    self.state = RecvState::Closed;
-                    Err(ReadError::Reset { error_code })
-                }
-                RecvState::Closed => unreachable!(),
-                RecvState::Recv { .. } => Err(ReadError::Blocked),
-                RecvState::DataRecvd { .. } => {
-                    self.state = RecvState::Closed;
-                    Err(ReadError::Finished)
-                }
+            Err(self.read_blocked())
+        }
+    }
+
+    fn read_blocked(&mut self) -> ReadError {
+        match self.state {
+            RecvState::ResetRecvd { error_code, .. } => {
+                self.state = RecvState::Closed;
+                ReadError::Reset { error_code }
+            }
+            RecvState::Closed => panic!("tried to read from a closed stream"),
+            RecvState::Recv { .. } => ReadError::Blocked,
+            RecvState::DataRecvd { .. } => {
+                self.state = RecvState::Closed;
+                ReadError::Finished
             }
         }
     }
