@@ -7,7 +7,8 @@ pub use self::field::HeaderField;
 
 pub mod dynamic;
 pub use self::dynamic::{
-    DynamicTable, DynamicTableDecoder, DynamicTableInserter, Error as DynamicTableError,
+    DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableDecoder,
+    DynamicTableEncoder, DynamicTableInserter, Error as DynamicTableError,
 };
 
 pub mod static_;
