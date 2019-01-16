@@ -1605,10 +1605,13 @@ impl Connection {
                         }
                         Ok(Some(stream)) => {
                             let rs = stream.recv_mut().unwrap();
+                            let limit = rs.limit();
                             if let Some(offset) = rs.final_offset() {
                                 if offset != final_offset {
                                     return Err(TransportError::FINAL_OFFSET_ERROR);
                                 }
+                            } else if limit > final_offset {
+                                return Err(TransportError::FINAL_OFFSET_ERROR);
                             }
                             if !rs.is_closed() {
                                 rs.state = stream::RecvState::ResetRecvd {
@@ -1616,10 +1619,10 @@ impl Connection {
                                     error_code,
                                 };
                             }
-                            (rs.limit(), mem::replace(&mut rs.fresh, false))
+                            (limit, mem::replace(&mut rs.fresh, false))
                         }
                     };
-                    self.data_recvd += final_offset.saturating_sub(offset);
+                    self.data_recvd += final_offset - offset;
                     if fresh {
                         self.stream_opened = true;
                         self.streams.incoming.push_back(id);
