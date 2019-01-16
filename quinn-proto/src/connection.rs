@@ -1487,7 +1487,7 @@ impl Connection {
                     }
 
                     if mem::replace(&mut rs.fresh, false) {
-                        self.stream_opened = self.streams.incoming.is_empty();
+                        self.stream_opened = true;
                         self.streams.incoming.push_back(frame.id);
                     } else {
                         self.events
@@ -1621,7 +1621,7 @@ impl Connection {
                     };
                     self.data_recvd += final_offset.saturating_sub(offset);
                     if fresh {
-                        self.stream_opened = self.streams.incoming.is_empty();
+                        self.stream_opened = true;
                         self.streams.incoming.push_back(id);
                     } else {
                         self.events.push_back(Event::StreamReadable { stream: id });
