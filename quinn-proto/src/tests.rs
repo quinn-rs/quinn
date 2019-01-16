@@ -546,7 +546,6 @@ fn reset_stream() {
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
     assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
         Err(ReadError::Reset { error_code: ERROR })
@@ -572,7 +571,6 @@ fn stop_stream() {
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
     assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamReadable { stream })) if conn == server_conn && stream == s);
-    assert_matches!(pair.server.read_unordered(server_conn, s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server.read_unordered(server_conn, s),
         Err(ReadError::Reset { error_code: ERROR })

@@ -169,13 +169,13 @@ impl Connection {
         for i in 0..config.stream_window_uni {
             streams.insert(
                 StreamId::new(!side, Directionality::Uni, u64::from(i)),
-                stream::Recv::new(u64::from(config.stream_receive_window)).into(),
+                stream::Recv::new().into(),
             );
         }
         for i in 0..config.stream_window_bidi {
             streams.insert(
                 StreamId::new(!side, Directionality::Bi, i as u64),
-                Stream::new_bi(config.stream_receive_window as u64),
+                Stream::new_bi(),
             );
         }
         let mut loc_cids = HashMap::new();
@@ -1457,6 +1457,10 @@ impl Connection {
                         _ => {}
                     }
                     let rs = self.streams.get_recv_mut(frame.id).unwrap();
+                    if rs.is_finished() {
+                        trace!(self.log, "dropping frame for finished stream");
+                        continue;
+                    }
 
                     let end = frame.offset + frame.data.len() as u64;
                     if let Some(final_offset) = rs.final_offset() {
@@ -1467,10 +1471,11 @@ impl Connection {
                     }
                     let prev_end = rs.limit();
                     let new_bytes = end.saturating_sub(prev_end);
-                    if end > rs.max_data || data_recvd + new_bytes > max_data {
+                    let stream_max_data = rs.bytes_read + self.config.stream_receive_window;
+                    if end > stream_max_data || data_recvd + new_bytes > max_data {
                         debug!(self.log, "flow control error";
                                    "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
-                                   "max data" => max_data, "end" => end, "stream max data" => rs.max_data);
+                                   "max data" => max_data, "end" => end, "stream max data" => stream_max_data);
                         return Err(TransportError::FLOW_CONTROL_ERROR);
                     }
                     if frame.fin {
@@ -1594,7 +1599,7 @@ impl Connection {
                     error_code,
                     final_offset,
                 }) => {
-                    let (offset, fresh) = match self.streams.get_recv_stream(self.side, id) {
+                    let rs = match self.streams.get_recv_stream(self.side, id) {
                         Err(e) => {
                             debug!(self.log, "received illegal RST_STREAM");
                             return Err(e);
@@ -1603,26 +1608,32 @@ impl Connection {
                             trace!(self.log, "received RST_STREAM on closed stream");
                             continue;
                         }
-                        Ok(Some(stream)) => {
-                            let rs = stream.recv_mut().unwrap();
-                            let limit = rs.limit();
-                            if let Some(offset) = rs.final_offset() {
-                                if offset != final_offset {
-                                    return Err(TransportError::FINAL_OFFSET_ERROR);
-                                }
-                            } else if limit > final_offset {
-                                return Err(TransportError::FINAL_OFFSET_ERROR);
-                            }
-                            if !rs.is_closed() {
-                                rs.state = stream::RecvState::ResetRecvd {
-                                    size: final_offset,
-                                    error_code,
-                                };
-                            }
-                            (limit, mem::replace(&mut rs.fresh, false))
-                        }
+                        Ok(Some(stream)) => stream.recv_mut().unwrap(),
                     };
-                    self.data_recvd += final_offset - offset;
+                    let limit = rs.limit();
+                    let fresh = mem::replace(&mut rs.fresh, false);
+
+                    // Validate final_offset
+                    if let Some(offset) = rs.final_offset() {
+                        if offset != final_offset {
+                            return Err(TransportError::FINAL_OFFSET_ERROR);
+                        }
+                    } else if limit > final_offset {
+                        return Err(TransportError::FINAL_OFFSET_ERROR);
+                    }
+
+                    // State transition
+                    rs.reset(error_code, final_offset);
+
+                    // Update flow control
+                    if rs.bytes_read != final_offset {
+                        self.data_recvd += final_offset - limit;
+                        // bytes_read is always <= limit, so this won't underflow.
+                        self.local_max_data += final_offset - rs.bytes_read;
+                        self.space_mut(SpaceId::Data).pending.max_data = true;
+                    }
+
+                    // Notify application
                     if fresh {
                         self.stream_opened = true;
                         self.streams.incoming.push_back(id);
@@ -1942,10 +1953,16 @@ impl Connection {
                 continue;
             }
             sent.max_stream_data.insert(id);
-            trace!(self.log, "MAX_STREAM_DATA"; "stream" => id.0, "value" => rs.max_data);
+            let max = rs.bytes_read + self.config.stream_receive_window;
+            trace!(
+                self.log,
+                "MAX_STREAM_DATA: {stream} = {max}",
+                stream = id,
+                max = max
+            );
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
-            buf.write_var(rs.max_data);
+            buf.write_var(max);
         }
 
         // MAX_STREAMS_UNI
@@ -2314,7 +2331,7 @@ impl Connection {
                 self.streams.next_bi += 1;
                 (
                     StreamId::new(self.side, direction, self.streams.next_bi - 1),
-                    Stream::new_bi(self.config.stream_receive_window as u64),
+                    Stream::new_bi(),
                 )
             }
             _ => {
@@ -2364,7 +2381,7 @@ impl Connection {
                         Directionality::Bi,
                         self.streams.max_remote_bi - 1,
                     ),
-                    Stream::new_bi(self.config.stream_receive_window as u64),
+                    Stream::new_bi(),
                 )
             }
             Directionality::Uni => {
@@ -2376,7 +2393,7 @@ impl Connection {
                         Directionality::Uni,
                         self.streams.max_remote_uni - 1,
                     ),
-                    stream::Recv::new(self.config.stream_receive_window).into(),
+                    stream::Recv::new().into(),
                 )
             }
         };
@@ -2424,6 +2441,7 @@ impl Connection {
         let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
+            // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
         Ok((buf, len))
@@ -2441,6 +2459,7 @@ impl Connection {
         let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
         if rs.receiving_unknown_size() {
+            // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
         Ok(len)
