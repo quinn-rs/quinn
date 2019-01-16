@@ -4,11 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, str};
 
-use aes::{Aes128, Aes256};
-use block_modes::block_padding::ZeroPadding;
-use block_modes::{BlockMode, Ecb};
-use bytes::{Buf, BufMut, ByteOrder, BytesMut, LittleEndian};
-use orion::hazardous::stream::chacha20;
+use bytes::{Buf, BufMut, BytesMut};
+use ring::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
 use ring::aead::{self, Aad, Nonce};
 use ring::digest;
 use ring::hkdf;
@@ -249,8 +246,8 @@ impl Crypto {
         let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();
         HeaderCrypto {
-            local: HeaderKey::from_aead(cipher, &local),
-            remote: HeaderKey::from_aead(cipher, &remote),
+            local: header_key_from_secret(cipher, &local),
+            remote: header_key_from_secret(cipher, &remote),
         }
     }
 
@@ -270,14 +267,17 @@ impl Crypto {
 }
 
 pub struct HeaderCrypto {
-    local: HeaderKey,
-    remote: HeaderKey,
+    local: HeaderProtectionKey,
+    remote: HeaderProtectionKey,
 }
 
 impl HeaderCrypto {
     pub fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
-        let mask = self.remote.mask(&sample[0..self.sample_size()]);
+        let mask = self
+            .remote
+            .new_mask(&sample[0..self.sample_size()])
+            .unwrap();
         if header[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
             // Long header: 4 bits masked
             header[0] ^= mask[0] & 0x0f;
@@ -296,7 +296,7 @@ impl HeaderCrypto {
 
     pub fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
-        let mask = self.local.mask(&sample[0..self.sample_size()]);
+        let mask = self.local.new_mask(&sample[0..self.sample_size()]).unwrap();
         let pn_length = PacketNumber::decode_len(header[0]);
         if header[0] & 0x80 == 0x80 {
             // Long header: 4 bits masked
@@ -314,7 +314,7 @@ impl HeaderCrypto {
     }
 
     pub fn sample_size(&self) -> usize {
-        self.local.sample_size()
+        self.local.algorithm().sample_len()
     }
 }
 
@@ -337,70 +337,22 @@ impl From<TLSError> for ConnectError {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum HeaderKey {
-    AesEcb128([u8; 16]),
-    AesEcb256([u8; 32]),
-    ChaCha20(chacha20::SecretKey),
-}
-
-impl HeaderKey {
-    fn from_aead(alg: &aead::Algorithm, secret_key: &SigningKey) -> Self {
-        use self::HeaderKey::*;
-        const LABEL: &[u8] = b"quic hp";
-        if alg == &aead::AES_128_GCM {
-            let mut pn = [0; 16];
-            hkdf_expand(&secret_key, LABEL, &mut pn);
-            AesEcb128(pn)
-        } else if alg == &aead::AES_256_GCM {
-            let mut pn = [0; 32];
-            hkdf_expand(&secret_key, LABEL, &mut pn);
-            AesEcb256(pn)
-        } else if alg == &aead::CHACHA20_POLY1305 {
-            let mut pn = [0; 32];
-            hkdf_expand(&secret_key, LABEL, &mut pn);
-            ChaCha20(
-                chacha20::SecretKey::from_slice(&pn)
-                    .expect("packet number key construction failed"),
-            )
-        } else {
-            unimplemented!()
-        }
-    }
-
-    fn sample_size(&self) -> usize {
-        use self::HeaderKey::*;
-        match *self {
-            AesEcb128(_) | AesEcb256(_) | ChaCha20(_) => 16,
-        }
-    }
-
-    fn mask(&self, sample: &[u8]) -> [u8; 5] {
-        use self::HeaderKey::*;
-        match self {
-            AesEcb128(key) => {
-                let cipher = Ecb::<Aes128, ZeroPadding>::new_var(key, &[]).unwrap();
-                let mut buf = [0; 16];
-                buf.copy_from_slice(sample);
-                cipher.encrypt(&mut buf, 16).unwrap();
-                [buf[0], buf[1], buf[2], buf[3], buf[4]]
-            }
-            AesEcb256(key) => {
-                let cipher = Ecb::<Aes256, ZeroPadding>::new_var(key, &[]).unwrap();
-                let mut buf = [0; 16];
-                buf.copy_from_slice(sample);
-                cipher.encrypt(&mut buf, 16).unwrap();
-                [buf[0], buf[1], buf[2], buf[3], buf[4]]
-            }
-            ChaCha20(key) => {
-                let mut buf = [0; 5];
-                let counter = LittleEndian::read_u32(&sample[..4]);
-                let nonce =
-                    chacha20::Nonce::from_slice(&sample[4..]).expect("failed to generate nonce");
-                chacha20::decrypt(key, &nonce, counter, &[0; 5], &mut buf).unwrap();
-                buf
-            }
-        }
+fn header_key_from_secret(aead: &aead::Algorithm, secret_key: &SigningKey) -> HeaderProtectionKey {
+    const LABEL: &[u8] = b"quic hp";
+    if aead == &aead::AES_128_GCM {
+        let mut pn = [0; 16];
+        hkdf_expand(&secret_key, LABEL, &mut pn);
+        HeaderProtectionKey::new(&AES_128, &pn).unwrap()
+    } else if aead == &aead::AES_256_GCM {
+        let mut pn = [0; 32];
+        hkdf_expand(&secret_key, LABEL, &mut pn);
+        HeaderProtectionKey::new(&AES_256, &pn).unwrap()
+    } else if aead == &aead::CHACHA20_POLY1305 {
+        let mut pn = [0; 32];
+        hkdf_expand(&secret_key, LABEL, &mut pn);
+        HeaderProtectionKey::new(&CHACHA20, &pn).unwrap()
+    } else {
+        unimplemented!()
     }
 }
 
@@ -538,14 +490,8 @@ mod test {
             hex!("8a3515a14ae3c31b9c2d6d5bc58538ca 5cd2baa119087143e60887428dcb52f6")
         );
         let (client_key, client_iv) = Crypto::get_keys(digest, cipher, &client_secret);
-        let client_header_key =
-            HeaderKey::from_aead(cipher, &SigningKey::new(digest, &client_secret));
         assert_eq!(&client_key[..], hex!("98b0d7e5e7a402c67c33f350fa65ea54"));
         assert_eq!(&client_iv[..], hex!("19e94387805eb0b46c03a788"));
-        assert_eq!(
-            client_header_key,
-            HeaderKey::AesEcb128(hex!("0edd982a6ac527f2eddcbb7348dea5d7"))
-        );
 
         let server_secret = expanded_initial_secret(&initial_secret, b"server in");
         assert_eq!(
@@ -553,14 +499,8 @@ mod test {
             hex!("47b2eaea6c266e32c0697a9e2a898bdf 5c4fb3e5ac34f0e549bf2c58581a3811")
         );
         let (server_key, server_iv) = Crypto::get_keys(digest, cipher, &server_secret);
-        let server_header_key =
-            HeaderKey::from_aead(cipher, &SigningKey::new(digest, &server_secret));
         assert_eq!(&server_key[..], hex!("9a8be902a9bdd91d16064ca118045fb4"));
         assert_eq!(&server_iv[..], hex!("0a82086d32205ba22241d8dc"));
-        assert_eq!(
-            server_header_key,
-            HeaderKey::AesEcb128(hex!("94b9452d2b3c7c7f6da7fdd8593537fd"))
-        );
     }
 
     #[test]
@@ -636,30 +576,13 @@ mod test {
             },
         );
 
-        let header = onertt.header_crypto();
-
         assert_eq!(
             &onertt.local_iv[..],
             [0xd5, 0x1b, 0x16, 0x6a, 0x3e, 0xc4, 0x6f, 0x7e, 0x5f, 0x93, 0x27, 0x15]
         );
         assert_eq!(
-            header.local,
-            HeaderKey::AesEcb128([
-                0x1b, 0xdc, 0x5b, 0xe9, 0x80, 0xd7, 0xb9, 0xb5, 0x0e, 0x78, 0x51, 0xcf, 0xb4, 0x71,
-                0xa8, 0x4d,
-            ])
-        );
-
-        assert_eq!(
             &onertt.remote_iv[..],
             [0x03, 0xda, 0x92, 0xa0, 0x91, 0x95, 0xe4, 0xbf, 0x87, 0x98, 0xd3, 0x78]
-        );
-        assert_eq!(
-            header.remote,
-            HeaderKey::AesEcb128([
-                0x1a, 0x05, 0x0f, 0xc6, 0x78, 0xc6, 0xea, 0x30, 0x88, 0x17, 0x05, 0x90, 0x2d, 0x85,
-                0x23, 0x23
-            ])
         );
     }
 }
