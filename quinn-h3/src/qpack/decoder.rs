@@ -7,13 +7,13 @@ use std::borrow::Cow;
 use std::io::Cursor;
 
 use super::table::{
-    dynamic, static_, DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter,
+    static_, DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter,
     HeaderField, StaticTable,
 };
 use super::vas::{self, VirtualAddressSpace};
 
 use super::bloc::{
-    HeaderBlocField, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+    HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
 use super::stream::{
@@ -44,15 +44,10 @@ pub enum Error {
 
 // Decode a header bloc received on Request of Push stream. (draft: 4.5)
 pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<HeaderField>, Error> {
-    let (_, encoded_largest_ref) = prefix_int::decode(8, buf)?;
-    let (sign, encoded_base_index) = prefix_int::decode(7, buf)?;
-    let remote_largest_ref = largest_ref(
-        encoded_largest_ref,
-        table.total_inserted(),
-        table.max_mem_size(),
-    );
+    let (required_ref, base) =
+        HeaderPrefix::decode(buf)?.get(table.total_inserted(), table.max_mem_size())?;
 
-    if remote_largest_ref > table.total_inserted() {
+    if required_ref > table.total_inserted() {
         // TODO here the header block cannot be decoded because it contains references to
         //      dynamic table entries that have not been recieved yet. It should be saved
         //      and then be decoded when the missing dynamic entries arrive on encoder
@@ -60,16 +55,7 @@ pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<He
         return Err(Error::MissingRefs);
     }
 
-    let decoder_table = if sign == 0 {
-        table.decoder(remote_largest_ref + encoded_base_index)
-    } else {
-        if encoded_base_index > remote_largest_ref - 1 {
-            return Err(Error::BadBaseIndex(
-                remote_largest_ref as isize - encoded_base_index as isize - 1,
-            ));
-        }
-        table.decoder(remote_largest_ref - encoded_base_index - 1)
-    };
+    let decoder_table = table.decoder(base);
 
     let mut fields = Vec::new();
     while buf.has_remaining() {
@@ -181,27 +167,6 @@ fn parse_instruction<R: Buf>(
     Ok(instruction)
 }
 
-fn largest_ref(bloc_largest_ref: usize, total_inserted: usize, max_mem_size: usize) -> usize {
-    if bloc_largest_ref == 0 {
-        return 0;
-    }
-
-    let total_inserted = total_inserted;
-    let mut lref_value = bloc_largest_ref - 1;
-    let max_entries = max_mem_size / 32;
-    let mut wrapped = total_inserted % (2 * max_entries);
-
-    if wrapped >= lref_value + max_entries {
-        // Largest Reference wrapped around 1 extra time
-        lref_value += 2 * max_entries;
-    } else if wrapped + max_entries < lref_value {
-        // Decoder wrapped around 1 extra time
-        wrapped += 2 * max_entries;
-    }
-
-    lref_value + total_inserted - wrapped
-}
-
 #[derive(Debug, PartialEq)]
 enum Instruction {
     Insert(HeaderField),
@@ -252,6 +217,7 @@ impl From<ParseError> for Error {
             ParseError::InvalidInteger(x) => Error::InvalidInteger(x),
             ParseError::InvalidString(x) => Error::InvalidString(x),
             ParseError::InvalidPrefix(_) => Error::UnknownPrefix,
+            ParseError::InvalidBase(b) => Error::BadBaseIndex(b),
         }
     }
 }
@@ -259,6 +225,7 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::qpack::table::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
@@ -465,21 +432,16 @@ mod tests {
     #[test]
     fn largest_ref_too_big() {
         let table = DynamicTable::new();
-        const MAX_ENTRIES: usize = (4242 * 31) / 32;
-
         let mut buf = vec![];
-        let encoded_largest_ref = (8 % (2 * MAX_ENTRIES)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf);
+        HeaderPrefix::new(8, 8, 10, TABLE_SIZE).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         assert_eq!(decode_header(&table, &mut read), Err(Error::MissingRefs));
     }
 
-    fn build_table(n_field: usize, max_table_size: usize) -> (DynamicTable, usize) {
+    fn build_table(n_field: usize) -> DynamicTable {
         let mut table = DynamicTable::new();
-        let max_entries = max_table_size / 32;
-        table.set_max_mem_size(max_table_size).unwrap();
+        table.set_max_mem_size(TABLE_SIZE).unwrap();
 
         let mut inserter = table.inserter();
         for i in 0..n_field {
@@ -488,7 +450,7 @@ mod tests {
                 .unwrap();
         }
 
-        (table, max_entries)
+        table
     }
 
     fn field(n: usize) -> HeaderField {
@@ -507,18 +469,14 @@ mod tests {
 
     #[test]
     fn decode_indexed_header_field() {
-        let (table, max_entries) = build_table(2, 4242 * 31);
-
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
+        HeaderPrefix::new(2, 2, 2, TABLE_SIZE).encode(&mut buf);
         Indexed::Dynamic(0).encode(&mut buf);
         Indexed::Dynamic(1).encode(&mut buf);
         Indexed::Static(18).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let headers = decode_header(&build_table(2), &mut read).unwrap();
         assert_eq!(
             headers,
             &[field(2), field(1), StaticTable::get(18).unwrap().clone()]
@@ -539,29 +497,21 @@ mod tests {
 
     #[test]
     fn decode_post_base_indexed() {
-        let (table, max_entries) = build_table(4, 4242 * 31);
-
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
+        HeaderPrefix::new(4, 2, 4, TABLE_SIZE).encode(&mut buf);
         Indexed::Dynamic(0).encode(&mut buf);
         IndexedWithPostBase(0).encode(&mut buf);
         IndexedWithPostBase(1).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let headers = decode_header(&build_table(4), &mut read).unwrap();
         assert_eq!(headers, &[field(2), field(3), field(4)])
     }
 
     #[test]
     fn decode_name_ref_header_field() {
-        let (table, max_entries) = build_table(2, 4242 * 31);
-
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
+        HeaderPrefix::new(2, 2, 4, TABLE_SIZE).encode(&mut buf);
         LiteralWithNameRef::new_dynamic(1, "new bar1")
             .encode(&mut buf)
             .unwrap();
@@ -570,7 +520,7 @@ mod tests {
             .unwrap();
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let headers = decode_header(&build_table(4), &mut read).unwrap();
         assert_eq!(
             headers,
             &[
@@ -582,26 +532,21 @@ mod tests {
 
     #[test]
     fn decode_post_base_name_ref_header_field() {
-        let (table, max_entries) = build_table(4, 4242 * 31);
-
         let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf); // base index = 2
+        HeaderPrefix::new(2, 2, 4, TABLE_SIZE).encode(&mut buf);
         LiteralWithPostBaseNameRef::new(0, "new bar3")
             .encode(&mut buf)
             .unwrap();
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let headers = decode_header(&build_table(4), &mut read).unwrap();
         assert_eq!(headers, &[field(3).with_value("new bar3")]);
     }
 
     #[test]
     fn decode_without_name_ref_header_field() {
         let mut buf = vec![];
-        prefix_int::encode(8, 0, 0, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf);
+        HeaderPrefix::new(0, 0, 0, TABLE_SIZE).encode(&mut buf);
         Literal::new("foo", "bar").encode(&mut buf).unwrap();
 
         let mut read = Cursor::new(&buf);
@@ -627,64 +572,54 @@ mod tests {
 
     #[test]
     fn decode_single_pass_encoded() {
-        let (table, max_entries) = build_table(4, 4242 * 31);
-
         let mut buf = vec![];
-        let encoded_largest_ref = (4 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 1, 3, &mut buf); // base index negative = 0
+        HeaderPrefix::new(4, 0, 4, TABLE_SIZE).encode(&mut buf);
         IndexedWithPostBase(0).encode(&mut buf);
         IndexedWithPostBase(1).encode(&mut buf);
         IndexedWithPostBase(2).encode(&mut buf);
         IndexedWithPostBase(3).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let headers = decode_header(&build_table(4), &mut read).unwrap();
         assert_eq!(headers, &[field(1), field(2), field(3), field(4)]);
     }
 
     #[test]
-    fn base_index_too_small() {
-        let (table, max_entries) = build_table(2, 4242 * 31);
-
-        let mut buf = vec![];
-        let encoded_largest_ref = (2 % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 1, 2, &mut buf); // base index negative = 0
-
-        let mut read = Cursor::new(&buf);
-        assert_eq!(
-            decode_header(&table, &mut read),
-            Err(Error::BadBaseIndex(-1))
-        );
-    }
-
-    #[test]
     fn largest_ref_greater_than_max_entries() {
-        let (table, max_entries) = build_table(((4242 * 31) / 32) + 10, 4242 * 31);
+        let max_entries = TABLE_SIZE / 32;
+        // some fields evicted
+        let table = build_table(max_entries + 10);
         let mut buf = vec![];
 
         // Pre-base relative reference
-        let encoded_largest_ref = ((max_entries + 5) % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 0, 0, &mut buf); // base index = 4114
+        HeaderPrefix::new(
+            max_entries + 5,
+            max_entries + 5,
+            max_entries + 10,
+            TABLE_SIZE,
+        )
+        .encode(&mut buf);
         Indexed::Dynamic(10).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
-        assert_eq!(headers, &[field(4104)]);
+        let headers = decode_header(&build_table(max_entries + 10), &mut read).unwrap();
+        assert_eq!(headers, &[field(max_entries - 5)]);
 
         let mut buf = vec![];
 
         // Post-base reference
-        let encoded_largest_ref = ((max_entries + 10) % (2 * max_entries)) + 1;
-        prefix_int::encode(8, 0, encoded_largest_ref, &mut buf);
-        prefix_int::encode(7, 1, 4, &mut buf); // base index = 4114
+        HeaderPrefix::new(
+            max_entries + 10,
+            max_entries + 5,
+            max_entries + 10,
+            TABLE_SIZE,
+        )
+        .encode(&mut buf);
         IndexedWithPostBase(0).encode(&mut buf);
         IndexedWithPostBase(4).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
         let headers = decode_header(&table, &mut read).unwrap();
-        assert_eq!(headers, &[field(4115), field(4119)]);
+        assert_eq!(headers, &[field(max_entries + 6), field(max_entries + 10)]);
     }
 }
