@@ -12,8 +12,8 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn new_bi(window: u64) -> Self {
-        Stream::Both(Send::new(), Recv::new(window))
+    pub fn new_bi() -> Self {
+        Stream::Both(Send::new(), Recv::new())
     }
 
     pub fn send(&self) -> Option<&Send> {
@@ -132,26 +132,27 @@ pub struct Recv {
     pub state: RecvState,
     pub recvd: RangeSet,
     pub buffered: VecDeque<(Bytes, u64)>,
-    /// Upper limit dictated by the peer
-    pub max_data: u64,
     /// Whether any unordered reads have been performed, making this stream unusable for ordered
     /// reads
     pub unordered: bool,
     pub assembler: Assembler,
     /// Whether the application has been notified of this stream yet
     pub fresh: bool,
+    /// Number of bytes read by the application. Equal to assembler.offset when `unordered` is
+    /// false.
+    pub bytes_read: u64,
 }
 
 impl Recv {
-    pub fn new(max_data: u64) -> Self {
+    pub fn new() -> Self {
         Self {
             state: RecvState::Recv { size: None },
             recvd: RangeSet::new(),
             buffered: VecDeque::new(),
-            max_data,
             unordered: false,
             assembler: Assembler::new(),
             fresh: true,
+            bytes_read: 0,
         }
     }
 
@@ -167,10 +168,7 @@ impl Recv {
 
         if !self.assembler.blocked() {
             let n = self.assembler.read(buf);
-            // Only bother issuing stream credit if the peer wants to send more
-            if self.receiving_unknown_size() {
-                self.max_data += n as u64;
-            }
+            self.bytes_read += n as u64;
             Ok(n)
         } else {
             match self.state {
@@ -194,10 +192,7 @@ impl Recv {
 
         // Return data we already have buffered, regardless of state
         if let Some(x) = self.buffered.pop_front() {
-            // Only bother issuing stream credit if the peer wants to send more
-            if self.receiving_unknown_size() {
-                self.max_data += x.0.len() as u64;
-            }
+            self.bytes_read += x.0.len() as u64;
             Ok(x)
         } else {
             match self.state {
@@ -255,6 +250,22 @@ impl Recv {
             RecvState::DataRecvd { size } => Some(size),
             _ => None,
         }
+    }
+
+    pub fn reset(&mut self, error_code: u16, final_offset: u64) {
+        if self.is_closed() {
+            return;
+        }
+        self.state = RecvState::ResetRecvd {
+            size: final_offset,
+            error_code,
+        };
+        // Nuke buffers so that future reads fail immediately, which ensures future reads don't
+        // issue flow control credit redundant to that already issued. We could instead special-case
+        // reset streams during read, but it's unclear if there's any benefit to retaining data for
+        // reset streams.
+        self.buffered.clear();
+        self.assembler.clear();
     }
 }
 
@@ -398,6 +409,12 @@ impl Assembler {
     /// Current position in the stream
     pub fn offset(&self) -> u64 {
         self.offset
+    }
+
+    /// Discard all buffered data
+    pub fn clear(&mut self) {
+        self.written = VecDeque::new();
+        self.data = VecDeque::new();
     }
 }
 
