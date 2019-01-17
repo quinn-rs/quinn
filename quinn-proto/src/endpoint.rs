@@ -145,55 +145,40 @@ impl Endpoint {
         data: BytesMut,
     ) {
         let datagram_len = data.len();
-        let mut remaining = Some(data);
-        while let Some(data) = remaining {
-            match PartialDecode::new(data, self.config.local_cid_len) {
-                Ok((partial_decode, rest)) => {
-                    remaining = rest;
-                    self.handle_decode(now, remote, ecn, partial_decode, datagram_len);
-                }
-                Err(PacketDecodeError::UnsupportedVersion {
-                    source,
-                    destination,
-                }) => {
-                    if !self.is_server() {
-                        debug!(self.log, "dropping packet with unsupported version");
-                        return;
-                    }
-                    trace!(self.log, "sending version negotiation");
-                    // Negotiate versions
-                    let mut buf = Vec::<u8>::new();
-                    Header::VersionNegotiate {
-                        random: self.rng.gen(),
-                        src_cid: destination,
-                        dst_cid: source,
-                    }
-                    .encode(&mut buf);
-                    buf.write::<u32>(0x0a1a_2a3a); // reserved version
-                    buf.write(VERSION); // supported version
-                    self.io.push_back(Io::Transmit {
-                        destination: remote,
-                        ecn: None,
-                        packet: buf.into(),
-                    });
+        let (partial_decode, rest) = match PartialDecode::new(data, self.config.local_cid_len) {
+            Ok(x) => x,
+            Err(PacketDecodeError::UnsupportedVersion {
+                source,
+                destination,
+            }) => {
+                if !self.is_server() {
+                    debug!(self.log, "dropping packet with unsupported version");
                     return;
                 }
-                Err(e) => {
-                    trace!(self.log, "malformed header"; "reason" => %e);
-                    return;
+                trace!(self.log, "sending version negotiation");
+                // Negotiate versions
+                let mut buf = Vec::<u8>::new();
+                Header::VersionNegotiate {
+                    random: self.rng.gen(),
+                    src_cid: destination,
+                    dst_cid: source,
                 }
+                .encode(&mut buf);
+                buf.write::<u32>(0x0a1a_2a3a); // reserved version
+                buf.write(VERSION); // supported version
+                self.io.push_back(Io::Transmit {
+                    destination: remote,
+                    ecn: None,
+                    packet: buf.into(),
+                });
+                return;
             }
-        }
-    }
+            Err(e) => {
+                trace!(self.log, "malformed header"; "reason" => %e);
+                return;
+            }
+        };
 
-    fn handle_decode(
-        &mut self,
-        now: u64,
-        remote: SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        partial_decode: PartialDecode,
-        datagram_len: usize,
-    ) {
         //
         // Handle packet on existing connection, if any
         //
@@ -219,7 +204,7 @@ impl Endpoint {
         };
         if let Some(ch) = known_ch {
             let had_1rtt = self.connections[ch].has_1rtt();
-            self.connections[ch].handle_decode(now, remote, ecn, partial_decode);
+            self.connections[ch].handle_dgram(now, remote, ecn, partial_decode, rest);
             if !had_1rtt
                 && (self.connections[ch].has_1rtt() || !self.connections[ch].is_handshaking())
             {
@@ -259,7 +244,7 @@ impl Endpoint {
                 let header_crypto = crypto.header_crypto();
                 match partial_decode.finish(Some(&header_crypto)) {
                     Ok(packet) => {
-                        self.handle_initial(now, remote, ecn, packet, &crypto, &header_crypto)
+                        self.handle_initial(now, remote, ecn, packet, rest, &crypto, &header_crypto)
                     }
                     Err(e) => {
                         trace!(self.log, "unable to decode packet"; "reason" => %e);
@@ -423,6 +408,7 @@ impl Endpoint {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
+        rest: Option<BytesMut>,
         crypto: &Crypto,
         header_crypto: &HeaderCrypto,
     ) {
@@ -554,7 +540,14 @@ impl Endpoint {
         if dst_cid.len() != 0 {
             self.connection_ids_initial.insert(dst_cid, ch);
         }
-        match self.connections[ch].handle_initial(now, ecn, packet_number as u64, packet) {
+        match self.connections[ch].handle_initial(
+            now,
+            remote,
+            ecn,
+            packet_number as u64,
+            packet,
+            rest,
+        ) {
             Ok(()) => {
                 self.incoming_handshakes += 1;
                 self.dirty_conns.insert(ch);
