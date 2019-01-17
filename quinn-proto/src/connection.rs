@@ -1667,9 +1667,17 @@ impl Connection {
                         return Err(TransportError::STREAM_STATE_ERROR);
                     }
                     self.reset(id, error_code);
-                    self.streams.get_send_mut(id).unwrap().state = stream::SendState::ResetSent {
+                    let stream = self.streams.streams.get_mut(&id).unwrap();
+                    stream.send_mut().unwrap().state = stream::SendState::ResetSent {
                         stop_reason: Some(error_code),
                     };
+                    if stream
+                        .recv_mut()
+                        .map_or(false, |rs| mem::replace(&mut rs.fresh, false))
+                    {
+                        self.stream_opened = true;
+                        self.streams.incoming.push_back(id);
+                    }
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.config.local_cid_len == 0 {
