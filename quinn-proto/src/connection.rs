@@ -2784,6 +2784,8 @@ impl Connection {
             }
             *stream.send_mut().unwrap() = stream::Send::new();
         }
+        // Discard already-queued frames
+        self.space_mut(SpaceId::Data).pending = Retransmits::default();
         // Discard 0-RTT packets
         let sent_packets = mem::replace(
             &mut self.space_mut(SpaceId::Data).sent_packets,
