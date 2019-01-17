@@ -1,13 +1,13 @@
 //! QUIC transport protocol support for Tokio
 //!
-//! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing shortcomings of TCP, such as
-//! head-of-line blocking, poor security, slow handshakes, and inefficient congestion control. This crate provides a
-//! portable userspace implementation.
+//! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing
+//! shortcomings of TCP, such as head-of-line blocking, poor security, slow handshakes, and
+//! inefficient congestion control. This crate provides a portable userspace implementation.
 //!
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
-//! The futures and streams defined in this crate are not `Send` because they necessarily share state with eachother. As
-//! a result, they must be spawned on a single-threaded tokio runtime.
+//! The futures and streams defined in this crate are not `Send` because they necessarily share
+//! state with each other. As a result, they must be spawned on a single-threaded tokio runtime.
 //!
 //! ```
 //! # extern crate tokio;
@@ -25,26 +25,30 @@
 //! ```
 //! # About QUIC
 //!
-//! A QUIC connection is an association between two endpoints. The endpoint which initiates the connection is termed the
-//! client, and the endpoint which accepts it is termed the server. A single endpoint may function as both client and
-//! server for different connections, for example in a peer-to-peer application. To communicate application data, each
-//! endpoint may open streams up to a limit dictated by its peer. Typically, that limit is increased as old streams are
+//! A QUIC connection is an association between two endpoints. The endpoint which initiates the
+//! connection is termed the client, and the endpoint which accepts it is termed the server. A
+//! single endpoint may function as both client and server for different connections, for example
+//! in a peer-to-peer application. To communicate application data, each endpoint may open streams
+//! up to a limit dictated by its peer. Typically, that limit is increased as old streams are
 //! finished.
 //!
-//! Streams may be unidirectional or bidirectional, and are cheap to create and disposable. For example, a traditionally
-//! datagram-oriented application could use a new stream for every message it wants to send, no longer needing to worry
-//! about MTUs. Bidirectional streams behave much like a traditional TCP connection, and are useful for sending messages
-//! that have an immediate response, such as an HTTP request. Stream data is delivered reliably, and there is no
+//! Streams may be unidirectional or bidirectional, and are cheap to create and disposable. For
+//! example, a traditionally datagram-oriented application could use a new stream for every
+//! message it wants to send, no longer needing to worry about MTUs. Bidirectional streams behave
+//! much like a traditional TCP connection, and are useful for sending messages that have an
+//! immediate response, such as an HTTP request. Stream data is delivered reliably, and there is no
 //! ordering enforced between data on different streams.
 //!
-//! By avoiding head-of-line blocking and providing unified congestion control across all streams of a connection, QUIC
-//! is able to provide higher throughput and lower latency than one or multiple TCP connections between the same two
-//! hosts, while providing more useful behavior than raw UDP sockets.
+//! By avoiding head-of-line blocking and providing unified congestion control across all streams
+//! of a connection, QUIC is able to provide higher throughput and lower latency than one or
+//! multiple TCP connections between the same two hosts, while providing more useful behavior than
+//! raw UDP sockets.
 //!
-//! QUIC uses encryption and identity verification built directly on TLS 1.3. Just as with a TLS server, it is useful
-//! for a QUIC server to be identified by a certificate signed by a trusted authority. If this is infeasible--for
-//! example, if servers are short-lived or not associated with a domain name--then as with TLS, self-signed certificates
-//! can be used to provide encryption alone.
+//! QUIC uses encryption and identity verification built directly on TLS 1.3. Just as with a TLS
+//! server, it is useful for a QUIC server to be identified by a certificate signed by a trusted
+//! authority. If this is infeasible--for example, if servers are short-lived or not associated
+//! with a domain name--then as with TLS, self-signed certificates can be used to provide
+//! encryption alone.
 #![warn(missing_docs)]
 
 #[macro_use]
@@ -172,8 +176,8 @@ impl Pending {
 
 /// A QUIC endpoint.
 ///
-/// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both client and server for
-/// different connections.
+/// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both
+/// client and server for different connections.
 ///
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Clone)]
@@ -196,7 +200,8 @@ impl Endpoint {
 
     /// Connect to a remote endpoint.
     ///
-    /// May fail immediately due to configuration errors, or in the future if the connection could not be established.
+    /// May fail immediately due to configuration errors, or in the future if the connection could
+    /// not be established.
     pub fn connect(
         &self,
         addr: &SocketAddr,
@@ -208,7 +213,8 @@ impl Endpoint {
 
     /// Connect to a remote endpoint using a custom configuration.
     ///
-    /// May fail immediately due to configuration errors, or in the future if the connection could not be established.
+    /// May fail immediately due to configuration errors, or in the future if the connection could
+    /// not be established.
     pub fn connect_with(
         &self,
         config: &ClientConfig,
@@ -227,19 +233,21 @@ impl Endpoint {
     }
 
     /*
-    /// Connect to a remote endpoint, with support for transmitting data before the connection is established
+    /// Connect to a remote endpoint, with support for transmitting data before the connection is
+    /// established
     ///
-    /// Returns a connection that may be used for sending immediately, and a future that will complete when the
+    /// Returns a connection that may be used for sending immediately, and a future that will
+    /// complete when the connection is established.
+    ///
+    /// Data transmitted this way may be replayed by an attacker until the session ticket expires.
+    /// Never send non-idempotent commands as 0-RTT data.
+    ///
+    /// Servers may reject 0-RTT data, in which case anything sent will be retransmitted after the
     /// connection is established.
     ///
-    /// Data transmitted this way may be replayed by an attacker until the session ticket expires. Never send non-idempotent
-    /// commands as 0-RTT data.
-    ///
-    /// Servers may reject 0-RTT data, in which case anything sent will be retransmitted after the connection is
-    /// established.
-    ///
     /// # Panics
-    /// - If `config.session_ticket` is `None`. A session ticket is necessary for 0-RTT to be possible.
+    /// - If `config.session_ticket` is `None`. A session ticket is necessary for 0-RTT to be
+    /// possible.
     pub fn connect_zero_rtt(
         &self,
         addr: &SocketAddr,
@@ -356,7 +364,8 @@ impl Future for Driver {
                     Ok(Async::NotReady) => {
                         break;
                     }
-                    // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an attacker
+                    // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
+                    // attacker
                     Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
                         continue;
                     }
@@ -379,8 +388,9 @@ impl Future for Driver {
                             .send(None);
                     }
                     ConnectionLost { reason } => {
-                        // HACK HACK HACK: Handshake currently emits ConnectionLost, which means we might not know about
-                        // this connection yet. This should probably be made more consistent.
+                        // HACK HACK HACK: Handshake currently emits ConnectionLost, which means
+                        // we might not know about this connection yet. This should probably be
+                        // made more consistent.
                         if let Some(x) = endpoint.pending.get_mut(&ch) {
                             x.fail(reason);
                         }
@@ -607,8 +617,8 @@ struct ConnectionInner {
 
 /// A QUIC connection.
 ///
-/// If a `Connection` is dropped without being explicitly closed, it will be automatically closed with an `error_code`
-/// of 0 and an empty `reason`.
+/// If a `Connection` is dropped without being explicitly closed, it will be automatically closed
+/// with an `error_code` of 0 and an empty `reason`.
 ///
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Clone)]
@@ -625,7 +635,8 @@ impl Connection {
             } else {
                 let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
                 pending.uni_opening.push_back(send);
-                // We don't notify the driver here because there's no way to ask the peer for more streams
+                // We don't notify the driver here because there's no way to ask the peer for more
+                // streams
             }
         }
         let conn = self.0.clone();
@@ -644,7 +655,8 @@ impl Connection {
             } else {
                 let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
                 pending.bi_opening.push_back(send);
-                // We don't notify the driver here because there's no way to ask the peer for more streams
+                // We don't notify the driver here because there's no way to ask the peer for more
+                // streams
             }
         }
         let conn = self.0.clone();
@@ -655,13 +667,13 @@ impl Connection {
 
     /// Close the connection immediately.
     ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility to call this only when
-    /// all important communications have been completed.
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility
+    /// to call this only when all important communications have been completed.
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
-    /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is preserved in full, it
-    /// should be kept under 1KiB.
+    /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is
+    /// preserved in full, it should be kept under 1KiB.
     ///
     /// # Panics
     /// - If called more than once on handles to the same connection
@@ -775,27 +787,32 @@ pub trait Read {
     ///
     /// Returns the number of bytes read into `buf` on success.
     ///
-    /// Applications involving bulk data transfer should consider using unordered reads for improved performance.
+    /// Applications involving bulk data transfer should consider using unordered reads for
+    /// improved performance.
     ///
     /// # Panics
     /// - If called after `poll_read_unordered` was called on the same stream.
-    ///   This is forbidden because an unordered read could consume a segment of data from a location other than the start
-    ///   of the receive buffer, making it impossible for future ordered reads to proceed.
+    ///   This is forbidden because an unordered read could consume a segment of data from a
+    ///   location other than the start of the receive buffer, making it impossible for future
+    ///   ordered reads to proceed.
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
 
     /// Read a segment of data from any offset in the stream.
     ///
-    /// Returns a segment of data and their offset in the stream. Segments may be received in any order and may overlap.
+    /// Returns a segment of data and their offset in the stream. Segments may be received in any
+    /// order and may overlap.
     ///
-    /// Unordered reads have reduced overhead and higher throughput, and should therefore be preferred when applicable.
+    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
+    /// preferred when applicable.
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
 
     /// Close the receive stream immediately.
     ///
-    /// The peer is notified and will cease transmitting on this stream, as if it had reset the stream itself. Further
-    /// data may still be received on this stream if it was already in flight. Once called, a `ReadError::Reset` should
-    /// be expected soon, although a peer might manage to finish the stream before it receives the reset, and a
-    /// misbehaving peer might ignore the request entirely and continue sending until halted by flow control.
+    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
+    /// stream itself. Further data may still be received on this stream if it was already in
+    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
+    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
+    /// ignore the request entirely and continue sending until halted by flow control.
     ///
     /// Has no effect if the incoming stream already finished.
     fn stop(&mut self, error_code: u16);
@@ -805,28 +822,29 @@ pub trait Read {
 pub trait Write {
     /// Write bytes to the stream.
     ///
-    /// Returns the number of bytes written on success. Congestion and flow control may cause this to be shorter than
-    /// `buf.len()`, indicating that only a prefix of `buf` was written.
+    /// Returns the number of bytes written on success. Congestion and flow control may cause this
+    /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
 
     /// Shut down the send stream gracefully.
     ///
-    /// No new data may be written after calling this method. Completes when the peer has acknowledged all sent data,
-    /// retransmitting data as needed.
+    /// No new data may be written after calling this method. Completes when the peer has
+    /// acknowledged all sent data, retransmitting data as needed.
     fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
 
     /// Close the send stream immediately.
     ///
-    /// No new data can be written after calling this method. Locally buffered data is dropped, and previously
-    /// transmitted data will no longer be retransmitted if lost. If `poll_finish` was called previously and all data
-    /// has already been transmitted at least once, the peer may still receive all written data.
+    /// No new data can be written after calling this method. Locally buffered data is dropped,
+    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
+    /// was called previously and all data has already been transmitted at least once, the peer
+    /// may still receive all written data.
     fn reset(&mut self, error_code: u16);
 }
 
 /// A bidirectional stream, supporting both sending and receiving data.
 ///
-/// Similar to a TCP connection. Each direction of data flow can be reset or finished by the sending endpoint without
-/// interfering with activity in the other direction.
+/// Similar to a TCP connection. Each direction of data flow can be reset or finished by the
+/// sending endpoint without interfering with activity in the other direction.
 pub struct BiStream {
     conn: Rc<ConnectionInner>,
     stream: StreamId,
