@@ -3141,15 +3141,6 @@ struct SentPacket {
     retransmits: Retransmits,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ConnectionHandle(pub usize);
-
-impl From<ConnectionHandle> for usize {
-    fn from(x: ConnectionHandle) -> usize {
-        x.0
-    }
-}
-
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
 
