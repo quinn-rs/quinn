@@ -1038,3 +1038,81 @@ fn migration() {
         pair.client.addr
     );
 }
+
+fn test_flow_control(config: Config, window_size: usize) {
+    let mut pair = Pair::new(config, Config::default(), server_config());
+    let (client_conn, server_conn) = pair.connect();
+    let msg = vec![0xAB; window_size + 10];
+    let mut buf = [0; 4096];
+
+    // Stream reset before read
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    pair.drive();
+    pair.client.reset(client_conn, s, 42);
+    pair.drive();
+    assert_eq!(
+        pair.server.read(server_conn, s, &mut buf),
+        Err(ReadError::Reset { error_code: 42 })
+    );
+
+    // Happy path
+    let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    pair.drive();
+    let mut cursor = 0;
+    loop {
+        match pair.server.read(server_conn, s, &mut buf[cursor..]) {
+            Ok(n) => {
+                cursor += n;
+            }
+            Err(ReadError::Blocked) => {
+                break;
+            }
+            Err(e) => {
+                panic!(e);
+            }
+        }
+    }
+    assert_eq!(cursor, window_size);
+    pair.drive();
+    assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    pair.drive();
+    let mut cursor = 0;
+    loop {
+        match pair.server.read(server_conn, s, &mut buf[cursor..]) {
+            Ok(n) => {
+                cursor += n;
+            }
+            Err(ReadError::Blocked) => {
+                break;
+            }
+            Err(e) => {
+                panic!(e);
+            }
+        }
+    }
+    assert_eq!(cursor, window_size);
+}
+
+#[test]
+fn stream_flow_control() {
+    test_flow_control(
+        Config {
+            stream_receive_window: 2000,
+            ..Config::default()
+        },
+        2000,
+    );
+}
+
+#[test]
+fn conn_flow_control() {
+    test_flow_control(
+        Config {
+            receive_window: 2000,
+            ..Config::default()
+        },
+        2000,
+    );
+}
