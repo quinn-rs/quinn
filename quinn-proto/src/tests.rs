@@ -692,10 +692,6 @@ fn zero_rtt_rejection() {
     pair.client.close(pair.time, client_conn, 0, [][..].into());
     pair.drive();
 
-    pair.client.addr = SocketAddr::new(
-        Ipv6Addr::LOCALHOST.into(),
-        CLIENT_PORTS.lock().unwrap().next().unwrap(),
-    );
     // Changing protocols invalidates 0-RTT
     Arc::get_mut(&mut config)
         .unwrap()
