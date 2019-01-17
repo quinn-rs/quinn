@@ -1116,3 +1116,24 @@ fn conn_flow_control() {
         2000,
     );
 }
+
+#[test]
+fn stop_opens_bidi() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    let s = pair.client.open(client_conn, Directionality::Bi).unwrap();
+    const ERROR: u16 = 42;
+    pair.client.stop_sending(server_conn, s, ERROR);
+    pair.drive();
+
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_matches!(pair.server.accept_stream(server_conn), Some(stream) if stream == s);
+    assert_matches!(
+        pair.server.read_unordered(server_conn, s),
+        Err(ReadError::Blocked)
+    );
+    assert_matches!(
+        pair.server.write(server_conn, s, b"foo"),
+        Err(WriteError::Stopped { error_code: ERROR })
+    );
+}
