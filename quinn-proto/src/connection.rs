@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{cmp, io, mem};
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 use err_derive::Error;
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng};
@@ -816,9 +816,11 @@ impl Connection {
     pub fn handle_initial(
         &mut self,
         now: u64,
+        remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         packet_number: u64,
         packet: Packet,
+        remaining: Option<BytesMut>,
     ) -> Result<(), TransportError> {
         let len = packet.header_data.len() + packet.payload.len();
         self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false, len);
@@ -833,6 +835,7 @@ impl Connection {
         self.set_params(params)?;
         self.write_tls();
         self.init_0rtt();
+        self.handle_coalesced(now, remote, ecn, remaining);
         Ok(())
     }
 
@@ -963,12 +966,13 @@ impl Connection {
         }
     }
 
-    pub fn handle_decode(
+    pub fn handle_dgram(
         &mut self,
         now: u64,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
-        partial_decode: PartialDecode,
+        first_decode: PartialDecode,
+        remaining: Option<BytesMut>,
     ) {
         if remote != self.remote && self.side.is_client() {
             trace!(
@@ -978,6 +982,39 @@ impl Connection {
             );
             return;
         }
+
+        self.handle_decode(now, remote, ecn, first_decode);
+        self.handle_coalesced(now, remote, ecn, remaining);
+    }
+
+    fn handle_coalesced(
+        &mut self,
+        now: u64,
+        remote: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        mut remaining: Option<BytesMut>,
+    ) {
+        while let Some(data) = remaining {
+            match PartialDecode::new(data, self.config.local_cid_len) {
+                Ok((partial_decode, rest)) => {
+                    remaining = rest;
+                    self.handle_decode(now, remote, ecn, partial_decode);
+                }
+                Err(e) => {
+                    trace!(self.log, "malformed header"; "reason" => %e);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn handle_decode(
+        &mut self,
+        now: u64,
+        remote: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        partial_decode: PartialDecode,
+    ) {
         let header_crypto = if partial_decode.is_0rtt() {
             if let Some(ref crypto) = self.zero_rtt_crypto {
                 Some(&crypto.header)
