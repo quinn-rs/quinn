@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use bytes::Bytes;
+use err_derive::Error;
 
 use crate::range_set::RangeSet;
 
@@ -117,13 +118,13 @@ impl Send {
     }
 }
 
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
     /// The peer is not able to accept additional data, or the connection is congested.
-    #[fail(display = "unable to accept further writes")]
+    #[error(display = "unable to accept further writes")]
     Blocked,
     /// The peer is no longer accepting data on this stream.
-    #[fail(display = "stopped by peer: error {}", error_code)]
+    #[error(display = "stopped by peer: error {}", error_code)]
     Stopped { error_code: u16 },
 }
 
@@ -262,16 +263,16 @@ impl Recv {
     }
 }
 
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
-    #[fail(display = "blocked")]
+    #[error(display = "blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
-    #[fail(display = "reset by peer: error {}", error_code)]
+    #[error(display = "reset by peer: error {}", error_code)]
     Reset { error_code: u16 },
     /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[fail(display = "finished")]
+    #[error(display = "finished")]
     Finished,
 }
 

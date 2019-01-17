@@ -22,7 +22,7 @@ dangerous_configuration = ["rustls/dangerous_configuration"]
 [dependencies]
 byteorder = "1.1"
 bytes = "0.4.7"
-failure = "0.1"
+err-derive = "0.1.5"
 fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.6"

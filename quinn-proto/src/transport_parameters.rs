@@ -1,6 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use bytes::{Buf, BufMut};
+use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::endpoint::Config;
@@ -167,13 +168,13 @@ impl PreferredAddress {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Fail)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum Error {
-    #[fail(display = "version negotiation was tampered with")]
+    #[error(display = "version negotiation was tampered with")]
     VersionNegotiation,
-    #[fail(display = "parameter had illegal value")]
+    #[error(display = "parameter had illegal value")]
     IllegalValue,
-    #[fail(display = "parameters were malformed")]
+    #[error(display = "parameters were malformed")]
     Malformed,
 }
 

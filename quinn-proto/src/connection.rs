@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes};
+use err_derive::Error;
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
@@ -2942,25 +2943,25 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
 }
 
 /// Reasons why a connection might be lost.
-#[derive(Debug, Clone, Fail)]
+#[derive(Debug, Clone, Error)]
 pub enum ConnectionError {
     /// The peer doesn't implement any supported version.
-    #[fail(display = "peer doesn't implement any supported version")]
+    #[error(display = "peer doesn't implement any supported version")]
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation.
-    #[fail(display = "{}", error_code)]
+    #[error(display = "{}", error_code)]
     TransportError { error_code: TransportError },
     /// The peer's QUIC stack aborted the connection automatically.
-    #[fail(display = "aborted by peer: {}", reason)]
+    #[error(display = "aborted by peer: {}", reason)]
     ConnectionClosed { reason: frame::ConnectionClose },
     /// The peer closed the connection.
-    #[fail(display = "closed by peer: {}", reason)]
+    #[error(display = "closed by peer: {}", reason)]
     ApplicationClosed { reason: frame::ApplicationClose },
     /// The peer is unable to continue processing this connection, usually due to having restarted.
-    #[fail(display = "reset by peer")]
+    #[error(display = "reset by peer")]
     Reset,
     /// The peer has become unreachable.
-    #[fail(display = "timed out")]
+    #[error(display = "timed out")]
     TimedOut,
 }
 

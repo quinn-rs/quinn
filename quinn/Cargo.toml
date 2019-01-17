@@ -21,7 +21,7 @@ travis-ci = { repository = "djc/quinn" }
 
 [dependencies]
 bytes = "0.4.7"
-failure = "0.1"
+err-derive = "0.1.5"
 fnv = "1.0.6"
 futures = "0.1.21"
 quinn-proto = { path = "../quinn-proto", version = "0.1.0" }
@@ -39,6 +39,7 @@ libc = "0.2.46"
 mio = "0.6"
 
 [dev-dependencies]
+failure = "0.1"
 slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"

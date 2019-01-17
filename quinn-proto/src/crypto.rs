@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, str};
 
 use bytes::{Buf, BufMut, BytesMut};
+use err_derive::Error;
 use ring::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
 use ring::aead::{self, Aad, Nonce};
 use ring::digest;
@@ -321,13 +322,13 @@ impl HeaderCrypto {
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum ConnectError {
     /// The domain name supplied was malformed
-    #[fail(display = "invalid DNS name: {}", _0)]
+    #[error(display = "invalid DNS name: {}", _0)]
     InvalidDnsName(String),
     /// The TLS configuration was invalid
-    #[fail(display = "TLS error: {}", _0)]
+    #[error(display = "TLS error: {}", _0)]
     Tls(TLSError),
 }
 

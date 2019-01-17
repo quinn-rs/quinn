@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, fmt, io, ops::Range, str};
 
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
+use err_derive::Error;
 use rand::Rng;
 use slog;
 
@@ -735,14 +736,14 @@ impl slog::Value for LongType {
     }
 }
 
-#[derive(Debug, Fail, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PacketDecodeError {
-    #[fail(display = "unsupported version")]
+    #[error(display = "unsupported version")]
     UnsupportedVersion {
         source: ConnectionId,
         destination: ConnectionId,
     },
-    #[fail(display = "invalid header: {}", _0)]
+    #[error(display = "invalid header: {}", _0)]
     InvalidHeader(&'static str),
 }
 
