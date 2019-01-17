@@ -94,86 +94,6 @@ use crate::udp::UdpSocket;
 #[cfg(test)]
 mod tests;
 
-struct EndpointInner {
-    log: Logger,
-    socket: UdpSocket,
-    inner: quinn::Endpoint,
-    outgoing: VecDeque<(SocketAddr, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
-    epoch: Instant,
-    pending: FnvHashMap<ConnectionHandle, Pending>,
-    // TODO: Replace this with something custom that avoids using oneshots to cancel
-    timers: FuturesUnordered<Timer>,
-    incoming: futures::sync::mpsc::Sender<NewConnection>,
-    driver: Option<Task>,
-    ipv6: bool,
-}
-
-impl EndpointInner {
-    /// Wake up a blocked `Driver` task to process I/O
-    fn notify(&self) {
-        if let Some(x) = self.driver.as_ref() {
-            x.notify();
-        }
-    }
-}
-
-struct Pending {
-    blocked_writers: FnvHashMap<StreamId, Task>,
-    blocked_readers: FnvHashMap<StreamId, Task>,
-    connecting: Option<oneshot::Sender<Option<ConnectionError>>>,
-    uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    cancel_timers: [Option<oneshot::Sender<()>>; 5],
-    incoming_streams_reader: Option<Task>,
-    finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
-    error: Option<ConnectionError>,
-    draining: Option<oneshot::Sender<()>>,
-    drained: bool,
-}
-
-impl Pending {
-    fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self {
-        Self {
-            blocked_writers: FnvHashMap::default(),
-            blocked_readers: FnvHashMap::default(),
-            connecting,
-            uni_opening: VecDeque::new(),
-            bi_opening: VecDeque::new(),
-            cancel_timers: [None, None, None, None, None],
-            incoming_streams_reader: None,
-            finishing: FnvHashMap::default(),
-            error: None,
-            draining: None,
-            drained: false,
-        }
-    }
-
-    fn fail(&mut self, reason: ConnectionError) {
-        self.error = Some(reason.clone());
-        for (_, writer) in self.blocked_writers.drain() {
-            writer.notify()
-        }
-        for (_, reader) in self.blocked_readers.drain() {
-            reader.notify()
-        }
-        if let Some(c) = self.connecting.take() {
-            let _ = c.send(Some(reason.clone()));
-        }
-        for x in self.uni_opening.drain(..) {
-            let _ = x.send(Err(reason.clone()));
-        }
-        for x in self.bi_opening.drain(..) {
-            let _ = x.send(Err(reason.clone()));
-        }
-        if let Some(x) = self.incoming_streams_reader.take() {
-            x.notify();
-        }
-        for (_, x) in self.finishing.drain() {
-            let _ = x.send(Some(reason.clone()));
-        }
-    }
-}
-
 /// A QUIC endpoint.
 ///
 /// An endpoint corresponds to a single UDP socket, may host many connections, and may act as both
@@ -185,12 +105,6 @@ pub struct Endpoint {
     inner: Rc<RefCell<EndpointInner>>,
     default_client_config: ClientConfig,
 }
-
-/// A future that drives IO on an endpoint.
-pub struct Driver(Rc<RefCell<EndpointInner>>);
-
-/// Stream of incoming connections.
-pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
 
 impl Endpoint {
     /// Begin constructing an `Endpoint`
@@ -306,44 +220,8 @@ impl Endpoint {
     }
 }
 
-/// A connection initiated by a remote client.
-pub struct NewConnection {
-    /// The connection itself.
-    pub connection: Connection,
-    /// The stream of QUIC streams initiated by the client.
-    pub incoming: IncomingStreams,
-}
-
-impl NewConnection {
-    fn new(endpoint: Rc<RefCell<EndpointInner>>, handle: quinn::ConnectionHandle) -> Self {
-        let conn = Rc::new(ConnectionInner {
-            endpoint,
-            handle,
-            side: Side::Server,
-        });
-        NewConnection {
-            connection: Connection(conn.clone()),
-            incoming: IncomingStreams(conn),
-        }
-    }
-}
-
-/// A connection initiated locally.
-pub struct NewClientConnection {
-    /// The connection itself.
-    pub connection: Connection,
-    /// The stream of QUIC streams initiated by the client.
-    pub incoming: IncomingStreams,
-}
-
-impl NewClientConnection {
-    fn new(conn: Rc<ConnectionInner>) -> Self {
-        Self {
-            connection: Connection(conn.clone()),
-            incoming: IncomingStreams(conn.clone()),
-        }
-    }
-}
+/// A future that drives IO on an endpoint.
+pub struct Driver(Rc<RefCell<EndpointInner>>);
 
 impl Future for Driver {
     type Item = ();
@@ -602,17 +480,126 @@ impl Drop for Driver {
     }
 }
 
-fn duration_micros(x: u64) -> Duration {
-    Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
-}
-fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
+struct EndpointInner {
+    log: Logger,
+    socket: UdpSocket,
+    inner: quinn::Endpoint,
+    outgoing: VecDeque<(SocketAddr, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
+    epoch: Instant,
+    pending: FnvHashMap<ConnectionHandle, Pending>,
+    // TODO: Replace this with something custom that avoids using oneshots to cancel
+    timers: FuturesUnordered<Timer>,
+    incoming: futures::sync::mpsc::Sender<NewConnection>,
+    driver: Option<Task>,
+    ipv6: bool,
 }
 
-struct ConnectionInner {
-    endpoint: Rc<RefCell<EndpointInner>>,
-    handle: ConnectionHandle,
-    side: Side,
+impl EndpointInner {
+    /// Wake up a blocked `Driver` task to process I/O
+    fn notify(&self) {
+        if let Some(x) = self.driver.as_ref() {
+            x.notify();
+        }
+    }
+}
+
+struct Pending {
+    blocked_writers: FnvHashMap<StreamId, Task>,
+    blocked_readers: FnvHashMap<StreamId, Task>,
+    connecting: Option<oneshot::Sender<Option<ConnectionError>>>,
+    uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
+    bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
+    cancel_timers: [Option<oneshot::Sender<()>>; 5],
+    incoming_streams_reader: Option<Task>,
+    finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
+    error: Option<ConnectionError>,
+    draining: Option<oneshot::Sender<()>>,
+    drained: bool,
+}
+
+impl Pending {
+    fn new(connecting: Option<oneshot::Sender<Option<ConnectionError>>>) -> Self {
+        Self {
+            blocked_writers: FnvHashMap::default(),
+            blocked_readers: FnvHashMap::default(),
+            connecting,
+            uni_opening: VecDeque::new(),
+            bi_opening: VecDeque::new(),
+            cancel_timers: [None, None, None, None, None],
+            incoming_streams_reader: None,
+            finishing: FnvHashMap::default(),
+            error: None,
+            draining: None,
+            drained: false,
+        }
+    }
+
+    fn fail(&mut self, reason: ConnectionError) {
+        self.error = Some(reason.clone());
+        for (_, writer) in self.blocked_writers.drain() {
+            writer.notify()
+        }
+        for (_, reader) in self.blocked_readers.drain() {
+            reader.notify()
+        }
+        if let Some(c) = self.connecting.take() {
+            let _ = c.send(Some(reason.clone()));
+        }
+        for x in self.uni_opening.drain(..) {
+            let _ = x.send(Err(reason.clone()));
+        }
+        for x in self.bi_opening.drain(..) {
+            let _ = x.send(Err(reason.clone()));
+        }
+        if let Some(x) = self.incoming_streams_reader.take() {
+            x.notify();
+        }
+        for (_, x) in self.finishing.drain() {
+            let _ = x.send(Some(reason.clone()));
+        }
+    }
+}
+
+/// Stream of incoming connections.
+pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
+
+/// A connection initiated by a remote client.
+pub struct NewConnection {
+    /// The connection itself.
+    pub connection: Connection,
+    /// The stream of QUIC streams initiated by the client.
+    pub incoming: IncomingStreams,
+}
+
+impl NewConnection {
+    fn new(endpoint: Rc<RefCell<EndpointInner>>, handle: quinn::ConnectionHandle) -> Self {
+        let conn = Rc::new(ConnectionInner {
+            endpoint,
+            handle,
+            side: Side::Server,
+        });
+        NewConnection {
+            connection: Connection(conn.clone()),
+            incoming: IncomingStreams(conn),
+        }
+    }
+}
+
+/// A connection initiated locally.
+pub struct NewClientConnection {
+    /// The connection itself.
+    pub connection: Connection,
+    /// The stream of QUIC streams initiated by the client.
+    pub incoming: IncomingStreams,
+}
+
+impl NewClientConnection {
+    fn new(conn: Rc<ConnectionInner>) -> Self {
+        Self {
+            connection: Connection(conn.clone()),
+            incoming: IncomingStreams(conn.clone()),
+        }
+    }
 }
 
 /// A QUIC connection.
@@ -759,6 +746,12 @@ impl Connection {
     }
 }
 
+struct ConnectionInner {
+    endpoint: Rc<RefCell<EndpointInner>>,
+    handle: ConnectionHandle,
+    side: Side,
+}
+
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.borrow_mut();
@@ -781,64 +774,39 @@ impl Drop for ConnectionInner {
     }
 }
 
-/// Trait of readable streams
-pub trait Read {
-    /// Read data contiguously from the stream.
-    ///
-    /// Returns the number of bytes read into `buf` on success.
-    ///
-    /// Applications involving bulk data transfer should consider using unordered reads for
-    /// improved performance.
-    ///
-    /// # Panics
-    /// - If called after `poll_read_unordered` was called on the same stream.
-    ///   This is forbidden because an unordered read could consume a segment of data from a
-    ///   location other than the start of the receive buffer, making it impossible for future
-    ///   ordered reads to proceed.
-    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
+/// A stream of QUIC streams initiated by a remote peer.
+pub struct IncomingStreams(Rc<ConnectionInner>);
 
-    /// Read a segment of data from any offset in the stream.
-    ///
-    /// Returns a segment of data and their offset in the stream. Segments may be received in any
-    /// order and may overlap.
-    ///
-    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
-    /// preferred when applicable.
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
-
-    /// Close the receive stream immediately.
-    ///
-    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
-    /// stream itself. Further data may still be received on this stream if it was already in
-    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
-    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
-    /// ignore the request entirely and continue sending until halted by flow control.
-    ///
-    /// Has no effect if the incoming stream already finished.
-    fn stop(&mut self, error_code: u16);
+impl FuturesStream for IncomingStreams {
+    type Item = NewStream;
+    type Error = ConnectionError;
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let mut endpoint = self.0.endpoint.borrow_mut();
+        if let Some(x) = endpoint.inner.accept_stream(self.0.handle) {
+            let stream = BiStream::new(self.0.clone(), x);
+            let stream = if x.directionality() == Directionality::Uni {
+                NewStream::Uni(RecvStream(stream))
+            } else {
+                NewStream::Bi(stream)
+            };
+            return Ok(Async::Ready(Some(stream)));
+        }
+        let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
+        if let Some(ref x) = pending.error {
+            Err(x.clone())
+        } else {
+            pending.incoming_streams_reader = Some(task::current());
+            Ok(Async::NotReady)
+        }
+    }
 }
 
-/// Trait of writable streams
-pub trait Write {
-    /// Write bytes to the stream.
-    ///
-    /// Returns the number of bytes written on success. Congestion and flow control may cause this
-    /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
-
-    /// Shut down the send stream gracefully.
-    ///
-    /// No new data may be written after calling this method. Completes when the peer has
-    /// acknowledged all sent data, retransmitting data as needed.
-    fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
-
-    /// Close the send stream immediately.
-    ///
-    /// No new data can be written after calling this method. Locally buffered data is dropped,
-    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
-    /// was called previously and all data has already been transmitted at least once, the peer
-    /// may still receive all written data.
-    fn reset(&mut self, error_code: u16);
+/// A stream initiated by a remote peer.
+pub enum NewStream {
+    /// A unidirectional stream.
+    Uni(RecvStream),
+    /// A bidirectional stream.
+    Bi(BiStream),
 }
 
 /// A bidirectional stream, supporting both sending and receiving data.
@@ -1037,20 +1005,6 @@ impl Drop for BiStream {
     }
 }
 
-/// Errors that arise from writing to a stream
-#[derive(Debug, Error, Clone)]
-pub enum WriteError {
-    /// The peer is no longer accepting data on this stream.
-    #[error(display = "sending stopped by peer: error {}", error_code)]
-    Stopped {
-        /// The error code supplied by the peer.
-        error_code: u16,
-    },
-    /// The connection was closed.
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
-}
-
 impl io::Read for BiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use crate::ReadError::*;
@@ -1133,21 +1087,13 @@ impl AsyncRead for RecvStream {
     }
 }
 
-/// Errors that arise from reading from a stream.
-#[derive(Debug, Error, Clone)]
-pub enum ReadError {
-    /// The peer abandoned transmitting data on this stream.
-    #[error(display = "stream reset by peer: error {}", error_code)]
-    Reset {
-        /// The error code supplied by the peer.
-        error_code: u16,
-    },
-    /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[error(display = "the stream has been completely received")]
-    Finished,
-    /// The connection was closed.
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
+/// Uses unordered reads to be more efficient than using `AsyncRead` would allow
+pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
+    ReadToEnd {
+        stream: Some(stream),
+        size_limit,
+        buffer: Vec::new(),
+    }
 }
 
 struct Timer {
@@ -1172,50 +1118,6 @@ impl Future for Timer {
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Ok(Async::Ready(())) => Ok(Async::Ready(Some((self.ch, self.ty)))),
         }
-    }
-}
-
-/// A stream of QUIC streams initiated by a remote peer.
-pub struct IncomingStreams(Rc<ConnectionInner>);
-
-/// A stream initiated by a remote peer.
-pub enum NewStream {
-    /// A unidirectional stream.
-    Uni(RecvStream),
-    /// A bidirectional stream.
-    Bi(BiStream),
-}
-
-impl FuturesStream for IncomingStreams {
-    type Item = NewStream;
-    type Error = ConnectionError;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut endpoint = self.0.endpoint.borrow_mut();
-        if let Some(x) = endpoint.inner.accept_stream(self.0.handle) {
-            let stream = BiStream::new(self.0.clone(), x);
-            let stream = if x.directionality() == Directionality::Uni {
-                NewStream::Uni(RecvStream(stream))
-            } else {
-                NewStream::Bi(stream)
-            };
-            return Ok(Async::Ready(Some(stream)));
-        }
-        let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
-        if let Some(ref x) = pending.error {
-            Err(x.clone())
-        } else {
-            pending.incoming_streams_reader = Some(task::current());
-            Ok(Async::NotReady)
-        }
-    }
-}
-
-/// Uses unordered reads to be more efficient than using `AsyncRead` would allow
-pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
-    ReadToEnd {
-        stream: Some(stream),
-        size_limit,
-        buffer: Vec::new(),
     }
 }
 
@@ -1258,9 +1160,108 @@ impl<T: Read> Future for ReadToEnd<T> {
     }
 }
 
+/// Trait of readable streams
+pub trait Read {
+    /// Read data contiguously from the stream.
+    ///
+    /// Returns the number of bytes read into `buf` on success.
+    ///
+    /// Applications involving bulk data transfer should consider using unordered reads for
+    /// improved performance.
+    ///
+    /// # Panics
+    /// - If called after `poll_read_unordered` was called on the same stream.
+    ///   This is forbidden because an unordered read could consume a segment of data from a
+    ///   location other than the start of the receive buffer, making it impossible for future
+    ///   ordered reads to proceed.
+    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
+
+    /// Read a segment of data from any offset in the stream.
+    ///
+    /// Returns a segment of data and their offset in the stream. Segments may be received in any
+    /// order and may overlap.
+    ///
+    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
+    /// preferred when applicable.
+    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
+
+    /// Close the receive stream immediately.
+    ///
+    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
+    /// stream itself. Further data may still be received on this stream if it was already in
+    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
+    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
+    /// ignore the request entirely and continue sending until halted by flow control.
+    ///
+    /// Has no effect if the incoming stream already finished.
+    fn stop(&mut self, error_code: u16);
+}
+
+/// Errors that arise from reading from a stream.
+#[derive(Debug, Error, Clone)]
+pub enum ReadError {
+    /// The peer abandoned transmitting data on this stream.
+    #[error(display = "stream reset by peer: error {}", error_code)]
+    Reset {
+        /// The error code supplied by the peer.
+        error_code: u16,
+    },
+    /// The data on this stream has been fully delivered and no more will be transmitted.
+    #[error(display = "the stream has been completely received")]
+    Finished,
+    /// The connection was closed.
+    #[error(display = "connection closed: {}", _0)]
+    ConnectionClosed(ConnectionError),
+}
+
+/// Trait of writable streams
+pub trait Write {
+    /// Write bytes to the stream.
+    ///
+    /// Returns the number of bytes written on success. Congestion and flow control may cause this
+    /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
+    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
+
+    /// Shut down the send stream gracefully.
+    ///
+    /// No new data may be written after calling this method. Completes when the peer has
+    /// acknowledged all sent data, retransmitting data as needed.
+    fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
+
+    /// Close the send stream immediately.
+    ///
+    /// No new data can be written after calling this method. Locally buffered data is dropped,
+    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
+    /// was called previously and all data has already been transmitted at least once, the peer
+    /// may still receive all written data.
+    fn reset(&mut self, error_code: u16);
+}
+
+/// Errors that arise from writing to a stream
+#[derive(Debug, Error, Clone)]
+pub enum WriteError {
+    /// The peer is no longer accepting data on this stream.
+    #[error(display = "sending stopped by peer: error {}", error_code)]
+    Stopped {
+        /// The error code supplied by the peer.
+        error_code: u16,
+    },
+    /// The connection was closed.
+    #[error(display = "connection closed: {}", _0)]
+    ConnectionClosed(ConnectionError),
+}
+
 fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
     match x {
         SocketAddr::V6(x) => x,
         SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),
     }
+}
+
+fn duration_micros(x: u64) -> Duration {
+    Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
+}
+
+fn micros_from(x: Duration) -> u64 {
+    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }
