@@ -1,6 +1,6 @@
-use bytes::{Buf, BufMut};
-
 use byteorder::{BigEndian, ByteOrder};
+use bytes::{Buf, BufMut};
+use err_derive::Error;
 
 pub fn size(x: u64) -> Option<usize> {
     if x < 2u64.pow(6) {
@@ -51,11 +51,11 @@ pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
     })
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Fail)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum WriteError {
-    #[fail(display = "insufficient space to encode value")]
+    #[error(display = "insufficient space to encode value")]
     InsufficientSpace,
-    #[fail(display = "value too large for varint encoding")]
+    #[error(display = "value too large for varint encoding")]
     OversizedValue,
 }
 

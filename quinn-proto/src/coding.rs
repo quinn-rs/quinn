@@ -1,9 +1,10 @@
 use bytes::{Buf, BufMut};
+use err_derive::Error;
 
 use crate::varint;
 
-#[derive(Fail, Debug, Copy, Clone, Eq, PartialEq)]
-#[fail(display = "unexpected end of buffer")]
+#[derive(Error, Debug, Copy, Clone, Eq, PartialEq)]
+#[error(display = "unexpected end of buffer")]
 pub struct UnexpectedEnd;
 
 pub type Result<T> = ::std::result::Result<T, UnexpectedEnd>;

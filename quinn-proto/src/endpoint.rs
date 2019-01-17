@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bytes::{BufMut, Bytes, BytesMut};
+use err_derive::Error;
 use fnv::{FnvHashMap, FnvHashSet};
 use rand::{rngs::OsRng, Rng, RngCore};
 use ring::digest;
@@ -942,9 +943,9 @@ impl Default for ServerConfig {
 }
 
 /// Errors in the configuration of an endpoint
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum EndpointError {
-    #[fail(display = "failed to configure TLS: {}", _0)]
+    #[error(display = "failed to configure TLS: {}", _0)]
     Tls(crypto::TLSError),
 }
 

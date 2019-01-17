@@ -48,8 +48,6 @@
 #![warn(missing_docs)]
 
 #[macro_use]
-extern crate failure;
-#[macro_use]
 extern crate slog;
 
 mod builders;
@@ -67,6 +65,7 @@ use std::time::{Duration, Instant};
 use std::{io, mem};
 
 use bytes::Bytes;
+use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::stream::FuturesUnordered;
 use futures::task::{self, Task};
@@ -1019,16 +1018,16 @@ impl Drop for BiStream {
 }
 
 /// Errors that arise from writing to a stream
-#[derive(Debug, Fail, Clone)]
+#[derive(Debug, Error, Clone)]
 pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
-    #[fail(display = "sending stopped by peer: error {}", error_code)]
+    #[error(display = "sending stopped by peer: error {}", error_code)]
     Stopped {
         /// The error code supplied by the peer.
         error_code: u16,
     },
     /// The connection was closed.
-    #[fail(display = "connection closed: {}", _0)]
+    #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
 }
 
@@ -1115,19 +1114,19 @@ impl AsyncRead for RecvStream {
 }
 
 /// Errors that arise from reading from a stream.
-#[derive(Debug, Fail, Clone)]
+#[derive(Debug, Error, Clone)]
 pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
-    #[fail(display = "stream reset by peer: error {}", error_code)]
+    #[error(display = "stream reset by peer: error {}", error_code)]
     Reset {
         /// The error code supplied by the peer.
         error_code: u16,
     },
     /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[fail(display = "the stream has been completely received")]
+    #[error(display = "the stream has been completely received")]
     Finished,
     /// The connection was closed.
-    #[fail(display = "connection closed: {}", _0)]
+    #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
 }
 

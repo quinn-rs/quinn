@@ -8,6 +8,7 @@ use std::str;
 use std::sync::Arc;
 use std::time::Instant;
 
+use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::stream::futures_unordered::FuturesUnordered;
 use quinn_proto as quinn;
@@ -120,16 +121,16 @@ impl<'a> Default for EndpointBuilder<'a> {
 }
 
 /// Errors that can occur during the construction of an `Endpoint`.
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
-    #[fail(display = "failed to set up UDP socket: {}", _0)]
+    #[error(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
     /// An error configuring TLS.
-    #[fail(display = "failed to set up TLS: {}", _0)]
+    #[error(display = "failed to set up TLS: {}", _0)]
     Tls(TLSError),
     /// Errors relating to web PKI infrastructure
-    #[fail(display = "webpki failed: {:?}", _0)]
+    #[error(display = "webpki failed: {:?}", _0)]
     WebPki(webpki::Error),
 }
 
