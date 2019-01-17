@@ -2330,9 +2330,11 @@ impl Connection {
             }
             Directionality::Bi if self.streams.next_bi < self.streams.max_bi => {
                 self.streams.next_bi += 1;
+                let mut stream = Stream::new_bi();
+                stream.recv_mut().unwrap().fresh = false;
                 (
                     StreamId::new(self.side, direction, self.streams.next_bi - 1),
-                    Stream::new_bi(),
+                    stream,
                 )
             }
             _ => {
