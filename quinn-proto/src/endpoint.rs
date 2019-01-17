@@ -186,25 +186,6 @@ impl Endpoint {
         }
     }
 
-    /// Connection is either ready to accept data or failed.
-    fn conn_ready(&mut self, ch: ConnectionHandle) {
-        if self.connections[ch].side().is_server() {
-            self.incoming_handshakes -= 1;
-            self.incoming.push_back(ch);
-        }
-        if self.config.local_cid_len != 0 && !self.connections[ch].is_closed() {
-            /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
-            /// connection IDs
-            const LOCAL_CID_COUNT: usize = 8;
-            // We've already issued one CID as part of the normal handshake process.
-            for _ in 1..LOCAL_CID_COUNT {
-                let cid = self.new_cid();
-                self.connection_ids.insert(cid, ch);
-                self.connections[ch].issue_cid(cid);
-            }
-        }
-    }
-
     fn handle_decode(
         &mut self,
         now: u64,
@@ -589,6 +570,25 @@ impl Endpoint {
                     ecn: None,
                     packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
+            }
+        }
+    }
+
+    /// Connection is either ready to accept data or failed.
+    fn conn_ready(&mut self, ch: ConnectionHandle) {
+        if self.connections[ch].side().is_server() {
+            self.incoming_handshakes -= 1;
+            self.incoming.push_back(ch);
+        }
+        if self.config.local_cid_len != 0 && !self.connections[ch].is_closed() {
+            /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
+            /// connection IDs
+            const LOCAL_CID_COUNT: usize = 8;
+            // We've already issued one CID as part of the normal handshake process.
+            for _ in 1..LOCAL_CID_COUNT {
+                let cid = self.new_cid();
+                self.connection_ids.insert(cid, ch);
+                self.connections[ch].issue_cid(cid);
             }
         }
     }
