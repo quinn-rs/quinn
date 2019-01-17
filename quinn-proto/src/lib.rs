@@ -22,7 +22,7 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use crate::connection::{ConnectionError, ConnectionHandle, TimerUpdate};
+pub use crate::connection::{ConnectionError, TimerUpdate};
 
 mod crypto;
 pub use crate::crypto::{ClientConfig, ConnectError, TokenKey};
@@ -32,7 +32,9 @@ use crate::frame::Frame;
 pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use crate::endpoint::{Config, Endpoint, EndpointError, Event, Io, ServerConfig, Timer};
+pub use crate::endpoint::{
+    Config, ConnectionHandle, Endpoint, EndpointError, Event, Io, ServerConfig, Timer,
+};
 
 mod packet;
 pub use crate::packet::{ConnectionId, EcnCodepoint};

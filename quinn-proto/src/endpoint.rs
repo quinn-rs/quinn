@@ -16,7 +16,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    self, initial_close, ClientConfig, Connection, ConnectionError, ConnectionHandle, TimerUpdate,
+    self, initial_close, ClientConfig, Connection, ConnectionError, TimerUpdate,
 };
 use crate::crypto::{
     self, reset_token_for, ConnectError, Crypto, HeaderCrypto, TlsSession, TokenKey,
@@ -1027,6 +1027,15 @@ impl slog::Value for Timer {
         serializer: &mut dyn slog::Serializer,
     ) -> slog::Result {
         serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ConnectionHandle(pub usize);
+
+impl From<ConnectionHandle> for usize {
+    fn from(x: ConnectionHandle) -> usize {
+        x.0
     }
 }
 
