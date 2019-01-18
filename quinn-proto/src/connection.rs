@@ -835,7 +835,9 @@ impl Connection {
         self.set_params(params)?;
         self.write_tls();
         self.init_0rtt();
-        self.handle_coalesced(now, remote, ecn, remaining);
+        if let Some(data) = remaining {
+            self.handle_coalesced(now, remote, ecn, data);
+        }
         Ok(())
     }
 
@@ -984,7 +986,9 @@ impl Connection {
         }
 
         self.handle_decode(now, remote, ecn, first_decode);
-        self.handle_coalesced(now, remote, ecn, remaining);
+        if let Some(data) = remaining {
+            self.handle_coalesced(now, remote, ecn, data);
+        }
     }
 
     fn handle_coalesced(
@@ -992,8 +996,9 @@ impl Connection {
         now: u64,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
-        mut remaining: Option<BytesMut>,
+        data: BytesMut,
     ) {
+        let mut remaining = Some(data);
         while let Some(data) = remaining {
             match PartialDecode::new(data, self.config.local_cid_len) {
                 Ok((partial_decode, rest)) => {
