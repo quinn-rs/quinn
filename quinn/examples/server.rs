@@ -93,11 +93,19 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    if let (Some(ref key), Some(ref cert)) = (options.key, options.cert) {
-        let key = fs::read(key).context("failed to read private key")?;
-        let key = quinn::PrivateKey::from_pem(&key)?;
-        let cert_chain = fs::read(cert).context("failed to read certificate chain")?;
-        let cert_chain = quinn::CertificateChain::from_pem(&cert_chain)?;
+    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
+        let key = fs::read(key_path).context("failed to read private key")?;
+        let key = if key_path.extension().map_or(false, |x| x == "der") {
+            quinn::PrivateKey::from_der(&key)?
+        } else {
+            quinn::PrivateKey::from_pem(&key)?
+        };
+        let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
+        let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
+            quinn::CertificateChain::from_certs(quinn::Certificate::from_der(&cert_chain))
+        } else {
+            quinn::CertificateChain::from_pem(&cert_chain)?
+        };
         server_config.set_certificate(cert_chain, key)?;
     } else {
         let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
