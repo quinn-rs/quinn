@@ -79,6 +79,7 @@ pub enum Error {
     BadRelativeIndex(usize),
     BadAbsoluteIndex(usize),
     BadPostbaseIndex(usize),
+    BadIndex(usize),
 }
 
 #[derive(Debug)]
@@ -146,6 +147,14 @@ impl VirtualAddressSpace {
             Err(Error::BadAbsoluteIndex(index))
         } else {
             Ok(index - self.dropped - 1)
+        }
+    }
+
+    pub fn index(&self, index: usize) -> Result<usize, Error> {
+        if index >= self.delta {
+            Err(Error::BadIndex(index))
+        } else {
+            Ok(index + self.dropped + 1)
         }
     }
 
@@ -274,5 +283,23 @@ mod tests {
         assert_eq!(vas.relative(1), Ok(5));
         assert_eq!(vas.relative(6), Ok(0));
         assert_eq!(vas.relative(7), Err(Error::BadRelativeIndex(7)));
+    }
+
+    #[test]
+    fn absolute_from_real_index() {
+        let mut vas = VirtualAddressSpace::new();
+        assert_eq!(vas.index(0), Err(Error::BadIndex(0)));
+        vas.add();
+        assert_eq!(vas.index(0), Ok(1));
+        vas.add();
+        vas.drop();
+        assert_eq!(vas.index(0), Ok(2));
+        vas.drop();
+        assert_eq!(vas.index(0), Err(Error::BadIndex(0)));
+        vas.add();
+        vas.add();
+        assert_eq!(vas.index(0), Ok(3));
+        assert_eq!(vas.index(1), Ok(4));
+        assert_eq!(vas.index(2), Err(Error::BadIndex(2)));
     }
 }
