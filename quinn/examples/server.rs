@@ -107,7 +107,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
             Ok(x) => x,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "generating self-signed certificates");
+                info!(log, "generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
                 let key = cert.serialize_private_key_der();
                 let cert = cert.serialize_der();
