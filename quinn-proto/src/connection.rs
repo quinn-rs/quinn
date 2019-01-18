@@ -1561,7 +1561,7 @@ impl Connection {
                             "got MAX_STREAM_DATA on recv-only {stream}",
                             stream = id
                         );
-                        return Err(TransportError::PROTOCOL_VIOLATION);
+                        return Err(TransportError::STREAM_STATE_ERROR);
                     }
                     if let Some(ss) = self.streams.get_send_mut(id) {
                         if offset > ss.max_data {
@@ -1578,7 +1578,7 @@ impl Connection {
                             "got MAX_STREAM_DATA on unopened {stream}",
                             stream = id
                         );
-                        return Err(TransportError::PROTOCOL_VIOLATION);
+                        return Err(TransportError::STREAM_STATE_ERROR);
                     }
                 }
                 Frame::MaxStreams {
@@ -1646,6 +1646,14 @@ impl Connection {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
                 }
                 Frame::StreamDataBlocked { id, offset } => {
+                    if id.initiator() == self.side && id.directionality() == Directionality::Uni {
+                        debug!(
+                            self.log,
+                            "got STREAM_DATA_BLOCKED on send-only {stream}",
+                            stream = id
+                        );
+                        return Err(TransportError::STREAM_STATE_ERROR);
+                    }
                     debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
                 }
                 Frame::StreamsBlocked {
