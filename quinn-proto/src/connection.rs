@@ -1160,7 +1160,7 @@ impl Connection {
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(_) = self.state {
-            self.io.close = true;
+            self.io.close = remote == self.remote;
         }
     }
 
