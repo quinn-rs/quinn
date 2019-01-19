@@ -516,7 +516,6 @@ impl Connection {
     pub fn timeout(&mut self, now: u64, timer: Timer) -> bool {
         match timer {
             Timer::Close => {
-                self.io.timer_stop(Timer::Idle);
                 self.state = State::Drained;
                 return self.app_closed;
             }
@@ -754,6 +753,10 @@ impl Connection {
     }
 
     fn reset_idle_timeout(&mut self, now: u64) {
+        if self.state.is_closed() {
+            self.io.timer_stop(Timer::Idle);
+            return;
+        }
         let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
             cmp::max(self.config.idle_timeout, self.params.idle_timeout)
         } else {
