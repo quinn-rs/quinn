@@ -302,6 +302,7 @@ impl TestEndpoint {
                 self.accepted = Some(ch);
             }
         }
+        self.endpoint.handle_endpoint_events();
         while let Some(x) = self.endpoint.poll_transmit(now) {
             self.outbound.push_back(x);
         }
