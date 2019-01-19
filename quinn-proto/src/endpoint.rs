@@ -25,8 +25,8 @@ use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeErro
 use crate::stream::{ReadError, WriteError};
 use crate::transport_parameters::TransportParameters;
 use crate::{
-    Directionality, Side, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
-    RESET_TOKEN_SIZE, VERSION,
+    Directionality, Side, StreamId, Transmit, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
+    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// The main entry point to the library
@@ -37,7 +37,7 @@ use crate::{
 pub struct Endpoint {
     log: Logger,
     rng: OsRng,
-    io: VecDeque<Io>,
+    transmits: VecDeque<Transmit>,
     incoming: VecDeque<ConnectionHandle>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
@@ -45,8 +45,10 @@ pub struct Endpoint {
     pub(crate) connections: Slab<Connection>,
     config: Arc<Config>,
     server_config: Option<ServerConfig>,
-    /// Connections that might have I/O to perform
-    dirty_conns: FnvHashSet<ConnectionHandle>,
+    /// Connections that might have timer updates to apply perform
+    dirty_timers: FnvHashSet<ConnectionHandle>,
+    /// Connections that might have packets to send
+    needs_transmit: FnvHashSet<ConnectionHandle>,
     /// Connections that might have application-facing events to report
     eventful_conns: FnvHashSet<ConnectionHandle>,
     incoming_handshakes: usize,
@@ -67,13 +69,14 @@ impl Endpoint {
         Ok(Self {
             log,
             rng,
-            io: VecDeque::new(),
+            transmits: VecDeque::new(),
             incoming: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
-            dirty_conns: FnvHashSet::default(),
+            dirty_timers: FnvHashSet::default(),
+            needs_transmit: FnvHashSet::default(),
             eventful_conns: FnvHashSet::default(),
             incoming_handshakes: 0,
             config,
@@ -99,40 +102,46 @@ impl Endpoint {
         None
     }
 
-    /// Get a pending IO operation
-    pub fn poll_io(&mut self, now: u64) -> Option<Io> {
-        if let Some(x) = self.io.pop_front() {
+    /// Get a pending timer update
+    pub fn poll_timers(&mut self) -> Option<(ConnectionHandle, TimerUpdate)> {
+        loop {
+            let &ch = self.dirty_timers.iter().next()?;
+            loop {
+                if let Some(io) = self.connections[ch].poll_io() {
+                    return Some((
+                        ch,
+                        match io {
+                            connection::Io::TimerUpdate(x) => x,
+                            connection::Io::RetireConnectionId { connection_id } => {
+                                self.connection_ids.remove(&connection_id);
+                                let new_cid = self.new_cid();
+                                self.connection_ids.insert(new_cid, ch);
+                                self.connections[ch].issue_cid(new_cid);
+                                continue;
+                            }
+                        },
+                    ));
+                } else {
+                    self.dirty_timers.remove(&ch);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Get the next packet to transmit
+    pub fn poll_transmit(&mut self, now: u64) -> Option<Transmit> {
+        if let Some(x) = self.transmits.pop_front() {
             return Some(x);
         }
         loop {
-            let &ch = self.dirty_conns.iter().next()?;
+            let &ch = self.needs_transmit.iter().next()?;
             loop {
-                if let Some(io) = self.connections[ch].poll_io(now) {
-                    return Some(match io {
-                        connection::Io::Transmit {
-                            destination,
-                            ecn,
-                            packet,
-                        } => Io::Transmit {
-                            destination,
-                            ecn,
-                            packet,
-                        },
-                        connection::Io::TimerUpdate { timer, update } => Io::TimerUpdate {
-                            connection: ch,
-                            timer,
-                            update,
-                        },
-                        connection::Io::RetireConnectionId { connection_id } => {
-                            self.connection_ids.remove(&connection_id);
-                            let new_cid = self.new_cid();
-                            self.connection_ids.insert(new_cid, ch);
-                            self.connections[ch].issue_cid(new_cid);
-                            continue;
-                        }
-                    });
+                if let Some(transmit) = self.connections[ch].poll_transmit(now) {
+                    self.dirty_timers.insert(ch);
+                    return Some(transmit);
                 } else {
-                    self.dirty_conns.remove(&ch);
+                    self.needs_transmit.remove(&ch);
                     break;
                 }
             }
@@ -169,7 +178,7 @@ impl Endpoint {
                 .encode(&mut buf);
                 buf.write::<u32>(0x0a1a_2a3a); // reserved version
                 buf.write(VERSION); // supported version
-                self.io.push_back(Io::Transmit {
+                self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
                     packet: buf.into(),
@@ -213,7 +222,8 @@ impl Endpoint {
             {
                 self.conn_ready(ch);
             }
-            self.dirty_conns.insert(ch);
+            self.needs_transmit.insert(ch);
+            self.dirty_timers.insert(ch);
             self.eventful_conns.insert(ch);
             return;
         }
@@ -310,7 +320,7 @@ impl Endpoint {
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
-        self.io.push_back(Io::Transmit {
+        self.transmits.push_back(Transmit {
             destination: remote,
             ecn: None,
             packet: buf.into(),
@@ -335,7 +345,7 @@ impl Endpoint {
                 server_name: server_name.into(),
             }),
         )?;
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
         Ok(ch)
     }
 
@@ -443,7 +453,7 @@ impl Endpoint {
 
         if self.incoming_handshakes == self.server_config.as_ref().unwrap().accept_buffer as usize {
             debug!(self.log, "rejecting connection due to full accept buffer");
-            self.io.push_back(Io::Transmit {
+            self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
                 packet: initial_close(
@@ -467,7 +477,7 @@ impl Endpoint {
                 "rejecting connection due to invalid DCID length {len}",
                 len = dst_cid.len()
             );
-            self.io.push_back(Io::Transmit {
+            self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
                 packet: initial_close(
@@ -519,7 +529,7 @@ impl Endpoint {
                 encode.finish(&mut buf, header_crypto);
                 buf.put_slice(&token);
 
-                self.io.push_back(Io::Transmit {
+                self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
                     packet: buf.into(),
@@ -551,7 +561,7 @@ impl Endpoint {
         ) {
             Ok(()) => {
                 self.incoming_handshakes += 1;
-                self.dirty_conns.insert(ch);
+                self.needs_transmit.insert(ch);
                 if self.connections[ch].has_1rtt() {
                     self.conn_ready(ch);
                 }
@@ -559,7 +569,7 @@ impl Endpoint {
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
                 self.forget(ch);
-                self.io.push_back(Io::Transmit {
+                self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
                     packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
@@ -598,7 +608,7 @@ impl Endpoint {
         }
         self.connection_remotes
             .remove(&self.connections[ch].remote());
-        self.dirty_conns.remove(&ch);
+        self.dirty_timers.remove(&ch);
         self.eventful_conns.remove(&ch);
         self.connections.remove(ch.0);
     }
@@ -609,10 +619,16 @@ impl Endpoint {
             self.forget(ch);
             return;
         }
-        if let Timer::Idle = timer {
-            self.eventful_conns.insert(ch);
+        self.dirty_timers.insert(ch);
+        match timer {
+            Timer::LossDetection => {
+                self.needs_transmit.insert(ch);
+            }
+            Timer::Idle => {
+                self.eventful_conns.insert(ch);
+            }
+            Timer::PathValidation | Timer::Close | Timer::KeyDiscard => {}
         }
-        self.dirty_conns.insert(ch);
     }
 
     /// Transmit data on a stream
@@ -628,7 +644,7 @@ impl Endpoint {
         data: &[u8],
     ) -> Result<usize, WriteError> {
         let result = self.connections[ch].write(stream, data);
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
         result
     }
 
@@ -641,7 +657,7 @@ impl Endpoint {
     /// - when applied to a stream that does not have an active outgoing channel
     pub fn finish(&mut self, ch: ConnectionHandle, stream: StreamId) {
         self.connections[ch].finish(stream);
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
     }
 
     /// Read data from a stream
@@ -657,7 +673,7 @@ impl Endpoint {
         stream: StreamId,
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
-        self.dirty_conns.insert(ch); // May need to send flow control frames after reading
+        self.needs_transmit.insert(ch); // May need to send flow control frames after reading
         match self.connections[ch].read(stream, buf) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[ch].maybe_cleanup(stream);
@@ -684,7 +700,7 @@ impl Endpoint {
         ch: ConnectionHandle,
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
-        self.dirty_conns.insert(ch); // May need to send flow control frames after reading
+        self.needs_transmit.insert(ch); // May need to send flow control frames after reading
         match self.connections[ch].read_unordered(stream) {
             x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
                 self.connections[ch].maybe_cleanup(stream);
@@ -700,7 +716,7 @@ impl Endpoint {
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[ch].reset(stream, error_code);
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
     }
 
     /// Instruct the peer to abandon transmitting data on a stream
@@ -709,7 +725,7 @@ impl Endpoint {
     /// - when applied to a stream that has not begun receiving data
     pub fn stop_sending(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
         self.connections[ch].stop_sending(stream, error_code);
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
     }
 
     /// Create a new stream
@@ -725,7 +741,7 @@ impl Endpoint {
     /// Useful for preventing an otherwise idle connection from timing out.
     pub fn ping(&mut self, ch: ConnectionHandle) {
         self.connections[ch].ping();
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
     }
 
     /// Close a connection immediately
@@ -738,7 +754,7 @@ impl Endpoint {
             return;
         }
         self.connections[ch].close(now, error_code, reason);
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
     }
 
     /// Free a handshake slot for reuse
@@ -752,7 +768,7 @@ impl Endpoint {
 
     pub fn accept_stream(&mut self, ch: ConnectionHandle) -> Option<StreamId> {
         let id = self.connections[ch].accept()?;
-        self.dirty_conns.insert(ch);
+        self.needs_transmit.insert(ch);
         Some(id)
     }
 
@@ -980,23 +996,6 @@ impl From<ConnectionError> for Event {
     fn from(x: ConnectionError) -> Self {
         Event::ConnectionLost { reason: x }
     }
-}
-
-/// I/O operations to be immediately executed the backend.
-#[derive(Debug)]
-pub enum Io {
-    Transmit {
-        destination: SocketAddr,
-        /// Explicit congestion notification bits to set on the packet
-        ecn: Option<EcnCodepoint>,
-        packet: Box<[u8]>,
-    },
-    /// Start, stop, or reset a timer
-    TimerUpdate {
-        connection: ConnectionHandle,
-        timer: Timer,
-        update: TimerUpdate,
-    },
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]

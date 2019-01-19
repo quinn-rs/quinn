@@ -182,19 +182,19 @@ impl Pair {
     fn drive_client(&mut self) {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
-        for (destination, packet, ecn) in self.client.outbound.drain(..) {
-            if packet[0] & packet::LONG_HEADER_FORM == 0 {
-                let spin = packet[0] & packet::SPIN_BIT != 0;
+        for x in self.client.outbound.drain(..) {
+            if x.packet[0] & packet::LONG_HEADER_FORM == 0 {
+                let spin = x.packet[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
             if let Some(ref socket) = self.client.socket {
-                socket.send_to(&packet, destination).unwrap();
+                socket.send_to(&x.packet, x.destination).unwrap();
             }
-            if self.server.addr == destination {
+            if self.server.addr == x.destination {
                 self.server
                     .inbound
-                    .push_back((self.time + self.latency, ecn, packet));
+                    .push_back((self.time + self.latency, x.ecn, x.packet));
             }
         }
     }
@@ -202,14 +202,14 @@ impl Pair {
     fn drive_server(&mut self) {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
-        for (destination, packet, ecn) in self.server.outbound.drain(..) {
+        for x in self.server.outbound.drain(..) {
             if let Some(ref socket) = self.server.socket {
-                socket.send_to(&packet, destination).unwrap();
+                socket.send_to(&x.packet, x.destination).unwrap();
             }
-            if self.client.addr == destination {
+            if self.client.addr == x.destination {
                 self.client
                     .inbound
-                    .push_back((self.time + self.latency, ecn, packet));
+                    .push_back((self.time + self.latency, x.ecn, x.packet));
             }
         }
     }
@@ -235,8 +235,8 @@ struct TestEndpoint {
     socket: Option<UdpSocket>,
     timers: [u64; 5],
     conn: Option<ConnectionHandle>,
-    outbound: VecDeque<(SocketAddr, Box<[u8]>, Option<EcnCodepoint>)>,
-    delayed: VecDeque<(SocketAddr, Box<[u8]>, Option<EcnCodepoint>)>,
+    outbound: VecDeque<Transmit>,
+    delayed: VecDeque<Transmit>,
     inbound: VecDeque<(u64, Option<EcnCodepoint>, Box<[u8]>)>,
 }
 
@@ -292,45 +292,33 @@ impl TestEndpoint {
             self.endpoint
                 .handle(now, remote, ecn, Vec::from(packet).into());
         }
-        while let Some(x) = self.endpoint.poll_io(now) {
-            match x {
-                Io::Transmit {
-                    destination,
-                    packet,
-                    ecn,
-                } => {
-                    self.outbound.push_back((destination, packet, ecn));
+        while let Some(x) = self.endpoint.poll_transmit(now) {
+            self.outbound.push_back(x);
+        }
+        while let Some((ch, x)) = self.endpoint.poll_timers() {
+            self.conn = Some(ch);
+            let time = match x.update {
+                TimerSetting::Stop => {
+                    trace!(
+                        log,
+                        "{side:?} {timer:?} stop",
+                        side = self.side,
+                        timer = x.timer
+                    );
+                    u64::max_value()
                 }
-                Io::TimerUpdate {
-                    timer,
-                    update,
-                    connection,
-                } => {
-                    self.conn = Some(connection);
-                    let time = match update {
-                        TimerUpdate::Stop => {
-                            trace!(
-                                log,
-                                "{side:?} {timer:?} stop",
-                                side = self.side,
-                                timer = timer
-                            );
-                            u64::max_value()
-                        }
-                        TimerUpdate::Start(time) => {
-                            trace!(
-                                log,
-                                "{side:?} {timer:?} set to expire at {:?}",
-                                Duration::from_micros(time),
-                                side = self.side,
-                                timer = timer,
-                            );
-                            time
-                        }
-                    };
-                    self.timers[timer as usize] = time;
+                TimerSetting::Start(time) => {
+                    trace!(
+                        log,
+                        "{side:?} {timer:?} set to expire at {:?}",
+                        Duration::from_micros(time),
+                        side = self.side,
+                        timer = x.timer,
+                    );
+                    time
                 }
-            }
+            };
+            self.timers[x.timer as usize] = time;
         }
     }
 
@@ -397,16 +385,16 @@ fn version_negotiate() {
         )[..]
             .into(),
     );
-    let io = server.poll_io(0);
-    assert_matches!(io, Some(Io::Transmit { .. }));
-    if let Some(Io::Transmit { packet, .. }) = io {
+    let io = server.poll_transmit(0);
+    assert!(io.is_some());
+    if let Some(Transmit { packet, .. }) = io {
         assert_ne!(packet[0] & 0x80, 0);
         assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
         assert!(packet[14..]
             .chunks(4)
             .any(|x| BigEndian::read_u32(x) == VERSION));
     }
-    assert_matches!(server.poll_io(0), None);
+    assert_matches!(server.poll_transmit(0), None);
     assert_matches!(server.poll(), None);
 }
 

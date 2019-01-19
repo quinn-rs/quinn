@@ -66,7 +66,7 @@ impl<'a> EndpointBuilder<'a> {
             log: self.logger.clone(),
             socket,
             inner: quinn::Endpoint::new(self.logger, self.config, self.server_config)?,
-            outgoing: VecDeque::new(),
+            outgoing: None,
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
             timers: FuturesUnordered::new(),

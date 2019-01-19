@@ -24,8 +24,8 @@ use crate::range_set::RangeSet;
 use crate::stream::{self, ReadError, Stream, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, Frame, Side, StreamId, TransportError, MIN_INITIAL_SIZE, MIN_MTU,
-    RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
+    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, MIN_INITIAL_SIZE,
+    MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
 };
 
 pub struct Connection {
@@ -276,24 +276,12 @@ impl Connection {
     /// Connections should be polled for I/O after:
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
+    /// - a packet is transmitted
     /// - any timer expires
-    pub fn poll_io(&mut self, now: u64) -> Option<Io> {
-        if let Some((destination, packet)) = self.next_packet(now) {
-            self.reset_idle_timeout(now);
-            return Some(Io::Transmit {
-                destination,
-                ecn: if self.sending_ecn {
-                    Some(EcnCodepoint::ECT0)
-                } else {
-                    None
-                },
-                packet,
-            });
-        }
-
+    pub fn poll_io(&mut self) -> Option<Io> {
         for (&timer, update) in Timer::VALUES.iter().zip(self.io.timers.iter_mut()) {
             if let Some(update) = update.take() {
-                return Some(Io::TimerUpdate { timer, update });
+                return Some(Io::TimerUpdate(TimerUpdate { timer, update }));
             }
         }
 
@@ -2125,7 +2113,13 @@ impl Connection {
         (sent, acks)
     }
 
-    fn next_packet(&mut self, now: u64) -> Option<(SocketAddr, Box<[u8]>)> {
+    /// Returns packets to transmit
+    ///
+    /// Connections should be polled for transmit after:
+    /// - the application performed some I/O on the connection
+    /// - an incoming packet is handled
+    /// - the LossDetection timer expires
+    pub fn poll_transmit(&mut self, now: u64) -> Option<Transmit> {
         let (space_id, close) = match self.state {
             State::Draining | State::Drained => {
                 return None;
@@ -2333,7 +2327,16 @@ impl Connection {
         );
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
-        Some((remote, buf.into()))
+        self.reset_idle_timeout(now);
+        Some(Transmit {
+            destination: remote,
+            packet: buf.into(),
+            ecn: if self.sending_ecn {
+                Some(EcnCodepoint::ECT0)
+            } else {
+                None
+            },
+        })
     }
 
     /// Close a connection immediately
@@ -3198,14 +3201,8 @@ const MAX_ACK_BLOCKS: usize = 64;
 /// I/O operations to be immediately executed the backend.
 #[derive(Debug)]
 pub enum Io {
-    Transmit {
-        destination: SocketAddr,
-        /// Explicit congestion notification bits to set on the packet
-        ecn: Option<EcnCodepoint>,
-        packet: Box<[u8]>,
-    },
     /// Stop or (re)start a timer
-    TimerUpdate { timer: Timer, update: TimerUpdate },
+    TimerUpdate(TimerUpdate),
     /// Stop routing `connection_id` to this `Connection`
     RetireConnectionId { connection_id: ConnectionId },
 }
@@ -3221,7 +3218,7 @@ struct IoQueue {
     ///
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
-    timers: [Option<TimerUpdate>; 5],
+    timers: [Option<TimerSetting>; 5],
     retired_cids: Vec<ConnectionId>,
 }
 
@@ -3237,22 +3234,29 @@ impl IoQueue {
 
     /// Start or reset a timer associated with this connection.
     fn timer_start(&mut self, timer: Timer, time: u64) {
-        self.timers[timer as usize] = Some(TimerUpdate::Start(time));
+        self.timers[timer as usize] = Some(TimerSetting::Start(time));
     }
 
     /// Start one of the timers associated with this connection.
     fn timer_stop(&mut self, timer: Timer) {
-        self.timers[timer as usize] = Some(TimerUpdate::Stop);
+        self.timers[timer as usize] = Some(TimerSetting::Stop);
     }
 }
 
-/// Changes to a connection's timers
+/// Change applicable to one of a connection's timers
 #[derive(Debug, Copy, Clone)]
-pub enum TimerUpdate {
+pub enum TimerSetting {
     /// Set the timer to expire at an a certain point in time, in absolute microseconds
     Start(u64),
     /// Cancel time timer if it's currently running
     Stop,
+}
+
+/// Change to apply to a specific timer
+#[derive(Debug, Copy, Clone)]
+pub struct TimerUpdate {
+    pub timer: Timer,
+    pub update: TimerSetting,
 }
 
 struct PacketSpace {
