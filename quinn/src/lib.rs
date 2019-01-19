@@ -76,7 +76,7 @@ use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll, Sink};
-use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId};
+use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId, TimerUpdate};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
@@ -347,17 +347,32 @@ impl Future for Driver {
             }
             let _ = endpoint.incoming.poll_complete();
             let mut blocked = false;
-            while !endpoint.outgoing.is_empty() {
-                {
-                    let (destination, ecn, packet) = endpoint.outgoing.front().unwrap();
-                    match endpoint.socket.poll_send(destination, *ecn, packet) {
+            if let Some(ref x) = endpoint.outgoing {
+                match endpoint.socket.poll_send(&x.destination, x.ecn, &x.packet) {
+                    Ok(Async::Ready(_)) => {
+                        endpoint.outgoing = None;
+                    }
+                    Ok(Async::NotReady) => {
+                        blocked = true;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                        blocked = true;
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+            if !blocked {
+                while let Some(x) = endpoint.inner.poll_transmit(now) {
+                    match endpoint.socket.poll_send(&x.destination, x.ecn, &x.packet) {
                         Ok(Async::Ready(_)) => {}
                         Ok(Async::NotReady) => {
-                            blocked = true;
+                            endpoint.outgoing = Some(x);
                             break;
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                            blocked = true;
+                            endpoint.outgoing = Some(x);
                             break;
                         }
                         Err(e) => {
@@ -365,38 +380,36 @@ impl Future for Driver {
                         }
                     }
                 }
-                endpoint.outgoing.pop_front();
             }
-            while let Some(io) = endpoint.inner.poll_io(now) {
-                use crate::quinn::Io::*;
-                match io {
-                    Transmit {
-                        destination,
-                        packet,
-                        ecn,
-                    } => {
-                        if !blocked {
-                            match endpoint.socket.poll_send(&destination, ecn, &packet) {
-                                Ok(Async::Ready(_)) => {}
-                                Ok(Async::NotReady) => {
-                                    blocked = true;
-                                }
-                                Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                                    blocked = true;
-                                }
-                                Err(e) => {
-                                    return Err(e);
+            let mut timer_fired = false;
+            loop {
+                match endpoint.timers.poll() {
+                    Ok(Async::Ready(Some(Some((ch, timer))))) => {
+                        trace!(endpoint.log, "timeout"; "timer" => ?timer);
+                        endpoint.inner.timeout(now, ch, timer);
+                        if timer == quinn::Timer::Close {
+                            // Connection drained
+                            if let Some(p) = endpoint.pending.get_mut(&ch) {
+                                p.drained = true;
+                                if let Some(x) = p.closing.take() {
+                                    let _ = x.send(());
                                 }
                             }
                         }
-                        if blocked {
-                            endpoint.outgoing.push_front((destination, ecn, packet));
-                        }
+                        timer_fired = true;
                     }
+                    Ok(Async::Ready(Some(None))) => {}
+                    Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
+                        break;
+                    }
+                    Err(()) => unreachable!(),
+                }
+            }
+            while let Some((ch, x)) = endpoint.inner.poll_timers() {
+                match x {
                     TimerUpdate {
-                        connection: ch,
                         timer: timer @ quinn::Timer::Close,
-                        update: quinn::TimerUpdate::Start(time),
+                        update: quinn::TimerSetting::Start(time),
                     } => {
                         let instant = endpoint.epoch + duration_micros(time);
                         endpoint.timers.push(Timer {
@@ -407,9 +420,8 @@ impl Future for Driver {
                         });
                     }
                     TimerUpdate {
-                        connection: ch,
                         timer,
-                        update: quinn::TimerUpdate::Start(time),
+                        update: quinn::TimerSetting::Start(time),
                     } => {
                         let pending = endpoint.pending.get_mut(&ch).unwrap();
                         let cancel = &mut pending.cancel_timers[timer as usize];
@@ -428,9 +440,8 @@ impl Future for Driver {
                         });
                     }
                     TimerUpdate {
-                        connection: ch,
                         timer,
-                        update: quinn::TimerUpdate::Stop,
+                        update: quinn::TimerSetting::Stop,
                     } => {
                         trace!(endpoint.log, "timer stop"; "timer" => ?timer);
                         // If a connection was lost, we already canceled its loss/idle timers.
@@ -442,31 +453,7 @@ impl Future for Driver {
                     }
                 }
             }
-            let mut fired = false;
-            loop {
-                match endpoint.timers.poll() {
-                    Ok(Async::Ready(Some(Some((ch, timer))))) => {
-                        trace!(endpoint.log, "timeout"; "timer" => ?timer);
-                        endpoint.inner.timeout(now, ch, timer);
-                        if timer == quinn::Timer::Close {
-                            // Connection drained
-                            if let Some(p) = endpoint.pending.get_mut(&ch) {
-                                p.drained = true;
-                                if let Some(x) = p.closing.take() {
-                                    let _ = x.send(());
-                                }
-                            }
-                        }
-                        fired = true;
-                    }
-                    Ok(Async::Ready(Some(None))) => {}
-                    Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
-                        break;
-                    }
-                    Err(()) => unreachable!(),
-                }
-            }
-            if !fired {
+            if !timer_fired {
                 break;
             }
         }
@@ -489,7 +476,7 @@ struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
     inner: quinn::Endpoint,
-    outgoing: VecDeque<(SocketAddr, Option<quinn::EcnCodepoint>, Box<[u8]>)>,
+    outgoing: Option<quinn::Transmit>,
     epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel

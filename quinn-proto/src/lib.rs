@@ -11,6 +11,7 @@ extern crate lazy_static;
 extern crate slog;
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::ops;
 
 mod coding;
@@ -22,7 +23,7 @@ mod transport_parameters;
 mod varint;
 
 mod connection;
-pub use crate::connection::{ConnectionError, TimerUpdate};
+pub use crate::connection::{ConnectionError, TimerSetting, TimerUpdate};
 
 mod crypto;
 pub use crate::crypto::{ClientConfig, ConnectError, TokenKey};
@@ -33,7 +34,7 @@ pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use crate::endpoint::{
-    Config, ConnectionHandle, Endpoint, EndpointError, Event, Io, ServerConfig, Timer,
+    Config, ConnectionHandle, Endpoint, EndpointError, Event, ServerConfig, Timer,
 };
 
 mod packet;
@@ -191,6 +192,15 @@ impl coding::Codec for StreamId {
     fn encode<B: bytes::BufMut>(&self, buf: &mut B) {
         varint::write(self.0, buf).unwrap()
     }
+}
+
+/// An outgoing packet
+#[derive(Debug)]
+pub struct Transmit {
+    pub destination: SocketAddr,
+    /// Explicit congestion notification bits to set on the packet
+    pub ecn: Option<EcnCodepoint>,
+    pub packet: Box<[u8]>,
 }
 
 //
