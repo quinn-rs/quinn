@@ -340,7 +340,6 @@ mod tests {
             &mut table,
             vec![HeaderField::new("", ""), HeaderField::new("", "")],
         );
-        assert_eq!(table.count(), 2);
 
         let mut buf = vec![];
         Duplicate(1).encode(&mut buf);
@@ -349,8 +348,6 @@ mod tests {
         let mut dec = vec![];
         let res = on_encoder_recv(&mut table.inserter(), &mut enc, &mut dec);
         assert_eq!(res, Ok(()));
-
-        assert_eq!(table.count(), 3);
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
@@ -423,7 +420,6 @@ mod tests {
         let mut dec = vec![];
         assert!(on_encoder_recv(&mut table.inserter(), &mut enc, &mut dec).is_ok());
         assert_eq!(enc.position(), 15);
-        assert_eq!(table.count(), 1);
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1))); // TODO Implement type
@@ -441,7 +437,7 @@ mod tests {
 
     fn build_table(n_field: usize) -> DynamicTable {
         let mut table = DynamicTable::new();
-        table.set_max_mem_size(TABLE_SIZE).unwrap();
+        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
 
         let mut inserter = table.inserter();
         for i in 0..n_field {
@@ -602,7 +598,7 @@ mod tests {
         Indexed::Dynamic(10).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table(max_entries + 10), &mut read).unwrap();
+        let headers = decode_header(&build_table(max_entries + 10), &mut read).expect("decode");
         assert_eq!(headers, &[field(max_entries - 5)]);
 
         let mut buf = vec![];

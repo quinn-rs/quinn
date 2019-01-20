@@ -3,10 +3,14 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::collections::btree_map::Entry as BTEntry;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+
+use crate::quinn_proto::{Directionality, Side};
 
 use super::field::HeaderField;
+use super::static_::StaticTable;
 use crate::qpack::vas::{self, VirtualAddressSpace};
 
 /**
@@ -71,16 +75,24 @@ impl<'a> DynamicTableInserter<'a> {
             .ok_or(Error::BadIndex(real_index))
     }
 
-    /**
-     * @returns Number of fields removed by resizing
-     */
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, Error> {
+    pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), Error> {
         if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
             return Err(Error::MaximumTableSizeTooLarge);
         }
 
+        if size >= self.table.mem_limit {
+            self.table.mem_limit = size;
+            return Ok(());
+        }
+
+        let required = self.table.mem_limit - size;
+
+        if let Some(to_evict) = self.table.can_free(required)? {
+            self.table.evict(to_evict)?;
+        }
+
         self.table.mem_limit = size;
-        Ok(self.table.shrink_to(size))
+        Ok(())
     }
 
     pub fn total_inserted(&self) -> usize {
@@ -91,10 +103,31 @@ impl<'a> DynamicTableInserter<'a> {
 pub struct DynamicTableEncoder<'a> {
     table: &'a mut DynamicTable,
     base: usize,
+    commited: bool,
+    stream_id: u64,
+    bloc_refs: HashMap<usize, usize>,
+}
+
+impl<'a> Drop for DynamicTableEncoder<'a> {
+    fn drop(&mut self) {
+        if !self.commited {
+            // TODO maybe possible to replace and not clone here?
+            self.table
+                .track_cancel(self.bloc_refs.iter().map(|(x, y)| (*x, *y)));
+            return;
+        }
+
+        self.table
+            .track_bloc(self.stream_id, self.bloc_refs.clone());
+    }
 }
 
 impl<'a> DynamicTableEncoder<'a> {
-    pub fn find(&self, field: &HeaderField) -> DynamicLookupResult {
+    pub fn commit(&mut self) {
+        self.commited = true;
+    }
+
+    pub fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
         self.lookup_result(
             self.table
                 .field_map
@@ -105,94 +138,79 @@ impl<'a> DynamicTableEncoder<'a> {
         )
     }
 
-    pub fn find_name(&self, name: &[u8]) -> DynamicLookupResult {
-        self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).map(|x| *x))
-    }
-
-    fn lookup_result(&self, abolute: Option<usize>) -> DynamicLookupResult {
+    fn lookup_result(&mut self, abolute: Option<usize>) -> DynamicLookupResult {
         match abolute {
-            Some(absolute) if absolute <= self.base => DynamicLookupResult::Relative {
-                index: self.base - absolute,
-                absolute,
-            },
-            Some(absolute) if absolute > self.base => DynamicLookupResult::PostBase {
-                index: absolute - self.base - 1,
-                absolute,
-            },
+            Some(absolute) if absolute <= self.base => {
+                self.track_ref(absolute);
+                DynamicLookupResult::Relative {
+                    index: self.base - absolute,
+                    absolute,
+                }
+            }
+            Some(absolute) if absolute > self.base => {
+                self.track_ref(absolute);
+                DynamicLookupResult::PostBase {
+                    index: absolute - self.base - 1,
+                    absolute,
+                }
+            }
             _ => DynamicLookupResult::NotFound,
         }
     }
 
-    pub fn can_insert(&mut self, field: &HeaderField) -> bool {
-        let lower_bound = if field.mem_size() <= self.table.mem_limit {
-            self.table.mem_limit - field.mem_size()
-        } else {
-            0
-        };
-        let mut hypothetic_mem_size = self.table.curr_mem_size;
-
-        while !self.table.fields.is_empty()
-            && self.table.curr_mem_size > lower_bound
-            && hypothetic_mem_size >= field.mem_size()
-        {
-            hypothetic_mem_size -= field.mem_size();
-        }
-
-        field.mem_size() <= self.table.mem_limit - hypothetic_mem_size
-    }
-
-    pub fn insert_static(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
-        let index = self.table.put_field(field.clone())?;
-
-        let field_map = self.table.field_map.as_mut().unwrap();
-
-        let result = match field_map.entry(field.clone()) {
-            Entry::Occupied(mut e) => {
-                let ref_index = e.insert(index);
-                DynamicInsertionResult::Duplicated {
-                    relative: index - ref_index - 1,
-                    postbase: index - self.base - 1,
-                    absolute: index,
-                }
-            }
-            Entry::Vacant(e) => {
-                e.insert(index);
-                DynamicInsertionResult::Inserted {
-                    postbase: index - self.base - 1,
-                    absolute: index,
-                }
-            }
-        };
-        Ok(result)
-    }
-
     pub fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
-        let index = self.table.put_field(field.clone())?;
+        let index = if let Some(index) = self.table.put_field(field.clone())? {
+            index
+        } else {
+            return Ok(DynamicInsertionResult::NotInserted(
+                self.find_name(&field.name),
+            ));
+        };
+        self.track_ref(index);
 
         let name_map = self.table.name_map.as_mut().unwrap();
         let field_map = self.table.field_map.as_mut().unwrap();
 
-        match field_map.entry(field.clone()) {
+        let field_index = match field_map.entry(field.clone()) {
             Entry::Occupied(mut e) => {
                 let ref_index = e.insert(index);
                 name_map
                     .entry(field.name.clone())
                     .and_modify(|i| *i = index);
 
-                return Ok(DynamicInsertionResult::Duplicated {
-                    relative: index - ref_index - 1,
-                    postbase: index - self.base - 1,
-                    absolute: index,
-                });
+                Some((
+                    ref_index,
+                    DynamicInsertionResult::Duplicated {
+                        relative: index - ref_index - 1,
+                        postbase: index - self.base - 1,
+                        absolute: index,
+                    },
+                ))
             }
             Entry::Vacant(e) => {
                 e.insert(index);
+                None
             }
+        };
+
+        if let Some((ref_index, result)) = field_index {
+            self.track_ref(ref_index);
+            return Ok(result);
+        }
+
+        if let Some(static_idx) = StaticTable::find_name(&field.name) {
+            return Ok(DynamicInsertionResult::InsertedWithStaticNameRef {
+                postbase: index - self.base - 1,
+                index: static_idx,
+                absolute: index,
+            });
         }
 
         let result = match name_map.entry(field.name.clone()) {
             Entry::Occupied(mut e) => {
                 let ref_index = e.insert(index);
+                self.track_ref(ref_index);
+
                 DynamicInsertionResult::InsertedWithNameRef {
                     postbase: index - self.base - 1,
                     relative: index - ref_index - 1,
@@ -210,6 +228,22 @@ impl<'a> DynamicTableEncoder<'a> {
         Ok(result)
     }
 
+    fn find_name(&mut self, name: &[u8]) -> DynamicLookupResult {
+        if let Some(index) = StaticTable::find_name(name) {
+            return DynamicLookupResult::Static(index);
+        }
+
+        self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).map(|x| *x))
+    }
+
+    fn track_ref(&mut self, reference: usize) {
+        self.bloc_refs
+            .entry(reference)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+        self.table.track_ref(reference);
+    }
+
     pub fn max_mem_size(&self) -> usize {
         self.table.mem_limit
     }
@@ -225,6 +259,7 @@ impl<'a> DynamicTableEncoder<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum DynamicLookupResult {
+    Static(usize),
     Relative { index: usize, absolute: usize },
     PostBase { index: usize, absolute: usize },
     NotFound,
@@ -246,6 +281,12 @@ pub enum DynamicInsertionResult {
         relative: usize,
         absolute: usize,
     },
+    InsertedWithStaticNameRef {
+        postbase: usize,
+        index: usize,
+        absolute: usize,
+    },
+    NotInserted(DynamicLookupResult),
 }
 
 pub struct DynamicTable {
@@ -255,6 +296,8 @@ pub struct DynamicTable {
     vas: VirtualAddressSpace,
     field_map: Option<HashMap<HeaderField, usize>>,
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
+    track_map: Option<BTreeMap<usize, usize>>,
+    track_blocs: Option<HashMap<u64, HashMap<usize, usize>>>,
 }
 
 impl DynamicTable {
@@ -266,6 +309,8 @@ impl DynamicTable {
             vas: VirtualAddressSpace::new(),
             name_map: None,
             field_map: None,
+            track_map: None,
+            track_blocs: None,
         }
     }
 
@@ -277,7 +322,7 @@ impl DynamicTable {
         DynamicTableInserter { table: self }
     }
 
-    pub fn encoder<'a>(&'a mut self) -> DynamicTableEncoder<'a> {
+    pub fn encoder<'a>(&'a mut self, stream_id: u64) -> DynamicTableEncoder<'a> {
         // TODO maintain tracking data and update maps instead of recontructing them
         if self.name_map.is_none() {
             self.name_map = Some(
@@ -302,6 +347,9 @@ impl DynamicTable {
         DynamicTableEncoder {
             base: self.vas.largest_ref(),
             table: self,
+            bloc_refs: HashMap::new(),
+            commited: false,
+            stream_id,
         }
     }
 
@@ -309,52 +357,126 @@ impl DynamicTable {
         self.vas.total_inserted()
     }
 
-    /**
-     * @returns Number of fields removed by resizing
-     */
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<usize, Error> {
-        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
-            return Err(Error::MaximumTableSizeTooLarge);
+    fn put_field(&mut self, field: HeaderField) -> Result<Option<usize>, Error> {
+        if self.mem_limit == 0 {
+            return Ok(None);
         }
 
-        self.mem_limit = size;
-        Ok(self.shrink_to(size))
-    }
-
-    fn put_field(&mut self, field: HeaderField) -> Result<usize, Error> {
-        let at_most = if field.mem_size() <= self.mem_limit {
-            self.mem_limit - field.mem_size()
-        } else {
-            0
-        };
-        let dropped = self.shrink_to(at_most);
-
-        let available = self.mem_limit - self.curr_mem_size;
-        let can_add = field.mem_size() <= available;
-        if !can_add {
-            return Err(Error::MaxTableSizeReached);
+        match self.can_free(field.mem_size())? {
+            None => return Ok(None),
+            Some(x) if x <= 0 => (),
+            Some(to_evict) => {
+                self.evict(to_evict)?;
+            }
         }
 
         self.curr_mem_size += field.mem_size();
         self.fields.push_back(field);
         let absolute = self.vas.add();
-        self.vas.drop_many(dropped);
 
-        Ok(absolute)
+        Ok(Some(absolute))
     }
 
-    fn shrink_to(&mut self, lower_bound: usize) -> usize {
-        let initial = self.fields.len();
-
-        while !self.fields.is_empty() && self.curr_mem_size > lower_bound {
-            let field = self
-                .fields
-                .pop_front()
-                .expect("there is at least one field");
+    fn evict(&mut self, to_evict: usize) -> Result<(), Error> {
+        for _ in 0..to_evict {
+            let field = self.fields.pop_front().ok_or(Error::MaxTableSizeReached)?; //TODO better type
             self.curr_mem_size -= field.mem_size();
         }
+        self.vas.drop_many(to_evict);
+        Ok(())
+    }
 
-        initial - self.fields.len()
+    fn can_free(&mut self, required: usize) -> Result<Option<usize>, Error> {
+        if required > self.mem_limit {
+            return Err(Error::MaxTableSizeReached);
+        }
+
+        if self.mem_limit - self.curr_mem_size >= required {
+            return Ok(Some(0));
+        }
+        let lower_bound = self.mem_limit - required;
+
+        let mut hypothetic_mem_size = self.curr_mem_size;
+        let mut evictable = 0;
+
+        for (idx, to_evict) in self.fields.iter().enumerate() {
+            if hypothetic_mem_size <= lower_bound {
+                break;
+            }
+
+            if self.is_tracked(self.vas.index(idx).unwrap()) {
+                // TODO handle out of bounds error
+                break;
+            }
+
+            evictable += 1;
+            hypothetic_mem_size -= to_evict.mem_size();
+        }
+
+        if required <= self.mem_limit - hypothetic_mem_size {
+            Ok(Some(evictable))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn track_ref(&mut self, reference: usize) {
+        if self.track_map.is_none() {
+            self.track_map = Some(BTreeMap::new());
+        }
+
+        self.track_map
+            .as_mut()
+            .unwrap()
+            .entry(reference)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+    }
+
+    fn is_tracked(&self, reference: usize) -> bool {
+        if self.track_map.is_none() {
+            return false;
+        }
+        match self.track_map.as_ref().unwrap().get(&reference) {
+            Some(count) if *count > 0 => true,
+            _ => false,
+        }
+    }
+
+    fn track_bloc(&mut self, stream_id: u64, refs: HashMap<usize, usize>) {
+        if self.track_blocs.is_none() {
+            self.track_blocs = Some(HashMap::new());
+        }
+
+        match self.track_blocs.as_mut().unwrap().entry(stream_id) {
+            Entry::Occupied(e) => {
+                unimplemented!();
+            }
+            Entry::Vacant(e) => e.insert(refs),
+        };
+    }
+
+    fn track_cancel<T>(&mut self, refs: T)
+    where
+        T: IntoIterator<Item = (usize, usize)>,
+    {
+        if self.track_map.is_none() {
+            return;
+        }
+
+        for (reference, count) in refs {
+            match self.track_map.as_mut().unwrap().entry(reference) {
+                BTEntry::Occupied(mut e) => {
+                    if *e.get() <= count {
+                        e.remove(); // TODO just pu 0 ?
+                    } else {
+                        let entry = e.get_mut();
+                        *entry -= count;
+                    }
+                }
+                _ => (),
+            }
+        }
     }
 
     pub fn max_mem_size(&self) -> usize {
@@ -367,10 +489,6 @@ impl DynamicTable {
             None => Err(Error::BadIndex(index)),
         }
     }
-
-    pub fn count(&self) -> usize {
-        self.fields.len()
-    }
 }
 
 impl From<vas::Error> for Error {
@@ -379,6 +497,7 @@ impl From<vas::Error> for Error {
             vas::Error::BadRelativeIndex(e) => Error::BadRelativeIndex(e),
             vas::Error::BadPostbaseIndex(e) => Error::BadPostbaseIndex(e),
             vas::Error::BadAbsoluteIndex(e) => Error::BadIndex(e),
+            vas::Error::BadIndex(e) => Error::BadIndex(e),
         }
     }
 }
@@ -388,8 +507,9 @@ mod tests {
     use super::*;
     use crate::qpack::table::static_::StaticTable;
 
-    // Test on table size
+    const STREAM_ID: u64 = 0x4;
 
+    // Test on table size
     /**
      * https://tools.ietf.org/html/rfc7541#section-4.1
      * "The size of the dynamic table is the sum of the size of its entries."
@@ -443,7 +563,7 @@ mod tests {
     fn test_try_set_too_large_maximum_table_size() {
         let mut table = DynamicTable::new();
         let invalid_size = SETTINGS_HEADER_TABLE_SIZE_MAX + 10;
-        let res_change = table.set_max_mem_size(invalid_size);
+        let res_change = table.inserter().set_max_mem_size(invalid_size);
         assert_eq!(res_change, Err(Error::MaximumTableSizeTooLarge));
     }
 
@@ -456,7 +576,7 @@ mod tests {
     #[test]
     fn test_maximum_table_size_can_reach_zero() {
         let mut table = DynamicTable::new();
-        let res_change = table.set_max_mem_size(0);
+        let res_change = table.inserter().set_max_mem_size(0);
         assert!(res_change.is_ok());
         assert_eq!(table.max_mem_size(), 0);
     }
@@ -471,7 +591,9 @@ mod tests {
     #[test]
     fn test_maximum_table_size_can_reach_maximum() {
         let mut table = DynamicTable::new();
-        let res_change = table.set_max_mem_size(SETTINGS_HEADER_TABLE_SIZE_MAX);
+        let res_change = table
+            .inserter()
+            .set_max_mem_size(SETTINGS_HEADER_TABLE_SIZE_MAX);
         assert!(res_change.is_ok());
         assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_MAX);
     }
@@ -495,7 +617,7 @@ mod tests {
             .inserter()
             .put_field(HeaderField::new("Name", "Value"))
             .unwrap();
-        assert_eq!(table.count(), 2);
+        assert_eq!(table.fields.len(), 2);
     }
 
     // Test adding fields
@@ -542,7 +664,7 @@ mod tests {
             .put_field(HeaderField::new("Name-B", "Value-B"))
             .unwrap();
         let perfect_size = table.curr_mem_size;
-        assert!(table.set_max_mem_size(perfect_size).is_ok());
+        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
         table.inserter().put_field(field).unwrap();
@@ -569,7 +691,7 @@ mod tests {
             .put_field(HeaderField::new("Name-A", "Value-A"))
             .unwrap();
         let perfect_size = table.curr_mem_size;
-        assert!(table.set_max_mem_size(perfect_size).is_ok());
+        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
         assert_eq!(
@@ -601,11 +723,10 @@ mod tests {
                 HeaderField::new("Name", "Value"),
             ],
         );
-        assert_eq!(table.count(), 2);
+        assert_eq!(table.fields.len(), 2);
 
-        let were_dropped = table.set_max_mem_size(0);
-        assert_eq!(were_dropped, Ok(2));
-        assert_eq!(table.count(), 0);
+        table.inserter().set_max_mem_size(0).unwrap();
+        assert_eq!(table.fields.len(), 0);
     }
 
     /** functional test */
@@ -621,7 +742,7 @@ mod tests {
             ],
         );
         let perfect_size = table.curr_mem_size;
-        assert!(table.set_max_mem_size(perfect_size).is_ok());
+        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
 
         insert_fields(&mut table, vec![HeaderField::new("Name-C", "Value-C")]);
 
@@ -637,7 +758,7 @@ mod tests {
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
 
-        let encoder = table.encoder();
+        let encoder = table.encoder(STREAM_ID);
         assert_eq!(encoder.base, 2);
         let name_map = encoder.table.name_map.as_ref().unwrap();
         let field_map = encoder.table.field_map.as_ref().unwrap();
@@ -656,7 +777,7 @@ mod tests {
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
 
-        let encoder = table.encoder();
+        let mut encoder = table.encoder(STREAM_ID);
         assert_eq!(
             encoder.find(&field_a),
             DynamicLookupResult::Relative {
@@ -702,7 +823,7 @@ mod tests {
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
 
-        let mut encoder = table.encoder();
+        let mut encoder = table.encoder(STREAM_ID);
         assert_eq!(
             encoder.insert(&field_a),
             Ok(DynamicInsertionResult::Duplicated {
@@ -775,7 +896,7 @@ mod tests {
         let mut table = DynamicTable::new();
         let field_a = HeaderField::new("Name-A", "Value-A");
 
-        let mut encoder = table.encoder();
+        let mut encoder = table.encoder(STREAM_ID);
         assert_eq!(
             encoder.insert(&field_a),
             Ok(DynamicInsertionResult::Inserted {
@@ -793,28 +914,15 @@ mod tests {
     }
 
     #[test]
-    fn encode_cannot_insert() {
-        let mut table = DynamicTable::new();
-        table.set_max_mem_size(31).unwrap();
-        let field = HeaderField::new("Name-A", "Value-A");
-
-        let mut encoder = table.encoder();
-        assert!(!encoder.can_insert(&field));
-        assert_eq!(encoder.insert(&field), Err(Error::MaxTableSizeReached));
-
-        assert_eq!(encoder.table.fields.len(), 0);
-    }
-
-    #[test]
     fn insert_static() {
         let mut table = DynamicTable::new();
         let field = HeaderField::new(":method", "Value-A");
         table.inserter().put_field(field.clone()).unwrap();
 
         assert_eq!(StaticTable::find_name(&field.name), Some(21));
-        let mut encoder = table.encoder();
+        let mut encoder = table.encoder(STREAM_ID);
         assert_eq!(
-            encoder.insert_static(&field),
+            encoder.insert(&field),
             Ok(DynamicInsertionResult::Duplicated {
                 relative: 0,
                 postbase: 0,
@@ -822,12 +930,201 @@ mod tests {
             })
         );
         assert_eq!(
-            encoder.insert_static(&field.with_value("Value-B")),
-            Ok(DynamicInsertionResult::Inserted {
+            encoder.insert(&field.with_value("Value-B")),
+            Ok(DynamicInsertionResult::InsertedWithStaticNameRef {
                 postbase: 1,
+                index: 21,
                 absolute: 3
             })
         );
-        assert_eq!(encoder.table.fields.len(), 3);
+        assert_eq!(
+            encoder.insert(&HeaderField::new(":path", "/baz")),
+            Ok(DynamicInsertionResult::InsertedWithStaticNameRef {
+                postbase: 2,
+                index: 1,
+                absolute: 4,
+            })
+        );
+        assert_eq!(encoder.table.fields.len(), 4);
+    }
+
+    #[test]
+    fn cannot_insert_field_greater_than_total_size() {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(33).unwrap();
+        let mut encoder = table.encoder(4);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo", "bar")),
+            Err(Error::MaxTableSizeReached)
+        );
+    }
+
+    #[test]
+    fn encoder_can_evict_unreferenced() {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(63).unwrap();
+        table.put_field(HeaderField::new("foo", "bar")).unwrap();
+
+        assert_eq!(table.fields.len(), 1);
+        assert_eq!(
+            table.encoder(4).insert(&HeaderField::new("baz", "quxx")),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 0,
+                absolute: 2,
+            })
+        );
+        assert_eq!(table.fields.len(), 1);
+    }
+
+    #[test]
+    fn encoder_insertion_tracks_ref() {
+        let mut table = DynamicTable::new();
+        let mut encoder = table.encoder(4);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("baz", "quxx")),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 0,
+                absolute: 1,
+            })
+        );
+        assert_eq!(
+            encoder
+                .table
+                .track_map
+                .as_ref()
+                .unwrap()
+                .get(&1)
+                .map(|x| *x),
+            Some(1)
+        );
+        assert_eq!(encoder.bloc_refs.get(&1).map(|x| *x), Some(1));
+    }
+
+    #[test]
+    fn encoder_insertion_refs_commited() {
+        let mut table = DynamicTable::new();
+        let stream_id = 42;
+        {
+            let mut encoder = table.encoder(stream_id);
+            for idx in 1..4 {
+                encoder
+                    .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
+                    .unwrap();
+            }
+            assert_eq!(encoder.bloc_refs.len(), 3);
+            encoder.commit();
+        }
+
+        let track_map = table.track_map.as_ref().unwrap();
+        for idx in 1..4 {
+            assert_eq!(table.is_tracked(idx), true);
+            assert_eq!(track_map.get(&1), Some(&1));
+        }
+        let track_blocs = table.track_blocs.as_ref().unwrap();
+        let bloc = track_blocs.get(&stream_id).unwrap();
+        assert_eq!(bloc.get(&1), Some(&1));
+        assert_eq!(bloc.get(&2), Some(&1));
+        assert_eq!(bloc.get(&3), Some(&1));
+    }
+
+    #[test]
+    fn encoder_insertion_refs_not_commited() {
+        let mut table = DynamicTable::new();
+        table.track_blocs = Some(HashMap::new());
+        let stream_id = 42;
+        {
+            let mut encoder = table.encoder(stream_id);
+            for idx in 1..4 {
+                encoder
+                    .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
+                    .unwrap();
+            }
+            assert_eq!(encoder.bloc_refs.len(), 3);
+        } // dropped without ::commit()
+
+        let track_map = table.track_map.as_ref().unwrap();
+        assert_eq!(track_map.len(), 0);
+        let track_blocs = table.track_blocs.as_ref().unwrap();
+        assert_eq!(track_blocs.len(), 0);
+    }
+
+    #[test]
+    fn encoder_insertion_with_ref_tracks_both() {
+        let mut table = DynamicTable::new();
+        table.put_field(HeaderField::new("foo", "bar")).unwrap();
+        table.track_blocs = Some(HashMap::new());
+
+        let stream_id = 42;
+        let mut encoder = table.encoder(stream_id);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo", "quxx")),
+            Ok(DynamicInsertionResult::InsertedWithNameRef {
+                postbase: 0,
+                relative: 0,
+                absolute: 2,
+            })
+        );
+
+        let track_map = encoder.table.track_map.as_ref().unwrap();
+        assert_eq!(track_map.get(&1), Some(&1));
+        assert_eq!(track_map.get(&2), Some(&1));
+        assert_eq!(encoder.bloc_refs.get(&1), Some(&1));
+        assert_eq!(encoder.bloc_refs.get(&2), Some(&1));
+    }
+
+    #[test]
+    fn encoder_ref_count_are_incremented() {
+        let mut table = DynamicTable::new();
+        table.put_field(HeaderField::new("foo", "bar")).unwrap();
+        table.track_blocs = Some(HashMap::new());
+        table.track_ref(1);
+
+        let stream_id = 42;
+        {
+            let mut encoder = table.encoder(stream_id);
+            encoder.track_ref(1);
+            encoder.track_ref(2);
+            encoder.track_ref(2);
+
+            let track_map = encoder.table.track_map.as_ref().unwrap();
+            assert_eq!(track_map.get(&1), Some(&2));
+            assert_eq!(track_map.get(&2), Some(&2));
+            assert_eq!(encoder.bloc_refs.get(&1), Some(&1));
+            assert_eq!(encoder.bloc_refs.get(&2), Some(&2));
+        }
+
+        // check ref count is correctly decremented after uncommited drop()
+        let track_map = table.track_map.as_ref().unwrap();
+        assert_eq!(track_map.get(&1), Some(&1));
+        assert_eq!(track_map.get(&2), None);
+    }
+
+    #[test]
+    fn encoder_does_not_evict_referenced() {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(95).unwrap();
+        table.put_field(HeaderField::new("foo", "bar")).unwrap();
+
+        let stream_id = 42;
+        let mut encoder = table.encoder(stream_id);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo", "quxx")),
+            Ok(DynamicInsertionResult::InsertedWithNameRef {
+                postbase: 0,
+                relative: 0,
+                absolute: 2,
+            })
+        );
+        assert!(encoder.table.is_tracked(1));
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo", "baz")),
+            Ok(DynamicInsertionResult::NotInserted(
+                DynamicLookupResult::PostBase {
+                    index: 0,
+                    absolute: 2,
+                }
+            ))
+        );
+        assert_eq!(encoder.table.fields.len(), 2);
     }
 }
