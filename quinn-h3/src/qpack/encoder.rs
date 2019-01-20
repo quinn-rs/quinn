@@ -10,22 +10,20 @@ use std::io::Cursor;
 
 use quinn_proto::coding::{BufMutExt, Codec};
 
+use super::bloc::{
+    HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+    LiteralWithPostBaseNameRef,
+};
+use super::prefix_string::Error as StringError;
+use super::stream::{
+    Duplicate, DynamicTableSizeUpdate, InsertWithNameRef, InsertWithoutNameRef, InstructionType,
+    TableSizeSync,
+};
 use super::table::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
     DynamicTableError, HeaderField, StaticTable,
 };
 use super::vas::VirtualAddressSpace;
-
-use super::bloc::{
-    HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
-    LiteralWithPostBaseNameRef,
-};
-use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, InsertWithNameRef, InsertWithoutNameRef, InstructionType,
-    TableSizeSync,
-};
-
-use super::prefix_string::Error as StringError;
 
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
@@ -49,8 +47,9 @@ pub fn encode<W: BufMut>(
         table.max_mem_size(),
     )
     .encode(bloc);
-
     bloc.put(bloc_buf);
+
+    table.commit();
 
     Ok(required_ref)
 }
@@ -68,53 +67,31 @@ fn encode_field<W: BufMut>(
 
     if let DynamicLookupResult::Relative { index, absolute } = table.find(field) {
         Indexed::Dynamic(index).encode(bloc);
-        Ok(Some(absolute))
-    } else if table.can_insert(&field) {
-        encode_field_insert(table, bloc, encoder, field)
-    } else {
-        encode_field_literal(table, bloc, field)
-    }
-}
-
-fn encode_field_insert<W: BufMut>(
-    table: &mut DynamicTableEncoder,
-    bloc: &mut Vec<u8>,
-    encoder: &mut W,
-    field: &HeaderField,
-) -> Result<Option<usize>, Error> {
-    if let Some(static_index) = StaticTable::find_name(&field.name) {
-        match table.insert_static(&field)? {
-            DynamicInsertionResult::Duplicated {
-                relative,
-                postbase,
-                absolute,
-            } => {
-                Duplicate(relative).encode(encoder);
-                IndexedWithPostBase(postbase).encode(bloc);
-                return Ok(Some(absolute));
-            }
-            DynamicInsertionResult::Inserted { postbase, absolute } => {
-                InsertWithNameRef::new_static(static_index, field.value.clone()).encode(encoder)?;
-                IndexedWithPostBase(postbase).encode(bloc);
-                return Ok(Some(absolute));
-            }
-            _ => unreachable!(),
-        }
+        return Ok(Some(absolute));
     }
 
-    let reference = match table.insert(&field)? {
-        DynamicInsertionResult::Inserted { postbase, absolute } => {
-            InsertWithoutNameRef::new(field.name.clone(), field.value.clone()).encode(encoder)?;
-            IndexedWithPostBase(postbase).encode(bloc);
-            Some(absolute)
-        }
+    let reference = match table.insert(field)? {
         DynamicInsertionResult::Duplicated {
             relative,
             postbase,
             absolute,
         } => {
             Duplicate(relative).encode(encoder);
-            Indexed::Dynamic(postbase).encode(bloc);
+            IndexedWithPostBase(postbase).encode(bloc);
+            Some(absolute)
+        }
+        DynamicInsertionResult::Inserted { postbase, absolute } => {
+            InsertWithoutNameRef::new(field.name.clone(), field.value.clone()).encode(encoder)?;
+            IndexedWithPostBase(postbase).encode(bloc);
+            Some(absolute)
+        }
+        DynamicInsertionResult::InsertedWithStaticNameRef {
+            postbase,
+            index,
+            absolute,
+        } => {
+            InsertWithNameRef::new_static(index, field.value.clone()).encode(encoder)?;
+            IndexedWithPostBase(postbase).encode(bloc);
             Some(absolute)
         }
         DynamicInsertionResult::InsertedWithNameRef {
@@ -126,33 +103,24 @@ fn encode_field_insert<W: BufMut>(
             IndexedWithPostBase(postbase).encode(bloc);
             Some(absolute)
         }
-    };
-    Ok(reference)
-}
-
-pub fn encode_field_literal<W: BufMut>(
-    table: &DynamicTableEncoder,
-    bloc: &mut W,
-    field: &HeaderField,
-) -> Result<Option<usize>, Error> {
-    if let Some(static_index) = StaticTable::find_name(&field.name) {
-        LiteralWithNameRef::new_static(static_index, field.value.clone()).encode(bloc)?;
-        return Ok(None);
-    }
-
-    let reference = match table.find_name(&field.name) {
-        DynamicLookupResult::Relative { index, absolute } => {
-            LiteralWithNameRef::new_dynamic(index, field.value.clone()).encode(bloc)?;
-            Some(absolute)
-        }
-        DynamicLookupResult::PostBase { index, absolute } => {
-            LiteralWithPostBaseNameRef::new(index, field.value.clone()).encode(bloc)?;
-            Some(absolute)
-        }
-        DynamicLookupResult::NotFound => {
-            Literal::new(field.name.clone(), field.value.clone()).encode(bloc)?;
-            None
-        }
+        DynamicInsertionResult::NotInserted(lookup_result) => match lookup_result {
+            DynamicLookupResult::Static(index) => {
+                LiteralWithNameRef::new_static(index, field.value.clone()).encode(bloc)?;
+                None
+            }
+            DynamicLookupResult::Relative { index, absolute } => {
+                LiteralWithNameRef::new_dynamic(index, field.value.clone()).encode(bloc)?;
+                Some(absolute)
+            }
+            DynamicLookupResult::PostBase { index, absolute } => {
+                LiteralWithPostBaseNameRef::new(index, field.value.clone()).encode(bloc)?;
+                Some(absolute)
+            }
+            DynamicLookupResult::NotFound => {
+                Literal::new(field.name.clone(), field.value.clone()).encode(bloc)?;
+                None
+            }
+        },
     };
     Ok(reference)
 }
@@ -185,13 +153,14 @@ mod tests {
         field: &[HeaderField],
         check: &Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
-        check_encode_field_table(&mut DynamicTable::new(), init_fields, field, check);
+        check_encode_field_table(&mut DynamicTable::new(), init_fields, field, 1, check);
     }
 
     fn check_encode_field_table(
         table: &mut DynamicTable,
         init_fields: &[HeaderField],
         field: &[HeaderField],
+        stream_id: u64,
         check: &Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
         for field in init_fields {
@@ -200,11 +169,13 @@ mod tests {
 
         let mut encoder = Vec::new();
         let mut bloc = Vec::new();
-        let mut enc_table = table.encoder();
+        let mut enc_table = table.encoder(stream_id);
 
         for field in field {
             encode_field(&mut enc_table, &mut bloc, &mut encoder, field).unwrap();
         }
+
+        enc_table.commit();
 
         let mut read_bloc = Cursor::new(&mut bloc);
         let mut read_encoder = Cursor::new(&mut encoder);
@@ -281,9 +252,9 @@ mod tests {
     #[test]
     fn encode_literal() {
         let mut table = DynamicTable::new();
-        table.set_max_mem_size(0).unwrap();
+        table.inserter().set_max_mem_size(0).unwrap();
         let field = HeaderField::new("foo", "bar");
-        check_encode_field_table(&mut table, &[], &[field], &|mut b, e| {
+        check_encode_field_table(&mut table, &[], &[field], 1, &|mut b, e| {
             assert_eq!(Literal::decode(&mut b), Ok(Literal::new("foo", "bar")));
             assert_eq!(e.get_ref().len(), 0);
         });
@@ -292,12 +263,20 @@ mod tests {
     #[test]
     fn encode_literal_nameref() {
         let mut table = DynamicTable::new();
-        table.set_max_mem_size(63).unwrap();
+        table.inserter().set_max_mem_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
+
+        check_encode_field_table(&mut table, &[], &[field.clone()], 1, &|mut b, _| {
+            assert_eq!(
+                IndexedWithPostBase::decode(&mut b),
+                Ok(IndexedWithPostBase(0))
+            );
+        });
         check_encode_field_table(
             &mut table,
             &[field.clone()],
             &[field.with_value("quxx")],
+            2,
             &|mut b, e| {
                 assert_eq!(
                     LiteralWithNameRef::decode(&mut b),
@@ -311,12 +290,13 @@ mod tests {
     #[test]
     fn encode_literal_postbase_nameref() {
         let mut table = DynamicTable::new();
-        table.set_max_mem_size(63).unwrap();
+        table.inserter().set_max_mem_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(
             &mut table,
             &[],
             &[field.clone(), field.with_value("quxx")],
+            1,
             &|mut b, mut e| {
                 assert_eq!(
                     IndexedWithPostBase::decode(&mut b),
@@ -360,7 +340,7 @@ mod tests {
         ];
 
         assert_eq!(
-            encode(&mut table.encoder(), &mut bloc, &mut encoder, &fields),
+            encode(&mut table.encoder(1), &mut bloc, &mut encoder, &fields),
             Ok(7)
         );
 
