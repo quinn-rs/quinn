@@ -60,7 +60,7 @@ pub mod tls;
 mod udp;
 
 use std::cell::RefCell;
-use std::collections::{hash_map, VecDeque};
+use std::collections::VecDeque;
 use std::net::{SocketAddr, SocketAddrV6};
 use std::rc::Rc;
 use std::str;
@@ -389,9 +389,8 @@ impl Future for Driver {
                         endpoint.inner.timeout(now, ch, timer);
                         if timer == quinn::Timer::Close {
                             // Connection drained
-                            if let Some(p) = endpoint.pending.get_mut(&ch) {
-                                p.drained = true;
-                                if let Some(x) = p.closing.take() {
+                            if let Some(p) = endpoint.pending.remove(&ch) {
+                                if let Some(x) = p.closing {
                                     let _ = x.send(());
                                 }
                             }
@@ -507,7 +506,6 @@ struct Pending {
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
     closing: Option<oneshot::Sender<()>>,
-    drained: bool,
 }
 
 impl Pending {
@@ -523,7 +521,6 @@ impl Pending {
             finishing: FnvHashMap::default(),
             error: None,
             closing: None,
-            drained: false,
         }
     }
 
@@ -748,8 +745,8 @@ struct ConnectionInner {
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.borrow_mut();
-        if let hash_map::Entry::Occupied(pending) = endpoint.pending.entry(self.handle) {
-            if pending.get().closing.is_none() && !pending.get().drained {
+        if let Some(pending) = endpoint.pending.get(&self.handle) {
+            if pending.closing.is_none() {
                 endpoint.inner.close(
                     micros_from(endpoint.epoch.elapsed()),
                     self.handle,
@@ -760,9 +757,6 @@ impl Drop for ConnectionInner {
                     x.notify();
                 }
             }
-            pending.remove_entry();
-        } else {
-            unreachable!()
         }
     }
 }
