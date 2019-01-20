@@ -27,7 +27,7 @@ fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.6"
 ring = "0.14.1"
-rustls = { git = "https://github.com/Ralith/rustls.git", rev = "6cb47566ee1a2bb480bfd18243be5f02fd355360", features = ["quic"] }
+rustls = { version = "0.15", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
 webpki = "0.19"
