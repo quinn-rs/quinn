@@ -209,6 +209,7 @@ impl Endpoint {
             };
             let handle = endpoint.inner.connect(addr, config, server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
+            endpoint.notify();
             handle
         };
         let conn = ConnectionInner {
