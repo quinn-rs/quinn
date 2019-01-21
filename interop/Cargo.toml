@@ -5,7 +5,7 @@ authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-quinn = { path = "../quinn", version = "0.1.0" }
+quinn = { path = "../quinn" }
 slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"
