@@ -60,7 +60,7 @@ pub mod tls;
 mod udp;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{hash_map, VecDeque};
 use std::net::{SocketAddr, SocketAddrV6};
 use std::rc::Rc;
 use std::str;
@@ -390,9 +390,14 @@ impl Future for Driver {
                         endpoint.inner.timeout(now, ch, timer);
                         if timer == quinn::Timer::Close {
                             // Connection drained
-                            if let Some(p) = endpoint.pending.remove(&ch) {
-                                if let Some(x) = p.closing {
+                            if let hash_map::Entry::Occupied(mut p) = endpoint.pending.entry(ch) {
+                                if let Some(x) = p.get_mut().closing.take() {
                                     let _ = x.send(());
+                                }
+                                if p.get().dropped {
+                                    p.remove();
+                                } else {
+                                    p.get_mut().drained = true;
                                 }
                             }
                         }
@@ -507,6 +512,8 @@ struct Pending {
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
     closing: Option<oneshot::Sender<()>>,
+    dropped: bool,
+    drained: bool,
 }
 
 impl Pending {
@@ -522,6 +529,8 @@ impl Pending {
             finishing: FnvHashMap::default(),
             error: None,
             closing: None,
+            dropped: false,
+            drained: false,
         }
     }
 
@@ -746,8 +755,13 @@ struct ConnectionInner {
 impl Drop for ConnectionInner {
     fn drop(&mut self) {
         let endpoint = &mut *self.endpoint.borrow_mut();
-        if let Some(pending) = endpoint.pending.get(&self.handle) {
-            if pending.closing.is_none() {
+        if let hash_map::Entry::Occupied(mut pending) = endpoint.pending.entry(self.handle) {
+            if pending.get().drained {
+                pending.remove();
+                return;
+            }
+            pending.get_mut().dropped = true;
+            if pending.get().closing.is_none() {
                 endpoint.inner.close(
                     micros_from(endpoint.epoch.elapsed()),
                     self.handle,
