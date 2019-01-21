@@ -2,7 +2,7 @@
 // TODO remove allow dead code
 #![allow(dead_code)]
 
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 use std::borrow::Cow;
 use std::cmp;
 use std::collections::VecDeque;
@@ -14,16 +14,18 @@ use super::bloc::{
     HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
+use super::prefix_int::Error as IntError;
 use super::prefix_string::Error as StringError;
 use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, InsertCountIncrement, InsertWithNameRef,
-    InsertWithoutNameRef,
+    DecoderInstruction, Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck,
+    InsertCountIncrement, InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
 use super::table::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
     DynamicTableError, HeaderField, StaticTable,
 };
 use super::vas::VirtualAddressSpace;
+use super::ParseError;
 
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
@@ -125,10 +127,55 @@ fn encode_field<W: BufMut>(
     Ok(reference)
 }
 
+pub fn on_decoder_recv<R: Buf>(table: &mut DynamicTable, read: &mut R) -> Result<(), Error> {
+    while let Some(instruction) = parse_instruction(read)? {
+        match instruction {
+            Instruction::Untrack(stream_id) => table.untrack_bloc(stream_id)?,
+            Instruction::RecievedRef(idx) => table.update_largest_recieved(idx),
+        }
+    }
+    Ok(())
+}
+
+fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error> {
+    if read.remaining() < 1 {
+        return Ok(None);
+    }
+
+    let mut buf = Cursor::new(read.bytes());
+    let first = buf.bytes()[0];
+    let instruction = match DecoderInstruction::decode(first) {
+        DecoderInstruction::Unknown => return Err(Error::UnknownPrefix),
+        DecoderInstruction::InsertCountIncrement => {
+            InsertCountIncrement::decode(&mut buf)?.map(|x| Instruction::RecievedRef(x.0))
+        }
+        DecoderInstruction::HeaderAck => {
+            HeaderAck::decode(&mut buf)?.map(|x| Instruction::Untrack(x.0))
+        }
+        DecoderInstruction::StreamCancel => {
+            StreamCancel::decode(&mut buf)?.map(|x| Instruction::Untrack(x.0))
+        }
+    };
+
+    if instruction.is_some() {
+        read.advance(buf.position() as usize);
+    }
+
+    Ok(instruction)
+}
+
+#[derive(Debug, PartialEq)]
+enum Instruction {
+    RecievedRef(usize),
+    Untrack(u64),
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Error {
     Insertion(DynamicTableError),
     InvalidString(StringError),
+    InvalidInteger(IntError),
+    UnknownPrefix,
 }
 
 impl From<DynamicTableError> for Error {
@@ -143,10 +190,22 @@ impl From<StringError> for Error {
     }
 }
 
+impl From<ParseError> for Error {
+    fn from(e: ParseError) -> Self {
+        match e {
+            ParseError::InvalidInteger(x) => Error::InvalidInteger(x),
+            ParseError::InvalidString(x) => Error::InvalidString(x),
+            ParseError::InvalidPrefix(_) => Error::UnknownPrefix,
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::qpack::table::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use std::collections::HashMap;
 
     fn check_encode_field(
         init_fields: &[HeaderField],
@@ -385,4 +444,98 @@ mod tests {
         );
         assert_eq!(read_bloc.get_ref().len() as u64, read_bloc.position());
     }
+
+    #[test]
+    fn decoder_bloc_ack() {
+        let mut table = DynamicTable::new();
+
+        let field = HeaderField::new("foo", "bar");
+        check_encode_field_table(
+            &mut table,
+            &[],
+            &[field.clone(), field.with_value("quxx")],
+            2,
+            &|_, _| {},
+        );
+
+        let mut buf = vec![];
+
+        HeaderAck(2).encode(&mut buf);
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            parse_instruction(&mut cur),
+            Ok(Some(Instruction::Untrack(2)))
+        );
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(on_decoder_recv(&mut table, &mut cur), Ok(()),);
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            on_decoder_recv(&mut table, &mut cur),
+            Err(Error::Insertion(DynamicTableError::UnknownStreamId(2)))
+        );
+    }
+
+    #[test]
+    fn decoder_stream_cacnceled() {
+        let mut table = DynamicTable::new();
+
+        let field = HeaderField::new("foo", "bar");
+        check_encode_field_table(
+            &mut table,
+            &[],
+            &[field.clone(), field.with_value("quxx")],
+            2,
+            &|_, _| {},
+        );
+
+        let mut buf = vec![];
+
+        StreamCancel(2).encode(&mut buf);
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            parse_instruction(&mut cur),
+            Ok(Some(Instruction::Untrack(2)))
+        );
+    }
+
+    #[test]
+    fn decoder_accept_trucated() {
+        let mut buf = vec![];
+        StreamCancel(2321).encode(&mut buf);
+
+        let mut cur = Cursor::new(&buf[..2]); // trucated prefix_int
+        assert_eq!(parse_instruction(&mut cur), Ok(None));
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            parse_instruction(&mut cur),
+            Ok(Some(Instruction::Untrack(2321)))
+        );
+    }
+
+    #[test]
+    fn decoder_unknown_stream() {
+        let mut table = DynamicTable::new();
+
+        check_encode_field_table(
+            &mut table,
+            &[],
+            &[HeaderField::new("foo", "bar")],
+            2,
+            &|_, _| {},
+        );
+
+        let mut buf = vec![];
+        StreamCancel(4).encode(&mut buf);
+
+        let mut cur = Cursor::new(&buf); // trucated prefix_int
+        assert_eq!(
+            on_decoder_recv(&mut table, &mut cur),
+            Err(Error::Insertion(DynamicTableError::UnknownStreamId(4)))
+        );
+    }
+    // wrong stream throws
+    // largest ref
 }
