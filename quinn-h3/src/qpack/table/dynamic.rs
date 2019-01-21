@@ -115,8 +115,10 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
     fn drop(&mut self) {
         if !self.commited {
             // TODO maybe possible to replace and not clone here?
+            // HOW Err should be handled?
             self.table
-                .track_cancel(self.bloc_refs.iter().map(|(x, y)| (*x, *y)));
+                .track_cancel(self.bloc_refs.iter().map(|(x, y)| (*x, *y)))
+                .ok();
             return;
         }
 
@@ -371,7 +373,7 @@ impl DynamicTable {
             self.track_cancel(bloc_entry.iter().map(|(x, y)| (*x, *y)))?;
             Ok(())
         } else {
-            Err(Error::InvalidTrackingCount)
+            Err(Error::UnknownStreamId(stream_id))
         }
     }
 
@@ -485,7 +487,6 @@ impl DynamicTable {
         for (reference, count) in refs {
             match self.track_map.as_mut().unwrap().entry(reference) {
                 BTEntry::Occupied(mut e) => {
-                    println!("entry = {}, count = {}", e.get(), count);
                     if *e.get() < count {
                         return Err(Error::InvalidTrackingCount);
                     } else if *e.get() == count {
@@ -1204,6 +1205,6 @@ mod tests {
     #[test]
     fn untrack_bloc_wrong_stream() {
         let mut table = tracked_table(41);
-        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
+        assert_eq!(table.untrack_bloc(42), Err(Error::UnknownStreamId(42)));
     }
 }
