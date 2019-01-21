@@ -7,7 +7,7 @@ use super::prefix_string::{self, Error as StringError};
 use super::table::field::HeaderField;
 use super::ParseError;
 
-pub enum InstructionType {
+pub enum EncoderInstruction {
     InsertWithNameRef,
     InsertWithoutNameRef,
     Duplicate,
@@ -15,18 +15,18 @@ pub enum InstructionType {
     Unknown,
 }
 
-impl InstructionType {
+impl EncoderInstruction {
     pub fn decode(first: u8) -> Self {
         if first & 0b1000_0000 != 0 {
-            InstructionType::InsertWithNameRef
+            EncoderInstruction::InsertWithNameRef
         } else if first & 0b0100_0000 == 0b0100_0000 {
-            InstructionType::InsertWithoutNameRef
+            EncoderInstruction::InsertWithoutNameRef
         } else if first & 0b1110_0000 == 0 {
-            InstructionType::Duplicate
+            EncoderInstruction::Duplicate
         } else if first & 0b0010_0000 == 0b0010_0000 {
-            InstructionType::DynamicTableSizeUpdate
+            EncoderInstruction::DynamicTableSizeUpdate
         } else {
-            InstructionType::Unknown
+            EncoderInstruction::Unknown
         }
     }
 }
@@ -164,11 +164,33 @@ impl DynamicTableSizeUpdate {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct TableSizeSync {
+pub enum DecoderInstruciton {
+    InsertCountIncrement,
+    HeaderAck,
+    StreamCancel,
+    Unknown,
+}
+
+impl DecoderInstruciton {
+    pub fn decode(first: u8) -> Self {
+        if first & 0b1100_0000 == 0 {
+            DecoderInstruciton::InsertCountIncrement
+        } else if first & 0b1000_0000 != 0 {
+            DecoderInstruciton::HeaderAck
+        } else if first & 0b0100_0000 == 0b0100_0000 {
+            DecoderInstruciton::StreamCancel
+        } else {
+            DecoderInstruciton::Unknown
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct InsertCountIncrement {
     pub insert_count: usize,
 }
 
-impl TableSizeSync {
+impl InsertCountIncrement {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
         let insert_count = match prefix_int::decode(6, buf) {
             Ok((0b00, x)) => x,
@@ -176,11 +198,53 @@ impl TableSizeSync {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(TableSizeSync { insert_count }))
+        Ok(Some(InsertCountIncrement { insert_count }))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         prefix_int::encode(6, 0b00, self.insert_count, buf);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct HeaderAck {
+    pub stream_id: u64,
+}
+
+impl HeaderAck {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
+        let stream_id = match prefix_int::decode(7, buf) {
+            Ok((0b1, x)) => x as u64,
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
+            Err(IntError::UnexpectedEnd) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Some(HeaderAck { stream_id }))
+    }
+
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        prefix_int::encode(7, 0b1, self.stream_id as usize, buf);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StreamCancel {
+    pub stream_id: u64,
+}
+
+impl StreamCancel {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
+        let stream_id = match prefix_int::decode(6, buf) {
+            Ok((0b01, x)) => x as u64,
+            Ok((f, _)) => return Err(ParseError::InvalidPrefix(f)),
+            Err(IntError::UnexpectedEnd) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Some(StreamCancel { stream_id }))
+    }
+
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+        prefix_int::encode(6, 0b01, self.stream_id as usize, buf);
     }
 }
 
@@ -231,11 +295,32 @@ mod test {
     }
 
     #[test]
-    fn table_size_sync() {
-        let instruction = TableSizeSync { insert_count: 42 };
+    fn insert_count_increment() {
+        let instruction = InsertCountIncrement { insert_count: 42 };
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);
-        assert_eq!(TableSizeSync::decode(&mut read), Ok(Some(instruction)));
+        assert_eq!(
+            InsertCountIncrement::decode(&mut read),
+            Ok(Some(instruction))
+        );
+    }
+
+    #[test]
+    fn header_ack() {
+        let instruction = HeaderAck { stream_id: 42 };
+        let mut buf = vec![];
+        instruction.encode(&mut buf);
+        let mut read = Cursor::new(&buf);
+        assert_eq!(HeaderAck::decode(&mut read), Ok(Some(instruction)));
+    }
+
+    #[test]
+    fn stream_cancel() {
+        let instruction = StreamCancel { stream_id: 42 };
+        let mut buf = vec![];
+        instruction.encode(&mut buf);
+        let mut read = Cursor::new(&buf);
+        assert_eq!(StreamCancel::decode(&mut read), Ok(Some(instruction)));
     }
 }
