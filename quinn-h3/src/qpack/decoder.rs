@@ -17,8 +17,8 @@ use super::bloc::{
     LiteralWithPostBaseNameRef,
 };
 use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, InsertWithNameRef, InsertWithoutNameRef, InstructionType,
-    TableSizeSync,
+    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, InsertCountIncrement, InsertWithNameRef,
+    InsertWithoutNameRef,
 };
 use super::ParseError;
 
@@ -119,7 +119,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
 
     if table.total_inserted() != inserted_on_start {
         //TODO RENAME
-        TableSizeSync {
+        InsertCountIncrement {
             insert_count: table.total_inserted() - inserted_on_start,
         }
         .encode(write);
@@ -138,18 +138,18 @@ fn parse_instruction<R: Buf>(
 
     let mut buf = Cursor::new(read.bytes());
     let first = buf.bytes()[0];
-    let instruction = match InstructionType::decode(first) {
-        InstructionType::Unknown => return Err(Error::UnknownPrefix),
-        InstructionType::DynamicTableSizeUpdate => {
+    let instruction = match EncoderInstruction::decode(first) {
+        EncoderInstruction::Unknown => return Err(Error::UnknownPrefix),
+        EncoderInstruction::DynamicTableSizeUpdate => {
             DynamicTableSizeUpdate::decode(&mut buf)?.map(|x| Instruction::TableSizeUpdate(x.size))
         }
-        InstructionType::InsertWithoutNameRef => InsertWithoutNameRef::decode(&mut buf)?
+        EncoderInstruction::InsertWithoutNameRef => InsertWithoutNameRef::decode(&mut buf)?
             .map(|x| Instruction::Insert(HeaderField::new(x.name, x.value))),
-        InstructionType::Duplicate => match Duplicate::decode(&mut buf)? {
+        EncoderInstruction::Duplicate => match Duplicate::decode(&mut buf)? {
             Some(Duplicate(index)) => Some(Instruction::Insert(table.get_relative(index)?.clone())),
             None => None,
         },
-        InstructionType::InsertWithNameRef => match InsertWithNameRef::decode(&mut buf)? {
+        EncoderInstruction::InsertWithNameRef => match InsertWithNameRef::decode(&mut buf)? {
             Some(InsertWithNameRef::Static { index, value }) => Some(Instruction::Insert(
                 StaticTable::get(index)?.with_value(value),
             )),
@@ -249,8 +249,8 @@ mod tests {
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
-            TableSizeSync::decode(&mut dec_cursor),
-            Ok(Some(TableSizeSync { insert_count: 1 }))
+            InsertCountIncrement::decode(&mut dec_cursor),
+            Ok(Some(InsertCountIncrement { insert_count: 1 }))
         );
     }
 
@@ -317,8 +317,8 @@ mod tests {
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
-            TableSizeSync::decode(&mut dec_cursor),
-            Ok(Some(TableSizeSync { insert_count: 1 }))
+            InsertCountIncrement::decode(&mut dec_cursor),
+            Ok(Some(InsertCountIncrement { insert_count: 1 }))
         );
     }
 
@@ -351,8 +351,8 @@ mod tests {
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
-            TableSizeSync::decode(&mut dec_cursor),
-            Ok(Some(TableSizeSync { insert_count: 1 }))
+            InsertCountIncrement::decode(&mut dec_cursor),
+            Ok(Some(InsertCountIncrement { insert_count: 1 }))
         );
     }
 

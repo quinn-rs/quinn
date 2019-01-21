@@ -16,8 +16,8 @@ use super::bloc::{
 };
 use super::prefix_string::Error as StringError;
 use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, InsertWithNameRef, InsertWithoutNameRef, InstructionType,
-    TableSizeSync,
+    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, InsertCountIncrement, InsertWithNameRef,
+    InsertWithoutNameRef,
 };
 use super::table::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
