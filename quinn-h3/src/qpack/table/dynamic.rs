@@ -32,6 +32,9 @@ pub enum Error {
     BadIndex(usize),
     MaxTableSizeReached,
     MaximumTableSizeTooLarge,
+    UnknownStreamId(u64),
+    NoTrackingData,
+    InvalidTrackingCount,
 }
 
 pub struct DynamicTableDecoder<'a> {
@@ -298,6 +301,7 @@ pub struct DynamicTable {
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
     track_map: Option<BTreeMap<usize, usize>>,
     track_blocs: Option<HashMap<u64, HashMap<usize, usize>>>,
+    largest_known_recieved: usize,
 }
 
 impl DynamicTable {
@@ -311,6 +315,7 @@ impl DynamicTable {
             field_map: None,
             track_map: None,
             track_blocs: None,
+            largest_known_recieved: 0,
         }
     }
 
@@ -355,6 +360,19 @@ impl DynamicTable {
 
     pub fn total_inserted(&self) -> usize {
         self.vas.total_inserted()
+    }
+
+    pub fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
+        if self.track_blocs.is_none() || self.track_map.is_none() {
+            return Err(Error::NoTrackingData);
+        }
+
+        if let Some(bloc_entry) = self.track_blocs.as_mut().unwrap().remove(&stream_id) {
+            self.track_cancel(bloc_entry.iter().map(|(x, y)| (*x, *y)))?;
+            Ok(())
+        } else {
+            Err(Error::InvalidTrackingCount)
+        }
     }
 
     fn put_field(&mut self, field: HeaderField) -> Result<Option<usize>, Error> {
@@ -456,27 +474,35 @@ impl DynamicTable {
         };
     }
 
-    fn track_cancel<T>(&mut self, refs: T)
+    fn track_cancel<T>(&mut self, refs: T) -> Result<(), Error>
     where
         T: IntoIterator<Item = (usize, usize)>,
     {
         if self.track_map.is_none() {
-            return;
+            return Err(Error::NoTrackingData);
         }
 
         for (reference, count) in refs {
             match self.track_map.as_mut().unwrap().entry(reference) {
                 BTEntry::Occupied(mut e) => {
-                    if *e.get() <= count {
+                    println!("entry = {}, count = {}", e.get(), count);
+                    if *e.get() < count {
+                        return Err(Error::InvalidTrackingCount);
+                    } else if *e.get() == count {
                         e.remove(); // TODO just pu 0 ?
                     } else {
                         let entry = e.get_mut();
                         *entry -= count;
                     }
                 }
-                _ => (),
+                BTEntry::Vacant(_) => return Err(Error::InvalidTrackingCount),
             }
         }
+        Ok(())
+    }
+
+    pub fn update_largest_recieved(&mut self, index: usize) {
+        self.largest_known_recieved = std::cmp::max(index, self.largest_known_recieved);
     }
 
     pub fn max_mem_size(&self) -> usize {
@@ -1126,5 +1152,58 @@ mod tests {
             ))
         );
         assert_eq!(encoder.table.fields.len(), 2);
+    }
+
+    fn tracked_table(stream_id: u64) -> DynamicTable {
+        let mut table = DynamicTable::new();
+        table.track_blocs = Some(HashMap::new());
+        {
+            let mut encoder = table.encoder(stream_id);
+            for idx in 1..4 {
+                encoder
+                    .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
+                    .unwrap();
+            }
+            assert_eq!(encoder.bloc_refs.len(), 3);
+            encoder.commit();
+        }
+        table
+    }
+
+    #[test]
+    fn untrack_bloc() {
+        let mut table = tracked_table(42);
+        assert_eq!(table.track_map.as_ref().unwrap().len(), 3);
+        assert_eq!(table.track_blocs.as_ref().unwrap().len(), 1);
+        table.untrack_bloc(42).unwrap();
+        assert_eq!(table.track_map.as_ref().unwrap().len(), 0);
+        assert_eq!(table.track_blocs.as_ref().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn untrack_bloc_not_in_map() {
+        let mut table = tracked_table(42);
+        table.track_map.as_mut().unwrap().remove(&2);
+        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
+    }
+
+    #[test]
+    fn untrack_bloc_wrong_count() {
+        let mut table = tracked_table(42);
+        table
+            .track_blocs
+            .as_mut()
+            .unwrap()
+            .entry(42)
+            .and_modify(|x| {
+                x.entry(2).and_modify(|c| *c += 1);
+            });
+        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
+    }
+
+    #[test]
+    fn untrack_bloc_wrong_stream() {
+        let mut table = tracked_table(41);
+        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
     }
 }
