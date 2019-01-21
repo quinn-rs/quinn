@@ -164,31 +164,29 @@ impl DynamicTableSizeUpdate {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum DecoderInstruciton {
+pub enum DecoderInstruction {
     InsertCountIncrement,
     HeaderAck,
     StreamCancel,
     Unknown,
 }
 
-impl DecoderInstruciton {
+impl DecoderInstruction {
     pub fn decode(first: u8) -> Self {
         if first & 0b1100_0000 == 0 {
-            DecoderInstruciton::InsertCountIncrement
+            DecoderInstruction::InsertCountIncrement
         } else if first & 0b1000_0000 != 0 {
-            DecoderInstruciton::HeaderAck
+            DecoderInstruction::HeaderAck
         } else if first & 0b0100_0000 == 0b0100_0000 {
-            DecoderInstruciton::StreamCancel
+            DecoderInstruction::StreamCancel
         } else {
-            DecoderInstruciton::Unknown
+            DecoderInstruction::Unknown
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct InsertCountIncrement {
-    pub insert_count: usize,
-}
+pub struct InsertCountIncrement(pub usize);
 
 impl InsertCountIncrement {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -198,18 +196,16 @@ impl InsertCountIncrement {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(InsertCountIncrement { insert_count }))
+        Ok(Some(InsertCountIncrement(insert_count)))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        prefix_int::encode(6, 0b00, self.insert_count, buf);
+        prefix_int::encode(6, 0b00, self.0, buf);
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct HeaderAck {
-    pub stream_id: u64,
-}
+pub struct HeaderAck(pub u64);
 
 impl HeaderAck {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -219,18 +215,16 @@ impl HeaderAck {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(HeaderAck { stream_id }))
+        Ok(Some(HeaderAck(stream_id)))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        prefix_int::encode(7, 0b1, self.stream_id as usize, buf);
+        prefix_int::encode(7, 0b1, self.0 as usize, buf);
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct StreamCancel {
-    pub stream_id: u64,
-}
+pub struct StreamCancel(pub u64);
 
 impl StreamCancel {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -240,11 +234,11 @@ impl StreamCancel {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(StreamCancel { stream_id }))
+        Ok(Some(StreamCancel(stream_id)))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        prefix_int::encode(6, 0b01, self.stream_id as usize, buf);
+        prefix_int::encode(6, 0b01, self.0 as usize, buf);
     }
 }
 
@@ -296,7 +290,7 @@ mod test {
 
     #[test]
     fn insert_count_increment() {
-        let instruction = InsertCountIncrement { insert_count: 42 };
+        let instruction = InsertCountIncrement(42);
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);
@@ -308,7 +302,7 @@ mod test {
 
     #[test]
     fn header_ack() {
-        let instruction = HeaderAck { stream_id: 42 };
+        let instruction = HeaderAck(42);
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);
@@ -317,7 +311,7 @@ mod test {
 
     #[test]
     fn stream_cancel() {
-        let instruction = StreamCancel { stream_id: 42 };
+        let instruction = StreamCancel(42);
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);

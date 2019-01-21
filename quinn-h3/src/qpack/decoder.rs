@@ -118,11 +118,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
     }
 
     if table.total_inserted() != inserted_on_start {
-        //TODO RENAME
-        InsertCountIncrement {
-            insert_count: table.total_inserted() - inserted_on_start,
-        }
-        .encode(write);
+        InsertCountIncrement(table.total_inserted() - inserted_on_start).encode(write);
     }
 
     Ok(())
@@ -250,7 +246,7 @@ mod tests {
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
             InsertCountIncrement::decode(&mut dec_cursor),
-            Ok(Some(InsertCountIncrement { insert_count: 1 }))
+            Ok(Some(InsertCountIncrement(1)))
         );
     }
 
@@ -318,7 +314,7 @@ mod tests {
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
             InsertCountIncrement::decode(&mut dec_cursor),
-            Ok(Some(InsertCountIncrement { insert_count: 1 }))
+            Ok(Some(InsertCountIncrement(1)))
         );
     }
 
@@ -352,7 +348,7 @@ mod tests {
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
             InsertCountIncrement::decode(&mut dec_cursor),
-            Ok(Some(InsertCountIncrement { insert_count: 1 }))
+            Ok(Some(InsertCountIncrement(1)))
         );
     }
 
@@ -422,7 +418,10 @@ mod tests {
         assert_eq!(enc.position(), 15);
 
         let mut dec_cursor = Cursor::new(&dec);
-        assert_eq!(prefix_int::decode(6, &mut dec_cursor), Ok((0, 1))); // TODO Implement type
+        assert_eq!(
+            InsertCountIncrement::decode(&mut dec_cursor),
+            Ok(Some(InsertCountIncrement(1)))
+        );
     }
 
     #[test]
