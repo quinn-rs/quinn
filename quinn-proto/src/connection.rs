@@ -839,7 +839,7 @@ impl Connection {
     }
 
     fn init_0rtt(&mut self) {
-        if self.side.is_client() && self.tls.get_early_secret().is_some() {
+        if self.side.is_client() && self.tls.early_secret().is_some() {
             if let Err(e) = self.tls.transport_parameters().and_then(|params| {
                 self.set_params(
                     params.expect("rustls didn't supply transport parameters with ticket"),
@@ -852,7 +852,7 @@ impl Connection {
                 return;
             }
         }
-        if let Some(secret) = self.tls.get_early_secret() {
+        if let Some(secret) = self.tls.early_secret() {
             trace!(self.log, "0-RTT enabled");
             let packet = Crypto::new_0rtt(secret);
             self.zero_rtt_crypto = Some(CryptoSpace {
@@ -893,9 +893,9 @@ impl Connection {
                 return Ok(());
             }
             trace!(self.log, "read {} TLS bytes", n);
-            if let Err(e) = self.tls.read_hs(&buf[..n]) {
+            if let Err(e) = self.tls.read_handshake(&buf[..n]) {
                 debug!(self.log, "TLS error: {}", e);
-                return Err(if let Some(alert) = self.tls.get_alert() {
+                return Err(if let Some(alert) = self.tls.alert() {
                     TransportError::crypto(alert)
                 } else {
                     TransportError::PROTOCOL_VIOLATION("TLS error")
@@ -2788,7 +2788,7 @@ impl Connection {
     }
 
     pub fn protocol(&self) -> Option<&[u8]> {
-        self.tls.get_alpn_protocol()
+        self.tls.alpn_protocol()
     }
 
     /// The number of bytes of packets containing retransmittable frames that have not been
