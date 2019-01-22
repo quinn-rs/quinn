@@ -16,9 +16,6 @@ all-features = true
 [badges]
 maintenance = { status = "experimental" }
 
-[features]
-dangerous_configuration = ["rustls/dangerous_configuration"]
-
 [dependencies]
 byteorder = "1.1"
 bytes = "0.4.7"
