@@ -21,7 +21,7 @@ use webpki::DNSNameRef;
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{ConnectionId, PacketNumber, LONG_HEADER_FORM};
 use crate::transport_parameters::TransportParameters;
-use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
     Client(ClientSession),
@@ -62,6 +62,20 @@ impl TlsSession {
             session
         } else {
             panic!("not a client");
+        }
+    }
+
+    pub fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
+        let side = match self {
+            TlsSession::Server(_) => Side::Server,
+            TlsSession::Client(_) => Side::Client,
+        };
+        match self.get_quic_transport_parameters() {
+            None => Ok(None),
+            Some(buf) => match TransportParameters::read(side, &mut io::Cursor::new(buf)) {
+                Ok(params) => Ok(Some(params)),
+                Err(e) => Err(e.into()),
+            },
         }
     }
 }
