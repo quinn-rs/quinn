@@ -29,20 +29,6 @@ pub enum TlsSession {
 }
 
 impl TlsSession {
-    pub fn new_client(
-        config: &Arc<ClientConfig>,
-        hostname: &str,
-        params: &TransportParameters,
-    ) -> Result<TlsSession, ConnectError> {
-        let pki_server_name = DNSNameRef::try_from_ascii_str(hostname)
-            .map_err(|_| ConnectError::InvalidDnsName(hostname.into()))?;
-        Ok(TlsSession::Client(ClientSession::new_quic(
-            &config,
-            pki_server_name,
-            to_vec(Side::Client, params),
-        )))
-    }
-
     pub fn new_server(config: &Arc<ServerConfig>, params: &TransportParameters) -> TlsSession {
         TlsSession::Server(ServerSession::new_quic(
             config,
@@ -126,6 +112,32 @@ pub trait CryptoSession {
     fn sni_hostname(&self) -> Option<&str>;
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto>;
+}
+
+impl CryptoClientConfig for Arc<ClientConfig> {
+    type Session = TlsSession;
+    fn start_session(
+        &self,
+        server_name: &str,
+        params: &TransportParameters,
+    ) -> Result<Self::Session, ConnectError> {
+        let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
+            .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
+        Ok(TlsSession::Client(ClientSession::new_quic(
+            self,
+            pki_server_name,
+            to_vec(Side::Client, params),
+        )))
+    }
+}
+
+pub trait CryptoClientConfig {
+    type Session: CryptoSession;
+    fn start_session(
+        &self,
+        server_name: &str,
+        params: &TransportParameters,
+    ) -> Result<Self::Session, ConnectError>;
 }
 
 impl Deref for TlsSession {

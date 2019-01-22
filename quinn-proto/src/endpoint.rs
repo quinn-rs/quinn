@@ -19,7 +19,8 @@ use crate::connection::{
     self, initial_close, ClientConfig, Connection, ConnectionError, TimerUpdate,
 };
 use crate::crypto::{
-    self, reset_token_for, ConnectError, Crypto, HeaderCrypto, TlsSession, TokenKey,
+    self, reset_token_for, ConnectError, Crypto, CryptoClientConfig, HeaderCrypto, TlsSession,
+    TokenKey,
 };
 use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PartialDecode};
 use crate::stream::{ReadError, WriteError};
@@ -369,11 +370,9 @@ impl Endpoint {
         let local_id = self.new_cid();
         let (tls, client_config) = match opts {
             ConnectionOpts::Client(config) => (
-                TlsSession::new_client(
-                    &config.tls_config,
-                    &config.server_name,
-                    &TransportParameters::new(&self.config),
-                )?,
+                config
+                    .tls_config
+                    .start_session(&config.server_name, &TransportParameters::new(&self.config))?,
                 Some(config),
             ),
             ConnectionOpts::Server { orig_dst_cid } => {

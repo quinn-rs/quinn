@@ -10,7 +10,10 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::crypto::{self, reset_token_for, Crypto, CryptoSession, HeaderCrypto, TlsSession, ACK_DELAY_EXPONENT};
+use crate::crypto::{
+    self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, TlsSession,
+    ACK_DELAY_EXPONENT,
+};
 use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
@@ -1191,12 +1194,13 @@ impl Connection {
 
                         // Reset to initial state
                         let client_config = self.client_config.as_ref().unwrap();
-                        self.tls = TlsSession::new_client(
-                            &client_config.tls_config,
-                            &client_config.server_name,
-                            &TransportParameters::new(&self.config),
-                        )
-                        .unwrap();
+                        self.tls = client_config
+                            .tls_config
+                            .start_session(
+                                &client_config.server_name,
+                                &TransportParameters::new(&self.config),
+                            )
+                            .unwrap();
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
                             crypto: Some(CryptoSpace::new(Crypto::new_initial(
