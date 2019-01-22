@@ -10,7 +10,7 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::crypto::{self, reset_token_for, Crypto, HeaderCrypto, TlsSession, ACK_DELAY_EXPONENT};
+use crate::crypto::{self, reset_token_for, Crypto, CryptoSession, HeaderCrypto, TlsSession, ACK_DELAY_EXPONENT};
 use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
@@ -2806,7 +2806,7 @@ impl Connection {
     ///
     /// `None` if no name was supplised or if this connection was locally initiated.
     pub fn server_name(&self) -> Option<&str> {
-        self.tls.get_sni_hostname()
+        self.tls.sni_hostname()
     }
 
     /// Total number of outgoing packets that have been deemed lost

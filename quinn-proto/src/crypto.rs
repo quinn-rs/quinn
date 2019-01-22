@@ -49,13 +49,6 @@ impl TlsSession {
         ))
     }
 
-    pub fn get_sni_hostname(&self) -> Option<&str> {
-        match *self {
-            TlsSession::Client(_) => None,
-            TlsSession::Server(ref session) => session.get_sni_hostname(),
-        }
-    }
-
     pub fn as_client(&self) -> &ClientSession {
         if let TlsSession::Client(ref session) = *self {
             session
@@ -63,8 +56,17 @@ impl TlsSession {
             panic!("not a client");
         }
     }
+}
 
-    pub fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
+impl CryptoSession for TlsSession {
+    fn sni_hostname(&self) -> Option<&str> {
+        match self {
+            TlsSession::Client(_) => None,
+            TlsSession::Server(session) => session.get_sni_hostname(),
+        }
+    }
+
+    fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
         let side = match self {
             TlsSession::Server(_) => Side::Server,
             TlsSession::Client(_) => Side::Client,
@@ -78,7 +80,7 @@ impl TlsSession {
         }
     }
 
-    pub fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto> {
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto> {
         let secrets = self.write_hs(buf)?;
         let suite = self
             .get_negotiated_ciphersuite()
@@ -89,6 +91,12 @@ impl TlsSession {
         };
         Some(Crypto::new(side, suite.get_hash(), suite.get_aead_alg(), secrets))
     }
+}
+
+pub trait CryptoSession {
+    fn sni_hostname(&self) -> Option<&str>;
+    fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto>;
 }
 
 impl Deref for TlsSession {
