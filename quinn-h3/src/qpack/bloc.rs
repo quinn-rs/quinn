@@ -342,7 +342,7 @@ mod test {
 
     #[test]
     fn header_prefix_table_size_0() {
-        let prefix = HeaderPrefix::new(10, 5, 12, 0).get(1, 0);
+        HeaderPrefix::new(10, 5, 12, 0).get(1, 0).unwrap();
     }
 
     #[test]

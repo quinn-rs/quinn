@@ -143,9 +143,7 @@ impl Duplicate {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct DynamicTableSizeUpdate {
-    pub size: usize,
-}
+pub struct DynamicTableSizeUpdate(pub usize);
 
 impl DynamicTableSizeUpdate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -155,11 +153,11 @@ impl DynamicTableSizeUpdate {
             Err(IntError::UnexpectedEnd) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        Ok(Some(DynamicTableSizeUpdate { size }))
+        Ok(Some(DynamicTableSizeUpdate(size)))
     }
 
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        prefix_int::encode(5, 0b001, self.size, buf);
+        prefix_int::encode(5, 0b001, self.0, buf);
     }
 }
 
@@ -278,7 +276,7 @@ mod test {
 
     #[test]
     fn dynamic_table_size_update() {
-        let instruction = DynamicTableSizeUpdate { size: 42 };
+        let instruction = DynamicTableSizeUpdate(42);
         let mut buf = vec![];
         instruction.encode(&mut buf);
         let mut read = Cursor::new(&buf);
