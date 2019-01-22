@@ -10,9 +10,7 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::crypto::{
-    self, reset_token_for, Crypto, HeaderCrypto, Secrets, TlsSession, ACK_DELAY_EXPONENT,
-};
+use crate::crypto::{self, reset_token_for, Crypto, HeaderCrypto, TlsSession, ACK_DELAY_EXPONENT};
 use crate::dedup::Dedup;
 use crate::endpoint::{Config, Event, Timer};
 use crate::frame::FrameStruct;
@@ -915,13 +913,13 @@ impl Connection {
         loop {
             let space = self.highest_space;
             let mut outgoing = Vec::new();
-            if let Some(secrets) = self.tls.write_hs(&mut outgoing) {
+            if let Some(crypto) = self.tls.write_handshake(&mut outgoing) {
                 match space {
                     SpaceId::Initial => {
-                        self.upgrade_crypto(SpaceId::Handshake, secrets);
+                        self.upgrade_crypto(SpaceId::Handshake, crypto);
                     }
                     SpaceId::Handshake => {
-                        self.upgrade_crypto(SpaceId::Data, secrets);
+                        self.upgrade_crypto(SpaceId::Data, crypto);
                     }
                     _ => unreachable!("got updated secrets during 1-RTT"),
                 }
@@ -948,9 +946,7 @@ impl Connection {
     }
 
     /// Switch to stronger cryptography during handshake
-    fn upgrade_crypto(&mut self, space: SpaceId, secrets: Secrets) {
-        let suite = self.tls.get_negotiated_ciphersuite().unwrap();
-        let crypto = Crypto::new(self.side, suite.get_hash(), suite.get_aead_alg(), secrets);
+    fn upgrade_crypto(&mut self, space: SpaceId, crypto: Crypto) {
         debug_assert!(
             self.spaces[space as usize].crypto.is_none(),
             "already reached packet space {:?}",
