@@ -137,7 +137,7 @@ fn parse_instruction<R: Buf>(
     let instruction = match EncoderInstruction::decode(first) {
         EncoderInstruction::Unknown => return Err(Error::UnknownPrefix),
         EncoderInstruction::DynamicTableSizeUpdate => {
-            DynamicTableSizeUpdate::decode(&mut buf)?.map(|x| Instruction::TableSizeUpdate(x.size))
+            DynamicTableSizeUpdate::decode(&mut buf)?.map(|x| Instruction::TableSizeUpdate(x.0))
         }
         EncoderInstruction::InsertWithoutNameRef => InsertWithoutNameRef::decode(&mut buf)?
             .map(|x| Instruction::Insert(HeaderField::new(x.name, x.value))),
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn test_dynamic_table_size_update() {
         let mut buf = vec![];
-        DynamicTableSizeUpdate { size: 25 }.encode(&mut buf);
+        DynamicTableSizeUpdate(25).encode(&mut buf);
 
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
