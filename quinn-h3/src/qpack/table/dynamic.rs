@@ -488,12 +488,18 @@ impl DynamicTable {
             self.track_blocs = Some(HashMap::new());
         }
 
+        if self.track_blocs.as_ref().unwrap().contains_key(&stream_id) {
+            self.untrack_bloc(stream_id).ok();
+        }
+
         match self.track_blocs.as_mut().unwrap().entry(stream_id) {
-            Entry::Occupied(e) => {
-                unimplemented!();
+            Entry::Occupied(mut e) => {
+                e.insert(refs);
             }
-            Entry::Vacant(e) => e.insert(refs),
-        };
+            Entry::Vacant(e) => {
+                e.insert(refs);
+            }
+        }
     }
 
     fn track_cancel<T>(&mut self, refs: T) -> Result<(), Error>
