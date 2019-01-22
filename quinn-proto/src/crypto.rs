@@ -11,8 +11,7 @@ use ring::aead::{self, Aad, Nonce};
 use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
-pub use rustls::quic::Secrets;
-use rustls::quic::{ClientQuicExt, ServerQuicExt};
+use rustls::quic::{ClientQuicExt, Secrets, ServerQuicExt};
 use rustls::ProtocolVersion;
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
 pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
@@ -77,6 +76,18 @@ impl TlsSession {
                 Err(e) => Err(e.into()),
             },
         }
+    }
+
+    pub fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto> {
+        let secrets = self.write_hs(buf)?;
+        let suite = self
+            .get_negotiated_ciphersuite()
+            .expect("should not get secrets without cipher suite");
+        let side = match self {
+            TlsSession::Client(_) => Side::Client,
+            TlsSession::Server(_) => Side::Server,
+        };
+        Some(Crypto::new(side, suite.get_hash(), suite.get_aead_alg(), secrets))
     }
 }
 
