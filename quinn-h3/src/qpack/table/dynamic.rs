@@ -66,7 +66,32 @@ pub struct DynamicTableInserter<'a> {
 
 impl<'a> DynamicTableInserter<'a> {
     pub fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
-        self.table.put_field(field)?;
+        let index = if let Some(index) = self.table.put_field(field.clone())? {
+            index
+        } else {
+            return Ok(());
+        };
+
+        if self.table.name_map.is_none() {
+            return Ok(());
+        }
+
+        let name_map = self.table.name_map.as_mut().unwrap();
+        let field_map = self.table.field_map.as_mut().unwrap();
+
+        field_map
+            .entry(field.clone())
+            .and_modify(|e| *e = index)
+            .or_insert(index);
+
+        if StaticTable::find_name(&field.name).is_some() {
+            return Ok(());
+        }
+
+        name_map
+            .entry(field.name.clone())
+            .and_modify(|e| *e = index)
+            .or_insert(index);
         Ok(())
     }
 
@@ -330,27 +355,22 @@ impl DynamicTable {
     }
 
     pub fn encoder<'a>(&'a mut self, stream_id: u64) -> DynamicTableEncoder<'a> {
-        // TODO maintain tracking data and update maps instead of recontructing them
         if self.name_map.is_none() {
-            self.name_map = Some(
-                self.fields
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, field)| (field.name.clone(), idx + 1))
-                    .collect(),
-            );
+            self.name_map = Some(HashMap::new());
+            self.field_map = Some(HashMap::new());
+
+            for (idx, field) in self.fields.iter().enumerate() {
+                self.name_map
+                    .as_mut()
+                    .unwrap()
+                    .insert(field.name.clone(), self.vas.index(idx).unwrap()); // XXX
+                self.field_map
+                    .as_mut()
+                    .unwrap()
+                    .insert(field.clone(), self.vas.index(idx).unwrap());
+            }
         }
 
-        if self.field_map.is_none() {
-            // TODO here Rc<HeaderField> might be useful ?
-            self.field_map = Some(
-                self.fields
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, field)| (field.clone(), idx + 1))
-                    .collect(),
-            );
-        }
         DynamicTableEncoder {
             base: self.vas.largest_ref(),
             table: self,
@@ -1206,5 +1226,29 @@ mod tests {
     fn untrack_bloc_wrong_stream() {
         let mut table = tracked_table(41);
         assert_eq!(table.untrack_bloc(42), Err(Error::UnknownStreamId(42)));
+    }
+
+    #[test]
+    fn inserter_updates_maps() {
+        let mut table = tracked_table(42);
+        assert_eq!(table.name_map.as_ref().unwrap().len(), 3);
+        assert_eq!(table.field_map.as_ref().unwrap().len(), 3);
+
+        table
+            .inserter()
+            .put_field(HeaderField::new("foo", "bar"))
+            .unwrap();
+        assert_eq!(table.name_map.as_ref().unwrap().len(), 4);
+        assert_eq!(table.field_map.as_ref().unwrap().len(), 4);
+
+        let field = HeaderField::new("foo1", "quxx");
+        table.inserter().put_field(field.clone()).unwrap();
+        assert_eq!(table.name_map.as_ref().unwrap().len(), 4);
+        assert_eq!(table.field_map.as_ref().unwrap().len(), 4);
+        assert_eq!(
+            table.name_map.as_ref().unwrap().get(&b"foo1"[..]),
+            Some(&5usize)
+        );
+        assert_eq!(table.field_map.as_ref().unwrap().get(&field), Some(&5usize));
     }
 }
