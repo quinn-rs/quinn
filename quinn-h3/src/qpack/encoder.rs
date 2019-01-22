@@ -530,12 +530,25 @@ mod tests {
         let mut buf = vec![];
         StreamCancel(4).encode(&mut buf);
 
-        let mut cur = Cursor::new(&buf); // trucated prefix_int
+        let mut cur = Cursor::new(&buf);
         assert_eq!(
             on_decoder_recv(&mut table, &mut cur),
             Err(Error::Insertion(DynamicTableError::UnknownStreamId(4)))
         );
     }
-    // wrong stream throws
-    // largest ref
+
+    #[test]
+    fn insert_count() {
+        let mut buf = vec![];
+        InsertCountIncrement(4).encode(&mut buf);
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(
+            parse_instruction(&mut cur),
+            Ok(Some(Instruction::RecievedRef(4)))
+        );
+
+        let mut cur = Cursor::new(&buf);
+        assert_eq!(on_decoder_recv(&mut DynamicTable::new(), &mut cur), Ok(()));
+    }
 }
