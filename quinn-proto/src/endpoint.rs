@@ -19,8 +19,8 @@ use crate::connection::{
     self, initial_close, ClientConfig, Connection, ConnectionError, TimerUpdate,
 };
 use crate::crypto::{
-    self, reset_token_for, ConnectError, Crypto, CryptoClientConfig, HeaderCrypto, TlsSession,
-    TokenKey,
+    self, reset_token_for, ConnectError, Crypto, CryptoClientConfig, CryptoServerConfig,
+    HeaderCrypto, TokenKey,
 };
 use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PartialDecode};
 use crate::stream::{ReadError, WriteError};
@@ -382,10 +382,11 @@ impl Endpoint {
                     ..TransportParameters::new(&self.config)
                 };
                 (
-                    TlsSession::new_server(
-                        &self.server_config.as_ref().unwrap().tls_config,
-                        &server_params,
-                    ),
+                    self.server_config
+                        .as_ref()
+                        .unwrap()
+                        .tls_config
+                        .start_session(&server_params),
                     None,
                 )
             }

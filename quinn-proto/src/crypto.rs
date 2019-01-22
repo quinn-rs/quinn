@@ -29,13 +29,6 @@ pub enum TlsSession {
 }
 
 impl TlsSession {
-    pub fn new_server(config: &Arc<ServerConfig>, params: &TransportParameters) -> TlsSession {
-        TlsSession::Server(ServerSession::new_quic(
-            config,
-            to_vec(Side::Server, params),
-        ))
-    }
-
     pub fn as_client(&self) -> &ClientSession {
         if let TlsSession::Client(ref session) = *self {
             session
@@ -138,6 +131,18 @@ pub trait CryptoClientConfig {
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<Self::Session, ConnectError>;
+}
+
+impl CryptoServerConfig for Arc<ServerConfig> {
+    type Session = TlsSession;
+    fn start_session(&self, params: &TransportParameters) -> Self::Session {
+        TlsSession::Server(ServerSession::new_quic(self, to_vec(Side::Server, params)))
+    }
+}
+
+pub trait CryptoServerConfig {
+    type Session: CryptoSession;
+    fn start_session(&self, params: &TransportParameters) -> Self::Session;
 }
 
 impl Deref for TlsSession {
