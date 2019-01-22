@@ -41,6 +41,10 @@ pub struct HeaderPrefix {
 
 impl HeaderPrefix {
     pub fn new(required: usize, base: usize, total_inserted: usize, max_table_size: usize) -> Self {
+        if max_table_size == 0 {
+            return Self { encoded_insert_count: 0, sign_negative: false, delta_base: 0 };
+        }
+
         assert!(required <= total_inserted);
         let (sign_negative, delta_base) = if required > base {
             (true, required - base - 1)
@@ -62,6 +66,10 @@ impl HeaderPrefix {
         total_inserted: usize,
         max_table_size: usize,
     ) -> Result<(usize, usize), ParseError> {
+        if max_table_size == 0 {
+            return Ok((0, 0));
+        }
+
         let required = if self.encoded_insert_count == 0 {
             0
         } else {
@@ -330,6 +338,11 @@ mod test {
         let decoded = HeaderPrefix::decode(&mut read);
         assert_eq!(decoded, Ok(prefix));
         assert_eq!(decoded.unwrap().get(13, 3332).unwrap(), (10, 5));
+    }
+
+    #[test]
+    fn header_prefix_table_size_0() {
+        let prefix = HeaderPrefix::new(10, 5, 12, 0).get(1, 0);
     }
 
     #[test]
