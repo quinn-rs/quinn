@@ -830,10 +830,7 @@ impl Connection {
         if self.state.is_closed() {
             return Ok(());
         }
-        let params = TransportParameters::read(
-            Side::Server,
-            &mut io::Cursor::new(self.tls.get_quic_transport_parameters().unwrap()),
-        )?;
+        let params = self.tls.transport_parameters()?.unwrap();
         self.set_params(params)?;
         self.write_tls();
         self.init_0rtt();
@@ -845,17 +842,14 @@ impl Connection {
 
     fn init_0rtt(&mut self) {
         if self.side.is_client() && self.tls.get_early_secret().is_some() {
-            let params = self
-                .tls
-                .get_quic_transport_parameters()
-                .expect("rustls didn't supply transport parameters with ticket");
-            if let Err(e) = TransportParameters::read(self.side, &mut io::Cursor::new(params))
-                .map_err(Into::into)
-                .and_then(|x| self.set_params(x))
-            {
+            if let Err(e) = self.tls.transport_parameters().and_then(|params| {
+                self.set_params(
+                    params.expect("rustls didn't supply transport parameters with ticket"),
+                )
+            }) {
                 error!(
                     self.log,
-                    "session ticket had malformed transport parameters: {}", e
+                    "session ticket has malformed transport parameters: {}", e
                 );
                 return;
             }
@@ -1250,18 +1244,13 @@ impl Connection {
 
                         if self.side.is_client() {
                             // Client-only beceause server params were set from the client's Initial
-                            let params = self
-                                .tls
-                                .get_quic_transport_parameters()
-                                .ok_or_else(|| {
-                                    TransportError::PROTOCOL_VIOLATION(
-                                        "transport parameters missing",
-                                    )
-                                })
-                                .and_then(|x| {
-                                    TransportParameters::read(self.side, &mut io::Cursor::new(x))
-                                        .map_err(Into::into)
-                                })?;
+                            let params = match self.tls.transport_parameters() {
+                                Ok(Some(params)) => Ok(params),
+                                Ok(None) => Err(TransportError::PROTOCOL_VIOLATION(
+                                    "transport parameters missing",
+                                )),
+                                Err(e) => Err(e),
+                            }?;
 
                             if self.has_0rtt() {
                                 if !self.tls.as_client().is_early_data_accepted() {
