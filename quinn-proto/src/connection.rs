@@ -48,11 +48,6 @@ pub struct Connection {
     state: State,
     side: Side,
     mtu: u16,
-    /// Highest received packet number
-    rx_packet: u64,
-    rx_packet_space: SpaceId,
-    /// Time at which the above was received
-    rx_packet_time: u64,
     zero_rtt_crypto: Option<CryptoSpace>,
     key_phase: bool,
     params: TransportParameters,
@@ -203,9 +198,6 @@ impl Connection {
             side,
             state,
             mtu: MIN_MTU,
-            rx_packet: 0,
-            rx_packet_space: SpaceId::Initial,
-            rx_packet_time: 0,
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::new(&config),
@@ -742,9 +734,9 @@ impl Connection {
         if space.pending_acks.len() > MAX_ACK_BLOCKS {
             space.pending_acks.pop_min();
         }
-        if (space_id, packet) >= (self.rx_packet_space, self.rx_packet) {
-            self.rx_packet = packet;
-            self.rx_packet_time = now;
+        if packet >= space.rx_packet {
+            space.rx_packet = packet;
+            space.rx_packet_time = now;
             // Update outgoing spin bit, inverting iff we're the client
             self.spin = self.side.is_client() ^ spin;
         }
@@ -1890,7 +1882,7 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = (now - self.rx_packet_time) >> ACK_DELAY_EXPONENT;
+            let delay = (now - space.rx_packet_time) >> ACK_DELAY_EXPONENT;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
@@ -2601,12 +2593,9 @@ impl Connection {
             // Retry packets are not encrypted and have no packet number
             return Ok(None);
         }
-        let number = packet
-            .header
-            .number()
-            .ok_or(None)?
-            .expand(self.rx_packet + 1);
         let space = packet.header.space();
+        let rx_packet = self.space(space).rx_packet;
+        let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
         let key_phase = packet.header.key_phase();
 
         let mut crypto_update = None;
@@ -2663,7 +2652,7 @@ impl Connection {
         }
 
         if let Some(crypto) = crypto_update {
-            if number <= self.rx_packet
+            if number <= rx_packet
                 || self
                     .prev_crypto
                     .as_ref()
@@ -3279,6 +3268,10 @@ pub struct TimerUpdate {
 struct PacketSpace {
     crypto: Option<CryptoSpace>,
     dedup: Dedup,
+    /// Highest received packet number
+    rx_packet: u64,
+    /// Time at which the above was received
+    rx_packet_time: u64,
 
     /// Data to send
     pending: Retransmits,
@@ -3313,6 +3306,8 @@ impl PacketSpace {
         Self {
             crypto: None,
             dedup: Dedup::new(),
+            rx_packet: 0,
+            rx_packet_time: 0,
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
