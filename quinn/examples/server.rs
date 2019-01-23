@@ -133,7 +133,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.set_certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 
-    let mut endpoint = quinn::Endpoint::new();
+    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
+        stream_window_uni: 0,
+        ..Default::default()
+    });
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
@@ -180,7 +183,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
 fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
     let stream = match stream {
         quinn::NewStream::Bi(stream) => stream,
-        quinn::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
+        quinn::NewStream::Uni(_) => unreachable!("disabled by endpoint configuration"),
     };
     let root = root.clone();
     let log = log.clone();
