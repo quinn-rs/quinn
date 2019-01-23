@@ -1,7 +1,3 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 use std::borrow::Cow;
 
 /**

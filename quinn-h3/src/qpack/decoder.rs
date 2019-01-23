@@ -1,16 +1,11 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 use bytes::{Buf, BufMut};
-use std::borrow::Cow;
 use std::io::Cursor;
 
 use super::table::{
     static_, DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter,
     HeaderField, StaticTable,
 };
-use super::vas::{self, VirtualAddressSpace};
+use super::vas;
 
 use super::bloc::{
     HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
@@ -29,10 +24,6 @@ use super::prefix_string;
 pub enum Error {
     InvalidInteger(prefix_int::Error),
     InvalidString(prefix_string::Error),
-    BadMaximumDynamicTableSize,
-    BadNameIndexOnDynamicTable(usize),
-    BadNameIndexOnStaticTable,
-    BadDuplicateIndex,
     InvalidIndex(vas::Error),
     DynamicTableError(DynamicTableError),
     InvalidStaticIndex(usize),
@@ -221,7 +212,7 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::table::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00

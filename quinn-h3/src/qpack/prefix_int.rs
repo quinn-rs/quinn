@@ -80,7 +80,6 @@ impl From<coding::UnexpectedEnd> for Error {
 
 #[cfg(test)]
 mod test {
-    use quinn_proto::coding::Codec;
     use std::io::Cursor;
 
     fn check_codec(size: u8, flags: u8, value: usize, data: &[u8]) {
