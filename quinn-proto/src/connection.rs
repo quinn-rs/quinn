@@ -749,6 +749,9 @@ impl Connection {
     }
 
     fn reset_idle_timeout(&mut self, now: u64) {
+        if self.config.idle_timeout == 0 && self.params.idle_timeout == 0 {
+            return;
+        }
         if self.state.is_closed() {
             self.io.timer_stop(Timer::Idle);
             return;
