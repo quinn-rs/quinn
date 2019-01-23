@@ -44,7 +44,7 @@ mod stream;
 pub use crate::stream::{ReadError, WriteError};
 
 mod transport_error;
-pub use crate::transport_error::Error as TransportError;
+pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_0011;

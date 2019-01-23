@@ -7,8 +7,8 @@ use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 use crate::packet::EcnCodepoint;
 use crate::range_set::RangeSet;
 use crate::{
-    varint, ConnectionId, Directionality, StreamId, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
-    RESET_TOKEN_SIZE,
+    varint, ConnectionId, Directionality, StreamId, TransportError, TransportErrorCode,
+    MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -163,7 +163,10 @@ pub enum Frame {
     PathResponse(u64),
     ConnectionClose(ConnectionClose),
     ApplicationClose(ApplicationClose),
-    Invalid(Type),
+    Invalid {
+        ty: Type,
+        reason: &'static str,
+    },
 }
 
 impl Frame {
@@ -213,14 +216,14 @@ impl Frame {
             NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
             Crypto(_) => Type::CRYPTO,
             NewToken { .. } => Type::NEW_TOKEN,
-            Invalid(ty) => ty,
+            Invalid { ty, .. } => ty,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ConnectionClose {
-    pub error_code: TransportError,
+    pub error_code: TransportErrorCode,
     pub frame_type: Option<Type>,
     pub reason: Bytes,
 }
@@ -239,9 +242,9 @@ impl fmt::Display for ConnectionClose {
 impl From<TransportError> for ConnectionClose {
     fn from(x: TransportError) -> Self {
         ConnectionClose {
-            error_code: x,
-            frame_type: None,
-            reason: Bytes::new(),
+            error_code: x.code,
+            frame_type: x.frame,
+            reason: x.reason.into(),
         }
     }
 }
@@ -452,6 +455,17 @@ enum IterErr {
     Malformed,
 }
 
+impl IterErr {
+    fn reason(&self) -> &'static str {
+        use self::IterErr::*;
+        match *self {
+            UnexpectedEnd => "unexpected end",
+            InvalidFrameId => "invalid frame ID",
+            Malformed => "malformed",
+        }
+    }
+}
+
 impl From<UnexpectedEnd> for IterErr {
     fn from(_: UnexpectedEnd) -> Self {
         IterErr::UnexpectedEnd
@@ -626,7 +640,10 @@ impl Iterator for Iter {
             Err(e) => {
                 // Corrupt frame, skip it and everything that follows
                 self.bytes = io::Cursor::new(Bytes::new());
-                Some(Frame::Invalid(self.last_ty.unwrap()))
+                Some(Frame::Invalid {
+                    ty: self.last_ty.unwrap(),
+                    reason: e.reason(),
+                })
             }
         }
     }

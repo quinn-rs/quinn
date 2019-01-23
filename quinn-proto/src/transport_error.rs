@@ -4,52 +4,121 @@ use bytes::{Buf, BufMut};
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
+use crate::frame;
 use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Error(u16);
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Error {
+    pub code: Code,
+    pub frame: Option<frame::Type>,
+    pub reason: &'static str,
+}
 
 impl Error {
+    pub fn new(code: Code, frame: Option<frame::Type>, reason: &'static str) -> Self {
+        Self {
+            code,
+            frame,
+            reason,
+        }
+    }
+
     pub fn crypto(alert: AlertDescription) -> Self {
-        Error(0x100 | alert.get_u8() as u16)
+        Self::new(Code::crypto(alert), None, "")
     }
 }
 
-impl coding::Codec for Error {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.code.fmt(f)?;
+        if let Some(frame) = self.frame {
+            write!(f, " in {}", frame)?;
+        }
+        if !self.reason.is_empty() {
+            write!(f, ": {}", self.reason)?;
+        }
+        Ok(())
+    }
+}
+
+impl From<Code> for Error {
+    fn from(x: Code) -> Self {
+        Self {
+            code: x,
+            frame: None,
+            reason: "",
+        }
+    }
+}
+
+impl slog::Value for Error {
+    fn serialize(
+        &self,
+        _: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct Code(u16);
+
+impl Code {
+    pub fn crypto(alert: AlertDescription) -> Self {
+        Code(0x100 | alert.get_u8() as u16)
+    }
+}
+
+impl coding::Codec for Code {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Error(buf.get::<u16>()?))
+        Ok(Code(buf.get::<u16>()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.write::<u16>(self.0)
     }
 }
 
-impl From<Error> for u16 {
-    fn from(x: Error) -> u16 {
+impl From<Code> for u16 {
+    fn from(x: Code) -> u16 {
         x.0
     }
 }
 
 macro_rules! errors {
     {$($name:ident($val:expr) $desc:expr;)*} => {
+        #[allow(non_snake_case, unused)]
         impl Error {
-            $(#[doc = $desc] pub const $name: Self = Error($val);)*
+            $(
+            pub(crate) fn $name(reason: &'static str) -> Self {
+                Self {
+                    code: Code::$name,
+                    frame: None,
+                    reason,
+                }
+            }
+            )*
         }
 
-        impl fmt::Debug for Error {
+        impl Code {
+            $(#[doc = $desc] pub const $name: Self = Code($val);)*
+        }
+
+        impl fmt::Debug for Code {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x100 && x < 0x200 => match AlertDescription::read_bytes(&[self.0 as u8]) {
-                        Some(desc) => write!(f, "Error::crypto({:?})", desc),
-                        None => write!(f, "Error::crypto({:02x})", self.0 as u8),
+                        Some(desc) => write!(f, "Code::crypto({:?})", desc),
+                        None => write!(f, "Code::crypto({:02x})", self.0 as u8),
                     },
-                    _ => write!(f, "Error({:04x})", self.0),
+                    _ => write!(f, "Code({:04x})", self.0),
                 }
             }
         }
 
-        impl fmt::Display for Error {
+        impl fmt::Display for Code {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let x = match self.0 {
                     $($val => $desc,)*
@@ -62,7 +131,7 @@ macro_rules! errors {
     }
 }
 
-impl slog::Value for Error {
+impl slog::Value for Code {
     fn serialize(
         &self,
         _: &slog::Record<'_>,

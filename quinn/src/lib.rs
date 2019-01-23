@@ -470,9 +470,11 @@ impl Drop for Driver {
     fn drop(&mut self) {
         let mut endpoint = self.0.borrow_mut();
         for ch in endpoint.pending.values_mut() {
-            ch.fail(ConnectionError::TransportError {
-                error_code: quinn::TransportError::INTERNAL_ERROR,
-            });
+            ch.fail(ConnectionError::TransportError(quinn::TransportError {
+                code: quinn::TransportErrorCode::INTERNAL_ERROR,
+                frame: None,
+                reason: "driver future was dropped",
+            }));
         }
     }
 }
