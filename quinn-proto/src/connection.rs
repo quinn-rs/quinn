@@ -577,18 +577,18 @@ impl Connection {
                     self.space_mut(space_id).pending += packet.retransmits;
                 }
             }
-            self.crypto_count += 1;
+            self.crypto_count = self.crypto_count.saturating_add(1);
         } else if self.state.is_handshake() && self.side.is_client() {
             trace!(self.log, "sending anti-deadlock handshake packet");
             self.io.probes += 1;
-            self.crypto_count += 1;
+            self.crypto_count = self.crypto_count.saturating_add(1);
         } else if self.loss_time != 0 {
             // Time threshold loss Detection
             self.detect_lost_packets(now);
         } else {
             trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes);
             self.io.probes += 2;
-            self.pto_count += 1;
+            self.pto_count = self.pto_count.saturating_add(1);
         }
         self.set_loss_detection_timer();
     }
