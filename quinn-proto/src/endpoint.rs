@@ -25,7 +25,7 @@ use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeErro
 use crate::stream::{ReadError, WriteError};
 use crate::transport_parameters::TransportParameters;
 use crate::{
-    Directionality, Side, StreamId, Transmit, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
+    varint, Directionality, Side, StreamId, Transmit, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
     MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
 };
 
@@ -59,13 +59,10 @@ impl Endpoint {
         log: Logger,
         config: Config,
         server_config: Option<ServerConfig>,
-    ) -> Result<Self, EndpointError> {
+    ) -> Result<Self, ConfigError> {
+        config.validate()?;
         let rng = OsRng::new().unwrap();
         let config = Arc::new(config);
-        assert!(
-            (config.local_cid_len == 0 || config.local_cid_len >= MIN_CID_SIZE)
-                && config.local_cid_len <= MAX_CID_SIZE
-        );
         Ok(Self {
             log,
             rng,
@@ -914,6 +911,31 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if (self.local_cid_len != 0 && self.local_cid_len < MIN_CID_SIZE)
+            || self.local_cid_len > MAX_CID_SIZE
+        {
+            return Err(ConfigError::IllegalValue(
+                "local_cid_len must be 0 or in [4, 18]",
+            ));
+        }
+        if let Some((name, _)) = [
+            ("stream_window_bidi", self.stream_window_bidi),
+            ("stream_window_uni", self.stream_window_uni),
+            ("receive_window", self.receive_window),
+            ("stream_receive_window", self.stream_receive_window),
+            ("idle_timeout", self.idle_timeout),
+        ]
+        .iter()
+        .find(|&&(_, x)| x > varint::MAX_VALUE)
+        {
+            return Err(ConfigError::VarIntBounds(name));
+        }
+        Ok(())
+    }
+}
+
 /// Parameters governing incoming connections.
 pub struct ServerConfig {
     /// TLS configuration used for incoming connections.
@@ -958,15 +980,14 @@ impl Default for ServerConfig {
 
 /// Errors in the configuration of an endpoint
 #[derive(Debug, Error)]
-pub enum EndpointError {
-    #[error(display = "failed to configure TLS: {}", _0)]
-    Tls(crypto::TLSError),
-}
-
-impl From<crypto::TLSError> for EndpointError {
-    fn from(x: crypto::TLSError) -> Self {
-        EndpointError::Tls(x)
-    }
+pub enum ConfigError {
+    /// The supplied configuration contained an invalid value
+    #[error(display = "illegal configuration value: {}", _0)]
+    IllegalValue(&'static str),
+    /// A configuration field that will be encoded as a variable-length integer exceeds the 0..2^62
+    /// range
+    #[error(display = "{} must be at most 2^62-1", _0)]
+    VarIntBounds(&'static str),
 }
 
 /// Events of interest to the application

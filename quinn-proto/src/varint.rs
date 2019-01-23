@@ -2,6 +2,9 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
+/// The largest value representable as a varint
+pub const MAX_VALUE: u64 = (1 << 62) - 1;
+
 pub fn size(x: u64) -> Option<usize> {
     if x < 2u64.pow(6) {
         Some(1)

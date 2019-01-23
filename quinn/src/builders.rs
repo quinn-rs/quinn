@@ -133,14 +133,14 @@ pub enum EndpointError {
     /// Errors relating to web PKI infrastructure
     #[error(display = "webpki failed: {:?}", _0)]
     WebPki(webpki::Error),
+    /// An error in the Quinn transport configuration
+    #[error(display = "configuration error: {:?}", _0)]
+    Config(quinn::ConfigError),
 }
 
-impl From<quinn::EndpointError> for EndpointError {
-    fn from(x: quinn::EndpointError) -> Self {
-        use crate::quinn::EndpointError::*;
-        match x {
-            Tls(x) => EndpointError::Tls(x),
-        }
+impl From<quinn::ConfigError> for EndpointError {
+    fn from(x: quinn::ConfigError) -> Self {
+        EndpointError::Config(x)
     }
 }
 
