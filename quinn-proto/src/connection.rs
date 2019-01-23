@@ -381,6 +381,9 @@ impl Connection {
             self.set_key_discard_timer(now);
         }
 
+        // Must be called before crypto/pto_count are clobbered
+        self.detect_lost_packets(now);
+
         self.crypto_count = 0;
         self.pto_count = 0;
 
@@ -407,7 +410,6 @@ impl Connection {
             }
         }
 
-        self.detect_lost_packets(now);
         self.set_loss_detection_timer();
         if was_blocked && !self.blocked() {
             for stream in self.blocked_streams.drain() {
@@ -643,6 +645,9 @@ impl Connection {
             (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
         self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
         self.ssthresh = self.congestion_window;
+        if self.pto_count > self.config.persistent_congestion_threshold {
+            self.congestion_window = self.config.minimum_window;
+        }
     }
 
     fn in_recovery(&self, sent_time: u64) -> bool {
