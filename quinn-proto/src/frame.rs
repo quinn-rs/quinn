@@ -164,7 +164,6 @@ pub enum Frame {
     ConnectionClose(ConnectionClose),
     ApplicationClose(ApplicationClose),
     Invalid(Type),
-    Illegal(Type),
 }
 
 impl Frame {
@@ -215,7 +214,6 @@ impl Frame {
             Crypto(_) => Type::CRYPTO,
             NewToken { .. } => Type::NEW_TOKEN,
             Invalid(ty) => ty,
-            Illegal(ty) => ty,
         }
     }
 }
@@ -452,7 +450,6 @@ enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
     Malformed,
-    Illegal,
 }
 
 impl From<UnexpectedEnd> for IterErr {
@@ -480,13 +477,8 @@ impl Iter {
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
-        let ty_start = self.bytes.position();
         let ty = self.bytes.get::<Type>()?;
         self.last_ty = Some(ty);
-        let ty_len = (self.bytes.position() - ty_start) as usize;
-        if varint::size(ty.0).unwrap() != ty_len {
-            return Err(IterErr::Illegal);
-        }
         Ok(match ty {
             Type::PADDING => Frame::Padding,
             Type::RESET_STREAM => Frame::ResetStream(ResetStream {
@@ -634,10 +626,7 @@ impl Iterator for Iter {
             Err(e) => {
                 // Corrupt frame, skip it and everything that follows
                 self.bytes = io::Cursor::new(Bytes::new());
-                Some(match e {
-                    IterErr::Illegal => Frame::Illegal(self.last_ty.unwrap()),
-                    _ => Frame::Invalid(self.last_ty.unwrap()),
-                })
+                Some(Frame::Invalid(self.last_ty.unwrap()))
             }
         }
     }
