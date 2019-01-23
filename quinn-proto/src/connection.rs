@@ -763,8 +763,14 @@ impl Connection {
         } else {
             cmp::min(self.config.idle_timeout, self.params.idle_timeout)
         };
-        self.io
-            .timer_start(Timer::Idle, now + dt as u64 * 1_000_000);
+        if let Some(timeout) = (dt as u64)
+            .checked_mul(1_000_000)
+            .and_then(|x| now.checked_add(x))
+        {
+            self.io.timer_start(Timer::Idle, timeout);
+        } else {
+            self.io.timer_stop(Timer::Idle);
+        }
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
