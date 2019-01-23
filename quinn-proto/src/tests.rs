@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{env, fmt, mem, str};
+use std::{cmp, env, fmt, mem, str};
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
@@ -896,9 +896,10 @@ fn idle_timeout() {
     while !pair.client.connection(client_ch).is_closed()
         || !pair.server.connection(server_ch).is_closed()
     {
-        pair.step();
-        pair.client.inbound.clear();
-        pair.time = pair.client.next_wakeup();
+        if !pair.step() {
+            pair.time = cmp::min(pair.client.next_wakeup(), pair.server.next_wakeup());
+        }
+        pair.client.inbound.clear(); // Simulate total S->C packet loss
     }
     assert!(pair.time != u64::max_value());
     assert_matches!(
