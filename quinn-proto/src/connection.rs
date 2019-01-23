@@ -1721,13 +1721,12 @@ impl Connection {
                     debug!(self.log, "peer claims to be blocked opening more than {limit} {directionality} streams", limit=limit, directionality=directionality);
                 }
                 Frame::StopSending { id, error_code } => {
-                    if self.streams.streams.get(&id).map_or(true, |x| {
-                        x.send()
-                            .map_or(true, |ss| id.initiator() == self.side && ss.offset == 0)
-                    }) {
+                    if id.initiator() != self.side && id.directionality() == Directionality::Uni
+                        || !self.streams.streams.contains_key(&id)
+                    {
                         debug!(
                             self.log,
-                            "got STOP_SENDING on invalid stream {stream}",
+                            "got STOP_SENDING on invalid {stream}",
                             stream = id
                         );
                         return Err(TransportError::STREAM_STATE_ERROR);
