@@ -1483,10 +1483,6 @@ impl Connection {
                     debug!(self.log, "received malformed {type} frame", type=ty);
                     return Err(TransportError::FRAME_ENCODING_ERROR);
                 }
-                Frame::Illegal(ty) => {
-                    debug!(self.log, "received illegal {type} frame", type=ty);
-                    return Err(TransportError::PROTOCOL_VIOLATION);
-                }
                 Frame::Crypto(frame) => {
                     if is_0rtt {
                         debug!(self.log, "received CRYPTO in 0-RTT");
