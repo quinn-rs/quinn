@@ -36,6 +36,13 @@ impl TlsSession {
             panic!("not a client");
         }
     }
+
+    fn side(&self) -> Side {
+        match self {
+            TlsSession::Client(_) => Side::Client,
+            TlsSession::Server(_) => Side::Server,
+        }
+    }
 }
 
 impl CryptoSession for TlsSession {
@@ -70,13 +77,9 @@ impl CryptoSession for TlsSession {
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
-        let side = match self {
-            TlsSession::Server(_) => Side::Server,
-            TlsSession::Client(_) => Side::Client,
-        };
         match self.get_quic_transport_parameters() {
             None => Ok(None),
-            Some(buf) => match TransportParameters::read(side, &mut io::Cursor::new(buf)) {
+            Some(buf) => match TransportParameters::read(self.side(), &mut io::Cursor::new(buf)) {
                 Ok(params) => Ok(Some(params)),
                 Err(e) => Err(e.into()),
             },
@@ -88,11 +91,12 @@ impl CryptoSession for TlsSession {
         let suite = self
             .get_negotiated_ciphersuite()
             .expect("should not get secrets without cipher suite");
-        let side = match self {
-            TlsSession::Client(_) => Side::Client,
-            TlsSession::Server(_) => Side::Server,
-        };
-        Some(Crypto::new(side, suite.get_hash(), suite.get_aead_alg(), secrets))
+        Some(Crypto::new(
+            self.side(),
+            suite.get_hash(),
+            suite.get_aead_alg(),
+            secrets,
+        ))
     }
 }
 
