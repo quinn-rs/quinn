@@ -40,7 +40,10 @@ macro_rules! errors {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if x >= 0x100 && x < 0x200 => write!(f, "Error::crypto({:?})", AlertDescription::read_bytes(&[self.0 as u8]).unwrap()),
+                    x if x >= 0x100 && x < 0x200 => match AlertDescription::read_bytes(&[self.0 as u8]) {
+                        Some(desc) => write!(f, "Error::crypto({:?})", desc),
+                        None => write!(f, "Error::crypto({:02x})", self.0 as u8),
+                    },
                     _ => write!(f, "Error({:04x})", self.0),
                 }
             }
