@@ -1,30 +1,21 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 use bytes::{Buf, BufMut};
-use std::borrow::Cow;
 use std::cmp;
-use std::collections::VecDeque;
 use std::io::Cursor;
 
-use quinn_proto::coding::{BufMutExt, Codec};
-
 use super::bloc::{
-    HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+    HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
 use super::prefix_int::Error as IntError;
 use super::prefix_string::Error as StringError;
 use super::stream::{
-    DecoderInstruction, Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck,
-    InsertCountIncrement, InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
+    DecoderInstruction, Duplicate, HeaderAck, InsertCountIncrement, InsertWithNameRef,
+    InsertWithoutNameRef, StreamCancel,
 };
 use super::table::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
     DynamicTableError, HeaderField, StaticTable,
 };
-use super::vas::VirtualAddressSpace;
 use super::ParseError;
 
 pub fn encode<W: BufMut>(
@@ -204,8 +195,7 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::table::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
-    use std::collections::HashMap;
+    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
 
     fn check_encode_field(
         init_fields: &[HeaderField],

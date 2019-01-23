@@ -1,7 +1,3 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 /**
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2.1
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2.2
@@ -170,8 +166,6 @@ impl VirtualAddressSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use proptest::prelude::*;
 
     #[test]
     fn test_no_relative_index_when_empty() {

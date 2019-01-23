@@ -1,7 +1,3 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(unused_imports)]
-
 /*
  *QUIC                                                           C. Krasic
  *Internet-Draft                                               Google, Inc
@@ -21,13 +17,26 @@ pub const QPACK_VERSION: &'static str = "0.0.0~draft";
 #[allow(dead_code)]
 pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 
-pub mod table;
+pub use self::decoder::{decode_header, on_encoder_recv, Error as DecoderError};
+pub use self::encoder::{encode, on_decoder_recv};
+pub use self::table::HeaderField;
+pub use self::table::{
+    DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableError, DynamicTableInserter,
+};
 
-pub mod decoder;
-pub mod encoder;
+mod bloc;
+mod stream;
+mod table;
+mod vas;
 
-pub mod prefix_int;
-pub mod prefix_string;
+mod decoder;
+mod encoder;
+
+mod prefix_int;
+mod prefix_string;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
@@ -52,7 +61,3 @@ impl From<prefix_string::Error> for ParseError {
         }
     }
 }
-
-mod bloc;
-mod stream;
-mod vas;

@@ -1,10 +1,7 @@
 use bytes::{Buf, BufMut};
-use std::borrow::Cow;
-use std::io::Cursor;
 
 use super::prefix_int::{self, Error as IntError};
 use super::prefix_string::{self, Error as StringError};
-use super::table::field::HeaderField;
 use super::ParseError;
 
 pub enum EncoderInstruction {
@@ -243,6 +240,7 @@ impl StreamCancel {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn insert_with_name_ref() {

@@ -1,6 +1,6 @@
 use crate::qpack::{
     decode_header, encode, on_decoder_recv, on_encoder_recv, DecoderError, DynamicTable,
-    DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter, HeaderField,
+    HeaderField,
 };
 use std::io::Cursor;
 

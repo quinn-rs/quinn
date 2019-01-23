@@ -5,9 +5,7 @@
 use std::borrow::Cow;
 use std::collections::btree_map::Entry as BTEntry;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-
-use crate::quinn_proto::{Directionality, Side};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::field::HeaderField;
 use super::static_::StaticTable;
@@ -43,7 +41,7 @@ pub struct DynamicTableDecoder<'a> {
 }
 
 impl<'a> DynamicTableDecoder<'a> {
-    pub fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(crate) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.relative_base(self.base, index)?;
         self.table
             .fields
@@ -51,7 +49,7 @@ impl<'a> DynamicTableDecoder<'a> {
             .ok_or(Error::BadIndex(real_index))
     }
 
-    pub fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(crate) fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.post_base(self.base, index)?;
         self.table
             .fields
@@ -65,7 +63,7 @@ pub struct DynamicTableInserter<'a> {
 }
 
 impl<'a> DynamicTableInserter<'a> {
-    pub fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
+    pub(crate) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
         } else {
@@ -95,7 +93,7 @@ impl<'a> DynamicTableInserter<'a> {
         Ok(())
     }
 
-    pub fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(crate) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.relative(index)?;
         self.table
             .fields
@@ -123,7 +121,7 @@ impl<'a> DynamicTableInserter<'a> {
         Ok(())
     }
 
-    pub fn total_inserted(&self) -> usize {
+    pub(crate) fn total_inserted(&self) -> usize {
         self.table.vas.total_inserted()
     }
 }
@@ -153,11 +151,11 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
 }
 
 impl<'a> DynamicTableEncoder<'a> {
-    pub fn commit(&mut self) {
+    pub(crate) fn commit(&mut self) {
         self.commited = true;
     }
 
-    pub fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
+    pub(crate) fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
         self.lookup_result(
             self.table
                 .field_map
@@ -188,7 +186,7 @@ impl<'a> DynamicTableEncoder<'a> {
         }
     }
 
-    pub fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+    pub(crate) fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
         } else {
@@ -274,15 +272,15 @@ impl<'a> DynamicTableEncoder<'a> {
         self.table.track_ref(reference);
     }
 
-    pub fn max_mem_size(&self) -> usize {
+    pub(crate) fn max_mem_size(&self) -> usize {
         self.table.mem_limit
     }
 
-    pub fn base(&self) -> usize {
+    pub(crate) fn base(&self) -> usize {
         self.base
     }
 
-    pub fn total_inserted(&self) -> usize {
+    pub(crate) fn total_inserted(&self) -> usize {
         self.table.total_inserted()
     }
 }
@@ -380,11 +378,11 @@ impl DynamicTable {
         }
     }
 
-    pub fn total_inserted(&self) -> usize {
+    pub(crate) fn total_inserted(&self) -> usize {
         self.vas.total_inserted()
     }
 
-    pub fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
+    pub(crate) fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
         if self.track_blocs.is_none() || self.track_map.is_none() {
             return Err(Error::NoTrackingData);
         }
@@ -532,11 +530,11 @@ impl DynamicTable {
         self.largest_known_recieved = std::cmp::max(index, self.largest_known_recieved);
     }
 
-    pub fn max_mem_size(&self) -> usize {
+    pub(crate) fn max_mem_size(&self) -> usize {
         self.mem_limit
     }
 
-    pub fn get(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(crate) fn get(&self, index: usize) -> Result<&HeaderField, Error> {
         match self.fields.get(index) {
             Some(f) => Ok(f),
             None => Err(Error::BadIndex(index)),

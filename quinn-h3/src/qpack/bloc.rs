@@ -1,5 +1,4 @@
 use bytes::{Buf, BufMut};
-use std::io::Cursor;
 
 use super::prefix_int;
 use super::prefix_string;
@@ -42,7 +41,11 @@ pub struct HeaderPrefix {
 impl HeaderPrefix {
     pub fn new(required: usize, base: usize, total_inserted: usize, max_table_size: usize) -> Self {
         if max_table_size == 0 {
-            return Self { encoded_insert_count: 0, sign_negative: false, delta_base: 0 };
+            return Self {
+                encoded_insert_count: 0,
+                sign_negative: false,
+                delta_base: 0,
+            };
         }
 
         assert!(required <= total_inserted);
@@ -273,7 +276,8 @@ impl Literal {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::qpack::table::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use std::io::Cursor;
 
     #[test]
     fn indexed_static() {

@@ -1,14 +1,11 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(unused_imports)]
-
-pub mod field;
+mod field;
 pub use self::field::HeaderField;
 
-pub mod dynamic;
+mod dynamic;
 pub use self::dynamic::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableDecoder,
     DynamicTableEncoder, DynamicTableInserter, Error as DynamicTableError,
+    SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
 };
 
 pub mod static_;

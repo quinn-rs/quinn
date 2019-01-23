@@ -1,20 +1,15 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(unused_imports, dead_code)]
-
 mod bitwin;
 mod decode;
 mod encode;
 
 pub use self::bitwin::BitWindow;
-use std::borrow::Cow;
 
 pub use self::decode::{DecodeIter, Error as HuffmanDecodingError, HpackStringDecode};
 pub use self::encode::{Error as HuffmanEncodingError, HpackStringEncode};
 
 use crate::qpack::prefix_int::{self, Error as IntegerError};
 use bytes::{Buf, BufMut};
-use quinn_proto::coding::{self, BufExt, BufMutExt};
+use quinn_proto::coding::BufMutExt;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {

@@ -1,7 +1,3 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -22,10 +18,6 @@ impl StaticTable {
         }
     }
 
-    pub fn count() -> usize {
-        PREDEFINED_HEADERS.len()
-    }
-
     pub fn find(field: &HeaderField) -> Option<usize> {
         PREDEFINED_HEADERS_MAP.get(field).map(|i| *i)
     }
@@ -35,7 +27,6 @@ impl StaticTable {
     }
 }
 
-#[allow(unused_macros)]
 macro_rules! decl_fields {
     [ $( ($key:expr, $value:expr) ),* ] => {
         [
@@ -190,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_static_table_is_full() {
-        assert_eq!(StaticTable::count(), 99);
+        assert_eq!(PREDEFINED_HEADERS.len(), 99);
     }
 
     #[test]
