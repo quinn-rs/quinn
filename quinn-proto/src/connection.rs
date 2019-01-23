@@ -1484,10 +1484,6 @@ impl Connection {
                     return Err(TransportError::FRAME_ENCODING_ERROR);
                 }
                 Frame::Crypto(frame) => {
-                    if is_0rtt {
-                        debug!(self.log, "received CRYPTO in 0-RTT");
-                        return Err(TransportError::PROTOCOL_VIOLATION);
-                    }
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
