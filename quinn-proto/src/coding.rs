@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
@@ -59,6 +61,34 @@ impl Codec for u64 {
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.put_u64_be(*self);
+    }
+}
+
+impl Codec for Ipv4Addr {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Ipv4Addr> {
+        if buf.remaining() < 4 {
+            return Err(UnexpectedEnd);
+        }
+        let mut octets = [0; 4];
+        buf.copy_to_slice(&mut octets);
+        Ok(octets.into())
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_slice(&self.octets());
+    }
+}
+
+impl Codec for Ipv6Addr {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Ipv6Addr> {
+        if buf.remaining() < 16 {
+            return Err(UnexpectedEnd);
+        }
+        let mut octets = [0; 16];
+        buf.copy_to_slice(&mut octets);
+        Ok(octets.into())
+    }
+    fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.put_slice(&self.octets());
     }
 }
 
