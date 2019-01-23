@@ -34,7 +34,7 @@ pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use crate::endpoint::{
-    Config, ConnectionHandle, Endpoint, EndpointError, Event, ServerConfig, Timer,
+    Config, ConfigError, ConnectionHandle, Endpoint, Event, ServerConfig, Timer,
 };
 
 mod packet;
