@@ -590,9 +590,8 @@ fn reject_self_signed_cert() {
         .unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
-                    Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError {
-                        error_code
-                    }})) if conn == client_ch && error_code == TransportError::crypto(AlertDescription::BadCertificate));
+                    Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError(error)}))
+                    if conn == client_ch && error.code == TransportErrorCode::crypto(AlertDescription::BadCertificate));
 }
 
 #[test]
@@ -945,7 +944,7 @@ fn server_busy() {
                     ConnectionError::ConnectionClosed {
                         reason:
                             frame::ConnectionClose {
-                                error_code: TransportError::SERVER_BUSY,
+                                error_code: TransportErrorCode::SERVER_BUSY,
                                 ..
                             },
                     },

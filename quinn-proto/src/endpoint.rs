@@ -462,7 +462,7 @@ impl Endpoint {
                     &src_cid,
                     &temp_loc_cid,
                     0,
-                    TransportError::SERVER_BUSY,
+                    TransportError::SERVER_BUSY(""),
                 ),
             });
             return;
@@ -486,7 +486,7 @@ impl Endpoint {
                     &src_cid,
                     &temp_loc_cid,
                     0,
-                    TransportError::PROTOCOL_VIOLATION,
+                    TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
                 ),
             });
             return;

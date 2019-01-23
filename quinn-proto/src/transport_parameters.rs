@@ -181,8 +181,9 @@ pub enum Error {
 impl From<Error> for TransportError {
     fn from(e: Error) -> Self {
         match e {
-            Error::VersionNegotiation => TransportError::VERSION_NEGOTIATION_ERROR,
-            Error::IllegalValue | Error::Malformed => TransportError::TRANSPORT_PARAMETER_ERROR,
+            Error::VersionNegotiation => TransportError::VERSION_NEGOTIATION_ERROR(""),
+            Error::IllegalValue => TransportError::TRANSPORT_PARAMETER_ERROR("illegal value"),
+            Error::Malformed => TransportError::TRANSPORT_PARAMETER_ERROR("malformed"),
         }
     }
 }
