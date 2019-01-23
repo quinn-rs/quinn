@@ -87,6 +87,8 @@ pub struct Connection {
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet
     stream_opened: bool,
     accepted_0rtt: bool,
+    /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
+    permit_idle_reset: bool,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -225,6 +227,7 @@ impl Connection {
             path_challenge: None,
             stream_opened: false,
             accepted_0rtt: false,
+            permit_idle_reset: true,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -324,6 +327,10 @@ impl Connection {
         if size != 0 {
             if ack_eliciting {
                 self.time_of_last_sent_ack_eliciting_packet = now;
+                if self.permit_idle_reset {
+                    self.reset_idle_timeout(now);
+                }
+                self.permit_idle_reset = false;
             }
             if is_crypto_packet {
                 self.time_of_last_sent_crypto_packet = now;
@@ -704,6 +711,7 @@ impl Connection {
         self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
         self.total_recvd = self.total_recvd.wrapping_add(size as u64);
         self.reset_idle_timeout(now);
+        self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
             self.ecn_counters += x;
@@ -2327,7 +2335,6 @@ impl Connection {
         );
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
-        self.reset_idle_timeout(now);
         Some(Transmit {
             destination: remote,
             packet: buf.into(),
