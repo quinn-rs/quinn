@@ -25,7 +25,7 @@ pub use self::dynamic::{
 pub use self::encoder::{encode, on_decoder_recv, set_dynamic_table_size};
 pub use self::field::HeaderField;
 
-mod bloc;
+mod block;
 mod dynamic;
 mod field;
 mod static_;
