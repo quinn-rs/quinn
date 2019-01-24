@@ -836,7 +836,12 @@ impl Connection {
         if self.state.is_closed() {
             return Ok(());
         }
-        let params = self.tls.transport_parameters()?.unwrap();
+        let params = self
+            .tls
+            .transport_parameters()?
+            .ok_or(TransportError::PROTOCOL_VIOLATION(
+                "transport parameters missing",
+            ))?;
         self.set_params(params)?;
         self.write_tls();
         self.init_0rtt();
