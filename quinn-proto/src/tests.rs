@@ -1121,3 +1121,17 @@ fn stop_opens_bidi() {
         Err(WriteError::Stopped { error_code: ERROR })
     );
 }
+
+#[test]
+fn implicit_open() {
+    let mut pair = Pair::default();
+    let (client_conn, server_conn) = pair.connect();
+    let s1 = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    let s2 = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    pair.client.write(client_conn, s2, b"hello").unwrap();
+    pair.drive();
+    assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_conn);
+    assert_eq!(pair.server.accept_stream(server_conn), Some(s1));
+    assert_eq!(pair.server.accept_stream(server_conn), Some(s2));
+    assert_eq!(pair.server.accept_stream(server_conn), None);
+}
