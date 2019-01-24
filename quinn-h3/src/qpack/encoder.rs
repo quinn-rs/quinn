@@ -6,18 +6,20 @@ use super::bloc::{
     HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
+use super::dynamic::{
+    DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
+    Error as DynamicTableError,
+};
 use super::prefix_int::Error as IntError;
 use super::prefix_string::Error as StringError;
+use super::static_::StaticTable;
 use super::stream::{
     DecoderInstruction, Duplicate, HeaderAck, InsertCountIncrement, InsertWithNameRef,
     InsertWithoutNameRef, StreamCancel,
 };
-use super::table::{
-    DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
-    DynamicTableError, HeaderField, StaticTable,
-};
-use super::ParseError;
+use super::{HeaderField, ParseError};
 
+#[allow(dead_code)]
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
     bloc: &mut W,
@@ -118,6 +120,7 @@ fn encode_field<W: BufMut>(
     Ok(reference)
 }
 
+#[allow(dead_code)]
 pub fn on_decoder_recv<R: Buf>(table: &mut DynamicTable, read: &mut R) -> Result<(), Error> {
     while let Some(instruction) = parse_instruction(read)? {
         match instruction {
@@ -195,7 +198,7 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use crate::qpack::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
 
     fn check_encode_field(
         init_fields: &[HeaderField],

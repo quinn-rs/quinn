@@ -73,13 +73,12 @@ pub type AbsoluteIndex = usize;
 #[derive(Debug, PartialEq)]
 pub enum Error {
     BadRelativeIndex(usize),
-    BadAbsoluteIndex(usize),
     BadPostbaseIndex(usize),
     BadIndex(usize),
 }
 
 #[derive(Debug)]
-pub struct VirtualAddressSpace {
+pub(super) struct VirtualAddressSpace {
     inserted: usize,
     dropped: usize,
     delta: usize,
@@ -100,16 +99,12 @@ impl VirtualAddressSpace {
         self.inserted
     }
 
-    pub fn drop(&mut self) {
-        self.dropped += 1;
-        self.delta -= 1;
-    }
-
     pub fn drop_many<T>(&mut self, count: T)
     where
         T: Into<usize>,
     {
         let count = count.into();
+
         self.dropped += count;
         self.delta -= count;
     }
@@ -135,14 +130,6 @@ impl VirtualAddressSpace {
             Err(Error::BadPostbaseIndex(index))
         } else {
             Ok(base - self.dropped + index)
-        }
-    }
-
-    pub fn absolute(&self, index: AbsoluteIndex) -> Result<usize, Error> {
-        if index == 0 || index <= self.dropped || index > self.inserted {
-            Err(Error::BadAbsoluteIndex(index))
-        } else {
-            Ok(index - self.dropped - 1)
         }
     }
 
@@ -174,24 +161,16 @@ mod tests {
         assert_eq!(res, Err(Error::BadRelativeIndex(0)));
     }
 
-    #[test]
-    fn test_no_absolute_index_when_empty() {
-        let vas = VirtualAddressSpace::new();
-        let res = vas.absolute(1);
-        assert_eq!(res, Err(Error::BadAbsoluteIndex(1)));
-    }
-
     proptest! {
         #[test]
         fn test_first_insertion_without_drop(
             ref count in 1..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
-            let abs_index = vas.add();
+            vas.add();
             (1..*count).for_each(|_| { vas.add(); });
 
             assert_eq!(vas.relative_base(*count, count - 1), Ok(0), "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
 
         #[test]
@@ -199,12 +178,11 @@ mod tests {
             ref count in 2..2200usize
         ) {
             let mut vas = VirtualAddressSpace::new();
-            let abs_index = vas.add();
+            vas.add();
             (1..*count).for_each(|_| { vas.add(); });
-            (0..*count - 1).for_each(|_| vas.drop());
+            (0..*count - 1).for_each(|_| vas.drop_many(1usize));
 
             assert_eq!(vas.relative_base(*count, count - 1), Err(Error::BadRelativeIndex(count - 1)), "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Err(Error::BadAbsoluteIndex(abs_index)), "{:?}", vas);
         }
 
         #[test]
@@ -213,11 +191,9 @@ mod tests {
         ) {
             let mut vas = VirtualAddressSpace::new();
             (1..*count).for_each(|_| { vas.add(); });
-            let abs_index = vas.add();
+            vas.add();
 
             assert_eq!(vas.relative_base(*count, 0), Ok(count -1),
-                       "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Ok(count - 1),
                        "{:?}", vas);
         }
 
@@ -227,12 +203,11 @@ mod tests {
         ) {
             let mut vas = VirtualAddressSpace::new();
             (0..*count - 1).for_each(|_| { vas.add(); });
-            let abs_index = vas.add();
-            (0..*count - 1).for_each(|_| { vas.drop(); });
+            vas.add();
+            (0..*count - 1).for_each(|_| { vas.drop_many(1usize); });
 
             assert_eq!(vas.relative_base(*count, 0), Ok(0),
                        "{:?}", vas);
-            assert_eq!(vas.absolute(abs_index), Ok(0), "{:?}", vas);
         }
     }
 
@@ -286,9 +261,9 @@ mod tests {
         vas.add();
         assert_eq!(vas.index(0), Ok(1));
         vas.add();
-        vas.drop();
+        vas.drop_many(1usize);
         assert_eq!(vas.index(0), Ok(2));
-        vas.drop();
+        vas.drop_many(1usize);
         assert_eq!(vas.index(0), Err(Error::BadIndex(0)));
         vas.add();
         vas.add();

@@ -1,11 +1,11 @@
 use bytes::{Buf, BufMut};
 use std::io::Cursor;
 
-use super::table::{
-    static_, DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter,
-    HeaderField, StaticTable,
-};
+use super::static_::{Error as StaticError, StaticTable};
 use super::vas;
+use super::{
+    DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter, HeaderField,
+};
 
 use super::bloc::{
     HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
@@ -34,6 +34,7 @@ pub enum Error {
 }
 
 // Decode a header bloc received on Request of Push stream. (draft: 4.5)
+#[allow(dead_code)]
 pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<HeaderField>, Error> {
     let (required_ref, base) =
         HeaderPrefix::decode(buf)?.get(table.total_inserted(), table.max_mem_size())?;
@@ -92,6 +93,7 @@ fn parse_header_field<R: Buf>(
 }
 
 // The receiving side of encoder stream
+#[allow(dead_code)]
 pub fn on_encoder_recv<R: Buf, W: BufMut>(
     table: &mut DynamicTableInserter,
     read: &mut R,
@@ -184,10 +186,10 @@ impl From<vas::Error> for Error {
     }
 }
 
-impl From<static_::Error> for Error {
-    fn from(e: static_::Error) -> Self {
+impl From<StaticError> for Error {
+    fn from(e: StaticError) -> Self {
         match e {
-            static_::Error::Unknown(i) => Error::InvalidStaticIndex(i),
+            StaticError::Unknown(i) => Error::InvalidStaticIndex(i),
         }
     }
 }
@@ -212,7 +214,7 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use crate::qpack::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
 
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-00
