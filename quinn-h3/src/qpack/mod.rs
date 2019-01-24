@@ -18,15 +18,18 @@ pub const QPACK_VERSION: &'static str = "0.0.0~draft";
 pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 
 pub use self::decoder::{decode_header, on_encoder_recv, Error as DecoderError};
-pub use self::encoder::{encode, on_decoder_recv};
-pub use self::table::HeaderField;
-pub use self::table::{
-    DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableError, DynamicTableInserter,
+pub use self::dynamic::{
+    DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter,
+    Error as DynamicTableError,
 };
+pub use self::encoder::{encode, on_decoder_recv};
+pub use self::field::HeaderField;
 
 mod bloc;
+mod dynamic;
+mod field;
+mod static_;
 mod stream;
-mod table;
 mod vas;
 
 mod decoder;
@@ -39,7 +42,7 @@ mod prefix_string;
 mod tests;
 
 #[derive(Debug, PartialEq)]
-pub enum ParseError {
+pub(self) enum ParseError {
     InvalidInteger(prefix_int::Error),
     InvalidString(prefix_string::Error),
     InvalidPrefix(u8),

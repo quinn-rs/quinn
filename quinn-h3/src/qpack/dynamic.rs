@@ -1,7 +1,3 @@
-// This is only here because qpack is new and quinn no uses it yet.
-// TODO remove allow dead code
-#![allow(dead_code)]
-
 use std::borrow::Cow;
 use std::collections::btree_map::Entry as BTEntry;
 use std::collections::hash_map::Entry;
@@ -21,7 +17,7 @@ pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
  * 4. Configuration
  */
-pub const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
+const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -41,7 +37,7 @@ pub struct DynamicTableDecoder<'a> {
 }
 
 impl<'a> DynamicTableDecoder<'a> {
-    pub(crate) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(super) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.relative_base(self.base, index)?;
         self.table
             .fields
@@ -49,7 +45,7 @@ impl<'a> DynamicTableDecoder<'a> {
             .ok_or(Error::BadIndex(real_index))
     }
 
-    pub(crate) fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(super) fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.post_base(self.base, index)?;
         self.table
             .fields
@@ -63,7 +59,7 @@ pub struct DynamicTableInserter<'a> {
 }
 
 impl<'a> DynamicTableInserter<'a> {
-    pub(crate) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
+    pub(super) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
         } else {
@@ -93,7 +89,7 @@ impl<'a> DynamicTableInserter<'a> {
         Ok(())
     }
 
-    pub(crate) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
+    pub(super) fn get_relative(&self, index: usize) -> Result<&HeaderField, Error> {
         let real_index = self.table.vas.relative(index)?;
         self.table
             .fields
@@ -121,7 +117,7 @@ impl<'a> DynamicTableInserter<'a> {
         Ok(())
     }
 
-    pub(crate) fn total_inserted(&self) -> usize {
+    pub(super) fn total_inserted(&self) -> usize {
         self.table.vas.total_inserted()
     }
 }
@@ -151,11 +147,11 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
 }
 
 impl<'a> DynamicTableEncoder<'a> {
-    pub(crate) fn commit(&mut self) {
+    pub(super) fn commit(&mut self) {
         self.commited = true;
     }
 
-    pub(crate) fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
+    pub(super) fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
         self.lookup_result(
             self.table
                 .field_map
@@ -186,7 +182,7 @@ impl<'a> DynamicTableEncoder<'a> {
         }
     }
 
-    pub(crate) fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+    pub(super) fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
         } else {
@@ -272,15 +268,15 @@ impl<'a> DynamicTableEncoder<'a> {
         self.table.track_ref(reference);
     }
 
-    pub(crate) fn max_mem_size(&self) -> usize {
+    pub(super) fn max_mem_size(&self) -> usize {
         self.table.mem_limit
     }
 
-    pub(crate) fn base(&self) -> usize {
+    pub(super) fn base(&self) -> usize {
         self.base
     }
 
-    pub(crate) fn total_inserted(&self) -> usize {
+    pub(super) fn total_inserted(&self) -> usize {
         self.table.total_inserted()
     }
 }
@@ -329,6 +325,7 @@ pub struct DynamicTable {
     largest_known_recieved: usize,
 }
 
+#[allow(dead_code)]
 impl DynamicTable {
     pub fn new() -> DynamicTable {
         DynamicTable {
@@ -378,11 +375,11 @@ impl DynamicTable {
         }
     }
 
-    pub(crate) fn total_inserted(&self) -> usize {
+    pub(super) fn total_inserted(&self) -> usize {
         self.vas.total_inserted()
     }
 
-    pub(crate) fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
+    pub(super) fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
         if self.track_blocs.is_none() || self.track_map.is_none() {
             return Err(Error::NoTrackingData);
         }
@@ -530,11 +527,11 @@ impl DynamicTable {
         self.largest_known_recieved = std::cmp::max(index, self.largest_known_recieved);
     }
 
-    pub(crate) fn max_mem_size(&self) -> usize {
+    pub(super) fn max_mem_size(&self) -> usize {
         self.mem_limit
     }
 
-    pub(crate) fn get(&self, index: usize) -> Result<&HeaderField, Error> {
+    fn get(&self, index: usize) -> Result<&HeaderField, Error> {
         match self.fields.get(index) {
             Some(f) => Ok(f),
             None => Err(Error::BadIndex(index)),
@@ -547,7 +544,6 @@ impl From<vas::Error> for Error {
         match e {
             vas::Error::BadRelativeIndex(e) => Error::BadRelativeIndex(e),
             vas::Error::BadPostbaseIndex(e) => Error::BadPostbaseIndex(e),
-            vas::Error::BadAbsoluteIndex(e) => Error::BadIndex(e),
             vas::Error::BadIndex(e) => Error::BadIndex(e),
         }
     }
@@ -556,7 +552,7 @@ impl From<vas::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::table::static_::StaticTable;
+    use crate::qpack::static_::StaticTable;
 
     const STREAM_ID: u64 = 0x4;
 

@@ -4,7 +4,7 @@ use super::prefix_int;
 use super::prefix_string;
 use super::ParseError;
 
-pub enum HeaderBlocField {
+pub(super) enum HeaderBlocField {
     Indexed,
     IndexedWithPostBase,
     LiteralWithNameRef,
@@ -32,7 +32,7 @@ impl HeaderBlocField {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct HeaderPrefix {
+pub(super) struct HeaderPrefix {
     encoded_insert_count: usize,
     sign_negative: bool,
     delta_base: usize,
@@ -64,7 +64,7 @@ impl HeaderPrefix {
         }
     }
 
-    pub fn get(
+    pub(super) fn get(
         self,
         total_inserted: usize,
         max_table_size: usize,
@@ -103,7 +103,7 @@ impl HeaderPrefix {
         Ok((required, base))
     }
 
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
+    pub(super) fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         let (_, encoded_insert_count) = prefix_int::decode(8, buf)?;
         let (sign_negative, delta_base) = prefix_int::decode(7, buf)?;
         Ok(Self {
@@ -113,7 +113,7 @@ impl HeaderPrefix {
         })
     }
 
-    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+    pub(super) fn encode<W: BufMut>(&self, buf: &mut W) {
         let sign_bit = if self.sign_negative { 1 } else { 0 };
         prefix_int::encode(8, 0, self.encoded_insert_count, buf);
         prefix_int::encode(7, sign_bit, self.delta_base, buf);
@@ -121,7 +121,7 @@ impl HeaderPrefix {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Indexed {
+pub(super) enum Indexed {
     Static(usize),
     Dynamic(usize),
 }
@@ -147,20 +147,20 @@ impl Indexed {
 pub struct IndexedWithPostBase(pub usize);
 
 impl IndexedWithPostBase {
-    pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
+    pub(super) fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         match prefix_int::decode(4, buf)? {
             (0b0001, i) => Ok(IndexedWithPostBase(i)),
             (f, _) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
-    pub fn encode<W: BufMut>(&self, buf: &mut W) {
+    pub(super) fn encode<W: BufMut>(&self, buf: &mut W) {
         prefix_int::encode(4, 0b0001, self.0, buf)
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub enum LiteralWithNameRef {
+pub(super) enum LiteralWithNameRef {
     Static { index: usize, value: Vec<u8> },
     Dynamic { index: usize, value: Vec<u8> },
 }
@@ -210,7 +210,7 @@ impl LiteralWithNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct LiteralWithPostBaseNameRef {
+pub(super) struct LiteralWithPostBaseNameRef {
     pub index: usize,
     pub value: Vec<u8>,
 }
@@ -241,7 +241,7 @@ impl LiteralWithPostBaseNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Literal {
+pub(super) struct Literal {
     pub name: Vec<u8>,
     pub value: Vec<u8>,
 }
@@ -276,7 +276,7 @@ impl Literal {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::qpack::table::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+    use crate::qpack::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
     use std::io::Cursor;
 
     #[test]
