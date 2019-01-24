@@ -253,8 +253,11 @@ impl Connection {
                 max_bi: 0,
                 max_remote_uni: config.stream_window_uni,
                 max_remote_bi: config.stream_window_bidi,
+                next_remote_uni: 0,
+                next_remote_bi: 0,
+                next_reported_remote_uni: 0,
+                next_reported_remote_bi: 0,
                 finished: Vec::new(),
-                incoming: VecDeque::new(),
             },
             config,
             rem_cids: Vec::new(),
@@ -1547,8 +1550,7 @@ impl Connection {
                     }
 
                     if mem::replace(&mut rs.fresh, false) {
-                        self.stream_opened = true;
-                        self.streams.incoming.push_back(frame.id);
+                        self.remote_stream_opened(frame.id);
                     } else {
                         self.events
                             .push_back(Event::StreamReadable { stream: frame.id });
@@ -1696,8 +1698,7 @@ impl Connection {
 
                     // Notify application
                     if fresh {
-                        self.stream_opened = true;
-                        self.streams.incoming.push_back(id);
+                        self.remote_stream_opened(id);
                     } else {
                         self.events.push_back(Event::StreamReadable { stream: id });
                     }
@@ -1746,8 +1747,7 @@ impl Connection {
                         .recv_mut()
                         .map_or(false, |rs| mem::replace(&mut rs.fresh, false))
                     {
-                        self.stream_opened = true;
-                        self.streams.incoming.push_back(id);
+                        self.remote_stream_opened(id);
                     }
                 }
                 Frame::RetireConnectionId { sequence } => {
@@ -1815,6 +1815,18 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    fn remote_stream_opened(&mut self, id: StreamId) {
+        debug_assert_ne!(id.initiator(), self.side);
+        let next = match id.directionality() {
+            Directionality::Bi => &mut self.streams.next_remote_bi,
+            Directionality::Uni => &mut self.streams.next_remote_uni,
+        };
+        if id.index() >= *next {
+            *next = id.index() + 1;
+            self.stream_opened = true;
+        }
     }
 
     fn migrate(&mut self, now: u64, remote: SocketAddr) {
@@ -2503,7 +2515,17 @@ impl Connection {
     }
 
     pub fn accept(&mut self) -> Option<StreamId> {
-        let id = self.streams.incoming.pop_front()?;
+        let id = if self.streams.next_remote_uni > self.streams.next_reported_remote_uni {
+            let x = self.streams.next_reported_remote_uni;
+            self.streams.next_reported_remote_uni = x + 1;
+            StreamId::new(!self.side, Directionality::Uni, x)
+        } else if self.streams.next_remote_bi > self.streams.next_reported_remote_bi {
+            let x = self.streams.next_reported_remote_bi;
+            self.streams.next_reported_remote_bi = x + 1;
+            StreamId::new(!self.side, Directionality::Bi, x)
+        } else {
+            return None;
+        };
         self.alloc_remote_stream(id.directionality());
         Some(id)
     }
@@ -2924,12 +2946,17 @@ struct Streams {
     // Locally initiated
     max_uni: u64,
     max_bi: u64,
-    // Remotely initiated
+    // Maximum that can be remotely initiated
     max_remote_uni: u64,
     max_remote_bi: u64,
+    // Lowest that hasn't actually been opened
+    next_remote_uni: u64,
+    next_remote_bi: u64,
+    // Next to report to the application, once opened
+    next_reported_remote_uni: u64,
+    next_reported_remote_bi: u64,
 
     finished: Vec<StreamId>,
-    incoming: VecDeque<StreamId>,
 }
 
 impl Streams {
