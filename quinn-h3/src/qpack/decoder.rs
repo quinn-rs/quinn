@@ -12,8 +12,8 @@ use super::bloc::{
     LiteralWithPostBaseNameRef,
 };
 use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, InsertCountIncrement, InsertWithNameRef,
-    InsertWithoutNameRef,
+    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck, InsertCountIncrement,
+    InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
 use super::ParseError;
 
@@ -31,6 +31,16 @@ pub enum Error {
     MissingRefs,
     BadBaseIndex(isize),
     UnexpectedEnd,
+}
+
+#[allow(dead_code)]
+pub fn ack_header<W: BufMut>(stream_id: u64, decoder: &mut W) {
+    HeaderAck(stream_id).encode(decoder);
+}
+
+#[allow(dead_code)]
+pub fn stream_canceled<W: BufMut>(stream_id: u64, decoder: &mut W) {
+    StreamCancel(stream_id).encode(decoder);
 }
 
 // Decode a header bloc received on Request of Push stream. (draft: 4.5)
