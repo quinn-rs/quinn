@@ -22,7 +22,7 @@ pub use self::dynamic::{
     DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter,
     Error as DynamicTableError,
 };
-pub use self::encoder::{encode, on_decoder_recv};
+pub use self::encoder::{encode, on_decoder_recv, set_dynamic_table_size};
 pub use self::field::HeaderField;
 
 mod bloc;

@@ -14,8 +14,8 @@ use super::prefix_int::Error as IntError;
 use super::prefix_string::Error as StringError;
 use super::static_::StaticTable;
 use super::stream::{
-    DecoderInstruction, Duplicate, HeaderAck, InsertCountIncrement, InsertWithNameRef,
-    InsertWithoutNameRef, StreamCancel,
+    DecoderInstruction, Duplicate, DynamicTableSizeUpdate, HeaderAck, InsertCountIncrement,
+    InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
 use super::{HeaderField, ParseError};
 
@@ -162,6 +162,17 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
 enum Instruction {
     RecievedRef(usize),
     Untrack(u64),
+}
+
+#[allow(dead_code)]
+pub fn set_dynamic_table_size<W: BufMut>(
+    table: &mut DynamicTable,
+    encoder: &mut W,
+    size: usize,
+) -> Result<(), Error> {
+    table.inserter().set_max_mem_size(size)?;
+    DynamicTableSizeUpdate(size).encode(encoder);
+    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
