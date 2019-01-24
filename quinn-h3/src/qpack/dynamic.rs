@@ -127,7 +127,7 @@ pub struct DynamicTableEncoder<'a> {
     base: usize,
     commited: bool,
     stream_id: u64,
-    bloc_refs: HashMap<usize, usize>,
+    block_refs: HashMap<usize, usize>,
 }
 
 impl<'a> Drop for DynamicTableEncoder<'a> {
@@ -136,13 +136,13 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
             // TODO maybe possible to replace and not clone here?
             // HOW Err should be handled?
             self.table
-                .track_cancel(self.bloc_refs.iter().map(|(x, y)| (*x, *y)))
+                .track_cancel(self.block_refs.iter().map(|(x, y)| (*x, *y)))
                 .ok();
             return;
         }
 
         self.table
-            .track_bloc(self.stream_id, self.bloc_refs.clone());
+            .track_block(self.stream_id, self.block_refs.clone());
     }
 }
 
@@ -261,7 +261,7 @@ impl<'a> DynamicTableEncoder<'a> {
     }
 
     fn track_ref(&mut self, reference: usize) {
-        self.bloc_refs
+        self.block_refs
             .entry(reference)
             .and_modify(|c| *c += 1)
             .or_insert(1);
@@ -321,7 +321,7 @@ pub struct DynamicTable {
     field_map: Option<HashMap<HeaderField, usize>>,
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
     track_map: Option<BTreeMap<usize, usize>>,
-    track_blocs: Option<HashMap<u64, HashMap<usize, usize>>>,
+    track_blocks: Option<HashMap<u64, HashMap<usize, usize>>>,
     largest_known_recieved: usize,
 }
 
@@ -336,7 +336,7 @@ impl DynamicTable {
             name_map: None,
             field_map: None,
             track_map: None,
-            track_blocs: None,
+            track_blocks: None,
             largest_known_recieved: 0,
         }
     }
@@ -369,7 +369,7 @@ impl DynamicTable {
         DynamicTableEncoder {
             base: self.vas.largest_ref(),
             table: self,
-            bloc_refs: HashMap::new(),
+            block_refs: HashMap::new(),
             commited: false,
             stream_id,
         }
@@ -379,12 +379,12 @@ impl DynamicTable {
         self.vas.total_inserted()
     }
 
-    pub(super) fn untrack_bloc(&mut self, stream_id: u64) -> Result<(), Error> {
-        if self.track_blocs.is_none() || self.track_map.is_none() {
+    pub(super) fn untrack_block(&mut self, stream_id: u64) -> Result<(), Error> {
+        if self.track_blocks.is_none() || self.track_map.is_none() {
             return Err(Error::NoTrackingData);
         }
 
-        if let Some(bloc_entry) = self.track_blocs.as_mut().unwrap().remove(&stream_id) {
+        if let Some(bloc_entry) = self.track_blocks.as_mut().unwrap().remove(&stream_id) {
             self.track_cancel(bloc_entry.iter().map(|(x, y)| (*x, *y)))?;
             Ok(())
         } else {
@@ -478,16 +478,16 @@ impl DynamicTable {
         }
     }
 
-    fn track_bloc(&mut self, stream_id: u64, refs: HashMap<usize, usize>) {
-        if self.track_blocs.is_none() {
-            self.track_blocs = Some(HashMap::new());
+    fn track_block(&mut self, stream_id: u64, refs: HashMap<usize, usize>) {
+        if self.track_blocks.is_none() {
+            self.track_blocks = Some(HashMap::new());
         }
 
-        if self.track_blocs.as_ref().unwrap().contains_key(&stream_id) {
-            self.untrack_bloc(stream_id).ok();
+        if self.track_blocks.as_ref().unwrap().contains_key(&stream_id) {
+            self.untrack_block(stream_id).ok();
         }
 
-        match self.track_blocs.as_mut().unwrap().entry(stream_id) {
+        match self.track_blocks.as_mut().unwrap().entry(stream_id) {
             Entry::Occupied(mut e) => {
                 e.insert(refs);
             }
@@ -1044,7 +1044,7 @@ mod tests {
                 .map(|x| *x),
             Some(1)
         );
-        assert_eq!(encoder.bloc_refs.get(&1).map(|x| *x), Some(1));
+        assert_eq!(encoder.block_refs.get(&1).map(|x| *x), Some(1));
     }
 
     #[test]
@@ -1058,7 +1058,7 @@ mod tests {
                     .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
                     .unwrap();
             }
-            assert_eq!(encoder.bloc_refs.len(), 3);
+            assert_eq!(encoder.block_refs.len(), 3);
             encoder.commit();
         }
 
@@ -1067,17 +1067,17 @@ mod tests {
             assert_eq!(table.is_tracked(idx), true);
             assert_eq!(track_map.get(&1), Some(&1));
         }
-        let track_blocs = table.track_blocs.as_ref().unwrap();
-        let bloc = track_blocs.get(&stream_id).unwrap();
-        assert_eq!(bloc.get(&1), Some(&1));
-        assert_eq!(bloc.get(&2), Some(&1));
-        assert_eq!(bloc.get(&3), Some(&1));
+        let track_blocks = table.track_blocks.as_ref().unwrap();
+        let block = track_blocks.get(&stream_id).unwrap();
+        assert_eq!(block.get(&1), Some(&1));
+        assert_eq!(block.get(&2), Some(&1));
+        assert_eq!(block.get(&3), Some(&1));
     }
 
     #[test]
     fn encoder_insertion_refs_not_commited() {
         let mut table = DynamicTable::new();
-        table.track_blocs = Some(HashMap::new());
+        table.track_blocks = Some(HashMap::new());
         let stream_id = 42;
         {
             let mut encoder = table.encoder(stream_id);
@@ -1086,20 +1086,20 @@ mod tests {
                     .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
                     .unwrap();
             }
-            assert_eq!(encoder.bloc_refs.len(), 3);
+            assert_eq!(encoder.block_refs.len(), 3);
         } // dropped without ::commit()
 
         let track_map = table.track_map.as_ref().unwrap();
         assert_eq!(track_map.len(), 0);
-        let track_blocs = table.track_blocs.as_ref().unwrap();
-        assert_eq!(track_blocs.len(), 0);
+        let track_blocks = table.track_blocks.as_ref().unwrap();
+        assert_eq!(track_blocks.len(), 0);
     }
 
     #[test]
     fn encoder_insertion_with_ref_tracks_both() {
         let mut table = DynamicTable::new();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
-        table.track_blocs = Some(HashMap::new());
+        table.track_blocks = Some(HashMap::new());
 
         let stream_id = 42;
         let mut encoder = table.encoder(stream_id);
@@ -1115,15 +1115,15 @@ mod tests {
         let track_map = encoder.table.track_map.as_ref().unwrap();
         assert_eq!(track_map.get(&1), Some(&1));
         assert_eq!(track_map.get(&2), Some(&1));
-        assert_eq!(encoder.bloc_refs.get(&1), Some(&1));
-        assert_eq!(encoder.bloc_refs.get(&2), Some(&1));
+        assert_eq!(encoder.block_refs.get(&1), Some(&1));
+        assert_eq!(encoder.block_refs.get(&2), Some(&1));
     }
 
     #[test]
     fn encoder_ref_count_are_incremented() {
         let mut table = DynamicTable::new();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
-        table.track_blocs = Some(HashMap::new());
+        table.track_blocks = Some(HashMap::new());
         table.track_ref(1);
 
         let stream_id = 42;
@@ -1136,8 +1136,8 @@ mod tests {
             let track_map = encoder.table.track_map.as_ref().unwrap();
             assert_eq!(track_map.get(&1), Some(&2));
             assert_eq!(track_map.get(&2), Some(&2));
-            assert_eq!(encoder.bloc_refs.get(&1), Some(&1));
-            assert_eq!(encoder.bloc_refs.get(&2), Some(&2));
+            assert_eq!(encoder.block_refs.get(&1), Some(&1));
+            assert_eq!(encoder.block_refs.get(&2), Some(&2));
         }
 
         // check ref count is correctly decremented after uncommited drop()
@@ -1177,7 +1177,7 @@ mod tests {
 
     fn tracked_table(stream_id: u64) -> DynamicTable {
         let mut table = DynamicTable::new();
-        table.track_blocs = Some(HashMap::new());
+        table.track_blocks = Some(HashMap::new());
         {
             let mut encoder = table.encoder(stream_id);
             for idx in 1..4 {
@@ -1185,47 +1185,47 @@ mod tests {
                     .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
                     .unwrap();
             }
-            assert_eq!(encoder.bloc_refs.len(), 3);
+            assert_eq!(encoder.block_refs.len(), 3);
             encoder.commit();
         }
         table
     }
 
     #[test]
-    fn untrack_bloc() {
+    fn untrack_block() {
         let mut table = tracked_table(42);
         assert_eq!(table.track_map.as_ref().unwrap().len(), 3);
-        assert_eq!(table.track_blocs.as_ref().unwrap().len(), 1);
-        table.untrack_bloc(42).unwrap();
+        assert_eq!(table.track_blocks.as_ref().unwrap().len(), 1);
+        table.untrack_block(42).unwrap();
         assert_eq!(table.track_map.as_ref().unwrap().len(), 0);
-        assert_eq!(table.track_blocs.as_ref().unwrap().len(), 0);
+        assert_eq!(table.track_blocks.as_ref().unwrap().len(), 0);
     }
 
     #[test]
-    fn untrack_bloc_not_in_map() {
+    fn untrack_block_not_in_map() {
         let mut table = tracked_table(42);
         table.track_map.as_mut().unwrap().remove(&2);
-        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
+        assert_eq!(table.untrack_block(42), Err(Error::InvalidTrackingCount));
     }
 
     #[test]
-    fn untrack_bloc_wrong_count() {
+    fn untrack_block_wrong_count() {
         let mut table = tracked_table(42);
         table
-            .track_blocs
+            .track_blocks
             .as_mut()
             .unwrap()
             .entry(42)
             .and_modify(|x| {
                 x.entry(2).and_modify(|c| *c += 1);
             });
-        assert_eq!(table.untrack_bloc(42), Err(Error::InvalidTrackingCount));
+        assert_eq!(table.untrack_block(42), Err(Error::InvalidTrackingCount));
     }
 
     #[test]
     fn untrack_bloc_wrong_stream() {
         let mut table = tracked_table(41);
-        assert_eq!(table.untrack_bloc(42), Err(Error::UnknownStreamId(42)));
+        assert_eq!(table.untrack_block(42), Err(Error::UnknownStreamId(42)));
     }
 
     #[test]

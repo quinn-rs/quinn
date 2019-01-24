@@ -9,7 +9,7 @@ fn codec_basic_get() {
     let mut enc_table = DynamicTable::new();
     let mut dec_table = DynamicTable::new();
 
-    let mut bloc_buf = vec![];
+    let mut block_buf = vec![];
     let mut enc_buf = vec![];
     let mut dec_buf = vec![];
 
@@ -21,7 +21,7 @@ fn codec_basic_get() {
 
     encode(
         &mut enc_table.encoder(42),
-        &mut bloc_buf,
+        &mut block_buf,
         &mut enc_buf,
         &header,
     )
@@ -30,8 +30,8 @@ fn codec_basic_get() {
     let mut enc_cur = Cursor::new(&mut enc_buf);
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
 
-    let mut bloc_cur = Cursor::new(&mut bloc_buf);
-    assert_eq!(decode_header(&dec_table, &mut bloc_cur), Ok(header));
+    let mut block_cur = Cursor::new(&mut block_buf);
+    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();
@@ -42,20 +42,20 @@ fn blocked_header() {
     let mut enc_table = DynamicTable::new();
     let dec_table = DynamicTable::new();
 
-    let mut bloc_buf = vec![];
+    let mut block_buf = vec![];
     let mut enc_buf = vec![];
 
     encode(
         &mut enc_table.encoder(42),
-        &mut bloc_buf,
+        &mut block_buf,
         &mut enc_buf,
         &[HeaderField::new("foo", "bar")],
     )
     .unwrap();
 
-    let mut bloc_cur = Cursor::new(&mut bloc_buf);
+    let mut block_cur = Cursor::new(&mut block_buf);
     assert_eq!(
-        decode_header(&dec_table, &mut bloc_cur),
+        decode_header(&dec_table, &mut block_cur),
         Err(DecoderError::MissingRefs)
     );
 }
@@ -65,7 +65,7 @@ fn codec_table_size_0() {
     let mut enc_table = DynamicTable::new();
     let mut dec_table = DynamicTable::new();
 
-    let mut bloc_buf = vec![];
+    let mut block_buf = vec![];
     let mut enc_buf = vec![];
     let mut dec_buf = vec![];
 
@@ -80,7 +80,7 @@ fn codec_table_size_0() {
 
     encode(
         &mut enc_table.encoder(42),
-        &mut bloc_buf,
+        &mut block_buf,
         &mut enc_buf,
         &header,
     )
@@ -89,8 +89,8 @@ fn codec_table_size_0() {
     let mut enc_cur = Cursor::new(&mut enc_buf);
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
 
-    let mut bloc_cur = Cursor::new(&mut bloc_buf);
-    assert_eq!(decode_header(&dec_table, &mut bloc_cur), Ok(header));
+    let mut block_cur = Cursor::new(&mut block_buf);
+    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();
@@ -101,7 +101,7 @@ fn codec_table_full() {
     let mut enc_table = DynamicTable::new();
     let mut dec_table = DynamicTable::new();
 
-    let mut bloc_buf = vec![];
+    let mut block_buf = vec![];
     let mut enc_buf = vec![];
     let mut dec_buf = vec![];
 
@@ -115,18 +115,18 @@ fn codec_table_full() {
 
     encode(
         &mut enc_table.encoder(42),
-        &mut bloc_buf,
+        &mut block_buf,
         &mut enc_buf,
         &header,
     )
     .unwrap();
 
     let mut enc_cur = Cursor::new(&mut enc_buf);
-    let mut bloc_cur = Cursor::new(&mut bloc_buf);
+    let mut block_cur = Cursor::new(&mut block_buf);
 
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
 
-    assert_eq!(decode_header(&dec_table, &mut bloc_cur), Ok(header));
+    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();

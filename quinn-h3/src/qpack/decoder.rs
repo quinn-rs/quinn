@@ -7,7 +7,7 @@ use super::{
     DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter, HeaderField,
 };
 
-use super::bloc::{
+use super::block::{
     HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
