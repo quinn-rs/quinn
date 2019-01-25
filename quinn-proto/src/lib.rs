@@ -21,7 +21,7 @@ mod range_set;
 #[cfg(test)]
 mod tests;
 mod transport_parameters;
-mod varint;
+pub mod varint;
 
 mod connection;
 pub use crate::connection::{ConnectionError, TimerSetting, TimerUpdate};
