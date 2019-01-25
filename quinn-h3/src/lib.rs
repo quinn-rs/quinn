@@ -10,4 +10,5 @@ extern crate proptest;
 extern crate assert_matches;
 
 extern crate quinn_proto;
-mod qpack;
+pub mod frame;
+pub mod qpack;
