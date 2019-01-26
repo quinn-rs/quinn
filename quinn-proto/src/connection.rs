@@ -260,7 +260,6 @@ impl Connection {
                 next_remote_bi: 0,
                 next_reported_remote_uni: 0,
                 next_reported_remote_bi: 0,
-                finished: Vec::new(),
             },
             config,
             rem_cids: Vec::new(),
@@ -487,23 +486,17 @@ impl Connection {
             }
         }
         for frame in info.retransmits.stream {
-            let recvd = {
-                let ss = if let Some(x) = self.streams.get_send_mut(frame.id) {
-                    x
-                } else {
-                    continue;
-                };
-                ss.bytes_in_flight -= frame.data.len() as u64;
-                if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
-                    ss.state = stream::SendState::DataRecvd;
-                    true
-                } else {
-                    false
-                }
+            let ss = if let Some(x) = self.streams.get_send_mut(frame.id) {
+                x
+            } else {
+                continue;
             };
-            if recvd {
+            ss.bytes_in_flight -= frame.data.len() as u64;
+            if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
+                ss.state = stream::SendState::DataRecvd;
                 self.maybe_cleanup(frame.id);
-                self.streams.finished.push(frame.id);
+                self.events
+                    .push_back(Event::StreamFinished { stream: frame.id });
             }
         }
         self.space_mut(space).pending_acks.subtract(&info.acks);
@@ -1557,9 +1550,6 @@ impl Connection {
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack);
-                    for stream in self.streams.finished.drain(..) {
-                        self.events.push_back(Event::StreamFinished { stream });
-                    }
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
@@ -2957,8 +2947,6 @@ struct Streams {
     // Next to report to the application, once opened
     next_reported_remote_uni: u64,
     next_reported_remote_bi: u64,
-
-    finished: Vec<StreamId>,
 }
 
 impl Streams {
