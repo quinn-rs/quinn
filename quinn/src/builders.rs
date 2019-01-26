@@ -175,10 +175,7 @@ impl ServerConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
-            tls_server_config.key_log = Arc::new(KeyLogFile::new());
-        }
+        Arc::make_mut(&mut self.config.tls_config).key_log = Arc::new(KeyLogFile::new());
         self
     }
 
@@ -188,10 +185,7 @@ impl ServerConfigBuilder {
         cert_chain: CertificateChain,
         key: PrivateKey,
     ) -> Result<&mut Self, TLSError> {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
-            tls_server_config.set_single_cert(cert_chain.certs, key.inner)?;
-        }
+        Arc::make_mut(&mut self.config.tls_config).set_single_cert(cert_chain.certs, key.inner)?;
         Ok(self)
     }
 
@@ -200,14 +194,8 @@ impl ServerConfigBuilder {
     /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
     // TODO: Cite IANA registery for ALPN IDs
     pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        {
-            let tls_server_config = Arc::get_mut(&mut self.config.tls_config).unwrap();
-            let protocols_strings = protocols
-                .iter()
-                .map(|p| str::from_utf8(p).unwrap().into())
-                .collect::<Vec<_>>();
-            tls_server_config.set_protocols(&protocols_strings);
-        }
+        Arc::make_mut(&mut self.config.tls_config).alpn_protocols =
+            protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
 
