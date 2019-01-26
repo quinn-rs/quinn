@@ -1734,9 +1734,13 @@ impl Connection {
                     }
                     self.reset(id, error_code);
                     let stream = self.streams.streams.get_mut(&id).unwrap();
-                    stream.send_mut().unwrap().state = stream::SendState::ResetSent {
+                    let ss = stream.send_mut().unwrap();
+                    ss.state = stream::SendState::ResetSent {
                         stop_reason: Some(error_code),
                     };
+                    if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
+                        self.events.push_back(Event::StreamWritable { stream: id });
+                    }
                     self.on_stream_frame(false, id);
                 }
                 Frame::RetireConnectionId { sequence } => {
