@@ -1638,6 +1638,7 @@ impl Connection {
                             "MAX_STREAM_DATA on unopened stream",
                         ));
                     }
+                    self.on_stream_frame(false, id);
                 }
                 Frame::MaxStreams {
                     directionality,
