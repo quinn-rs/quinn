@@ -5,7 +5,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{io, str};
 
 use bytes::{Buf, BufMut, BytesMut};
-use err_derive::Error;
 use ring::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
 use ring::aead::{self, Aad, Nonce};
 use ring::digest;
@@ -21,7 +20,7 @@ use webpki::DNSNameRef;
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{ConnectionId, PacketNumber, LONG_HEADER_FORM};
 use crate::transport_parameters::TransportParameters;
-use crate::{Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{ConnectError, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
     Client(ClientSession),
@@ -399,25 +398,6 @@ impl HeaderCrypto {
 
     pub fn sample_size(&self) -> usize {
         self.local.algorithm().sample_len()
-    }
-}
-
-/// Errors in the parameters being used to create a new connection
-///
-/// These arise before any I/O has been performed.
-#[derive(Debug, Error)]
-pub enum ConnectError {
-    /// The domain name supplied was malformed
-    #[error(display = "invalid DNS name: {}", _0)]
-    InvalidDnsName(String),
-    /// The TLS configuration was invalid
-    #[error(display = "TLS error: {}", _0)]
-    Tls(TLSError),
-}
-
-impl From<TLSError> for ConnectError {
-    fn from(x: TLSError) -> Self {
-        ConnectError::Tls(x)
     }
 }
 

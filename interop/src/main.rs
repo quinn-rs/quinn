@@ -69,6 +69,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     let client_config = quinn::ClientConfig {
         tls_config: Arc::new(tls_config),
+        transport: Default::default(),
     };
 
     builder.logger(log.clone());

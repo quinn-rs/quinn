@@ -1,7 +1,4 @@
-use super::{
-    read_to_end, ClientConfigBuilder, Config, Endpoint, EndpointBuilder, NewStream,
-    ServerConfigBuilder,
-};
+use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
 use futures::{Future, Stream};
 use slog::{Drain, Logger, KV};
 use std::{
@@ -45,10 +42,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
     server_config.set_certificate(cert_chain, key).unwrap();
 
-    let mut server = EndpointBuilder::new(Config {
-        stream_window_bidi: 32,
-        ..Config::default()
-    });
+    let mut server = Endpoint::new();
     server.logger(log.clone());
     server.listen(server_config.build());
     let server_sock = UdpSocket::bind(server_addr).unwrap();

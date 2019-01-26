@@ -82,7 +82,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 
 pub use crate::quinn::{
-    Config, ConnectError, ConnectionError, ConnectionId, ServerConfig, ALPN_QUIC_HTTP,
+    ConnectError, ConnectionError, ConnectionId, ServerConfig, TransportConfig, ALPN_QUIC_HTTP,
 };
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
@@ -136,7 +136,12 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<impl Future<Item = NewClientConnection, Error = ConnectionError>, ConnectError>
     {
-        let (fut, conn) = self.connect_inner(addr, &config.tls_config, server_name)?;
+        let (fut, conn) = self.connect_inner(
+            addr,
+            config.transport.clone(),
+            config.tls_config.clone(),
+            server_name,
+        )?;
         Ok(fut.map_err(|_| unreachable!()).and_then(move |err| {
             if let Some(err) = err {
                 Err(err)
@@ -190,7 +195,8 @@ impl Endpoint {
     fn connect_inner(
         &self,
         addr: &SocketAddr,
-        config: &Arc<quinn::ClientConfig>,
+        transport_config: Arc<TransportConfig>,
+        crypto_config: Arc<quinn::ClientConfig>,
         server_name: &str,
     ) -> Result<
         (
@@ -207,7 +213,10 @@ impl Endpoint {
             } else {
                 *addr
             };
-            let handle = endpoint.inner.connect(addr, config, server_name)?;
+            let handle =
+                endpoint
+                    .inner
+                    .connect(addr, transport_config, crypto_config, server_name)?;
             endpoint.pending.insert(handle, Pending::new(Some(send)));
             endpoint.notify();
             handle
