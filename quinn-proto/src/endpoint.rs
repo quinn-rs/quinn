@@ -606,6 +606,7 @@ impl Endpoint {
             .remove(&self.connections[ch].remote());
         self.dirty_timers.remove(&ch);
         self.eventful_conns.remove(&ch);
+        self.needs_transmit.remove(&ch);
         self.connections.remove(ch.0);
     }
 
