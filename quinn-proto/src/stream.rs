@@ -137,8 +137,6 @@ pub struct Recv {
     /// reads
     pub unordered: bool,
     pub assembler: Assembler,
-    /// Whether the application has been notified of this stream yet
-    pub fresh: bool,
     /// Number of bytes read by the application. Equal to assembler.offset when `unordered` is
     /// false.
     pub bytes_read: u64,
@@ -152,7 +150,6 @@ impl Recv {
             buffered: VecDeque::new(),
             unordered: false,
             assembler: Assembler::new(),
-            fresh: true,
             bytes_read: 0,
         }
     }

@@ -1552,12 +1552,7 @@ impl Connection {
                         }
                     }
 
-                    if mem::replace(&mut rs.fresh, false) {
-                        self.remote_stream_opened(frame.id);
-                    } else {
-                        self.events
-                            .push_back(Event::StreamReadable { stream: frame.id });
-                    }
+                    self.on_stream_frame(true, frame.id);
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
@@ -1675,7 +1670,6 @@ impl Connection {
                         Ok(Some(stream)) => stream.recv_mut().unwrap(),
                     };
                     let limit = rs.limit();
-                    let fresh = mem::replace(&mut rs.fresh, false);
 
                     // Validate final_offset
                     if let Some(offset) = rs.final_offset() {
@@ -1700,11 +1694,7 @@ impl Connection {
                     }
 
                     // Notify application
-                    if fresh {
-                        self.remote_stream_opened(id);
-                    } else {
-                        self.events.push_back(Event::StreamReadable { stream: id });
-                    }
+                    self.on_stream_frame(true, id);
                 }
                 Frame::DataBlocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
@@ -1746,12 +1736,7 @@ impl Connection {
                     stream.send_mut().unwrap().state = stream::SendState::ResetSent {
                         stop_reason: Some(error_code),
                     };
-                    if stream
-                        .recv_mut()
-                        .map_or(false, |rs| mem::replace(&mut rs.fresh, false))
-                    {
-                        self.remote_stream_opened(id);
-                    }
+                    self.on_stream_frame(false, id);
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {
@@ -1820,15 +1805,26 @@ impl Connection {
         Ok(())
     }
 
-    fn remote_stream_opened(&mut self, id: StreamId) {
-        debug_assert_ne!(id.initiator(), self.side);
-        let next = match id.directionality() {
+    /// Notify the application that new streams were opened or a stream became readable.
+    fn on_stream_frame(&mut self, recv: bool, stream: StreamId) {
+        if stream.initiator() == self.side {
+            // Notifying about the opening of locally-initiated streams would be redundant.
+            if recv {
+                // TODO: Deduplicate
+                self.events.push_back(Event::StreamReadable { stream });
+            }
+            return;
+        }
+        let next = match stream.directionality() {
             Directionality::Bi => &mut self.streams.next_remote_bi,
             Directionality::Uni => &mut self.streams.next_remote_uni,
         };
-        if id.index() >= *next {
-            *next = id.index() + 1;
+        if stream.index() >= *next {
+            *next = stream.index() + 1;
             self.stream_opened = true;
+        } else if recv {
+            // TODO: Deduplicate
+            self.events.push_back(Event::StreamReadable { stream });
         }
     }
 
@@ -2444,11 +2440,9 @@ impl Connection {
             }
             Directionality::Bi if self.streams.next_bi < self.streams.max_bi => {
                 self.streams.next_bi += 1;
-                let mut stream = Stream::new_bi();
-                stream.recv_mut().unwrap().fresh = false;
                 (
                     StreamId::new(self.side, direction, self.streams.next_bi - 1),
-                    stream,
+                    Stream::new_bi(),
                 )
             }
             _ => {
