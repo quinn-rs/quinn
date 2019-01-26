@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt::{Display, Formatter};
 
 /**
  * https://tools.ietf.org/html/rfc7541
@@ -36,6 +37,18 @@ impl HeaderField {
             name: self.name.to_owned(),
             value: Cow::Owned(value.into()),
         }
+    }
+}
+
+impl Display for HeaderField {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "{}\t{}",
+            String::from_utf8_lossy(&self.name),
+            String::from_utf8_lossy(&self.value)
+        )?;
+        Ok(())
     }
 }
 
