@@ -359,7 +359,7 @@ macro_rules! setting_identifiers {
 }
 
 setting_identifiers! {
-    NUM_PLACEHOLDERS = 0x3,
+    NUM_PLACEHOLDERS = 0x8,
     MAX_HEADER_LIST_SIZE = 0x6,
 }
 
