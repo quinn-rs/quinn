@@ -91,7 +91,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         ..Default::default()
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
+    server_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
 
     if options.keylog {
         server_config.enable_keylog();
@@ -114,7 +114,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         } else {
             quinn::CertificateChain::from_pem(&cert_chain)?
         };
-        server_config.set_certificate(cert_chain, key)?;
+        server_config.certificate(cert_chain, key)?;
     } else {
         let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         let path = dirs.data_local_dir();
@@ -138,7 +138,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         };
         let key = quinn::PrivateKey::from_der(&key)?;
         let cert = quinn::Certificate::from_der(&cert)?;
-        server_config.set_certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
+        server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 
     let mut endpoint = quinn::Endpoint::new();

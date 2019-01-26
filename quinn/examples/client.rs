@@ -61,7 +61,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut endpoint = quinn::Endpoint::new();
     let mut client_config = quinn::ClientConfigBuilder::new();
-    client_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
+    client_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
     endpoint.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();

@@ -180,7 +180,7 @@ impl ServerConfigBuilder {
     }
 
     /// Set the certificate chain that will be presented to clients.
-    pub fn set_certificate(
+    pub fn certificate(
         &mut self,
         cert_chain: CertificateChain,
         key: PrivateKey,
@@ -193,7 +193,7 @@ impl ServerConfigBuilder {
     ///
     /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
     // TODO: Cite IANA registery for ALPN IDs
-    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
+    pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         Arc::make_mut(&mut self.config.tls_config).alpn_protocols =
             protocols.iter().map(|x| x.to_vec()).collect();
         self
@@ -265,7 +265,7 @@ impl ClientConfigBuilder {
     }
 
     /// Set application-layer protocols to declare support for.
-    pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
+    pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         self.crypto.alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
         self
     }

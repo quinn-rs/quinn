@@ -40,7 +40,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
     let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
     let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
-    server_config.set_certificate(cert_chain, key).unwrap();
+    server_config.certificate(cert_chain, key).unwrap();
 
     let mut server = Endpoint::new();
     server.logger(log.clone());
