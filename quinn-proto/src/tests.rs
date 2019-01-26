@@ -1189,3 +1189,21 @@ fn implicit_open() {
     assert_eq!(pair.server.accept_stream(server_conn), Some(s2));
     assert_eq!(pair.server.accept_stream(server_conn), None);
 }
+
+#[test]
+fn zero_length_cid() {
+    let mut pair = Pair::new(
+        Arc::new(EndpointConfig {
+            local_cid_len: 0,
+            ..EndpointConfig::default()
+        }),
+        server_config(),
+    );
+    let (client_ch, server_ch) = pair.connect();
+    // Ensure we can reconnect after a previous connection is cleaned up
+    info!(pair.log, "closing");
+    pair.client.close(pair.time, client_ch, 42, Bytes::new());
+    pair.drive();
+    pair.server.close(pair.time, server_ch, 42, Bytes::new());
+    pair.connect();
+}
