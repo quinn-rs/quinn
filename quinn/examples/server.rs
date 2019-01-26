@@ -6,6 +6,7 @@ extern crate slog;
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{ascii, fmt, fs, io, str};
 
 use failure::{Error, Fail, ResultExt};
@@ -82,7 +83,14 @@ fn main() {
 }
 
 fn run(log: Logger, options: Opt) -> Result<()> {
-    let mut server_config = quinn::ServerConfigBuilder::default();
+    let server_config = quinn::ServerConfig {
+        transport_config: Arc::new(quinn::TransportConfig {
+            stream_window_uni: 0,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.set_protocols(&[quinn::ALPN_QUIC_HTTP]);
 
     if options.keylog {
@@ -133,10 +141,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.set_certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 
-    let mut endpoint = quinn::EndpointBuilder::new(quinn::Config {
-        stream_window_uni: 0,
-        ..Default::default()
-    });
+    let mut endpoint = quinn::Endpoint::new();
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 

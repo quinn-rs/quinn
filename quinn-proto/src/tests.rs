@@ -75,7 +75,7 @@ struct Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        Pair::new(Default::default(), Default::default(), server_config())
+        Pair::new(Default::default(), server_config())
     }
 }
 
@@ -112,15 +112,15 @@ fn client_config() -> Arc<ClientConfig> {
 }
 
 impl Pair {
-    fn new(server_config: Config, client_config: Config, listen_keys: ServerConfig) -> Self {
+    fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
         let log = logger();
         let server = Endpoint::new(
             log.new(o!("side" => "Server")),
-            server_config,
-            Some(listen_keys),
+            endpoint_config.clone(),
+            Some(Arc::new(server_config)),
         )
         .unwrap();
-        let client = Endpoint::new(log.new(o!("side" => "Client")), client_config, None).unwrap();
+        let client = Endpoint::new(log.new(o!("side" => "Client")), endpoint_config, None).unwrap();
 
         let server_addr = SocketAddr::new(
             Ipv6Addr::LOCALHOST.into(),
@@ -218,7 +218,12 @@ impl Pair {
         info!(self.log, "connecting");
         let client_ch = self
             .client
-            .connect(self.server.addr, &client_config(), "localhost")
+            .connect(
+                self.server.addr,
+                Default::default(),
+                client_config(),
+                "localhost",
+            )
             .unwrap();
         self.drive();
         let server_ch = self.server.assert_accept();
@@ -369,8 +374,8 @@ fn version_negotiate() {
     let client_addr = "[::2]:7890".parse().unwrap();
     let mut server = Endpoint::new(
         log.new(o!("peer" => "server")),
-        Config::default(),
-        Some(server_config()),
+        Default::default(),
+        Some(Arc::new(server_config())),
     )
     .unwrap();
     server.handle(
@@ -421,8 +426,7 @@ fn lifecycle() {
 #[test]
 fn stateless_retry() {
     let mut pair = Pair::new(
-        Config::default(),
-        Config::default(),
+        Default::default(),
         ServerConfig {
             use_stateless_retry: true,
             ..server_config()
@@ -438,22 +442,18 @@ fn server_stateless_reset() {
     rng.fill_bytes(&mut reset_value);
 
     let reset_key = SigningKey::new(&digest::SHA512_256, &reset_value);
-    let reset_key_2 = SigningKey::new(&digest::SHA512_256, &reset_value);
 
-    let server = Config {
+    let endpoint_config = Arc::new(EndpointConfig {
         reset_key,
-        ..Config::default()
-    };
+        ..Default::default()
+    });
 
-    let mut pair = Pair::new(server, Config::default(), server_config());
+    let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
     pair.server.endpoint = Endpoint::new(
         pair.log.new(o!("side" => "Server")),
-        Config {
-            reset_key: reset_key_2,
-            ..Config::default()
-        },
-        Some(server_config()),
+        endpoint_config,
+        Some(Arc::new(server_config())),
     )
     .unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
@@ -471,22 +471,18 @@ fn client_stateless_reset() {
     rng.fill_bytes(&mut reset_value);
 
     let reset_key = SigningKey::new(&digest::SHA512_256, &reset_value);
-    let reset_key_2 = SigningKey::new(&digest::SHA512_256, &reset_value);
 
-    let client = Config {
+    let endpoint_config = Arc::new(EndpointConfig {
         reset_key,
-        ..Config::default()
-    };
+        ..Default::default()
+    });
 
-    let mut pair = Pair::new(Config::default(), client, server_config());
+    let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
     pair.client.endpoint = Endpoint::new(
         pair.log.new(o!("side" => "Client")),
-        Config {
-            reset_key: reset_key_2,
-            ..Config::default()
-        },
-        Some(server_config()),
+        endpoint_config,
+        Some(Arc::new(server_config())),
     )
     .unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
@@ -586,7 +582,12 @@ fn reject_self_signed_cert() {
     info!(pair.log, "connecting");
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &Arc::new(client_config), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            Arc::new(client_config),
+            "localhost",
+        )
         .unwrap();
     pair.drive();
     assert_matches!(pair.client.poll(),
@@ -639,7 +640,12 @@ fn zero_rtt() {
     // Establish normal connection
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &config, "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            config.clone(),
+            "localhost",
+        )
         .unwrap();
     pair.drive();
     pair.server.assert_accept();
@@ -653,7 +659,7 @@ fn zero_rtt() {
     info!(pair.log, "resuming session");
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &config, "localhost")
+        .connect(pair.server.addr, Default::default(), config, "localhost")
         .unwrap();
     assert!(pair.client.connection(client_ch).has_0rtt());
     let s = pair.client.open(client_ch, Directionality::Uni).unwrap();
@@ -674,7 +680,12 @@ fn zero_rtt_rejection() {
     // Establish normal connection
     let client_conn = pair
         .client
-        .connect(pair.server.addr, &config, "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            config.clone(),
+            "localhost",
+        )
         .unwrap();
     pair.drive();
     pair.server.assert_accept();
@@ -688,7 +699,7 @@ fn zero_rtt_rejection() {
     info!(pair.log, "resuming session");
     let client_conn = pair
         .client
-        .connect(pair.server.addr, &config, "localhost")
+        .connect(pair.server.addr, Default::default(), config, "localhost")
         .unwrap();
     assert!(pair.client.connection(client_conn).has_0rtt());
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
@@ -709,7 +720,12 @@ fn close_during_handshake() {
     let mut pair = Pair::default();
     let c = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.client.close(pair.time, c, 0, Bytes::new());
     // This never actually sends the client's Initial; we may want to behave better here.
@@ -717,11 +733,14 @@ fn close_during_handshake() {
 
 #[test]
 fn stream_id_backpressure() {
-    let server = Config {
-        stream_window_uni: 1,
-        ..Config::default()
+    let server = ServerConfig {
+        transport_config: Arc::new(TransportConfig {
+            stream_window_uni: 1,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
     };
-    let mut pair = Pair::new(server, Default::default(), server_config());
+    let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
 
     let s = pair
@@ -846,7 +865,12 @@ fn initial_retransmit() {
     let mut pair = Pair::default();
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     pair.client.outbound.clear(); // Drop initial
@@ -860,7 +884,12 @@ fn instant_close() {
     info!(pair.log, "connecting");
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.client.close(pair.time, client_ch, 0, Bytes::new());
     pair.drive();
@@ -874,7 +903,12 @@ fn instant_close_2() {
     info!(pair.log, "connecting");
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     // Unlike `instant_close`, the server sees a valid Initial packet first.
     pair.drive_client();
@@ -924,15 +958,19 @@ fn idle_timeout() {
 #[test]
 fn server_busy() {
     let mut pair = Pair::new(
-        Config::default(),
-        Config::default(),
+        Default::default(),
         ServerConfig {
             accept_buffer: 0,
             ..server_config()
         },
     );
     pair.client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.drive();
     assert_matches!(
@@ -959,7 +997,12 @@ fn server_hs_retransmit() {
     let mut pair = Pair::default();
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.step();
     assert!(pair.client.inbound.len() > 1); // Initial + Handshakes
@@ -990,7 +1033,12 @@ fn decode_coalesced() {
     let mut pair = Pair::default();
     let client_ch = pair
         .client
-        .connect(pair.server.addr, &client_config(), "localhost")
+        .connect(
+            pair.server.addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
         .unwrap();
     pair.step();
     assert!(
@@ -1023,8 +1071,14 @@ fn migration() {
     assert_eq!(pair.server.connection(server_ch).remote(), pair.client.addr);
 }
 
-fn test_flow_control(config: Config, window_size: usize) {
-    let mut pair = Pair::new(config, Config::default(), server_config());
+fn test_flow_control(config: TransportConfig, window_size: usize) {
+    let mut pair = Pair::new(
+        Default::default(),
+        ServerConfig {
+            transport_config: Arc::new(config),
+            ..server_config()
+        },
+    );
     let (client_conn, server_conn) = pair.connect();
     let msg = vec![0xAB; window_size + 10];
     let mut buf = [0; 4096];
@@ -1082,9 +1136,9 @@ fn test_flow_control(config: Config, window_size: usize) {
 #[test]
 fn stream_flow_control() {
     test_flow_control(
-        Config {
+        TransportConfig {
             stream_receive_window: 2000,
-            ..Config::default()
+            ..TransportConfig::default()
         },
         2000,
     );
@@ -1093,9 +1147,9 @@ fn stream_flow_control() {
 #[test]
 fn conn_flow_control() {
     test_flow_control(
-        Config {
+        TransportConfig {
             receive_window: 2000,
-            ..Config::default()
+            ..TransportConfig::default()
         },
         2000,
     );

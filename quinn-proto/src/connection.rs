@@ -15,7 +15,7 @@ use crate::crypto::{
     ACK_DELAY_EXPONENT,
 };
 use crate::dedup::Dedup;
-use crate::endpoint::{Config, Event, Timer};
+use crate::endpoint::{Event, Timer, TransportConfig};
 use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
@@ -25,13 +25,14 @@ use crate::range_set::RangeSet;
 use crate::stream::{self, ReadError, Stream, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, MIN_INITIAL_SIZE,
-    MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
+    frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
+    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
 };
 
 pub struct Connection {
     log: Logger,
-    config: Arc<Config>,
+    endpoint_config: Arc<EndpointConfig>,
+    config: Arc<TransportConfig>,
     rng: OsRng,
     tls: TlsSession,
     app_closed: bool,
@@ -144,7 +145,8 @@ pub struct Connection {
 impl Connection {
     pub fn new(
         log: Logger,
-        config: Arc<Config>,
+        endpoint_config: Arc<EndpointConfig>,
+        config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
@@ -185,6 +187,7 @@ impl Connection {
         });
         let mut this = Self {
             log,
+            endpoint_config,
             rng,
             tls,
             app_closed: false,
@@ -1010,7 +1013,7 @@ impl Connection {
     ) {
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.config.local_cid_len) {
+            match PartialDecode::new(data, self.endpoint_config.local_cid_len) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -1437,7 +1440,7 @@ impl Connection {
     }
 
     pub fn issue_cid(&mut self, cid: ConnectionId) {
-        let token = reset_token_for(&self.config.reset_key, &cid);
+        let token = reset_token_for(&self.endpoint_config.reset_key, &cid);
         self.cids_issued += 1;
         let sequence = self.cids_issued;
         self.space_mut(SpaceId::Data)
@@ -1751,7 +1754,7 @@ impl Connection {
                     }
                 }
                 Frame::RetireConnectionId { sequence } => {
-                    if self.config.local_cid_len == 0 {
+                    if self.endpoint_config.local_cid_len == 0 {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "RETIRE_CONNECTION_ID when CIDs aren't in use",
                         ));

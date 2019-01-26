@@ -4,9 +4,11 @@ use bytes::{Buf, BufMut};
 use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::endpoint::Config;
 use crate::packet::ConnectionId;
-use crate::{varint, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE, VERSION};
+use crate::{
+    varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
+    VERSION,
+};
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
 // their codes and default values. Using this helps us avoid error-prone duplication of the
@@ -68,7 +70,7 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &TransportConfig) -> Self {
         TransportParameters {
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,

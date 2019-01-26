@@ -15,7 +15,7 @@ use quinn_proto as quinn;
 use rustls::{KeyLogFile, ProtocolVersion, TLSError};
 use slog::Logger;
 
-use quinn_proto::{Config, ServerConfig};
+use quinn_proto::{EndpointConfig, ServerConfig, TransportConfig};
 
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
 use crate::udp::UdpSocket;
@@ -26,14 +26,14 @@ pub struct EndpointBuilder<'a> {
     reactor: Option<&'a tokio_reactor::Handle>,
     logger: Logger,
     server_config: Option<ServerConfig>,
-    config: Config,
+    config: EndpointConfig,
     client_config: ClientConfig,
 }
 
 #[allow(missing_docs)]
 impl<'a> EndpointBuilder<'a> {
     /// Start a builder with a specific initial low-level configuration.
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: EndpointConfig) -> Self {
         Self {
             config,
             ..Self::default()
@@ -65,7 +65,11 @@ impl<'a> EndpointBuilder<'a> {
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
-            inner: quinn::Endpoint::new(self.logger, self.config, self.server_config)?,
+            inner: quinn::Endpoint::new(
+                self.logger,
+                Arc::new(self.config),
+                self.server_config.map(Arc::new),
+            )?,
             outgoing: None,
             epoch: Instant::now(),
             pending: FnvHashMap::default(),
@@ -115,7 +119,7 @@ impl<'a> Default for EndpointBuilder<'a> {
             reactor: None,
             logger: Logger::root(slog::Discard, o!()),
             server_config: None,
-            config: Config::default(),
+            config: EndpointConfig::default(),
             client_config: ClientConfig::default(),
         }
     }
@@ -224,20 +228,24 @@ impl Default for ServerConfigBuilder {
 
 /// Helper for creating new outgoing connections.
 pub struct ClientConfigBuilder {
-    config: quinn::ClientConfig,
+    transport: TransportConfig,
+    crypto: quinn::ClientConfig,
 }
 
 impl ClientConfigBuilder {
     /// Create a new builder with default options set.
     pub fn new() -> Self {
-        let mut config = quinn::ClientConfig::new();
-        config
+        let mut crypto = quinn::ClientConfig::new();
+        crypto
             .root_store
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        config.ct_logs = Some(&ct_logs::LOGS);
-        config.versions = vec![ProtocolVersion::TLSv1_3];
-        config.enable_early_data = true;
-        Self { config }
+        crypto.ct_logs = Some(&ct_logs::LOGS);
+        crypto.versions = vec![ProtocolVersion::TLSv1_3];
+        crypto.enable_early_data = true;
+        Self {
+            transport: TransportConfig::default(),
+            crypto,
+        }
     }
 
     /// Add a trusted certificate authority.
@@ -253,7 +261,7 @@ impl ClientConfigBuilder {
             let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
                 untrusted::Input::from(&cert.inner.0),
             )?;
-            self.config
+            self.crypto
                 .root_store
                 .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
         }
@@ -264,27 +272,21 @@ impl ClientConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        self.config.key_log = Arc::new(KeyLogFile::new());
+        self.crypto.key_log = Arc::new(KeyLogFile::new());
         self
     }
 
     /// Set application-layer protocols to declare support for.
     pub fn set_protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        self.config.alpn_protocols = protocols
-            .iter()
-            .map(|p| {
-                str::from_utf8(p)
-                    .expect("non-UTF8 protocols unsupported")
-                    .into()
-            })
-            .collect();
+        self.crypto.alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
 
     /// Begin connecting from `endpoint` to `addr`.
     pub fn build(self) -> ClientConfig {
         ClientConfig {
-            tls_config: Arc::new(self.config),
+            transport: Arc::new(self.transport),
+            tls_config: Arc::new(self.crypto),
         }
     }
 }
@@ -298,6 +300,9 @@ impl Default for ClientConfigBuilder {
 /// Configuration for outgoing connections
 #[derive(Clone)]
 pub struct ClientConfig {
+    /// Transport configuration to use
+    pub transport: Arc<TransportConfig>,
+
     /// TLS configuration to use.
     ///
     /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
