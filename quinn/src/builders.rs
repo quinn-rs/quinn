@@ -189,10 +189,13 @@ impl ServerConfigBuilder {
         Ok(self)
     }
 
-    /// Set the application-layer protocols to accept.
+    /// Set the application-layer protocols to accept, in order of descending preference.
     ///
     /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
-    // TODO: Cite IANA registery for ALPN IDs
+    ///
+    /// The IANA maintains a [registry] of standard protocol IDs, but custom IDs may be used as well.
+    ///
+    /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         Arc::make_mut(&mut self.config.tls_config).alpn_protocols =
             protocols.iter().map(|x| x.to_vec()).collect();
@@ -264,7 +267,13 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Set application-layer protocols to declare support for.
+    /// Set the application-layer protocols to accept, in order of descending preference.
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    ///
+    /// The IANA maintains a [registry] of standard protocol IDs, but custom IDs may be used as well.
+    ///
+    /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         self.crypto.alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
         self
