@@ -3065,14 +3065,20 @@ impl Default for Retransmits {
 
 impl ::std::ops::AddAssign for Retransmits {
     fn add_assign(&mut self, rhs: Self) {
+        // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
+        // STREAM and CRYPTO frames.
         self.max_data |= rhs.max_data;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
         self.max_bi_stream_id |= rhs.max_bi_stream_id;
-        self.stream.extend(rhs.stream.into_iter());
+        for stream in rhs.stream.into_iter().rev() {
+            self.stream.push_front(stream);
+        }
         self.rst_stream.extend_from_slice(&rhs.rst_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);
-        self.crypto.extend(rhs.crypto.into_iter());
+        for crypto in rhs.crypto.into_iter().rev() {
+            self.crypto.push_front(crypto);
+        }
         self.new_cids.extend(&rhs.new_cids);
         self.retire_cids.extend(rhs.retire_cids);
     }
