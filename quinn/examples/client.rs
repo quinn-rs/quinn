@@ -28,9 +28,17 @@ struct Opt {
 
     url: Url,
 
+    /// Override hostname used for certificate verification
+    #[structopt(long = "host")]
+    host: Option<String>,
+
     /// Custom certificate authority to trust, in DER format
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
+
+    /// Simulate NAT rebinding after connecting
+    #[structopt(long = "rebind")]
+    rebind: bool,
 }
 
 fn main() {
@@ -92,12 +100,15 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
+    let rebind = options.rebind;
+    let host = options
+        .host
+        .as_ref()
+        .map_or_else(|| url.host_str(), |x| Some(&x))
+        .ok_or(format_err!("no hostname specified"))?;
     runtime.block_on(
         endpoint
-            .connect(
-                &remote,
-                url.host_str().ok_or(format_err!("URL missing host"))?,
-            )?
+            .connect(&remote, &host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
                 eprintln!("connected at {:?}", start.elapsed());
@@ -106,6 +117,14 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| {
+                        if rebind {
+                            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+                            let addr = socket.local_addr().unwrap();
+                            eprintln!("rebinding to {}", addr);
+                            endpoint
+                                .rebind(socket, &tokio_reactor::Handle::default())
+                                .expect("rebind failed");
+                        }
                         tokio::io::write_all(stream, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
                     })
