@@ -303,8 +303,9 @@ impl Endpoint {
 
         debug!(
             self.log,
-            "sending stateless reset to {remote}",
-            remote = remote
+            "sending stateless reset for {connection} to {remote}",
+            connection = dst_cid,
+            remote = remote,
         );
         let mut buf = Vec::<u8>::new();
         let padding_len = self.rng.gen_range(MIN_PADDING_LEN, max_padding_len);
@@ -556,6 +557,7 @@ impl Endpoint {
             rest,
         ) {
             Ok(()) => {
+                trace!(self.log, "connection incoming; ICID {icid}", icid = dst_cid);
                 self.incoming_handshakes += 1;
                 self.needs_transmit.insert(ch);
                 if self.connections[ch].has_1rtt() {
