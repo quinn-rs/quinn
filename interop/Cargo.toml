@@ -10,6 +10,7 @@ slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
+tokio-reactor = "0.1"
 rustls = { version = "0.15", features = ["dangerous_configuration"] }
 failure = "0.1"
 slog = "2.2"
