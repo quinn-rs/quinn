@@ -7,7 +7,7 @@ use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
 use failure::{format_err, Error};
-use slog::{o, Drain, Logger};
+use slog::{o, warn, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -52,6 +52,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .to_socket_addrs()?
         .next()
         .ok_or(format_err!("couldn't resolve to an address"))?;
+    let host = if webpki::DNSNameRef::try_from_ascii_str(&options.host).is_ok() {
+        &options.host
+    } else {
+        warn!(log, "invalid hostname, using \"example.com\"");
+        "example.com"
+    };
 
     let mut runtime = Runtime::new()?;
 
@@ -83,7 +89,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut key_update = false;
     let result = runtime.block_on(
         endpoint
-            .connect_with(&client_config, &remote, &options.host)?
+            .connect_with(&client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
                 println!("connected");
@@ -108,7 +114,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 println!("attempting resumption");
                 state.lock().unwrap().saw_cert = false;
                 endpoint
-                    .connect_with(&client_config, &remote, &options.host)
+                    .connect_with(&client_config, &remote, host)
                     .unwrap()
                     .map_err(|e| format_err!("failed to connect: {}", e))
                     .and_then(|conn| {
@@ -139,7 +145,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .ok_or(format_err!("couldn't resolve to an address"))?;
         let result = runtime.block_on(
             endpoint
-                .connect_with(&client_config, &remote, &options.host)?
+                .connect_with(&client_config, &remote, host)?
                 .and_then(|conn| {
                     retry = true;
                     conn.connection
