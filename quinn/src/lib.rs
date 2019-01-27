@@ -151,6 +151,25 @@ impl Endpoint {
         }))
     }
 
+    /// Switch to a new UDP socket
+    ///
+    /// Allows the endpoint's address to be updated live, affecting all active connections. Incoming
+    /// connections and connections to servers unreachable from the new address will be lost.
+    ///
+    /// On error, the old UDP socket is retained.
+    pub fn rebind(
+        &self,
+        socket: std::net::UdpSocket,
+        reactor: &tokio_reactor::Handle,
+    ) -> io::Result<()> {
+        let addr = socket.local_addr()?;
+        let socket = UdpSocket::from_std(socket, &reactor)?;
+        let mut inner = self.inner.borrow_mut();
+        inner.socket = socket;
+        inner.ipv6 = addr.is_ipv6();
+        Ok(())
+    }
+
     /*
     /// Connect to a remote endpoint, with support for transmitting data before the connection is
     /// established

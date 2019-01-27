@@ -87,6 +87,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut close = false;
     let mut resumption = false;
     let mut key_update = false;
+    let mut rebinding = false;
+    let endpoint = &endpoint;
     let result = runtime.block_on(
         endpoint
             .connect_with(&client_config, &remote, host)?
@@ -122,13 +124,29 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         let conn = conn.connection;
                         conn.force_key_update();
                         let stream = conn.open_bi();
+                        let stream2 = conn.open_bi();
+                        let rebinding = &mut rebinding;
                         stream
                             .map_err(|e| format_err!("failed to open stream: {}", e))
                             .and_then(move |stream| get(stream))
                             .inspect(|_| {
                                 key_update = true;
                             })
-                            .and_then(move |_| conn.close(0, b"done").map_err(|_| unreachable!()))
+                            .and_then(move |_| {
+                                let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+                                let addr = socket.local_addr().unwrap();
+                                println!("rebinding to {}", addr);
+                                endpoint
+                                    .rebind(socket, &tokio_reactor::Handle::default())
+                                    .expect("rebind failed");
+                                stream2
+                                    .map_err(|e| format_err!("failed to open stream: {}", e))
+                                    .and_then(move |stream| get(stream))
+                            })
+                            .and_then(move |_| {
+                                *rebinding = true;
+                                conn.close(0, b"done").map_err(|_| unreachable!())
+                            })
                     })
             }),
     );
@@ -172,6 +190,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     if retry {
         print!("S");
+    }
+    if rebinding {
+        print!("B");
     }
     if key_update {
         print!("U");
