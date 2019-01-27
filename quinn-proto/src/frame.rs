@@ -202,7 +202,7 @@ impl Frame {
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
-                let mut ty = 0x10;
+                let mut ty = STREAM_TY_MIN;
                 if x.fin {
                     ty |= 0x01;
                 }
