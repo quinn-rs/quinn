@@ -619,6 +619,7 @@ impl Connection {
                     space.sent_packets[&largest_lost].time_sent,
                 );
                 self.lost_packets += lost_packets.len() as u64;
+                trace!(self.log, "packets lost: {:?}", lost_packets);
                 for packet in &lost_packets {
                     let info = space.sent_packets.remove(&packet).unwrap();
                     self.in_flight.remove(&info);
@@ -1388,7 +1389,7 @@ impl Connection {
             match frame {
                 Frame::Padding => {}
                 _ => {
-                    trace!(self.log, "got frame"; "type" => %frame.ty());
+                    trace!(self.log, "got {type}", type=frame.ty());
                 }
             }
             match frame {
@@ -2729,9 +2730,17 @@ impl Connection {
 
         if self.blocked() {
             if self.congestion_blocked() {
-                trace!(self.log, "write blocked by congestion"; "stream" => stream.0);
+                trace!(
+                    self.log,
+                    "write on {stream} blocked by congestion",
+                    stream = stream
+                );
             } else {
-                trace!(self.log, "write blocked by connection-level flow control"; "stream" => stream.0);
+                trace!(
+                    self.log,
+                    "write on {stream} blocked by connection-level flow control",
+                    stream = stream
+                );
             }
             self.blocked_streams.insert(stream);
             return Err(WriteError::Blocked);
@@ -2750,7 +2759,11 @@ impl Connection {
                 return Err(e);
             }
             Err(e @ WriteError::Blocked) => {
-                trace!(self.log, "write blocked by flow control"; "stream" => stream.0);
+                trace!(
+                    self.log,
+                    "write on {stream} blocked by flow control",
+                    stream = stream
+                );
                 return Err(e);
             }
         };
@@ -2758,7 +2771,12 @@ impl Connection {
         let conn_budget = self.max_data - self.data_sent;
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.queue_stream_data(stream, (&data[0..n]).into());
-        trace!(self.log, "write"; "stream" => stream.0, "len" => n);
+        trace!(
+            self.log,
+            "wrote {len} bytes to {stream}",
+            len = n,
+            stream = stream
+        );
         Ok(n)
     }
 
