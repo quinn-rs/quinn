@@ -1067,10 +1067,11 @@ impl Connection {
     ) {
         trace!(
             self.log,
-            "got {space:?} packet ({len} bytes) from {remote}",
+            "got {space:?} packet ({len} bytes) from {remote} using id {connection}",
             space = packet.header.space(),
             len = packet.payload.len() + packet.header_data.len(),
             remote = remote,
+            connection = packet.header.dst_cid(),
         );
         let was_closed = self.state.is_closed();
 
@@ -1762,6 +1763,12 @@ impl Connection {
                     }
                 }
                 Frame::NewConnectionId(frame) => {
+                    trace!(
+                        self.log,
+                        "NEW_CONNECTION_ID {sequence} = {id}",
+                        sequence = frame.sequence,
+                        id = frame.id,
+                    );
                     if self.rem_cid.is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "NEW_CONNECTION_ID when CIDs aren't in use",
@@ -2082,8 +2089,9 @@ impl Connection {
             };
             trace!(
                 self.log,
-                "NEW_CONNECTION_ID {sequence}",
-                sequence = frame.sequence
+                "NEW_CONNECTION_ID {sequence} = {id}",
+                sequence = frame.sequence,
+                id = frame.id,
             );
             frame.encode(buf);
             sent.new_cids.push(frame);

@@ -394,6 +394,17 @@ impl Header {
             _ => false,
         }
     }
+
+    pub fn dst_cid(&self) -> &ConnectionId {
+        use self::Header::*;
+        match *self {
+            Initial { ref dst_cid, .. } => dst_cid,
+            Long { ref dst_cid, .. } => dst_cid,
+            Retry { ref dst_cid, .. } => dst_cid,
+            Short { ref dst_cid, .. } => dst_cid,
+            VersionNegotiate { ref dst_cid, .. } => dst_cid,
+        }
+    }
 }
 
 pub struct PartialEncode {
