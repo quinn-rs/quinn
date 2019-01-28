@@ -1261,7 +1261,7 @@ impl Connection {
                             }?;
 
                             if self.has_0rtt() {
-                                if !self.tls.as_client().is_early_data_accepted() {
+                                if !self.tls.early_data_accepted().unwrap() {
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
