@@ -10,7 +10,6 @@ use ring::aead::{self, Aad, Nonce};
 use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
-use rustls::internal::msgs::enums::AlertDescription;
 use rustls::quic::{ClientQuicExt, Secrets, ServerQuicExt};
 use rustls::ProtocolVersion;
 pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
@@ -45,10 +44,6 @@ impl TlsSession {
 }
 
 impl CryptoSession for TlsSession {
-    fn alert(&self) -> Option<AlertDescription> {
-        self.get_alert()
-    }
-
     fn alpn_protocol(&self) -> Option<&[u8]> {
         self.get_alpn_protocol()
     }
@@ -65,8 +60,14 @@ impl CryptoSession for TlsSession {
         }
     }
 
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TLSError> {
-        self.read_hs(buf)
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError> {
+        self.read_hs(buf).map_err(|_| {
+            if let Some(alert) = self.get_alert() {
+                TransportError::crypto(alert.get_u8())
+            } else {
+                TransportError::PROTOCOL_VIOLATION("TLS error")
+            }
+        })
     }
 
     fn sni_hostname(&self) -> Option<&str> {
@@ -101,11 +102,10 @@ impl CryptoSession for TlsSession {
 }
 
 pub trait CryptoSession {
-    fn alert(&self) -> Option<AlertDescription>;
     fn alpn_protocol(&self) -> Option<&[u8]>;
     fn early_crypto(&self) -> Option<Crypto>;
     fn is_handshaking(&self) -> bool;
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TLSError>;
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError>;
     fn sni_hostname(&self) -> Option<&str>;
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto>;

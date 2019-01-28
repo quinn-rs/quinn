@@ -23,8 +23,8 @@ impl Error {
         }
     }
 
-    pub fn crypto(alert: AlertDescription) -> Self {
-        Self::new(Code::crypto(alert), None, "")
+    pub fn crypto(code: u8) -> Self {
+        Self::new(Code::crypto(code), None, "")
     }
 }
 
@@ -66,8 +66,8 @@ impl slog::Value for Error {
 pub struct Code(u16);
 
 impl Code {
-    pub fn crypto(alert: AlertDescription) -> Self {
-        Code(0x100 | alert.get_u8() as u16)
+    pub fn crypto(code: u8) -> Self {
+        Code(0x100 | code as u16)
     }
 }
 
