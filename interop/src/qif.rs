@@ -45,17 +45,40 @@ impl<R: Buf> BlockIterator<R> {
 struct EncodedFile {
     file: PathBuf,
     qif: Option<PathBuf>,
+    table_size: usize,
+    hundred: usize,
+    instance: usize,
 }
 
 impl EncodedFile {
+    pub fn new(file: PathBuf, qif: Option<PathBuf>) -> Self {
+        let numbers = file
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or("")
+            .rsplit('.')
+            .take(3)
+            .map(|n| str::parse::<usize>(n).unwrap_or_default())
+            .collect::<Vec<_>>();
+
+        let (instance, hundred, table_size) = if numbers.len() >= 3 {
+            (numbers[0], numbers[1], numbers[2])
+        } else {
+            (0, 0, 0)
+        };
+
+        Self {
+            file,
+            qif,
+            table_size,
+            hundred,
+            instance,
+        }
+    }
+
     pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
         let encoded = fs::read(&self.file)?;
-        // println!(
-        //     "decoding: {:.2} KB of {:?}",
-        //     encoded.len() as f64 / 1024f64,
-        //     self.file,
-        // );
-
         let mut table = qpack::DynamicTable::new();
         let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
         let mut count = 0;
@@ -90,14 +113,7 @@ impl ImplEncodedDir {
             .read_dir()?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_file())
-            .map(|e| EncodedFile {
-                file: e.path(),
-                qif: if let Ok(f) = find_qif(&e.path()) {
-                    f
-                } else {
-                    None
-                },
-            }))
+            .map(|e| EncodedFile::new(e.path(), find_qif(&e.path()).unwrap_or(None))))
     }
 }
 
@@ -133,18 +149,17 @@ impl InputType {
 
     pub fn what_is(path: &Path) -> Result<Self, Error> {
         let input_type = if path.is_file() {
-            let path = path.file_name().ok_or(Error::BadFilename)?;
-            let s = path.to_str().ok_or(Error::BadFilename)?;
-            if s.contains(".out") {
-                InputType::EncodedFile(EncodedFile {
-                    file: PathBuf::from(path),
-                    qif: if let Ok(f) = find_qif(&Path::new(path)) {
-                        f
-                    } else {
-                        None
-                    },
-                })
-            } else if s.ends_with(".qif") {
+            let file_name = path
+                .file_name()
+                .ok_or(Error::BadFilename)?
+                .to_str()
+                .ok_or(Error::BadFilename)?;
+            if file_name.contains(".out") {
+                InputType::EncodedFile(EncodedFile::new(
+                    PathBuf::from(path),
+                    find_qif(&Path::new(path)).unwrap_or(None),
+                ))
+            } else if file_name.ends_with(".qif") {
                 InputType::QifFile
             } else {
                 InputType::Unknown
@@ -178,7 +193,7 @@ fn find_qif(path: &Path) -> Result<Option<PathBuf>, Error> {
 }
 
 fn find_qif_dir(path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
-    let ancestors = path.ancestors().take(4).collect::<Vec<_>>();
+    let ancestors = path.ancestors().skip(1).take(5).collect::<Vec<_>>();
     for a in ancestors {
         let mut dir = a.read_dir()?;
         let found = dir.find(|ref mut e| {
@@ -224,14 +239,15 @@ impl From<quinn_proto::coding::UnexpectedEnd> for Error {
 }
 
 fn main() -> Result<(), Error> {
-    let input = "/home/jc/code/perso/qifs/encoded/qpack-05/ls-qpack";
+    let input = "/home/jc/code/perso/qifs/encoded/qpack-05/ls-qpack/fb-req-hq.out.4096.100.0";
 
     let mut failures = vec![];
 
     match InputType::what_is(Path::new(input))? {
-        InputType::EncodedFile(file) => {
-            file.decode();
-        }
+        InputType::EncodedFile(file) => match file.decode() {
+            Err(e) => failures.push((file, e)),
+            Ok(_) => println!("{:?}: ok", file),
+        },
         InputType::ImplEncodedDir(dir) => {
             for file in dir.iter()? {
                 match file.decode() {
