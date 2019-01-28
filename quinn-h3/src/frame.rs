@@ -312,6 +312,7 @@ impl SettingsFrame {
             }
             let identifier = buf.get::<SettingId>()?;
             let value = buf.get_var()?;
+            println!("frame value: {:x}", identifier.0);
             match identifier {
                 id if id.0 & 0x0f0f == 0x0a0a => continue,
                 SettingId::NUM_PLACEHOLDERS => {
@@ -333,8 +334,8 @@ impl FrameHeader for SettingsFrame {
     const TYPE: Type = Type::SETTINGS;
     fn len(&self) -> usize {
         size_of::<u16>() * 2
-            + varint::size(self.max_header_list_size).unwrap()
             + varint::size(self.num_placeholders).unwrap()
+            + varint::size(self.max_header_list_size).unwrap()
     }
 }
 
@@ -402,7 +403,7 @@ mod tests {
         };
 
         let mut buf = Cursor::new(&[
-            18, 4, 0, 3, 128, 0, 250, 218, 0x1a, 0x2a, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218,
+            18, 4, 0, 8, 128, 0, 250, 218, 0x1a, 0x2a, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218,
         ]);
         let decoded = HttpFrame::decode(&mut buf).unwrap();
         assert_eq!(decoded, HttpFrame::Settings(settings));
@@ -439,7 +440,7 @@ mod tests {
                 num_placeholders: 0xFADA,
                 max_header_list_size: 0xFADA,
             }),
-            &[12, 4, 0, 3, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
+            &[12, 4, 0, 8, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
         );
     }
 
