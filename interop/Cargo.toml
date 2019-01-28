@@ -6,7 +6,10 @@ edition = "2018"
 
 [dependencies]
 quinn = { path = "../quinn" }
+quinn-h3 = { path = "../quinn-h3" }
+quinn-proto = { path = "../quinn-proto" }
 slog-term = "2"
+bytes = "0.4.7"
 structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
@@ -16,3 +19,7 @@ failure = "0.1"
 slog = "2.2"
 futures = "0.1.21"
 webpki = "0.19"
+
+[[bin]]
+name = "qif"
+path = "src/qif.rs"
