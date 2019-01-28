@@ -27,8 +27,8 @@ impl<R: Buf> BlockIterator<R> {
             return Ok(None);
         }
 
-        let current = u64::decode(&mut self.buf).expect("decoding stream id");
-        let length = u32::decode(&mut self.buf).expect("decoding length") as usize;
+        let current = u64::decode(&mut self.buf)?;
+        let length = u32::decode(&mut self.buf)? as usize;
 
         if self.buf.remaining() < length {
             Err(Error::UnexpectedEnd)
@@ -41,50 +41,68 @@ impl<R: Buf> BlockIterator<R> {
     }
 }
 
-fn decode(path: &PathBuf) -> Result<Vec<Vec<qpack::HeaderField>>, ()> {
-    let encoded = fs::read(path).expect("nope");
-    println!(
-        "decoding: {:.2} KB of {:?}",
-        encoded.len() as f64 / 1024f64,
-        path
-    );
-
-    let mut table = qpack::DynamicTable::new();
-    let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
-    let mut count = 0;
-    let mut decoded = vec![];
-
-    while let Some((mut buf, current)) = blocks.next().expect("next block") {
-        if current != count + 1 {
-            eprintln!("got wrong stream ID: {}", current);
-            break;
-        }
-
-        println!("Decoding stream: {}[{}]", current, buf.remaining());
-
-        decoded.push(qpack::decode_header(&mut table, &mut buf).expect("decoding failed"));
-        count += 1;
-    }
-    Ok(decoded)
+#[derive(Debug)]
+struct EncodedFile {
+    file: PathBuf,
+    qif: Option<PathBuf>,
 }
 
-struct EncodedFile(PathBuf);
+impl EncodedFile {
+    pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
+        let encoded = fs::read(&self.file)?;
+        // println!(
+        //     "decoding: {:.2} KB of {:?}",
+        //     encoded.len() as f64 / 1024f64,
+        //     self.file,
+        // );
+
+        let mut table = qpack::DynamicTable::new();
+        let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
+        let mut count = 0;
+        let mut decoder = vec![];
+        let mut decoded = vec![];
+
+        while let Some((mut buf, current)) = blocks.next().expect("next block") {
+            if current == 0 {
+                // encoder stream
+                qpack::on_encoder_recv(&mut table.inserter(), &mut buf, &mut decoder)?;
+                continue;
+            }
+
+            if current != count + 1 {
+                eprintln!("got wrong stream ID: {}", current);
+                break;
+            }
+
+            decoded.push(qpack::decode_header(&mut table, &mut buf)?);
+            count += 1;
+        }
+        Ok(decoded)
+    }
+}
 
 struct ImplEncodedDir(PathBuf, String);
 
 impl ImplEncodedDir {
-    pub fn iter(&self) -> Result<impl Iterator<Item = EncodedFile>, std::io::Error> {
+    pub fn iter(&self) -> Result<impl Iterator<Item = EncodedFile>, Error> {
         Ok(self
             .0
             .read_dir()?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_file())
-            .map(|e| EncodedFile(e.path())))
+            .map(|e| EncodedFile {
+                file: e.path(),
+                qif: if let Ok(f) = find_qif(&e.path()) {
+                    f
+                } else {
+                    None
+                },
+            }))
     }
 }
 
 enum InputType {
-    EncodedFile(Option<PathBuf>),
+    EncodedFile(EncodedFile),
     ImplEncodedDir(ImplEncodedDir),
     QifFile,
     QifDir,
@@ -118,7 +136,14 @@ impl InputType {
             let path = path.file_name().ok_or(Error::BadFilename)?;
             let s = path.to_str().ok_or(Error::BadFilename)?;
             if s.contains(".out") {
-                InputType::EncodedFile(find_qif(&Path::new(path))?)
+                InputType::EncodedFile(EncodedFile {
+                    file: PathBuf::from(path),
+                    qif: if let Ok(f) = find_qif(&Path::new(path)) {
+                        f
+                    } else {
+                        None
+                    },
+                })
             } else if s.ends_with(".qif") {
                 InputType::QifFile
             } else {
@@ -177,6 +202,7 @@ enum Error {
     UnexpectedEnd,
     BadFilename,
     IO(std::io::Error),
+    Decode(qpack::DecoderError),
 }
 
 impl From<std::io::Error> for Error {
@@ -185,19 +211,40 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<qpack::DecoderError> for Error {
+    fn from(e: qpack::DecoderError) -> Error {
+        Error::Decode(e)
+    }
+}
+
+impl From<quinn_proto::coding::UnexpectedEnd> for Error {
+    fn from(e: quinn_proto::coding::UnexpectedEnd) -> Error {
+        Error::UnexpectedEnd
+    }
+}
+
 fn main() -> Result<(), Error> {
     let input = "/home/jc/code/perso/qifs/encoded/qpack-05/ls-qpack";
 
+    let mut failures = vec![];
+
     match InputType::what_is(Path::new(input))? {
-        InputType::EncodedFile(_q) => {
-            decode(&PathBuf::from(input)).expect("decode file");
+        InputType::EncodedFile(file) => {
+            file.decode();
         }
-        InputType::ImplEncodedDir(e) => {
-            for file in e.iter()? {
-                decode(&PathBuf::from(file.0)).expect("decode file");
+        InputType::ImplEncodedDir(dir) => {
+            for file in dir.iter()? {
+                match file.decode() {
+                    Err(e) => failures.push((file, e)),
+                    Ok(_) => println!("{:?}: ok", file),
+                }
             }
         }
         _ => unimplemented!(),
+    }
+
+    for failure in failures {
+        println!("{:?}", failure);
     }
 
     Ok(())
