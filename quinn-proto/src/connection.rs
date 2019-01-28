@@ -851,7 +851,7 @@ impl Connection {
     }
 
     fn init_0rtt(&mut self) {
-        if self.side.is_client() && self.tls.early_secret().is_some() {
+        if self.side.is_client() && self.tls.early_crypto().is_some() {
             if let Err(e) = self.tls.transport_parameters().and_then(|params| {
                 self.set_params(
                     params.expect("rustls didn't supply transport parameters with ticket"),
@@ -864,9 +864,8 @@ impl Connection {
                 return;
             }
         }
-        if let Some(secret) = self.tls.early_secret() {
+        if let Some(packet) = self.tls.early_crypto() {
             trace!(self.log, "0-RTT enabled");
-            let packet = Crypto::new_0rtt(secret);
             self.zero_rtt_crypto = Some(CryptoSpace {
                 header: packet.header_crypto(),
                 packet,
