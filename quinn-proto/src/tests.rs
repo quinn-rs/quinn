@@ -590,7 +590,7 @@ fn reject_self_signed_cert() {
     pair.drive();
     assert_matches!(pair.client.poll(),
                     Some((conn, Event::ConnectionLost { reason: ConnectionError::TransportError(error)}))
-                    if conn == client_ch && error.code == TransportErrorCode::crypto(AlertDescription::BadCertificate));
+                    if conn == client_ch && error.code == TransportErrorCode::crypto(AlertDescription::BadCertificate.get_u8()));
 }
 
 #[test]
