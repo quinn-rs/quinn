@@ -11,8 +11,8 @@ use slog::Logger;
 
 use crate::coding::{BufExt, BufMutExt};
 use crate::crypto::{
-    self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, TlsSession,
-    ACK_DELAY_EXPONENT,
+    self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto,
+    RingHeaderCrypto, TlsSession, ACK_DELAY_EXPONENT,
 };
 use crate::dedup::Dedup;
 use crate::endpoint::{Event, Timer, TransportConfig};
@@ -2905,7 +2905,7 @@ impl Connection {
 
 pub fn initial_close<R>(
     crypto: &Crypto,
-    header_crypto: &HeaderCrypto,
+    header_crypto: &RingHeaderCrypto,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
@@ -3401,7 +3401,7 @@ impl PacketSpace {
 
 struct CryptoSpace {
     packet: Crypto,
-    header: HeaderCrypto,
+    header: RingHeaderCrypto,
 }
 
 impl CryptoSpace {

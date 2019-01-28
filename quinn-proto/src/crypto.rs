@@ -325,11 +325,11 @@ impl Crypto {
         (key, iv)
     }
 
-    pub fn header_crypto(&self) -> HeaderCrypto {
+    pub fn header_crypto(&self) -> RingHeaderCrypto {
         let local = SigningKey::new(self.digest, &self.local_secret);
         let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();
-        HeaderCrypto {
+        RingHeaderCrypto {
             local: header_key_from_secret(cipher, &local),
             remote: header_key_from_secret(cipher, &remote),
         }
@@ -350,13 +350,13 @@ impl Crypto {
     }
 }
 
-pub struct HeaderCrypto {
+pub struct RingHeaderCrypto {
     local: HeaderProtectionKey,
     remote: HeaderProtectionKey,
 }
 
-impl HeaderCrypto {
-    pub fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+impl HeaderCrypto for RingHeaderCrypto {
+    fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
         let mask = self
             .remote
@@ -378,7 +378,7 @@ impl HeaderCrypto {
         }
     }
 
-    pub fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+    fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
         let mask = self.local.new_mask(&sample[0..self.sample_size()]).unwrap();
         let pn_length = PacketNumber::decode_len(header[0]);
@@ -397,9 +397,15 @@ impl HeaderCrypto {
         }
     }
 
-    pub fn sample_size(&self) -> usize {
+    fn sample_size(&self) -> usize {
         self.local.algorithm().sample_len()
     }
+}
+
+pub trait HeaderCrypto {
+    fn decrypt(&self, pn_offset: usize, packet: &mut [u8]);
+    fn encrypt(&self, pn_offset: usize, packet: &mut [u8]);
+    fn sample_size(&self) -> usize;
 }
 
 fn header_key_from_secret(aead: &aead::Algorithm, secret_key: &SigningKey) -> HeaderProtectionKey {
