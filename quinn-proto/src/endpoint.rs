@@ -19,7 +19,8 @@ use crate::connection::{
     self, initial_close, ClientConfig, Connection, ConnectionError, TimerUpdate,
 };
 use crate::crypto::{
-    self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, HeaderCrypto, TokenKey,
+    self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
+    TokenKey,
 };
 use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PartialDecode};
 use crate::stream::{ReadError, WriteError};
@@ -425,7 +426,7 @@ impl Endpoint {
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Crypto,
-        header_crypto: &HeaderCrypto,
+        header_crypto: &RingHeaderCrypto,
     ) {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {

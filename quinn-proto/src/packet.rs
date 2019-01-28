@@ -6,7 +6,7 @@ use rand::Rng;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::HeaderCrypto;
+use crate::crypto::{HeaderCrypto, RingHeaderCrypto};
 use crate::varint;
 use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
 
@@ -96,7 +96,10 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
-    pub fn finish(self, header_crypto: Option<&HeaderCrypto>) -> Result<Packet, PacketDecodeError> {
+    pub fn finish(
+        self,
+        header_crypto: Option<&RingHeaderCrypto>,
+    ) -> Result<Packet, PacketDecodeError> {
         use self::PlainHeader::*;
         let Self {
             plain_header,
@@ -182,7 +185,7 @@ impl PartialDecode {
 
     fn decrypt_header(
         buf: &mut io::Cursor<BytesMut>,
-        header_crypto: &HeaderCrypto,
+        header_crypto: &RingHeaderCrypto,
     ) -> Result<PacketNumber, PacketDecodeError> {
         let packet_length = buf.get_ref().len();
         let pn_offset = buf.position() as usize;
@@ -412,7 +415,7 @@ pub struct PartialEncode {
 }
 
 impl PartialEncode {
-    pub fn finish(self, buf: &mut [u8], header_crypto: &HeaderCrypto) {
+    pub fn finish(self, buf: &mut [u8], header_crypto: &RingHeaderCrypto) {
         let PartialEncode { pn, .. } = self;
         let pn_pos = if let Some(pn) = pn {
             pn
