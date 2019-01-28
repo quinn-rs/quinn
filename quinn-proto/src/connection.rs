@@ -852,26 +852,29 @@ impl Connection {
     }
 
     fn init_0rtt(&mut self) {
-        if self.side.is_client() && self.tls.early_crypto().is_some() {
-            if let Err(e) = self.tls.transport_parameters().and_then(|params| {
-                self.set_params(
-                    params.expect("rustls didn't supply transport parameters with ticket"),
-                )
-            }) {
-                error!(
-                    self.log,
-                    "session ticket has malformed transport parameters: {}", e
-                );
-                return;
+        let packet = if let Some(crypto) = self.tls.early_crypto() {
+            if self.side.is_client() {
+                if let Err(e) = self.tls.transport_parameters().and_then(|params| {
+                    self.set_params(
+                        params.expect("rustls didn't supply transport parameters with ticket"),
+                    )
+                }) {
+                    error!(
+                        self.log,
+                        "session ticket has malformed transport parameters: {}", e
+                    );
+                    return;
+                }
             }
-        }
-        if let Some(packet) = self.tls.early_crypto() {
-            trace!(self.log, "0-RTT enabled");
-            self.zero_rtt_crypto = Some(CryptoSpace {
-                header: packet.header_crypto(),
-                packet,
-            });
-        }
+            crypto
+        } else {
+            return;
+        };
+        trace!(self.log, "0-RTT enabled");
+        self.zero_rtt_crypto = Some(CryptoSpace {
+            header: packet.header_crypto(),
+            packet,
+        });
     }
 
     fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
