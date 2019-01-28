@@ -53,8 +53,9 @@ impl CryptoSession for TlsSession {
         self.get_alpn_protocol()
     }
 
-    fn early_secret(&self) -> Option<&[u8]> {
+    fn early_crypto(&self) -> Option<Crypto> {
         self.get_early_secret()
+            .map(|secret| Crypto::new_0rtt(secret))
     }
 
     fn is_handshaking(&self) -> bool {
@@ -102,7 +103,7 @@ impl CryptoSession for TlsSession {
 pub trait CryptoSession {
     fn alert(&self) -> Option<AlertDescription>;
     fn alpn_protocol(&self) -> Option<&[u8]>;
-    fn early_secret(&self) -> Option<&[u8]>;
+    fn early_crypto(&self) -> Option<Crypto>;
     fn is_handshaking(&self) -> bool;
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TLSError>;
     fn sni_hostname(&self) -> Option<&str>;
