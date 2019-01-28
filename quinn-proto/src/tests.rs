@@ -1083,6 +1083,10 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     // Stream reset before read
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    assert_eq!(
+        pair.client.write(client_conn, s, &msg[window_size..]),
+        Err(WriteError::Blocked)
+    );
     pair.drive();
     pair.client.reset(client_conn, s, 42);
     pair.drive();
@@ -1094,6 +1098,10 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     // Happy path
     let s = pair.client.open(client_conn, Directionality::Uni).unwrap();
     assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    assert_eq!(
+        pair.client.write(client_conn, s, &msg[window_size..]),
+        Err(WriteError::Blocked)
+    );
     pair.drive();
     let mut cursor = 0;
     loop {
@@ -1112,6 +1120,10 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     assert_eq!(cursor, window_size);
     pair.drive();
     assert_eq!(pair.client.write(client_conn, s, &msg), Ok(window_size));
+    assert_eq!(
+        pair.client.write(client_conn, s, &msg[window_size..]),
+        Err(WriteError::Blocked)
+    );
     pair.drive();
     let mut cursor = 0;
     loop {
