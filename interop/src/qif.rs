@@ -4,6 +4,69 @@ use quinn_proto::coding::Codec;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{fs, mem};
+use structopt::StructOpt;
+
+#[derive(StructOpt, Debug)]
+#[structopt(name = "interop")]
+struct Opt {
+    path: String,
+}
+
+fn main() -> Result<(), Error> {
+    let opt = Opt::from_args();
+    let input = &opt.path;
+
+    let mut failures = vec![];
+    let mut success = vec![];
+
+    match InputType::what_is(Path::new(input))? {
+        InputType::EncodedFile(file, qif) => match file.decode() {
+            Err(e) => failures.push((file, e)),
+            Ok(ref mut v) if qif.is_some() => {
+                let mut fields = v.iter().flatten();
+                qif.unwrap().compare(&mut fields)?;
+                success.push(file);
+            }
+            Ok(_) => failures.push((file, Error::NoQif)),
+        },
+        InputType::ImplEncodedDir(dir) => {
+            for (file, qif) in dir.iter()? {
+                match file.decode() {
+                    Err(e) => failures.push((file, e)),
+                    Ok(ref mut v) if qif.is_some() => {
+                        let mut fields = v.iter().flatten();
+                        qif.unwrap().compare(&mut fields)?;
+                        success.push(file);
+                    }
+                    Ok(_) => failures.push((file, Error::NoQif)),
+                }
+            }
+        }
+        _ => unimplemented!(),
+    }
+
+    for failure in &failures {
+        println!(
+            "{: <32}: {:?}",
+            failure
+                .0
+                .file
+                .file_name()
+                .unwrap_or(OsStr::new("err"))
+                .to_str()
+                .unwrap(),
+            failure.1
+        );
+    }
+
+    println!("\nSuccess: {}, Failures: {}", success.len(), failures.len());
+
+    if failures.len() == 0 {
+        Ok(())
+    } else {
+        Err(Error::SomeFailures)
+    }
+}
 
 struct BlockIterator<R: Buf> {
     buf: R,
@@ -247,6 +310,7 @@ enum Error {
     NoQif,
     MissingDecoded,
     NotMatching(String, String),
+    SomeFailures,
 }
 
 impl From<std::io::Error> for Error {
@@ -265,55 +329,4 @@ impl From<quinn_proto::coding::UnexpectedEnd> for Error {
     fn from(_: quinn_proto::coding::UnexpectedEnd) -> Error {
         Error::UnexpectedEnd
     }
-}
-
-fn main() -> Result<(), Error> {
-    let input = "/home/jc/code/perso/qifs/encoded/qpack-05/ls-qpack/";
-
-    let mut failures = vec![];
-    let mut success = vec![];
-
-    match InputType::what_is(Path::new(input))? {
-        InputType::EncodedFile(file, qif) => match file.decode() {
-            Err(e) => failures.push((file, e)),
-            Ok(ref mut v) if qif.is_some() => {
-                let mut fields = v.iter().flatten();
-                qif.unwrap().compare(&mut fields)?;
-                success.push(file);
-            }
-            Ok(_) => failures.push((file, Error::NoQif)),
-        },
-        InputType::ImplEncodedDir(dir) => {
-            for (file, qif) in dir.iter()? {
-                match file.decode() {
-                    Err(e) => failures.push((file, e)),
-                    Ok(ref mut v) if qif.is_some() => {
-                        let mut fields = v.iter().flatten();
-                        qif.unwrap().compare(&mut fields)?;
-                        success.push(file);
-                    }
-                    Ok(_) => failures.push((file, Error::NoQif)),
-                }
-            }
-        }
-        _ => unimplemented!(),
-    }
-
-    for failure in &failures {
-        println!(
-            "{: <32}: {:?}",
-            failure
-                .0
-                .file
-                .file_name()
-                .unwrap_or(OsStr::new("err"))
-                .to_str()
-                .unwrap(),
-            failure.1
-        );
-    }
-
-    println!("\nSuccess: {}, Failures: {}", success.len(), failures.len());
-
-    Ok(())
 }
