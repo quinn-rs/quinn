@@ -89,7 +89,9 @@ impl HeaderPrefix {
             insert_count + total_inserted - wrapped
         };
 
-        let base = if !self.sign_negative {
+        let base = if required == 0 {
+            0
+        } else if !self.sign_negative {
             required + self.delta_base
         } else {
             if self.delta_base + 1 > required {
