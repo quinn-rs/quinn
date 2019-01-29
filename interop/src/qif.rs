@@ -42,6 +42,9 @@ fn main() -> Result<(), Error> {
                 }
             }
         }
+        InputType::QifFile(file, encoded) => {
+            encoded.encode(file.blocks()?)?;
+        }
         _ => unimplemented!(),
     }
 
@@ -108,8 +111,8 @@ impl<R: Buf> BlockIterator<R> {
 struct EncodedFile {
     file: PathBuf,
     table_size: usize,
-    hundred: usize,
-    instance: usize,
+    max_blocked: usize,
+    ack_mode: usize,
 }
 
 impl EncodedFile {
@@ -124,7 +127,7 @@ impl EncodedFile {
             .map(|n| str::parse::<usize>(n).unwrap_or_default())
             .collect::<Vec<_>>();
 
-        let (instance, hundred, table_size) = if numbers.len() >= 3 {
+        let (ack_mode, max_blocked, table_size) = if numbers.len() >= 3 {
             (numbers[0], numbers[1], numbers[2])
         } else {
             (0, 0, 0)
@@ -133,9 +136,44 @@ impl EncodedFile {
         Self {
             file,
             table_size,
-            hundred,
-            instance,
+            max_blocked,
+            ack_mode,
         }
+    }
+
+    fn from_qif(
+        qif: &Path,
+        table_size: usize,
+        max_blocked: usize,
+        ack_mode: usize,
+    ) -> Result<EncodedFile, Error> {
+        let enc_dir = qif
+            .ancestors()
+            .skip(2)
+            .take(1)
+            .collect::<PathBuf>()
+            .join("encoded")
+            .join("qpack-05")
+            .join("quinn");
+        println!("found root: {:?}", enc_dir);
+        if !enc_dir.is_dir() {
+            fs::create_dir(&enc_dir)?;
+        }
+
+        let name = qif.file_stem().ok_or(Error::BadFilename)?;
+        println!("found name: {:?}", name);
+        Ok(Self {
+            file: enc_dir.join(format!(
+                "{}.out.d{}.{}.{}",
+                name.to_str().ok_or(Error::BadFilename)?,
+                table_size,
+                max_blocked,
+                ack_mode
+            )),
+            table_size,
+            max_blocked,
+            ack_mode,
+        })
     }
 
     pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
@@ -163,6 +201,57 @@ impl EncodedFile {
             count += 1;
         }
         Ok(decoded)
+    }
+
+    pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<(), Error> {
+        let mut table = qpack::DynamicTable::new();
+        table.inserter().set_max_mem_size(self.table_size)?;
+
+        let mut buf = vec![];
+        let mut stream_count = 1;
+
+        for block in blocks {
+            let block_str = String::from_utf8_lossy(&block);
+            let fields = block_str
+                .split("\n")
+                .map(|f| f.split("\t"))
+                .filter_map(|mut s| {
+                    let f = s.collect::<Vec<&str>>();
+                    if f.len() >= 2 {
+                        Some((f[0], f[1]))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(k, v)| qpack::HeaderField::new(k, v))
+                .collect::<Vec<_>>();
+
+            let mut block_chunk = vec![];
+            let mut encoder_chunk = vec![];
+
+            qpack::encode(
+                &mut table.encoder(stream_count),
+                &mut block_chunk,
+                &mut encoder_chunk,
+                &fields,
+            );
+
+            if encoder_chunk.len() > 0 {
+                println!("encoder stream: {}", encoder_chunk.len());
+                0u64.encode(&mut buf);
+                (encoder_chunk.len() as u32).encode(&mut buf);
+                buf.append(&mut encoder_chunk);
+            }
+
+            stream_count.encode(&mut buf);
+            (block_chunk.len() as u32).encode(&mut buf);
+            buf.append(&mut block_chunk);
+
+            stream_count += 1;
+        }
+        hexdump(&buf);
+        fs::write(&self.file, buf);
+        Err(Error::MissingDecoded)
     }
 }
 
@@ -205,12 +294,25 @@ impl QifFile {
 
         Ok(())
     }
+
+    fn blocks(&self) -> Result<Vec<Vec<u8>>, Error> {
+        let mut content = String::new();
+        fs::read_to_string(&mut content);
+
+        let blocks = String::from_utf8_lossy(&fs::read(&self.0)?)
+            .split("\n\n")
+            .filter(|l| l.len() != 0)
+            .map(|c| Vec::from(c))
+            .collect::<Vec<Vec<u8>>>();
+        println!("found {} blocks", blocks.len());
+        Ok(blocks)
+    }
 }
 
 enum InputType {
     EncodedFile(EncodedFile, Option<QifFile>),
     ImplEncodedDir(ImplEncodedDir),
-    QifFile,
+    QifFile(QifFile, EncodedFile),
     QifDir,
     Unknown,
 }
@@ -250,7 +352,13 @@ impl InputType {
                     find_qif(&Path::new(path)).unwrap_or(None),
                 )
             } else if file_name.ends_with(".qif") {
-                InputType::QifFile
+                let table_size = 4096;
+                let max_blocked = 0;
+                let ack_mode = 0;
+                InputType::QifFile(
+                    QifFile(PathBuf::from(path)),
+                    EncodedFile::from_qif(&path, table_size, max_blocked, ack_mode)?,
+                )
             } else {
                 InputType::Unknown
             }
