@@ -52,6 +52,16 @@ impl Display for HeaderField {
     }
 }
 
+impl From<HeaderField> for String {
+    fn from(field: HeaderField) -> String {
+        format!(
+            "{}\t{}",
+            String::from_utf8_lossy(&field.name),
+            String::from_utf8_lossy(&field.value)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
