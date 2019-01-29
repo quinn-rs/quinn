@@ -141,6 +141,7 @@ impl EncodedFile {
     pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
         let encoded = fs::read(&self.file)?;
         let mut table = qpack::DynamicTable::new();
+        table.inserter().set_max_mem_size(self.table_size)?;
         let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
         let mut count = 0;
         let mut decoder = vec![];
@@ -307,6 +308,7 @@ enum Error {
     BadFilename,
     IO(std::io::Error),
     Decode(qpack::DecoderError),
+    DynamicTable(qpack::DynamicTableError),
     NoQif,
     MissingDecoded,
     NotMatching(String, String),
@@ -328,5 +330,11 @@ impl From<qpack::DecoderError> for Error {
 impl From<quinn_proto::coding::UnexpectedEnd> for Error {
     fn from(_: quinn_proto::coding::UnexpectedEnd) -> Error {
         Error::UnexpectedEnd
+    }
+}
+
+impl From<qpack::DynamicTableError> for Error {
+    fn from(e: qpack::DynamicTableError) -> Error {
+        Error::DynamicTable(e)
     }
 }
