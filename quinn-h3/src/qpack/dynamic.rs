@@ -138,16 +138,15 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
             self.table
                 .track_cancel(self.block_refs.iter().map(|(x, y)| (*x, *y)))
                 .ok();
-            return;
         }
-
-        self.table
-            .track_block(self.stream_id, self.block_refs.clone());
     }
 }
 
 impl<'a> DynamicTableEncoder<'a> {
-    pub(super) fn commit(&mut self) {
+    pub(super) fn commit(&mut self, largest_ref: usize) {
+        self.table
+            .track_block(self.stream_id, self.block_refs.clone());
+        self.table.register_blocked(largest_ref);
         self.commited = true;
     }
 
@@ -183,6 +182,12 @@ impl<'a> DynamicTableEncoder<'a> {
     }
 
     pub(super) fn insert(&mut self, field: &HeaderField) -> Result<DynamicInsertionResult, Error> {
+        if self.table.blocked_count >= self.table.blocked_max {
+            return Ok(DynamicInsertionResult::NotInserted(
+                self.find_name(&field.name),
+            ));
+        }
+
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
         } else {
@@ -323,6 +328,9 @@ pub struct DynamicTable {
     track_map: Option<BTreeMap<usize, usize>>,
     track_blocks: Option<HashMap<u64, HashMap<usize, usize>>>,
     largest_known_recieved: usize,
+    blocked_max: usize,
+    blocked_count: usize,
+    blocked_streams: Option<BTreeMap<usize, usize>>, // <required_ref, blocked_count>
 }
 
 #[allow(dead_code)]
@@ -333,11 +341,14 @@ impl DynamicTable {
             curr_mem_size: 0,
             mem_limit: SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
             vas: VirtualAddressSpace::new(),
-            name_map: None,
+            name_map: None, // TODO gather in encoder data
             field_map: None,
             track_map: None,
             track_blocks: None,
             largest_known_recieved: 0,
+            blocked_max: 100,
+            blocked_count: 0,
+            blocked_streams: None,
         }
     }
 
@@ -373,6 +384,11 @@ impl DynamicTable {
             commited: false,
             stream_id,
         }
+    }
+
+    pub fn set_max_blocked(&mut self, max: usize) {
+        // TODO handle existing data
+        self.blocked_max = max;
     }
 
     pub(super) fn total_inserted(&self) -> usize {
@@ -523,8 +539,40 @@ impl DynamicTable {
         Ok(())
     }
 
+    fn register_blocked(&mut self, largest: usize) {
+        if largest <= self.largest_known_recieved {
+            return;
+        }
+
+        self.blocked_count += 1;
+
+        let map = self.blocked_streams.get_or_insert(BTreeMap::new());
+        match map.entry(largest) {
+            BTEntry::Occupied(mut e) => {
+                let entry = e.get_mut();
+                *entry += 1;
+            }
+            BTEntry::Vacant(e) => {
+                e.insert(1);
+            }
+        }
+    }
+
     pub fn update_largest_recieved(&mut self, index: usize) {
         self.largest_known_recieved = std::cmp::max(index, self.largest_known_recieved);
+
+        if self.blocked_streams.is_none() || self.blocked_count == 0 {
+            return;
+        }
+
+        let acked = self.blocked_streams.as_mut().unwrap();
+        let blocked = acked.split_off(&(self.largest_known_recieved + 1));
+
+        if acked.len() > 0 {
+            let total_acked = acked.iter().fold(0usize, |t, (_, v)| t + v);
+            self.blocked_count -= total_acked;
+        }
+        self.blocked_streams = Some(blocked);
     }
 
     pub(super) fn max_mem_size(&self) -> usize {
@@ -1059,7 +1107,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(encoder.block_refs.len(), 3);
-            encoder.commit();
+            encoder.commit(2);
         }
 
         let track_map = table.track_map.as_ref().unwrap();
@@ -1186,7 +1234,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(encoder.block_refs.len(), 3);
-            encoder.commit();
+            encoder.commit(3);
         }
         table
     }
@@ -1250,5 +1298,206 @@ mod tests {
             Some(&5usize)
         );
         assert_eq!(table.field_map.as_ref().unwrap().get(&field), Some(&5usize));
+    }
+
+    #[test]
+    fn blocked_stream_registered() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        assert_eq!(table.blocked_count, 1);
+        assert_eq!(table.blocked_streams.unwrap().get(&3), Some(&1usize))
+    }
+
+    #[test]
+    fn blocked_stream_not_registered() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        table
+            .encoder(44)
+            .insert(&HeaderField::new("foo", "bar"))
+            .unwrap();
+        // encoder dropped without commit
+
+        assert_eq!(table.blocked_count, 1);
+        assert_eq!(table.blocked_streams.unwrap().get(&5), None);
+    }
+
+    #[test]
+    fn blocked_stream_register_accumulate() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        {
+            let mut encoder = table.encoder(44);
+
+            assert_eq!(
+                encoder.find(&HeaderField::new("foo3", "quxx")),
+                DynamicLookupResult::Relative {
+                    index: 0,
+                    absolute: 3,
+                }
+            );
+            // the encoder inserts a reference to foo3 in a block (absolte index = 3)
+            encoder.commit(3);
+        }
+
+        assert_eq!(table.blocked_count, 2);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&2));
+    }
+
+    #[test]
+    fn blocked_stream_register_put_smaller() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        {
+            let mut encoder = table.encoder(44);
+            encoder.commit(2);
+        }
+
+        assert_eq!(table.blocked_count, 2);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), Some(&1));
+    }
+
+    #[test]
+    fn blocked_stream_register_put_larger() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        {
+            let mut encoder = table.encoder(44);
+            encoder.commit(5);
+        }
+
+        assert_eq!(table.blocked_count, 2);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&5), Some(&1));
+    }
+
+    #[test]
+    fn unblock_stream_smaller() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        {
+            let mut encoder = table.encoder(44);
+            encoder.commit(2);
+        }
+
+        assert_eq!(table.blocked_count, 2);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), Some(&1));
+
+        table.update_largest_recieved(2);
+
+        assert_eq!(table.blocked_count, 1);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), None);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&1));
+    }
+
+    #[test]
+    fn unblock_stream_larger() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        table.encoder(44).commit(2);
+        table.encoder(46).commit(5);
+
+        assert_eq!(table.blocked_count, 3);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), Some(&1));
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&1));
+
+        table.update_largest_recieved(5);
+
+        assert_eq!(table.blocked_count, 0);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn unblock_stream_decrement() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(100);
+
+        table.encoder(44).commit(3);
+
+        assert_eq!(table.blocked_count, 2);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&2));
+
+        table.update_largest_recieved(5);
+
+        assert_eq!(table.blocked_count, 0);
+        assert_eq!(table.blocked_streams.as_ref().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn no_insert_when_max_blocked_0() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(0);
+
+        assert_eq!(
+            table.encoder(44).insert(&HeaderField::new("foo", "bar")),
+            Ok(DynamicInsertionResult::NotInserted(
+                DynamicLookupResult::NotFound
+            ))
+        );
+    }
+
+    #[test]
+    fn no_insert_after_max_blocked_reached() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(2);
+
+        {
+            let mut encoder = table.encoder(44);
+            assert_eq!(
+                encoder.insert(&HeaderField::new("foo", "bar")),
+                Ok(DynamicInsertionResult::Inserted {
+                    postbase: 0,
+                    absolute: 4
+                })
+            );
+            encoder.commit(4);
+        }
+
+        assert_eq!(table.blocked_count, 2);
+
+        let mut encoder = table.encoder(46);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo99", "bar")),
+            Ok(DynamicInsertionResult::NotInserted(
+                DynamicLookupResult::NotFound
+            ))
+        );
+    }
+
+    #[test]
+    fn insert_again_after_encoder_ack() {
+        let mut table = tracked_table(42);
+        table.set_max_blocked(1);
+
+        assert_eq!(table.blocked_count, 1);
+
+        {
+            let mut encoder = table.encoder(44);
+            assert_eq!(
+                encoder.insert(&HeaderField::new("foo99", "bar")),
+                Ok(DynamicInsertionResult::NotInserted(
+                    DynamicLookupResult::NotFound
+                ))
+            );
+            encoder.commit(0);
+        }
+
+        table.update_largest_recieved(3);
+        assert_eq!(table.blocked_count, 0);
+
+        let mut encoder = table.encoder(46);
+        assert_eq!(
+            encoder.insert(&HeaderField::new("foo", "bar")),
+            Ok(DynamicInsertionResult::Inserted {
+                postbase: 0,
+                absolute: 4
+            })
+        );
     }
 }
