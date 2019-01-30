@@ -908,10 +908,7 @@ impl Connection {
                 return Ok(());
             }
             trace!(self.log, "read {} TLS bytes", n);
-            if let Err(e) = self.tls.read_handshake(&buf[..n]) {
-                debug!(self.log, "reading handshake bytes resulted in error {}", e);
-                return Err(e);
-            }
+            self.tls.read_handshake(&buf[..n])?;
         }
     }
 
@@ -1155,7 +1152,7 @@ impl Connection {
                     debug!(
                         self.log,
                         "closing connection due to transport error: {error}",
-                        error = err
+                        error = &err
                     );
                     State::closed(err)
                 }
