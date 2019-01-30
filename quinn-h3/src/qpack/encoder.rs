@@ -44,7 +44,7 @@ pub fn encode<W: BufMut>(
     .encode(block);
     block.put(block_buf);
 
-    table.commit();
+    table.commit(required_ref);
 
     Ok(required_ref)
 }
@@ -238,7 +238,7 @@ mod tests {
             encode_field(&mut enc_table, &mut block, &mut encoder, field).unwrap();
         }
 
-        enc_table.commit();
+        enc_table.commit(field.len());
 
         let mut read_block = Cursor::new(&mut block);
         let mut read_encoder = Cursor::new(&mut encoder);
