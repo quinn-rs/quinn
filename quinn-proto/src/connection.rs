@@ -461,7 +461,7 @@ impl Connection {
         if info.ack_eliciting {
             // Congestion control
             // Do not increase congestion window in recovery period.
-            if !self.in_recovery(packet) {
+            if !self.in_recovery(info.time_sent) {
                 if self.congestion_window < self.ssthresh {
                     // Slow start.
                     self.congestion_window += info.size as u64;
