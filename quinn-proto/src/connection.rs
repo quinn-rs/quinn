@@ -1255,13 +1255,9 @@ impl Connection {
 
                         if self.side.is_client() {
                             // Client-only beceause server params were set from the client's Initial
-                            let params = match self.tls.transport_parameters() {
-                                Ok(Some(params)) => Ok(params),
-                                Ok(None) => Err(TransportError::PROTOCOL_VIOLATION(
-                                    "transport parameters missing",
-                                )),
-                                Err(e) => Err(e),
-                            }?;
+                            let params = self.tls.transport_parameters()?.ok_or(
+                                TransportError::PROTOCOL_VIOLATION("transport parameters missing"),
+                            )?;
 
                             if self.has_0rtt() {
                                 if !self.tls.as_client().is_early_data_accepted() {
