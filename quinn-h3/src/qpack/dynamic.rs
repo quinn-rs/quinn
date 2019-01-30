@@ -188,12 +188,14 @@ impl<'a> DynamicTableEncoder<'a> {
             ));
         }
 
-        let index = if let Some(index) = self.table.put_field(field.clone())? {
-            index
-        } else {
-            return Ok(DynamicInsertionResult::NotInserted(
-                self.find_name(&field.name),
-            ));
+        let index = match self.table.put_field(field.clone()) {
+            Ok(Some(index)) => index,
+            Err(Error::MaxTableSizeReached) | Ok(None) => {
+                return Ok(DynamicInsertionResult::NotInserted(
+                    self.find_name(&field.name),
+                ));
+            }
+            Err(e) => Err(e)?,
         };
         self.track_ref(index);
 
@@ -1050,7 +1052,9 @@ mod tests {
         let mut encoder = table.encoder(4);
         assert_eq!(
             encoder.insert(&HeaderField::new("foo", "bar")),
-            Err(Error::MaxTableSizeReached)
+            Ok(DynamicInsertionResult::NotInserted(
+                DynamicLookupResult::NotFound
+            ))
         );
     }
 
