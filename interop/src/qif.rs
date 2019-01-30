@@ -251,6 +251,13 @@ impl EncodedFile {
                 &fields,
             )?;
 
+            if self.ack_mode == 1 && self.table_size > 0 {
+                let mut decoder_stream = vec![];
+                qpack::ack_header(stream_count, &mut decoder_stream);
+                let mut cur = std::io::Cursor::new(&decoder_stream);
+                qpack::on_decoder_recv(&mut table, &mut cur)?;
+            }
+
             if encoder_chunk.len() > 0 {
                 println!("encoder stream: {}", encoder_chunk.len());
                 0u64.encode(&mut buf);
