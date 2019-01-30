@@ -482,7 +482,7 @@ impl Drop for Driver {
             ch.fail(ConnectionError::TransportError(quinn::TransportError {
                 code: quinn::TransportErrorCode::INTERNAL_ERROR,
                 frame: None,
-                reason: "driver future was dropped",
+                reason: "driver future was dropped".to_string(),
             }));
         }
     }

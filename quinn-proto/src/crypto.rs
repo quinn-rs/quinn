@@ -60,11 +60,11 @@ impl CryptoSession for TlsSession {
     }
 
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError> {
-        self.read_hs(buf).map_err(|_| {
+        self.read_hs(buf).map_err(|e| {
             if let Some(alert) = self.get_alert() {
-                TransportError::crypto(alert.get_u8())
+                TransportError::crypto(alert.get_u8(), e.to_string())
             } else {
-                TransportError::PROTOCOL_VIOLATION("TLS error")
+                TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
             }
         })
     }

@@ -7,24 +7,27 @@ use crate::coding::{self, BufExt, BufMutExt};
 use crate::frame;
 use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Error {
     pub code: Code,
     pub frame: Option<frame::Type>,
-    pub reason: &'static str,
+    pub reason: String,
 }
 
 impl Error {
-    pub fn new(code: Code, frame: Option<frame::Type>, reason: &'static str) -> Self {
+    pub fn new<T>(code: Code, frame: Option<frame::Type>, reason: T) -> Self
+    where
+        T: Into<String>,
+    {
         Self {
             code,
             frame,
-            reason,
+            reason: reason.into(),
         }
     }
 
-    pub fn crypto(code: u8) -> Self {
-        Self::new(Code::crypto(code), None, "")
+    pub fn crypto(code: u8, reason: String) -> Self {
+        Self::new(Code::crypto(code), None, reason)
     }
 }
 
@@ -46,7 +49,7 @@ impl From<Code> for Error {
         Self {
             code: x,
             frame: None,
-            reason: "",
+            reason: "".to_string(),
         }
     }
 }
@@ -91,11 +94,11 @@ macro_rules! errors {
         #[allow(non_snake_case, unused)]
         impl Error {
             $(
-            pub(crate) fn $name(reason: &'static str) -> Self {
+            pub(crate) fn $name<T>(reason: T) -> Self where T: Into<String> {
                 Self {
                     code: Code::$name,
                     frame: None,
-                    reason,
+                    reason: reason.into(),
                 }
             }
             )*
