@@ -17,7 +17,9 @@ pub const QPACK_VERSION: &'static str = "0.0.0~draft";
 #[allow(dead_code)]
 pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
 
-pub use self::decoder::{decode_header, on_encoder_recv, Error as DecoderError};
+pub use self::decoder::{
+    ack_header, decode_header, on_encoder_recv, stream_canceled, Error as DecoderError,
+};
 pub use self::dynamic::{
     DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter,
     Error as DynamicTableError,
