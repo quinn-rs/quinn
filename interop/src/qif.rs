@@ -24,24 +24,39 @@ fn main() -> Result<(), Error> {
 
     match InputType::what_is(Path::new(input))? {
         InputType::EncodedFile(file, qif) => match file.decode() {
-            Err(e) => failures.push((file, e)),
+            Err(e) => failures.push((file.file, e)),
             Ok(ref mut v) if qif.is_some() => {
                 let mut fields = v.iter().flatten();
                 qif.unwrap().compare(&mut fields)?;
                 success.push(file);
             }
-            Ok(_) => failures.push((file, Error::NoQif)),
+            Ok(_) => failures.push((file.file, Error::NoQif)),
         },
         InputType::ImplEncodedDir(dir) => {
             for (file, qif) in dir.iter()? {
                 match file.decode() {
-                    Err(e) => failures.push((file, e)),
+                    Err(e) => failures.push((file.file, e)),
                     Ok(ref mut v) if qif.is_some() => {
                         let mut fields = v.iter().flatten();
                         qif.unwrap().compare(&mut fields)?;
                         success.push(file);
                     }
-                    Ok(_) => failures.push((file, Error::NoQif)),
+                    Ok(_) => failures.push((file.file, Error::NoQif)),
+                }
+            }
+        }
+        InputType::EncodedDir(dir) => {
+            for impl_dir in dir.iter()? {
+                for (file, qif) in impl_dir.iter()? {
+                    match file.decode() {
+                        Err(e) => failures.push((file.file, e)),
+                        Ok(ref mut v) if qif.is_some() => {
+                            let mut fields = v.iter().flatten();
+                            qif.unwrap().compare(&mut fields)?;
+                            success.push(file);
+                        }
+                        Ok(_) => failures.push((file.file, Error::NoQif)),
+                    }
                 }
             }
         }
@@ -63,17 +78,23 @@ fn main() -> Result<(), Error> {
     }
 
     for failure in &failures {
-        println!(
-            "{: <32}: {:?}",
-            failure
-                .0
-                .file
-                .file_name()
-                .unwrap_or(OsStr::new("err"))
-                .to_str()
-                .unwrap(),
-            failure.1
-        );
+        let mut name = failure
+            .0
+            .ancestors()
+            .take(2)
+            .map(|a| {
+                a.file_name()
+                    .unwrap_or(OsStr::new("ERR"))
+                    .to_str()
+                    .unwrap_or("ERR")
+            })
+            .map(|n| String::from(n))
+            .collect::<Vec<String>>();
+
+        name.reverse();
+        let name = name.join("/");
+
+        println!("{: <42}: {:?}", name, failure.1);
     }
 
     println!("\nSuccess: {}, Failures: {}", success.len(), failures.len());
@@ -294,6 +315,29 @@ impl ImplEncodedDir {
     }
 }
 
+struct EncodedDir(PathBuf);
+
+impl EncodedDir {
+    pub fn iter(&self) -> Result<impl Iterator<Item = ImplEncodedDir>, Error> {
+        let path = if self.0.file_name().unwrap_or_default() == OsStr::new("encoded") {
+            self.0.join("qpack-05")
+        } else {
+            self.0.clone()
+        };
+
+        Ok(path
+            .read_dir()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .map(|e| {
+                ImplEncodedDir(
+                    e.path(),
+                    e.file_name().to_str().unwrap_or_default().to_string(),
+                )
+            }))
+    }
+}
+
 struct QifFile(PathBuf);
 
 impl QifFile {
@@ -340,16 +384,18 @@ impl QifDir {
             .map(|f| QifFile(f.path())))
     }
 }
+
 enum InputType {
     EncodedFile(EncodedFile, Option<QifFile>),
     ImplEncodedDir(ImplEncodedDir),
+    EncodedDir(EncodedDir),
     QifFile(QifFile, EncodedFile),
     QifDir(QifDir),
     Unknown,
 }
 
 impl InputType {
-    fn is_encoded_dir(path: &Path) -> bool {
+    fn is_impl_encoded_dir(path: &Path) -> bool {
         if !path.is_dir() {
             return false;
         }
@@ -370,15 +416,26 @@ impl InputType {
         }
     }
 
-    fn is_qif_dir(path: &Path) -> bool {
+    fn is_encoded_dir(path: &Path) -> Result<bool, Error> {
         if !path.is_dir() {
-            return false;
+            return Ok(false);
         }
 
-        path.read_dir()
-            .unwrap()
+        Ok(
+            path.file_name().unwrap_or_default() == OsStr::new("encoded")
+                || path.file_name().unwrap_or_default() == OsStr::new("qpack-05"),
+        )
+    }
+
+    fn is_qif_dir(path: &Path) -> Result<bool, Error> {
+        if !path.is_dir() {
+            return Ok(false);
+        }
+
+        Ok(path
+            .read_dir()?
             .filter_map(|e| e.ok())
-            .any(|f| f.path().extension() == Some(OsStr::new("qif")))
+            .any(|f| f.path().extension() == Some(OsStr::new("qif"))))
     }
 
     pub fn what_is(path: &Path) -> Result<Self, Error> {
@@ -404,7 +461,7 @@ impl InputType {
             } else {
                 InputType::Unknown
             }
-        } else if InputType::is_encoded_dir(path) {
+        } else if InputType::is_impl_encoded_dir(path) {
             InputType::ImplEncodedDir(ImplEncodedDir(
                 path.to_path_buf(),
                 path.parent()
@@ -415,7 +472,10 @@ impl InputType {
                     .unwrap()
                     .into(),
             ))
-        } else if InputType::is_qif_dir(path) {
+        } else if InputType::is_encoded_dir(path)? {
+            println!("encoder dir");
+            InputType::EncodedDir(EncodedDir(path.to_path_buf()))
+        } else if InputType::is_qif_dir(path)? {
             InputType::QifDir(QifDir(path.to_path_buf()))
         } else {
             InputType::Unknown
