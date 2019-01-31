@@ -28,7 +28,7 @@ fn main() -> Result<(), Error> {
             Ok(ref mut v) if qif.is_some() => {
                 let mut fields = v.iter().flatten();
                 qif.unwrap().compare(&mut fields)?;
-                success.push(file);
+                success.push(file.file);
             }
             Ok(_) => failures.push((file.file, Error::NoQif)),
         },
@@ -39,7 +39,7 @@ fn main() -> Result<(), Error> {
                     Ok(ref mut v) if qif.is_some() => {
                         let mut fields = v.iter().flatten();
                         qif.unwrap().compare(&mut fields)?;
-                        success.push(file);
+                        success.push(file.file);
                     }
                     Ok(_) => failures.push((file.file, Error::NoQif)),
                 }
@@ -53,25 +53,31 @@ fn main() -> Result<(), Error> {
                         Ok(ref mut v) if qif.is_some() => {
                             let mut fields = v.iter().flatten();
                             qif.unwrap().compare(&mut fields)?;
-                            success.push(file);
+                            success.push(file.file);
                         }
                         Ok(_) => failures.push((file.file, Error::NoQif)),
                     }
                 }
             }
         }
-        InputType::QifFile(file, encoded) => {
-            encoded.encode(file.blocks()?)?;
-        }
+        InputType::QifFile(qif, enc_file) => match enc_file.encode(qif.blocks()?) {
+            Err(e) => failures.push((enc_file.file, e)),
+            Ok(_) => success.push(enc_file.file),
+        },
         InputType::QifDir(qif_dir) => {
             for qif in qif_dir.iter()? {
                 for size in &table_size {
                     for blocked in &max_blocked {
-                        EncodedFile::from_qif(&qif.0, *size, *blocked, 0)?.encode(qif.blocks()?)?;
-                        EncodedFile::from_qif(&qif.0, *size, *blocked, 1)?.encode(qif.blocks()?)?;
+                        for ack_mode in 0..2 {
+                            let enc_file =
+                                EncodedFile::from_qif(&qif.0, *size, *blocked, ack_mode)?;
+                            match enc_file.encode(qif.blocks()?) {
+                                Err(e) => failures.push((enc_file.file, e)),
+                                Ok(_) => success.push(enc_file.file),
+                            }
+                        }
                     }
                 }
-                println!("QIF: {:?}", qif.0);
             }
         }
         _ => unimplemented!(),
@@ -190,7 +196,7 @@ impl EncodedFile {
             .join("encoded")
             .join("qpack-05")
             .join("quinn");
-        println!("found root: {:?}", enc_dir);
+
         if !enc_dir.is_dir() {
             fs::create_dir(&enc_dir)?;
         }
@@ -203,7 +209,7 @@ impl EncodedFile {
             max_blocked,
             ack_mode
         ));
-        println!("found name: {:?}", enc_file);
+
         Ok(Self {
             file: enc_file,
             table_size,
@@ -280,7 +286,6 @@ impl EncodedFile {
             }
 
             if encoder_chunk.len() > 0 {
-                println!("encoder stream: {}", encoder_chunk.len());
                 0u64.encode(&mut buf);
                 (encoder_chunk.len() as u32).encode(&mut buf);
                 buf.append(&mut encoder_chunk);
