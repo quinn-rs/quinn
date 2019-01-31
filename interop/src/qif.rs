@@ -10,6 +10,12 @@ use structopt::StructOpt;
 #[structopt(name = "interop")]
 struct Opt {
     path: String,
+    #[structopt(short = "t", long = "table_size")]
+    table_size: Option<String>,
+    #[structopt(short = "b", long = "max_blocked")]
+    max_blocked: Option<String>,
+    #[structopt(short = "a", long = "ack_mode")]
+    ack_mode: Option<String>,
 }
 
 fn main() -> Result<(), Error> {
@@ -19,8 +25,32 @@ fn main() -> Result<(), Error> {
     let mut failures = vec![];
     let mut success = vec![];
 
-    let table_size = vec![4096, 512, 256, 0];
-    let max_blocked = vec![100, 0];
+    let table_size = if let Some(sizes) = opt.table_size {
+        sizes
+            .split(",")
+            .map(|e| str::parse::<usize>(e).unwrap_or_default())
+            .collect()
+    } else {
+        vec![4096usize, 512, 256, 0]
+    };
+
+    let max_blocked = if let Some(sizes) = opt.max_blocked {
+        sizes
+            .split(",")
+            .map(|e| str::parse::<usize>(e).unwrap_or_default())
+            .collect()
+    } else {
+        vec![100usize, 0]
+    };
+
+    let ack_mode = if let Some(sizes) = opt.ack_mode {
+        sizes
+            .split(",")
+            .map(|e| str::parse::<usize>(e).unwrap_or_default())
+            .collect()
+    } else {
+        vec![1usize, 0]
+    };
 
     match InputType::what_is(Path::new(input))? {
         InputType::EncodedFile(file, qif) => match file.decode() {
@@ -68,9 +98,8 @@ fn main() -> Result<(), Error> {
             for qif in qif_dir.iter()? {
                 for size in &table_size {
                     for blocked in &max_blocked {
-                        for ack_mode in 0..2 {
-                            let enc_file =
-                                EncodedFile::from_qif(&qif.0, *size, *blocked, ack_mode)?;
+                        for ack in &ack_mode {
+                            let enc_file = EncodedFile::from_qif(&qif.0, *size, *blocked, *ack)?;
                             match enc_file.encode(qif.blocks()?) {
                                 Err(e) => failures.push((enc_file.file, e)),
                                 Ok(_) => success.push(enc_file.file),
