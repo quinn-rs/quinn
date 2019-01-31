@@ -99,14 +99,9 @@ impl VirtualAddressSpace {
         self.inserted
     }
 
-    pub fn drop_many<T>(&mut self, count: T)
-    where
-        T: Into<usize>,
-    {
-        let count = count.into();
-
-        self.dropped += count;
-        self.delta -= count;
+    pub fn drop(&mut self) {
+        self.dropped += 1;
+        self.delta -= 1;
     }
 
     pub fn relative(&self, index: RelativeIndex) -> Result<usize, Error> {
@@ -114,6 +109,14 @@ impl VirtualAddressSpace {
             Err(Error::BadRelativeIndex(index))
         } else {
             Ok(self.inserted - self.dropped - index - 1)
+        }
+    }
+
+    pub fn evicted(&self, index: AbsoluteIndex) -> bool {
+        if index != 0 && index <= self.dropped {
+            true
+        } else {
+            false
         }
     }
 
@@ -180,7 +183,7 @@ mod tests {
             let mut vas = VirtualAddressSpace::new();
             vas.add();
             (1..*count).for_each(|_| { vas.add(); });
-            (0..*count - 1).for_each(|_| vas.drop_many(1usize));
+            (0..*count - 1).for_each(|_| vas.drop());
 
             assert_eq!(vas.relative_base(*count, count - 1), Err(Error::BadRelativeIndex(count - 1)), "{:?}", vas);
         }
@@ -204,7 +207,7 @@ mod tests {
             let mut vas = VirtualAddressSpace::new();
             (0..*count - 1).for_each(|_| { vas.add(); });
             vas.add();
-            (0..*count - 1).for_each(|_| { vas.drop_many(1usize); });
+            (0..*count - 1).for_each(|_| { vas.drop(); });
 
             assert_eq!(vas.relative_base(*count, 0), Ok(0),
                        "{:?}", vas);
@@ -261,14 +264,30 @@ mod tests {
         vas.add();
         assert_eq!(vas.index(0), Ok(1));
         vas.add();
-        vas.drop_many(1usize);
+        vas.drop();
         assert_eq!(vas.index(0), Ok(2));
-        vas.drop_many(1usize);
+        vas.drop();
         assert_eq!(vas.index(0), Err(Error::BadIndex(0)));
         vas.add();
         vas.add();
         assert_eq!(vas.index(0), Ok(3));
         assert_eq!(vas.index(1), Ok(4));
         assert_eq!(vas.index(2), Err(Error::BadIndex(2)));
+    }
+
+    #[test]
+    fn evicted() {
+        let mut vas = VirtualAddressSpace::new();
+        assert_eq!(vas.evicted(0), false);
+        assert_eq!(vas.evicted(1), false);
+        vas.add();
+        vas.add();
+        assert_eq!(vas.evicted(1), false);
+        vas.drop();
+        assert_eq!(vas.evicted(0), false);
+        assert_eq!(vas.evicted(1), true);
+        assert_eq!(vas.evicted(2), false);
+        vas.drop();
+        assert_eq!(vas.evicted(2), true);
     }
 }
