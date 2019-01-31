@@ -434,8 +434,31 @@ impl DynamicTable {
         for _ in 0..to_evict {
             let field = self.fields.pop_front().ok_or(Error::MaxTableSizeReached)?; //TODO better type
             self.curr_mem_size -= field.mem_size();
+
+            self.vas.drop();
+
+            if self.name_map.is_some() {
+                match self.name_map.as_mut().unwrap().entry(field.name.clone()) {
+                    Entry::Occupied(e) => {
+                        if self.vas.evicted(*e.get()) {
+                            e.remove();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            if self.field_map.is_some() {
+                match self.field_map.as_mut().unwrap().entry(field) {
+                    Entry::Occupied(e) => {
+                        if self.vas.evicted(*e.get()) {
+                            e.remove();
+                        }
+                    }
+                    _ => (),
+                }
+            }
         }
-        self.vas.drop_many(to_evict);
         Ok(())
     }
 
@@ -1056,6 +1079,42 @@ mod tests {
                 DynamicLookupResult::NotFound
             ))
         );
+    }
+
+    #[test]
+    fn encoder_maps_are_cleaned_on_eviction() {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(64).unwrap();
+
+        {
+            let mut encoder = table.encoder(4);
+            assert_eq!(
+                encoder.insert(&HeaderField::new("foo", "bar")),
+                Ok(DynamicInsertionResult::Inserted {
+                    postbase: 0,
+                    absolute: 1
+                })
+            );
+            encoder.commit(1);
+        }
+        table.untrack_block(4).unwrap();
+
+        {
+            let mut encoder = table.encoder(4);
+            assert_eq!(
+                encoder.insert(&HeaderField::new("foo2", "bar")),
+                Ok(DynamicInsertionResult::Inserted {
+                    postbase: 0,
+                    absolute: 2
+                })
+            );
+            assert_eq!(
+                encoder.find(&HeaderField::new("foo", "bar")),
+                DynamicLookupResult::NotFound
+            );
+            assert_eq!(encoder.find_name(b"foo"), DynamicLookupResult::NotFound);
+            encoder.commit(2);
+        }
     }
 
     #[test]
