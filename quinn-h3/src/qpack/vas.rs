@@ -126,10 +126,10 @@ impl VirtualAddressSpace {
     }
 
     pub fn post_base(&self, base: usize, index: RelativeIndex) -> Result<usize, Error> {
-        if self.delta == 0 || base + index >= self.inserted {
+        if self.delta == 0 || base + index >= self.inserted || base + index < self.dropped {
             Err(Error::BadPostbaseIndex(index))
         } else {
-            Ok(base - self.dropped + index)
+            Ok(base + index - self.dropped)
         }
     }
 
