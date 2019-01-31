@@ -48,6 +48,14 @@ impl HeaderPrefix {
             };
         }
 
+        if required == 0 {
+            return Self {
+                encoded_insert_count: 0,
+                delta_base: 0,
+                sign_negative: false,
+            };
+        }
+
         assert!(required <= total_inserted);
         let (sign_negative, delta_base) = if required > base {
             (true, required - base - 1)
