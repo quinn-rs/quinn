@@ -90,10 +90,19 @@ fn main() -> Result<(), Error> {
                 }
             }
         }
-        InputType::QifFile(qif, enc_file) => match enc_file.encode(qif.blocks()?) {
-            Err(e) => failures.push((enc_file.file, e)),
-            Ok(_) => success.push(enc_file.file),
-        },
+        InputType::QifFile(qif) => {
+            for size in &table_size {
+                for blocked in &max_blocked {
+                    for ack in &ack_mode {
+                        let enc_file = EncodedFile::from_qif(&qif.0, *size, *blocked, *ack)?;
+                        match enc_file.encode(qif.blocks()?) {
+                            Err(e) => failures.push((enc_file.file, e)),
+                            Ok(_) => success.push(enc_file.file),
+                        }
+                    }
+                }
+            }
+        }
         InputType::QifDir(qif_dir) => {
             for qif in qif_dir.iter()? {
                 for size in &table_size {
@@ -423,7 +432,7 @@ enum InputType {
     EncodedFile(EncodedFile, Option<QifFile>),
     ImplEncodedDir(ImplEncodedDir),
     EncodedDir(EncodedDir),
-    QifFile(QifFile, EncodedFile),
+    QifFile(QifFile),
     QifDir(QifDir),
     Unknown,
 }
@@ -485,13 +494,7 @@ impl InputType {
                     find_qif(&Path::new(path)).unwrap_or(None),
                 )
             } else if file_name.ends_with(".qif") {
-                let table_size = 4096;
-                let max_blocked = 0;
-                let ack_mode = 0;
-                InputType::QifFile(
-                    QifFile(PathBuf::from(path)),
-                    EncodedFile::from_qif(&path, table_size, max_blocked, ack_mode)?,
-                )
+                InputType::QifFile(QifFile(PathBuf::from(path)))
             } else {
                 InputType::Unknown
             }
