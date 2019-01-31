@@ -58,7 +58,7 @@ pub fn encode<B: BufMut>(size: u8, flags: u8, value: usize, buf: &mut B) {
     buf.write(mask | flags);
     let mut remaining = value - mask as usize;
 
-    while remaining > 128 {
+    while remaining >= 128 {
         let rest = (remaining % 128) as u8;
         buf.write(rest + 128);
         remaining /= 128;
@@ -137,5 +137,10 @@ mod test {
         let buf = vec![255, 128, 254, 255, 255, 255, 255, 255, 255, 255, 255, 1];
         let mut read = Cursor::new(&buf);
         assert!(super::decode(8, &mut read).is_err());
+    }
+
+    #[test]
+    fn number_never_ends_with_0x80() {
+        check_codec(4, 0b0001, 143, &[31, 128, 1]);
     }
 }
