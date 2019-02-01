@@ -262,6 +262,7 @@ impl EncodedFile {
         table.inserter().set_max_mem_size(self.table_size)?;
         let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
         let mut count = 0;
+        let mut blocked: Vec<Vec<u8>> = vec![];
         let mut decoder = vec![];
         let mut decoded = vec![];
 
@@ -269,6 +270,25 @@ impl EncodedFile {
             if current == 0 {
                 // encoder stream
                 qpack::on_encoder_recv(&mut table.inserter(), &mut buf, &mut decoder)?;
+
+                let mut unblocked = vec![];
+
+                for (i, block) in blocked.iter_mut().enumerate() {
+                    let mut cur = std::io::Cursor::new(&block);
+                    match qpack::decode_header(&mut table, &mut cur) {
+                        Ok(d) => {
+                            decoded.push(d);
+                            unblocked.push(i);
+                        }
+                        Err(qpack::DecoderError::MissingRefs) => (),
+                        Err(e) => Err(e)?,
+                    }
+                }
+
+                for i in unblocked {
+                    blocked.remove(i);
+                }
+
                 continue;
             }
 
@@ -277,7 +297,14 @@ impl EncodedFile {
                 break;
             }
 
-            decoded.push(qpack::decode_header(&mut table, &mut buf)?);
+            let mut cur = std::io::Cursor::new(&buf.bytes()[..]);
+            match qpack::decode_header(&mut table, &mut cur) {
+                Ok(d) => decoded.push(d),
+                Err(qpack::DecoderError::MissingRefs) => {
+                    blocked.push(buf.bytes().into());
+                }
+                Err(e) => Err(e)?,
+            }
             count += 1;
         }
         Ok(decoded)
