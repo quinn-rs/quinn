@@ -4,7 +4,7 @@ use super::prefix_int;
 use super::prefix_string;
 use super::ParseError;
 
-pub(super) enum HeaderBlocField {
+pub(super) enum HeaderBlockField {
     Indexed,
     IndexedWithPostBase,
     LiteralWithNameRef,
@@ -13,20 +13,20 @@ pub(super) enum HeaderBlocField {
     Unknown,
 }
 
-impl HeaderBlocField {
+impl HeaderBlockField {
     pub fn decode(first: u8) -> Self {
         if first & 0b1000_0000 != 0 {
-            HeaderBlocField::Indexed
+            HeaderBlockField::Indexed
         } else if first & 0b1111_0000 == 0b0001_0000 {
-            HeaderBlocField::IndexedWithPostBase
+            HeaderBlockField::IndexedWithPostBase
         } else if first & 0b1100_0000 == 0b0100_0000 {
-            HeaderBlocField::LiteralWithNameRef
+            HeaderBlockField::LiteralWithNameRef
         } else if first & 0b1111_0000 == 0 {
-            HeaderBlocField::LiteralWithPostBaseNameRef
+            HeaderBlockField::LiteralWithPostBaseNameRef
         } else if first & 0b1110_0000 == 0b0010_0000 {
-            HeaderBlocField::Literal
+            HeaderBlockField::Literal
         } else {
-            HeaderBlocField::Unknown
+            HeaderBlockField::Unknown
         }
     }
 }
