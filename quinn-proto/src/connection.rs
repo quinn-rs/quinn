@@ -684,9 +684,7 @@ impl Connection {
 
         // Calculate PTO duration
         const MAX_PTO_EXPONENT: u32 = 24; // 2^24μs = ~17 seconds
-        let timeout = self.rtt.smoothed + 4 * self.rtt.var + self.max_ack_delay();
-        let timeout = cmp::max(timeout, TIMER_GRANULARITY)
-            * 2u64.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
+        let timeout = self.pto() * 2u64.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
         self.io.timer_start(
             Timer::LossDetection,
             self.time_of_last_sent_ack_eliciting_packet + timeout,
