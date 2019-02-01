@@ -4,7 +4,7 @@
  */
 
 /*
- *  # Virtualy infinit address space mapper.
+ *  # Virtually infinite address space mapper.
  *
  *  It can be described as a infinitively growable list, with a visibility
  *  window that can only move in the direction of insertion.
