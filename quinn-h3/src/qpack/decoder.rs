@@ -8,7 +8,7 @@ use super::{
 };
 
 use super::block::{
-    HeaderBlocField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+    HeaderBlockField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
 use super::stream::{
@@ -72,16 +72,16 @@ fn parse_header_field<R: Buf>(
     buf: &mut R,
 ) -> Result<HeaderField, Error> {
     let first = buf.bytes()[0];
-    let field = match HeaderBlocField::decode(first) {
-        HeaderBlocField::Indexed => match Indexed::decode(buf)? {
+    let field = match HeaderBlockField::decode(first) {
+        HeaderBlockField::Indexed => match Indexed::decode(buf)? {
             Indexed::Static(index) => StaticTable::get(index)?.clone(),
             Indexed::Dynamic(index) => table.get_relative(index)?.clone(),
         },
-        HeaderBlocField::IndexedWithPostBase => {
+        HeaderBlockField::IndexedWithPostBase => {
             let index = IndexedWithPostBase::decode(buf)?.0;
             table.get_postbase(index)?.clone()
         }
-        HeaderBlocField::LiteralWithNameRef => match LiteralWithNameRef::decode(buf)? {
+        HeaderBlockField::LiteralWithNameRef => match LiteralWithNameRef::decode(buf)? {
             LiteralWithNameRef::Static { index, value } => {
                 StaticTable::get(index)?.with_value(value)
             }
@@ -89,11 +89,11 @@ fn parse_header_field<R: Buf>(
                 table.get_relative(index)?.with_value(value)
             }
         },
-        HeaderBlocField::LiteralWithPostBaseNameRef => {
+        HeaderBlockField::LiteralWithPostBaseNameRef => {
             let literal = LiteralWithPostBaseNameRef::decode(buf)?;
             table.get_postbase(literal.index)?.with_value(literal.value)
         }
-        HeaderBlocField::Literal => {
+        HeaderBlockField::Literal => {
             let literal = Literal::decode(buf)?;
             HeaderField::new(literal.name, literal.value)
         }
