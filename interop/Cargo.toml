@@ -1,7 +1,7 @@
 [package]
 name = "interop"
 version = "0.1.0"
-authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Jean-Christophe BEGUE <begue.jc@gmail.com>"]
 edition = "2018"
 
 [dependencies]
@@ -19,6 +19,10 @@ failure = "0.1"
 slog = "2.2"
 futures = "0.1.21"
 webpki = "0.19"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
 
 [[bin]]
 name = "qif"
