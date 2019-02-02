@@ -597,9 +597,11 @@ impl Connection {
     fn detect_lost_packets(&mut self, now: Instant) {
         self.loss_time = None;
         let mut lost_packets = Vec::<u64>::new();
-        let rtt = cmp::max(self.rtt.latest, self.rtt.smoothed);
-        let loss_delay =
-            Duration::from_micros(rtt + ((rtt * self.config.time_threshold as u64) >> 16));
+        let mut rtt = self.rtt.latest;
+        if let Some(smoothed) = self.rtt.smoothed {
+            rtt = cmp::max(rtt, smoothed);
+        }
+        let loss_delay = rtt + ((rtt * self.config.time_threshold as u32) / 65536);
         let lost_send_time = now - loss_delay;
 
         let mut lost_ack_eliciting = false;
@@ -668,14 +670,12 @@ impl Connection {
     fn set_loss_detection_timer(&mut self) {
         if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission alarm.
-            let timeout = Duration::from_micros(if self.rtt.smoothed == 0 {
-                2 * self.config.initial_rtt
+            let timeout = if let Some(smoothed) = self.rtt.smoothed {
+                2 * smoothed
             } else {
-                2 * self.rtt.smoothed
-            });
-            let timeout = Duration::from_micros(
-                micros_from(cmp::max(timeout, TIMER_GRANULARITY)) * 2u64.pow(self.crypto_count),
-            );
+                2 * Duration::from_micros(self.config.initial_rtt)
+            };
+            let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u32.pow(self.crypto_count);
             self.io.timer_start(
                 Timer::LossDetection,
                 self.time_of_last_sent_crypto_packet + timeout,
@@ -705,8 +705,11 @@ impl Connection {
 
     /// Probe Timeout
     fn pto(&self) -> Duration {
-        let computed =
-            Duration::from_micros(self.rtt.smoothed + 4 * self.rtt.var) + self.max_ack_delay();
+        let rtt = self
+            .rtt
+            .smoothed
+            .unwrap_or(Duration::from_micros(self.config.initial_rtt));
+        let computed = rtt + 4 * self.rtt.var + self.max_ack_delay();
         cmp::max(computed, TIMER_GRANULARITY)
     }
 
@@ -3497,30 +3500,27 @@ impl InFlight {
 }
 
 struct RttEstimator {
-    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet.
-    /// μs
-    latest: u64,
-    /// The smoothed RTT of the connection, computed as described in RFC6298. μs
-    smoothed: u64,
+    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet
+    latest: Duration,
+    /// The smoothed RTT of the connection, computed as described in RFC6298
+    smoothed: Option<Duration>,
     /// The RTT variance, computed as described in RFC6298
-    var: u64,
+    var: Duration,
     /// The minimum RTT seen in the connection, ignoring ack delay.
-    min: u64,
+    min: Duration,
 }
 
 impl RttEstimator {
     fn new() -> Self {
         Self {
-            latest: 0,
-            smoothed: 0,
-            var: 0,
-            min: u64::max_value(),
+            latest: Duration::new(0, 0),
+            smoothed: None,
+            var: Duration::new(0, 0),
+            min: Duration::new(u64::max_value(), 0),
         }
     }
 
     fn update(&mut self, ack_delay: Duration, rtt: Duration) {
-        let ack_delay = micros_from(ack_delay);
-        let rtt = micros_from(rtt);
         self.latest = rtt;
         // min_rtt ignores ack delay.
         self.min = cmp::min(self.min, self.latest);
@@ -3529,13 +3529,17 @@ impl RttEstimator {
             self.latest -= ack_delay;
         }
         // Based on RFC6298.
-        if self.smoothed == 0 {
-            self.smoothed = self.latest;
-            self.var = self.latest / 2;
-        } else {
-            let var_sample = (self.smoothed as i64 - self.latest as i64).abs() as u64;
+        if let Some(smoothed) = self.smoothed {
+            let var_sample = if smoothed > self.latest {
+                smoothed - self.latest
+            } else {
+                self.latest - smoothed
+            };
             self.var = (3 * self.var + var_sample) / 4;
-            self.smoothed = (7 * self.smoothed + self.latest) / 8;
+            self.smoothed = Some((7 * smoothed + self.latest) / 8);
+        } else {
+            self.smoothed = Some(self.latest);
+            self.var = self.latest / 2;
         }
     }
 }
