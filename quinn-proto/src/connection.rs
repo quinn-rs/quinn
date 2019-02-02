@@ -107,7 +107,7 @@ pub struct Connection {
     pto_count: u32,
     /// The time at which the next packet will be considered lost based on early transmit or
     /// exceeding the reordering window in time.
-    loss_time: u64,
+    loss_time: Option<u64>,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_ack_eliciting_packet: u64,
     /// The time the most recently sent handshake packet was sent.
@@ -232,7 +232,7 @@ impl Connection {
 
             crypto_count: 0,
             pto_count: 0,
-            loss_time: 0,
+            loss_time: None,
             time_of_last_sent_ack_eliciting_packet: 0,
             time_of_last_sent_crypto_packet: 0,
             rtt: RttEstimator::new(),
@@ -576,7 +576,7 @@ impl Connection {
             trace!(self.log, "sending anti-deadlock handshake packet");
             self.io.probes += 1;
             self.crypto_count = self.crypto_count.saturating_add(1);
-        } else if self.loss_time != 0 {
+        } else if self.loss_time.is_some() {
             // Time threshold loss Detection
             self.detect_lost_packets(now);
         } else {
@@ -588,14 +588,14 @@ impl Connection {
     }
 
     fn detect_lost_packets(&mut self, now: u64) {
-        self.loss_time = 0;
+        self.loss_time = None;
         let mut lost_packets = Vec::<u64>::new();
         let rtt = cmp::max(self.rtt.latest, self.rtt.smoothed);
         let loss_delay = rtt + ((rtt * self.config.time_threshold as u64) >> 16);
         let lost_send_time = now.saturating_sub(loss_delay);
 
         let mut lost_ack_eliciting = false;
-        let mut largest_lost_time = 0;
+        let mut largest_lost_time = None;
         for space in self.spaces.iter_mut().filter(|x| x.crypto.is_some()) {
             lost_packets.clear();
             let lost_pn = space
@@ -604,20 +604,22 @@ impl Connection {
             for (&packet, info) in space.sent_packets.range(0..space.largest_acked_packet) {
                 if info.time_sent <= lost_send_time || packet <= lost_pn {
                     lost_packets.push(packet);
-                } else if self.loss_time == 0 {
-                    self.loss_time = info.time_sent + loss_delay;
                 } else {
-                    self.loss_time = cmp::min(self.loss_time, info.time_sent + loss_delay);
+                    let next_loss_time = info.time_sent + loss_delay;
+                    self.loss_time = Some(self.loss_time.map_or(next_loss_time, |loss_time| {
+                        cmp::min(loss_time, next_loss_time)
+                    }));
                 }
             }
 
             // OnPacketsLost
             if let Some(largest_lost) = lost_packets.last().cloned() {
                 let old_bytes_in_flight = self.in_flight.bytes;
-                largest_lost_time = cmp::max(
-                    largest_lost_time,
-                    space.sent_packets[&largest_lost].time_sent,
-                );
+                let largest_lost_sent = space.sent_packets[&largest_lost].time_sent;
+                largest_lost_time =
+                    Some(largest_lost_time.map_or(largest_lost_sent, |lost_time| {
+                        cmp::max(lost_time, largest_lost_sent)
+                    }));
                 self.lost_packets += lost_packets.len() as u64;
                 trace!(self.log, "packets lost: {:?}", lost_packets);
                 for packet in &lost_packets {
@@ -630,7 +632,7 @@ impl Connection {
             }
         }
         if lost_ack_eliciting {
-            self.congestion_event(now, largest_lost_time)
+            self.congestion_event(now, largest_lost_time.unwrap())
         }
     }
 
@@ -676,9 +678,9 @@ impl Connection {
             return;
         }
 
-        if self.loss_time != 0 {
+        if let Some(loss_time) = self.loss_time {
             // Time threshold loss detection.
-            self.io.timer_start(Timer::LossDetection, self.loss_time);
+            self.io.timer_start(Timer::LossDetection, loss_time);
             return;
         }
 
