@@ -333,7 +333,7 @@ impl Endpoint {
         crypto_config: Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<ConnectionHandle, ConnectError> {
-        transport_config.validate()?;
+        transport_config.validate(&self.log)?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let ch = self.add_connection(
@@ -621,7 +621,7 @@ impl Endpoint {
         }
         self.dirty_timers.insert(ch);
         match timer {
-            Timer::LossDetection => {
+            Timer::LossDetection | Timer::KeepAlive => {
                 self.needs_transmit.insert(ch);
             }
             Timer::Idle => {
@@ -861,6 +861,14 @@ pub struct TransportConfig {
     pub loss_reduction_factor: u16,
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub persistent_congestion_threshold: u32,
+    /// Number of seconds of inactivity before sending a keep-alive packet
+    ///
+    /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
+    ///
+    /// 0 to disable, which is the default. Only one side of any given connection needs keep-alive
+    /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
+    /// peers to be effective.
+    pub keep_alive_interval: u32,
 }
 
 impl Default for TransportConfig {
@@ -893,12 +901,13 @@ impl Default for TransportConfig {
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
             persistent_congestion_threshold: 2,
+            keep_alive_interval: 0,
         }
     }
 }
 
 impl TransportConfig {
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self, log: &Logger) -> Result<(), ConfigError> {
         if let Some((name, _)) = [
             ("stream_window_bidi", self.stream_window_bidi),
             ("stream_window_uni", self.stream_window_uni),
@@ -910,6 +919,14 @@ impl TransportConfig {
         .find(|&&(_, x)| x > varint::MAX_VALUE)
         {
             return Err(ConfigError::VarIntBounds(name));
+        }
+        if self.keep_alive_interval as u64 >= self.idle_timeout {
+            warn!(
+                log,
+                "keep-alive interval {} is ineffective due to lower idle timeout {}",
+                self.keep_alive_interval,
+                self.idle_timeout
+            );
         }
         Ok(())
     }
@@ -1049,17 +1066,19 @@ pub enum Timer {
     Close = 2,
     KeyDiscard = 3,
     PathValidation = 4,
+    KeepAlive = 5,
 }
 
 impl Timer {
     /// Number of types of timers that a connection may start
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
     pub(crate) const VALUES: [Timer; Self::COUNT] = [
         Timer::LossDetection,
         Timer::Idle,
         Timer::Close,
         Timer::KeyDiscard,
         Timer::PathValidation,
+        Timer::KeepAlive,
     ];
 }
 

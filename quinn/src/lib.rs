@@ -551,7 +551,7 @@ impl Pending {
             connecting,
             uni_opening: VecDeque::new(),
             bi_opening: VecDeque::new(),
-            cancel_timers: [None, None, None, None, None],
+            cancel_timers: [None, None, None, None, None, None],
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
