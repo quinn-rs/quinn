@@ -13,6 +13,7 @@ extern crate slog;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops;
+use std::time::Duration;
 
 mod coding;
 mod dedup;
@@ -213,4 +214,4 @@ const MAX_CID_SIZE: usize = 18;
 const MIN_CID_SIZE: usize = 4;
 const MIN_INITIAL_SIZE: usize = 1200;
 const MIN_MTU: u16 = 1232;
-const TIMER_GRANULARITY: u64 = 1000;
+const TIMER_GRANULARITY: Duration = Duration::from_millis(1);
