@@ -152,26 +152,33 @@ impl Pair {
         {
             return false;
         }
-        if client_t < server_t {
-            if client_t != self.time {
-                self.time = self.time.max(client_t);
-                trace!(
-                    self.log,
-                    "advancing to {:?} for client",
-                    Duration::from_micros(self.time)
-                );
+
+        match min_opt(client_t, server_t) {
+            Some(t) if Some(t) == client_t => {
+                if t != self.time {
+                    self.time = self.time.max(t);
+                    trace!(
+                        self.log,
+                        "advancing to {:?} for client",
+                        Duration::from_micros(self.time)
+                    );
+                }
+                true
             }
-        } else {
-            if server_t != self.time {
-                self.time = self.time.max(server_t);
-                trace!(
-                    self.log,
-                    "advancing to {:?} for server",
-                    Duration::from_micros(self.time)
-                );
+            Some(t) if Some(t) == server_t => {
+                if t != self.time {
+                    self.time = self.time.max(t);
+                    trace!(
+                        self.log,
+                        "advancing to {:?} for server",
+                        Duration::from_micros(self.time)
+                    );
+                }
+                true
             }
+            Some(_) => unreachable!(),
+            None => false,
         }
-        true
     }
 
     /// Advance time until both connections are idle
@@ -238,7 +245,7 @@ struct TestEndpoint {
     endpoint: Endpoint,
     addr: SocketAddr,
     socket: Option<UdpSocket>,
-    timers: [u64; 5],
+    timers: [Option<u64>; 5],
     conn: Option<ConnectionHandle>,
     outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
@@ -261,7 +268,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            timers: [u64::max_value(); 5],
+            timers: [None; 5],
             conn: None,
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
@@ -280,15 +287,17 @@ impl TestEndpoint {
         }
         if let Some(conn) = self.conn {
             for &timer in Timer::VALUES.iter() {
-                if self.timers[timer as usize] <= now {
-                    trace!(
-                        log,
-                        "{side:?} {timer:?} timeout",
-                        side = self.side,
-                        timer = timer
-                    );
-                    self.timers[timer as usize] = u64::max_value();
-                    self.endpoint.timeout(now, conn, timer);
+                if let Some(time) = self.timers[timer as usize] {
+                    if time <= now {
+                        trace!(
+                            log,
+                            "{side:?} {timer:?} timeout",
+                            side = self.side,
+                            timer = timer
+                        );
+                        self.timers[timer as usize] = None;
+                        self.endpoint.timeout(now, conn, timer);
+                    }
                 }
             }
         }
@@ -302,7 +311,7 @@ impl TestEndpoint {
         }
         while let Some((ch, x)) = self.endpoint.poll_timers() {
             self.conn = Some(ch);
-            let time = match x.update {
+            self.timers[x.timer as usize] = match x.update {
                 TimerSetting::Stop => {
                     trace!(
                         log,
@@ -310,7 +319,7 @@ impl TestEndpoint {
                         side = self.side,
                         timer = x.timer
                     );
-                    u64::max_value()
+                    None
                 }
                 TimerSetting::Start(time) => {
                     trace!(
@@ -320,20 +329,16 @@ impl TestEndpoint {
                         side = self.side,
                         timer = x.timer,
                     );
-                    time
+                    Some(time)
                 }
             };
-            self.timers[x.timer as usize] = time;
         }
     }
 
-    fn next_wakeup(&self) -> u64 {
-        self.timers
-            .iter()
-            .cloned()
-            .min()
-            .unwrap()
-            .min(self.inbound.front().map_or(u64::max_value(), |x| x.0))
+    fn next_wakeup(&self) -> Option<u64> {
+        let next_timer = self.timers.iter().cloned().filter_map(|t| t).min();
+        let next_inbound = self.inbound.front().map(|x| x.0);
+        min_opt(next_timer, next_inbound)
     }
 
     fn delay_outbound(&mut self) {
@@ -931,15 +936,21 @@ fn idle_timeout() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     pair.client.ping(client_ch);
+
+    let mut next = None;
     while !pair.client.connection(client_ch).is_closed()
         || !pair.server.connection(server_ch).is_closed()
     {
         if !pair.step() {
-            pair.time = cmp::min(pair.client.next_wakeup(), pair.server.next_wakeup());
+            next = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup());
+            if let Some(t) = next {
+                pair.time = t;
+            }
         }
         pair.client.inbound.clear(); // Simulate total S->C packet loss
     }
-    assert!(pair.time != u64::max_value());
+
+    assert!(next.is_some());
     assert_matches!(
         pair.client.poll(),
         Some((
@@ -1223,4 +1234,13 @@ fn zero_length_cid() {
     pair.drive();
     pair.server.close(pair.time, server_ch, 42, Bytes::new());
     pair.connect();
+}
+
+fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
+    match (x, y) {
+        (Some(x), Some(y)) => Some(cmp::min(x, y)),
+        (Some(x), _) => Some(x),
+        (_, Some(y)) => Some(y),
+        _ => None,
+    }
 }
