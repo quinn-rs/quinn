@@ -6,7 +6,6 @@ use std::net::ToSocketAddrs;
 use std::rc::Rc;
 use std::str;
 use std::sync::Arc;
-use std::time::Instant;
 
 use err_derive::Error;
 use fnv::FnvHashMap;
@@ -71,7 +70,6 @@ impl<'a> EndpointBuilder<'a> {
                 self.server_config.map(Arc::new),
             )?,
             outgoing: None,
-            epoch: Instant::now(),
             pending: FnvHashMap::default(),
             timers: FuturesUnordered::new(),
             buffered_incoming: VecDeque::new(),

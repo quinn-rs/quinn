@@ -65,7 +65,7 @@ use std::net::{SocketAddr, SocketAddrV6};
 use std::rc::Rc;
 use std::str;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{io, mem};
 
 use bytes::Bytes;
@@ -261,7 +261,7 @@ impl Future for Driver {
         if endpoint.driver.is_none() {
             endpoint.driver = Some(task::current());
         }
-        let now = micros_from(endpoint.epoch.elapsed());
+        let now = Instant::now();
         loop {
             loop {
                 match endpoint.socket.poll_recv(&mut buf) {
@@ -444,11 +444,10 @@ impl Future for Driver {
                         timer: timer @ quinn::Timer::Close,
                         update: quinn::TimerSetting::Start(time),
                     } => {
-                        let instant = endpoint.epoch + duration_micros(time);
                         endpoint.timers.push(Timer {
                             ch,
                             ty: timer,
-                            delay: Delay::new(instant),
+                            delay: Delay::new(time),
                             cancel: None,
                         });
                     }
@@ -458,17 +457,16 @@ impl Future for Driver {
                     } => {
                         let pending = endpoint.pending.get_mut(&ch).unwrap();
                         let cancel = &mut pending.cancel_timers[timer as usize];
-                        let instant = endpoint.epoch + duration_micros(time);
                         if let Some(cancel) = cancel.take() {
                             let _ = cancel.send(());
                         }
                         let (send, recv) = oneshot::channel();
                         *cancel = Some(send);
-                        trace!(endpoint.log, "timer start"; "timer" => ?timer, "time" => ?duration_micros(time));
+                        trace!(endpoint.log, "timer start"; "timer" => ?timer, "time" => ?time);
                         endpoint.timers.push(Timer {
                             ch,
                             ty: timer,
-                            delay: Delay::new(instant),
+                            delay: Delay::new(time),
                             cancel: Some(recv),
                         });
                     }
@@ -512,7 +510,6 @@ struct EndpointInner {
     socket: UdpSocket,
     inner: quinn::Endpoint,
     outgoing: Option<quinn::Transmit>,
-    epoch: Instant,
     pending: FnvHashMap<ConnectionHandle, Pending>,
     // TODO: Replace this with something custom that avoids using oneshots to cancel
     timers: FuturesUnordered<Timer>,
@@ -707,12 +704,9 @@ impl Connection {
             );
             pending.closing = Some(send);
 
-            endpoint.inner.close(
-                micros_from(endpoint.epoch.elapsed()),
-                self.0.handle,
-                error_code,
-                reason.into(),
-            );
+            endpoint
+                .inner
+                .close(Instant::now(), self.0.handle, error_code, reason.into());
         }
         let handle = self.clone();
         recv.then(move |_| {
@@ -792,12 +786,9 @@ impl Drop for ConnectionInner {
             }
             pending.get_mut().dropped = true;
             if pending.get().closing.is_none() {
-                endpoint.inner.close(
-                    micros_from(endpoint.epoch.elapsed()),
-                    self.handle,
-                    0,
-                    (&[][..]).into(),
-                );
+                endpoint
+                    .inner
+                    .close(Instant::now(), self.handle, 0, (&[][..]).into());
                 if let Some(x) = endpoint.driver.as_ref() {
                     x.notify();
                 }
@@ -1288,12 +1279,4 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
         SocketAddr::V6(x) => x,
         SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),
     }
-}
-
-fn duration_micros(x: u64) -> Duration {
-    Duration::new(x / (1000 * 1000), (x % (1000 * 1000)) as u32 * 1000)
-}
-
-fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }

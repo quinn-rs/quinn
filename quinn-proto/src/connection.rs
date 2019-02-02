@@ -1,6 +1,7 @@
 use std::collections::{hash_map, BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -107,11 +108,11 @@ pub struct Connection {
     pto_count: u32,
     /// The time at which the next packet will be considered lost based on early transmit or
     /// exceeding the reordering window in time.
-    loss_time: Option<u64>,
+    loss_time: Option<Instant>,
     /// The time the most recently sent retransmittable packet was sent.
-    time_of_last_sent_ack_eliciting_packet: u64,
+    time_of_last_sent_ack_eliciting_packet: Instant,
     /// The time the most recently sent handshake packet was sent.
-    time_of_last_sent_crypto_packet: u64,
+    time_of_last_sent_crypto_packet: Instant,
     rtt: RttEstimator,
 
     //
@@ -123,7 +124,7 @@ pub struct Connection {
     congestion_window: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
     /// after this time is acknowledged, QUIC exits recovery.
-    recovery_start_time: u64,
+    recovery_start_time: Instant,
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
@@ -233,13 +234,13 @@ impl Connection {
             crypto_count: 0,
             pto_count: 0,
             loss_time: None,
-            time_of_last_sent_ack_eliciting_packet: 0,
-            time_of_last_sent_crypto_packet: 0,
+            time_of_last_sent_ack_eliciting_packet: Instant::now(),
+            time_of_last_sent_crypto_packet: Instant::now(),
             rtt: RttEstimator::new(),
 
             in_flight: InFlight::new(),
             congestion_window: config.initial_window,
-            recovery_start_time: 0,
+            recovery_start_time: Instant::now(),
             ssthresh: u64::max_value(),
             ecn_counters: frame::EcnCounts::ZERO,
             sending_ecn: true,
@@ -310,7 +311,13 @@ impl Connection {
         None
     }
 
-    fn on_packet_sent(&mut self, now: u64, space: SpaceId, packet_number: u64, packet: SentPacket) {
+    fn on_packet_sent(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        packet_number: u64,
+        packet: SentPacket,
+    ) {
         let SentPacket {
             size,
             is_crypto_packet,
@@ -346,7 +353,7 @@ impl Connection {
         }
     }
 
-    fn on_ack_received(&mut self, now: u64, space: SpaceId, ack: frame::Ack) {
+    fn on_ack_received(&mut self, now: Instant, space: SpaceId, ack: frame::Ack) {
         trace!(self.log, "handling ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
         let largest_acked_packet = &mut self.space_mut(space).largest_acked_packet;
@@ -356,7 +363,7 @@ impl Connection {
         let largest_acked_time_sent;
         if let Some(info) = self.space(space).sent_packets.get(&ack.largest).cloned() {
             if info.ack_eliciting {
-                let delay = ack.delay << self.params.ack_delay_exponent;
+                let delay = Duration::from_micros(ack.delay << self.params.ack_delay_exponent);
                 self.rtt
                     .update(cmp::min(delay, self.max_ack_delay()), now - info.time_sent);
             }
@@ -427,11 +434,11 @@ impl Connection {
     /// Process a new ECN block from an in-order ACK
     fn process_ecn(
         &mut self,
-        now: u64,
+        now: Instant,
         space: SpaceId,
         newly_acked: u64,
         ecn: frame::EcnCounts,
-        largest_sent_time: u64,
+        largest_sent_time: Instant,
     ) {
         match self.space_mut(space).detect_ecn(newly_acked, ecn) {
             Err(e) => {
@@ -502,7 +509,7 @@ impl Connection {
         self.space_mut(space).pending_acks.subtract(&info.acks);
     }
 
-    pub fn timeout(&mut self, now: u64, timer: Timer) -> bool {
+    pub fn timeout(&mut self, now: Instant, timer: Timer) -> bool {
         match timer {
             Timer::Close => {
                 self.state = State::Drained;
@@ -524,7 +531,7 @@ impl Connection {
                 } else if let Some(ref prev) = self.prev_crypto {
                     if prev
                         .update_ack_time
-                        .map_or(false, |x| now.saturating_sub(x) >= self.pto() * 3)
+                        .map_or(false, |x| now - x >= self.pto() * 3)
                     {
                         self.prev_crypto = None;
                     } else {
@@ -545,10 +552,10 @@ impl Connection {
         false
     }
 
-    fn set_key_discard_timer(&mut self, now: u64) {
+    fn set_key_discard_timer(&mut self, now: Instant) {
         let time = if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
             now + self.pto() * 3
-        } else if let Some(ref time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
+        } else if let Some(time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
             time + self.pto() * 3
         } else {
             return;
@@ -556,7 +563,7 @@ impl Connection {
         self.io.timer_start(Timer::KeyDiscard, time);
     }
 
-    fn on_loss_detection_timeout(&mut self, now: u64) {
+    fn on_loss_detection_timeout(&mut self, now: Instant) {
         if self.in_flight.crypto != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
@@ -587,12 +594,13 @@ impl Connection {
         self.set_loss_detection_timer();
     }
 
-    fn detect_lost_packets(&mut self, now: u64) {
+    fn detect_lost_packets(&mut self, now: Instant) {
         self.loss_time = None;
         let mut lost_packets = Vec::<u64>::new();
         let rtt = cmp::max(self.rtt.latest, self.rtt.smoothed);
-        let loss_delay = rtt + ((rtt * self.config.time_threshold as u64) >> 16);
-        let lost_send_time = now.saturating_sub(loss_delay);
+        let loss_delay =
+            Duration::from_micros(rtt + ((rtt * self.config.time_threshold as u64) >> 16));
+        let lost_send_time = now - loss_delay;
 
         let mut lost_ack_eliciting = false;
         let mut largest_lost_time = None;
@@ -632,11 +640,11 @@ impl Connection {
             }
         }
         if lost_ack_eliciting {
-            self.congestion_event(now, largest_lost_time.unwrap())
+            self.congestion_event(now, largest_lost_time.unwrap());
         }
     }
 
-    fn congestion_event(&mut self, now: u64, sent_time: u64) {
+    fn congestion_event(&mut self, now: Instant, sent_time: Instant) {
         // Start a new recovery epoch if the lost packet is larger than the end of the
         // previous recovery epoch.
         if self.in_recovery(sent_time) {
@@ -653,19 +661,21 @@ impl Connection {
         }
     }
 
-    fn in_recovery(&self, sent_time: u64) -> bool {
+    fn in_recovery(&self, sent_time: Instant) -> bool {
         sent_time <= self.recovery_start_time
     }
 
     fn set_loss_detection_timer(&mut self) {
         if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission alarm.
-            let timeout = if self.rtt.smoothed == 0 {
+            let timeout = Duration::from_micros(if self.rtt.smoothed == 0 {
                 2 * self.config.initial_rtt
             } else {
                 2 * self.rtt.smoothed
-            };
-            let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u64.pow(self.crypto_count);
+            });
+            let timeout = Duration::from_micros(
+                micros_from(cmp::max(timeout, TIMER_GRANULARITY)) * 2u64.pow(self.crypto_count),
+            );
             self.io.timer_start(
                 Timer::LossDetection,
                 self.time_of_last_sent_crypto_packet + timeout,
@@ -686,7 +696,7 @@ impl Connection {
 
         // Calculate PTO duration
         const MAX_PTO_EXPONENT: u32 = 24; // 2^24μs = ~17 seconds
-        let timeout = self.pto() * 2u64.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
+        let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
         self.io.timer_start(
             Timer::LossDetection,
             self.time_of_last_sent_ack_eliciting_packet + timeout,
@@ -694,14 +704,15 @@ impl Connection {
     }
 
     /// Probe Timeout
-    fn pto(&self) -> u64 {
-        let computed = self.rtt.smoothed + 4 * self.rtt.var + self.max_ack_delay();
+    fn pto(&self) -> Duration {
+        let computed =
+            Duration::from_micros(self.rtt.smoothed + 4 * self.rtt.var) + self.max_ack_delay();
         cmp::max(computed, TIMER_GRANULARITY)
     }
 
     fn on_packet_authenticated(
         &mut self,
-        now: u64,
+        now: Instant,
         space_id: SpaceId,
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
@@ -748,7 +759,7 @@ impl Connection {
         }
     }
 
-    fn reset_idle_timeout(&mut self, now: u64) {
+    fn reset_idle_timeout(&mut self, now: Instant) {
         if self.config.idle_timeout == 0 && self.params.idle_timeout == 0 {
             return;
         }
@@ -761,14 +772,7 @@ impl Connection {
         } else {
             cmp::min(self.config.idle_timeout, self.params.idle_timeout)
         };
-        if let Some(timeout) = (dt as u64)
-            .checked_mul(1_000_000)
-            .and_then(|x| now.checked_add(x))
-        {
-            self.io.timer_start(Timer::Idle, timeout);
-        } else {
-            self.io.timer_stop(Timer::Idle);
-        }
+        self.io.timer_start(Timer::Idle, now + Duration::new(dt, 0));
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -823,7 +827,7 @@ impl Connection {
 
     pub fn handle_initial(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         packet_number: u64,
@@ -972,7 +976,7 @@ impl Connection {
 
     pub fn handle_dgram(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         first_decode: PartialDecode,
@@ -995,7 +999,7 @@ impl Connection {
 
     fn handle_coalesced(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
@@ -1017,7 +1021,7 @@ impl Connection {
 
     fn handle_decode(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
@@ -1056,7 +1060,7 @@ impl Connection {
 
     fn handle_packet(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
@@ -1172,7 +1176,7 @@ impl Connection {
 
     fn handle_connected_inner(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         number: Option<u64>,
         packet: Packet,
@@ -1374,7 +1378,11 @@ impl Connection {
     }
 
     /// Process an Initial or Handshake packet payload
-    fn process_early_payload(&mut self, now: u64, packet: Packet) -> Result<(), TransportError> {
+    fn process_early_payload(
+        &mut self,
+        now: Instant,
+        packet: Packet,
+    ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         for frame in frame::Iter::new(packet.payload.into()) {
             match frame {
@@ -1442,7 +1450,7 @@ impl Connection {
 
     fn process_payload(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         number: u64,
         payload: Bytes,
@@ -1822,7 +1830,7 @@ impl Connection {
         }
     }
 
-    fn migrate(&mut self, now: u64, remote: SocketAddr) {
+    fn migrate(&mut self, now: Instant, remote: SocketAddr) {
         trace!(
             self.log,
             "migration initiated from {remote}",
@@ -1840,7 +1848,10 @@ impl Connection {
         // Initiate path validation
         self.io.timer_start(
             Timer::PathValidation,
-            now + 3 * cmp::max(self.pto(), 2 * self.config.initial_rtt),
+            now + 3 * cmp::max(
+                self.pto(),
+                Duration::from_micros(2 * self.config.initial_rtt),
+            ),
         );
         self.path_challenge = Some(self.rng.gen());
         self.path_challenge_pending = true;
@@ -1865,7 +1876,7 @@ impl Connection {
 
     fn populate_packet(
         &mut self,
-        now: u64,
+        now: Instant,
         space_id: SpaceId,
         buf: &mut Vec<u8>,
     ) -> (Retransmits, RangeSet) {
@@ -1899,7 +1910,7 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = (now - space.rx_packet_time) >> ACK_DELAY_EXPONENT;
+            let delay = micros_from(now - space.rx_packet_time) >> ACK_DELAY_EXPONENT;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
@@ -2147,7 +2158,7 @@ impl Connection {
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
     /// - the LossDetection timer expires
-    pub fn poll_transmit(&mut self, now: u64) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         let (space_id, close) = match self.state {
             State::Draining | State::Drained => {
                 return None;
@@ -2370,7 +2381,7 @@ impl Connection {
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: u64, error_code: u16, reason: Bytes) {
+    pub fn close(&mut self, now: Instant, error_code: u16, reason: Bytes) {
         let was_closed = self.state.is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
@@ -2388,7 +2399,7 @@ impl Connection {
         }
     }
 
-    fn close_common(&mut self, now: u64) {
+    fn close_common(&mut self, now: Instant) {
         trace!(self.log, "connection closed");
         self.io.timer_stop(Timer::LossDetection);
         self.io.timer_stop(Timer::Idle);
@@ -2614,7 +2625,7 @@ impl Connection {
 
     fn decrypt_packet(
         &mut self,
-        now: u64,
+        now: Instant,
         packet: &mut Packet,
     ) -> Result<Option<u64>, Option<TransportError>> {
         if packet.header.is_retry() {
@@ -2864,9 +2875,8 @@ impl Connection {
         self.sending_ecn
     }
 
-    /// Microseconds
-    fn max_ack_delay(&self) -> u64 {
-        u64::from(self.params.max_ack_delay) * 1000
+    fn max_ack_delay(&self) -> Duration {
+        Duration::from_micros(self.params.max_ack_delay * 1000)
     }
 
     fn space(&self, id: SpaceId) -> &PacketSpace {
@@ -3241,7 +3251,7 @@ pub struct ClientConfig {
 #[derive(Debug, Clone)]
 struct SentPacket {
     /// The time the packet was sent.
-    time_sent: u64,
+    time_sent: Instant,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
     /// "in flight" packet.
@@ -3294,7 +3304,7 @@ impl IoQueue {
     }
 
     /// Start or reset a timer associated with this connection.
-    fn timer_start(&mut self, timer: Timer, time: u64) {
+    fn timer_start(&mut self, timer: Timer, time: Instant) {
         self.timers[timer as usize] = Some(TimerSetting::Start(time));
     }
 
@@ -3307,8 +3317,8 @@ impl IoQueue {
 /// Change applicable to one of a connection's timers
 #[derive(Debug, Copy, Clone)]
 pub enum TimerSetting {
-    /// Set the timer to expire at an a certain point in time, in absolute microseconds
-    Start(u64),
+    /// Set the timer to expire at an a certain point in time
+    Start(Instant),
     /// Cancel time timer if it's currently running
     Stop,
 }
@@ -3326,7 +3336,7 @@ struct PacketSpace {
     /// Highest received packet number
     rx_packet: u64,
     /// Time at which the above was received
-    rx_packet_time: u64,
+    rx_packet_time: Instant,
 
     /// Data to send
     pending: Retransmits,
@@ -3362,7 +3372,7 @@ impl PacketSpace {
             crypto: None,
             dedup: Dedup::new(),
             rx_packet: 0,
-            rx_packet_time: 0,
+            rx_packet_time: Instant::now(),
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
@@ -3442,7 +3452,7 @@ struct PrevCrypto {
     crypto: Crypto,
     end_packet: u64,
     /// Time at which a packet using the following key phase was received
-    update_ack_time: Option<u64>,
+    update_ack_time: Option<Instant>,
     /// Whether the following key phase is from a remotely initiated update that we haven't acked
     update_unacked: bool,
 }
@@ -3508,7 +3518,9 @@ impl RttEstimator {
         }
     }
 
-    fn update(&mut self, ack_delay: u64, rtt: u64) {
+    fn update(&mut self, ack_delay: Duration, rtt: Duration) {
+        let ack_delay = micros_from(ack_delay);
+        let rtt = micros_from(rtt);
         self.latest = rtt;
         // min_rtt ignores ack delay.
         self.min = cmp::min(self.min, self.latest);
@@ -3532,4 +3544,8 @@ struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
     token: u64,
+}
+
+fn micros_from(x: Duration) -> u64 {
+    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }

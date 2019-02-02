@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use err_derive::Error;
@@ -127,7 +127,7 @@ impl Endpoint {
     }
 
     /// Get the next packet to transmit
-    pub fn poll_transmit(&mut self, now: u64) -> Option<Transmit> {
+    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if let Some(x) = self.transmits.pop_front() {
             return Some(x);
         }
@@ -148,7 +148,7 @@ impl Endpoint {
     /// Process an incoming UDP datagram
     pub fn handle(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
@@ -420,7 +420,7 @@ impl Endpoint {
 
     fn handle_initial(
         &mut self,
-        now: u64,
+        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
@@ -614,7 +614,7 @@ impl Endpoint {
     }
 
     /// Handle a timer expiring
-    pub fn timeout(&mut self, now: u64, ch: ConnectionHandle, timer: Timer) {
+    pub fn timeout(&mut self, now: Instant, ch: ConnectionHandle, timer: Timer) {
         if self.connections[ch].timeout(now, timer) {
             self.forget(ch);
             return;
@@ -748,7 +748,7 @@ impl Endpoint {
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: u64, ch: ConnectionHandle, error_code: u16, reason: Bytes) {
+    pub fn close(&mut self, now: Instant, ch: ConnectionHandle, error_code: u16, reason: Bytes) {
         if self.connections[ch].is_drained() {
             self.forget(ch);
             return;

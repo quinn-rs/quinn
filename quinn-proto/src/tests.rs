@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{cmp, env, fmt, mem, str};
 
 use byteorder::{BigEndian, ByteOrder};
@@ -65,9 +65,9 @@ struct Pair {
     log: Logger,
     server: TestEndpoint,
     client: TestEndpoint,
-    time: u64,
+    time: Instant,
     // One-way
-    latency: u64,
+    latency: Duration,
     /// Number of spin bit flips
     spins: u64,
     last_spin: bool,
@@ -134,8 +134,8 @@ impl Pair {
             log,
             server: TestEndpoint::new(Side::Server, server, server_addr),
             client: TestEndpoint::new(Side::Client, client, client_addr),
-            time: 0,
-            latency: 0,
+            time: Instant::now(),
+            latency: Duration::new(0, 0),
             spins: 0,
             last_spin: false,
         }
@@ -152,27 +152,18 @@ impl Pair {
         {
             return false;
         }
-
         match min_opt(client_t, server_t) {
             Some(t) if Some(t) == client_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!(
-                        self.log,
-                        "advancing to {:?} for client",
-                        Duration::from_micros(self.time)
-                    );
+                    trace!(self.log, "advancing to {:?} for client", self.time);
                 }
                 true
             }
             Some(t) if Some(t) == server_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!(
-                        self.log,
-                        "advancing to {:?} for server",
-                        Duration::from_micros(self.time)
-                    );
+                    trace!(self.log, "advancing to {:?} for server", self.time);
                 }
                 true
             }
@@ -245,11 +236,11 @@ struct TestEndpoint {
     endpoint: Endpoint,
     addr: SocketAddr,
     socket: Option<UdpSocket>,
-    timers: [Option<u64>; 5],
+    timers: [Option<Instant>; 5],
     conn: Option<ConnectionHandle>,
     outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
-    inbound: VecDeque<(u64, Option<EcnCodepoint>, Box<[u8]>)>,
+    inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
 }
 
 impl TestEndpoint {
@@ -276,7 +267,7 @@ impl TestEndpoint {
         }
     }
 
-    fn drive(&mut self, log: &Logger, now: u64, remote: SocketAddr) {
+    fn drive(&mut self, log: &Logger, now: Instant, remote: SocketAddr) {
         if let Some(ref socket) = self.socket {
             loop {
                 let mut buf = [0; 8192];
@@ -325,7 +316,7 @@ impl TestEndpoint {
                     trace!(
                         log,
                         "{side:?} {timer:?} set to expire at {:?}",
-                        Duration::from_micros(time),
+                        time,
                         side = self.side,
                         timer = x.timer,
                     );
@@ -335,7 +326,7 @@ impl TestEndpoint {
         }
     }
 
-    fn next_wakeup(&self) -> Option<u64> {
+    fn next_wakeup(&self) -> Option<Instant> {
         let next_timer = self.timers.iter().cloned().filter_map(|t| t).min();
         let next_inbound = self.inbound.front().map(|x| x.0);
         min_opt(next_timer, next_inbound)
@@ -383,8 +374,9 @@ fn version_negotiate() {
         Some(Arc::new(server_config())),
     )
     .unwrap();
+    let now = Instant::now();
     server.handle(
-        0,
+        now,
         client_addr,
         None,
         // Long-header packet with reserved version number
@@ -395,7 +387,7 @@ fn version_negotiate() {
         )[..]
             .into(),
     );
-    let io = server.poll_transmit(0);
+    let io = server.poll_transmit(now);
     assert!(io.is_some());
     if let Some(Transmit { packet, .. }) = io {
         assert_ne!(packet[0] & 0x80, 0);
@@ -404,7 +396,7 @@ fn version_negotiate() {
             .chunks(4)
             .any(|x| BigEndian::read_u32(x) == VERSION));
     }
-    assert_matches!(server.poll_transmit(0), None);
+    assert_matches!(server.poll_transmit(now), None);
     assert_matches!(server.poll(), None);
 }
 
@@ -627,7 +619,7 @@ fn congestion() {
 #[test]
 fn high_latency_handshake() {
     let mut pair = Pair::default();
-    pair.latency = 200 * 1000;
+    pair.latency = Duration::from_micros(200 * 1000);
     let (client_ch, server_ch) = pair.connect();
     assert_eq!(pair.client.connection(client_ch).bytes_in_flight(), 0);
     assert_eq!(pair.server.connection(server_ch).bytes_in_flight(), 0);
