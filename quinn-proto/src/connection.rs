@@ -3297,7 +3297,7 @@ struct IoQueue {
     ///
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
-    timers: [Option<TimerSetting>; 5],
+    timers: [Option<TimerSetting>; Timer::COUNT],
     retired_cids: Vec<ConnectionId>,
 }
 
@@ -3306,7 +3306,7 @@ impl IoQueue {
         Self {
             probes: 0,
             close: false,
-            timers: [None; 5],
+            timers: [None; Timer::COUNT],
             retired_cids: Vec::new(),
         }
     }
