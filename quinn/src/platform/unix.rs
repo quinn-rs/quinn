@@ -11,6 +11,11 @@ use quinn_proto::EcnCodepoint;
 
 use super::cmsg;
 
+#[cfg(target_os = "freebsd")]
+type IpTosTy = libc::c_uchar;
+#[cfg(not(target_os = "freebsd"))]
+type IpTosTy = libc::c_int;
+
 impl super::UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
         // Safety
@@ -22,9 +27,9 @@ impl super::UdpExt for UdpSocket {
             mem::size_of::<SocketAddrV6>(),
             mem::size_of::<libc::sockaddr_in6>()
         );
-        assert_eq!(CMSG_LEN, unsafe {
-            libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize
-        });
+        assert!(
+            CMSG_LEN >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+        );
         assert!(
             mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
             "control message buffers will be misaligned"
@@ -32,14 +37,16 @@ impl super::UdpExt for UdpSocket {
 
         let addr = self.local_addr()?;
 
-        if addr.is_ipv4() || !self.only_v6()? {
+        // macos doesn't support IP_RECVTOS on dual-stack sockets :(
+        if addr.is_ipv4() || (!cfg!(target_os = "macos") && !self.only_v6()?) {
+            let on: libc::c_int = 1;
             let rc = unsafe {
                 libc::setsockopt(
                     self.as_raw_fd(),
                     libc::IPPROTO_IP,
                     libc::IP_RECVTOS,
-                    &true as *const _ as _,
-                    1,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
                 )
             };
             if rc == -1 {
@@ -54,7 +61,7 @@ impl super::UdpExt for UdpSocket {
                     libc::IPPROTO_IPV6,
                     libc::IPV6_RECVTCLASS,
                     &on as *const _ as _,
-                    mem::size_of::<libc::c_int>() as _,
+                    mem::size_of_val(&on) as _,
                 )
             };
             if rc == -1 {
@@ -100,7 +107,7 @@ impl super::UdpExt for UdpSocket {
         };
         let mut encoder = unsafe { cmsg::Encoder::new(&mut hdr, &mut ctrl.0) };
         if is_ipv4 {
-            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn);
+            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
         } else {
             encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
         }
@@ -148,7 +155,10 @@ impl super::UdpExt for UdpSocket {
         };
         let ecn_bits = if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
             match (cmsg.cmsg_level, cmsg.cmsg_type) {
-                (libc::IPPROTO_IP, libc::IP_TOS) => unsafe { cmsg::decode::<u8>(cmsg) },
+                // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
+                (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
+                    cmsg::decode::<u8>(cmsg)
+                },
                 (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                     cmsg::decode::<libc::c_int>(cmsg) as u8
                 },
