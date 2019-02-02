@@ -1937,7 +1937,7 @@ impl Connection {
         }
 
         // PATH_RESPONSE
-        if buf.len() + 9 < max_size {
+        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
             if let Some(response) = self.path_response.take() {
                 trace!(
                     self.log,
@@ -2195,8 +2195,11 @@ impl Connection {
         };
         let probe = !close && self.io.probes != 0;
         let mut ack_only = self.space(space_id).pending.is_empty();
-        if space_id == SpaceId::Data && !probe && !ack_only && self.congestion_blocked() {
-            return None;
+        if space_id == SpaceId::Data {
+            ack_only &= self.path_response.is_none();
+            if !probe && !ack_only && self.congestion_blocked() {
+                return None;
+            }
         }
         if self.state.is_handshake()
             && !self.remote_validated
@@ -2266,6 +2269,12 @@ impl Connection {
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len();
 
+        if probe && ack_only && !self.state.is_handshake() {
+            // Nothing ack-eliciting to send, so we need to make something up
+            self.ping_pending = true;
+        }
+        ack_only &= !self.ping_pending;
+
         let (remote, sent) = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
             let max_len =
@@ -2293,13 +2302,6 @@ impl Connection {
                 Some(self.populate_packet(now, space_id, &mut buf)),
             )
         };
-
-        if probe && ack_only && !self.state.is_handshake() {
-            // Nothing ack-eliciting to send, so we need to make something up
-            trace!(self.log, "PING");
-            buf.write(frame::Type::PING);
-            ack_only = false;
-        }
 
         let space = &mut self.spaces[space_id as usize];
         let crypto = if let Some(ref crypto) = space.crypto {
