@@ -332,6 +332,7 @@ impl Connection {
         self.space_mut(space)
             .sent_packets
             .insert(packet_number, packet);
+        self.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
                 self.time_of_last_sent_ack_eliciting_packet = now;
@@ -522,6 +523,10 @@ impl Connection {
                 self.close_common(now);
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Draining;
+            }
+            Timer::KeepAlive => {
+                trace!(self.log, "sending keep-alive");
+                self.ping();
             }
             Timer::LossDetection => {
                 self.on_loss_detection_timeout(now);
@@ -726,6 +731,7 @@ impl Connection {
     ) {
         self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
         self.total_recvd = self.total_recvd.wrapping_add(size as u64);
+        self.reset_keep_alive(now);
         self.reset_idle_timeout(now);
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
@@ -774,6 +780,16 @@ impl Connection {
         }
         self.io
             .timer_start(Timer::Idle, now + Duration::new(self.idle_timeout, 0));
+    }
+
+    fn reset_keep_alive(&mut self, now: Instant) {
+        if self.config.keep_alive_interval == 0 || self.state.is_closed() {
+            return;
+        }
+        self.io.timer_start(
+            Timer::KeepAlive,
+            now + Duration::new(self.config.keep_alive_interval as u64, 0),
+        );
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -2408,6 +2424,7 @@ impl Connection {
         self.io.timer_stop(Timer::Idle);
         self.io.timer_stop(Timer::KeyDiscard);
         self.io.timer_stop(Timer::PathValidation);
+        self.io.timer_stop(Timer::KeepAlive);
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 

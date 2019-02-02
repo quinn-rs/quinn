@@ -145,13 +145,12 @@ impl Pair {
     fn step(&mut self) -> bool {
         self.drive_client();
         self.drive_server();
-        let client_t = self.client.next_wakeup();
-        let server_t = self.server.next_wakeup();
-        if client_t == self.client.timers[Timer::Idle as usize]
-            && server_t == self.server.timers[Timer::Idle as usize]
-        {
+        if self.client.is_idle() && self.server.is_idle() {
             return false;
         }
+
+        let client_t = self.client.next_wakeup();
+        let server_t = self.server.next_wakeup();
         match min_opt(client_t, server_t) {
             Some(t) if Some(t) == client_t => {
                 if t != self.time {
@@ -330,6 +329,11 @@ impl TestEndpoint {
         let next_timer = self.timers.iter().cloned().filter_map(|t| t).min();
         let next_inbound = self.inbound.front().map(|x| x.0);
         min_opt(next_timer, next_inbound)
+    }
+
+    fn is_idle(&self) -> bool {
+        let t = self.next_wakeup();
+        t == self.timers[Timer::Idle as usize] || t == self.timers[Timer::KeepAlive as usize]
     }
 
     fn delay_outbound(&mut self) {
@@ -1226,6 +1230,32 @@ fn zero_length_cid() {
     pair.drive();
     pair.server.close(pair.time, server_ch, 42, Bytes::new());
     pair.connect();
+}
+
+#[test]
+fn keep_alive() {
+    const IDLE_TIMEOUT: u64 = 10;
+    let server = ServerConfig {
+        transport_config: Arc::new(TransportConfig {
+            keep_alive_interval: IDLE_TIMEOUT as u32 / 2,
+            idle_timeout: IDLE_TIMEOUT,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    // Run a good while longer than the idle timeout
+    let end = pair.time + Duration::new(20 * IDLE_TIMEOUT, 0);
+    while pair.time < end {
+        if !pair.step() {
+            if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
+                pair.time = time;
+            }
+        }
+        assert!(!pair.client.connection(client_ch).is_closed());
+        assert!(!pair.server.connection(server_ch).is_closed());
+    }
 }
 
 fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
