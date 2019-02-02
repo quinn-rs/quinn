@@ -1052,7 +1052,9 @@ pub enum Timer {
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Timer; 5] = [
+    /// Number of types of timers that a connection may start
+    pub const COUNT: usize = 5;
+    pub(crate) const VALUES: [Timer; Self::COUNT] = [
         Timer::LossDetection,
         Timer::Idle,
         Timer::Close,

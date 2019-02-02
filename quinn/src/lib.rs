@@ -534,7 +534,7 @@ struct Pending {
     connecting: Option<oneshot::Sender<Option<ConnectionError>>>,
     uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    cancel_timers: [Option<oneshot::Sender<()>>; 5],
+    cancel_timers: [Option<oneshot::Sender<()>>; quinn::Timer::COUNT],
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
