@@ -87,6 +87,8 @@ pub struct Connection {
     accepted_0rtt: bool,
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
+    /// Negotiated idle timeout
+    idle_timeout: u64,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -225,6 +227,7 @@ impl Connection {
             stream_opened: false,
             accepted_0rtt: false,
             permit_idle_reset: true,
+            idle_timeout: config.idle_timeout,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -762,19 +765,15 @@ impl Connection {
     }
 
     fn reset_idle_timeout(&mut self, now: Instant) {
-        if self.config.idle_timeout == 0 && self.params.idle_timeout == 0 {
+        if self.idle_timeout == 0 {
             return;
         }
         if self.state.is_closed() {
             self.io.timer_stop(Timer::Idle);
             return;
         }
-        let dt = if self.config.idle_timeout == 0 || self.params.idle_timeout == 0 {
-            cmp::max(self.config.idle_timeout, self.params.idle_timeout)
-        } else {
-            cmp::min(self.config.idle_timeout, self.params.idle_timeout)
-        };
-        self.io.timer_start(Timer::Idle, now + Duration::new(dt, 0));
+        self.io
+            .timer_start(Timer::Idle, now + Duration::new(self.idle_timeout, 0));
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
@@ -2433,6 +2432,11 @@ impl Connection {
             self.streams.get_send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
+        self.idle_timeout = if self.config.idle_timeout == 0 || params.idle_timeout == 0 {
+            cmp::max(self.config.idle_timeout, params.idle_timeout)
+        } else {
+            cmp::min(self.config.idle_timeout, params.idle_timeout)
+        };
         self.params = params;
         Ok(())
     }
