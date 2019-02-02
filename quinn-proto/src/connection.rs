@@ -695,7 +695,6 @@ impl Connection {
         }
 
         // Calculate PTO duration
-        const MAX_PTO_EXPONENT: u32 = 24; // 2^24μs = ~17 seconds
         let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
         self.io.timer_start(
             Timer::LossDetection,
@@ -3553,3 +3552,5 @@ struct PathResponse {
 fn micros_from(x: Duration) -> u64 {
     x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }
+
+const MAX_PTO_EXPONENT: u32 = 24; // 2^24μs = ~17 seconds
