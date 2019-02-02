@@ -35,7 +35,7 @@ untrusted = "0.6.2"
 webpki = "0.19"
 webpki-roots = "0.16"
 ct-logs = "0.5"
-libc = "0.2.46"
+libc = "0.2.49"
 mio = "0.6"
 
 [dev-dependencies]

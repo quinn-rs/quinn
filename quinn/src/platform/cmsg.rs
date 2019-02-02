@@ -36,7 +36,7 @@ impl<'a> Encoder<'a> {
         assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
         let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
         assert!(
-            self.hdr.msg_controllen >= self.len + space,
+            self.hdr.msg_controllen as usize >= self.len + space,
             "control message buffer too small"
         );
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
@@ -60,7 +60,7 @@ impl<'a> Encoder<'a> {
 // by `sendmsg`.
 impl<'a> Drop for Encoder<'a> {
     fn drop(&mut self) {
-        self.hdr.msg_controllen = self.len;
+        self.hdr.msg_controllen = self.len as _;
     }
 }
 

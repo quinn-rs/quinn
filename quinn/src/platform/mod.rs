@@ -2,15 +2,13 @@
 use quinn_proto::EcnCodepoint;
 use std::{io, net::SocketAddr};
 
-// The Linux code should work for most unixes, but as of this writing nobody's ported the
-// CMSG_... macros to the libc crate for any of the BSDs.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod cmsg;
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(unix)]
+mod unix;
 
 // No ECN support
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 mod fallback;
 
 pub trait UdpExt {
