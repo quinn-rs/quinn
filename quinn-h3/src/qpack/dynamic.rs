@@ -335,7 +335,6 @@ pub struct DynamicTable {
     blocked_streams: Option<BTreeMap<usize, usize>>, // <required_ref, blocked_count>
 }
 
-#[allow(dead_code)]
 impl DynamicTable {
     pub fn new() -> DynamicTable {
         DynamicTable {
@@ -602,13 +601,6 @@ impl DynamicTable {
 
     pub(super) fn max_mem_size(&self) -> usize {
         self.mem_limit
-    }
-
-    fn get(&self, index: usize) -> Result<&HeaderField, Error> {
-        match self.fields.get(index) {
-            Some(f) => Ok(f),
-            None => Err(Error::BadIndex(index)),
-        }
     }
 }
 

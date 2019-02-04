@@ -1,22 +1,3 @@
-/*
- *QUIC                                                           C. Krasic
- *Internet-Draft                                               Google, Inc
- *Intended status: Standards Track                               M. Bishop
- *Expires: November 24, 2018                           Akamai Technologies
- *                                                        A. Frindell, Ed.
- *                                                                Facebook
- *                                                            May 23, 2018
- *
- *
- *              QPACK: Header Compression for HTTP over QUIC
- *                        draft-ietf-quic-qpack-00
- */
-
-#[allow(dead_code)]
-pub const QPACK_VERSION: &'static str = "0.0.0~draft";
-#[allow(dead_code)]
-pub const QPACK_VERSION_DATE: &'static str = "23-may-2018";
-
 pub use self::decoder::{
     ack_header, decode_header, on_encoder_recv, stream_canceled, Error as DecoderError,
 };
