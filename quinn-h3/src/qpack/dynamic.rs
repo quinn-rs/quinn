@@ -59,6 +59,26 @@ pub struct DynamicTableInserter<'a> {
 }
 
 impl<'a> DynamicTableInserter<'a> {
+    pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), Error> {
+        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
+            return Err(Error::MaximumTableSizeTooLarge);
+        }
+
+        if size >= self.table.mem_limit {
+            self.table.mem_limit = size;
+            return Ok(());
+        }
+
+        let required = self.table.mem_limit - size;
+
+        if let Some(to_evict) = self.table.can_free(required)? {
+            self.table.evict(to_evict)?;
+        }
+
+        self.table.mem_limit = size;
+        Ok(())
+    }
+
     pub(super) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
         let index = if let Some(index) = self.table.put_field(field.clone())? {
             index
@@ -97,26 +117,6 @@ impl<'a> DynamicTableInserter<'a> {
             .ok_or(Error::BadIndex(real_index))
     }
 
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), Error> {
-        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
-            return Err(Error::MaximumTableSizeTooLarge);
-        }
-
-        if size >= self.table.mem_limit {
-            self.table.mem_limit = size;
-            return Ok(());
-        }
-
-        let required = self.table.mem_limit - size;
-
-        if let Some(to_evict) = self.table.can_free(required)? {
-            self.table.evict(to_evict)?;
-        }
-
-        self.table.mem_limit = size;
-        Ok(())
-    }
-
     pub(super) fn total_inserted(&self) -> usize {
         self.table.vas.total_inserted()
     }
@@ -143,6 +143,18 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
 }
 
 impl<'a> DynamicTableEncoder<'a> {
+    pub(super) fn max_mem_size(&self) -> usize {
+        self.table.mem_limit
+    }
+
+    pub(super) fn base(&self) -> usize {
+        self.base
+    }
+
+    pub(super) fn total_inserted(&self) -> usize {
+        self.table.total_inserted()
+    }
+
     pub(super) fn commit(&mut self, largest_ref: usize) {
         self.table
             .track_block(self.stream_id, self.block_refs.clone());
@@ -273,18 +285,6 @@ impl<'a> DynamicTableEncoder<'a> {
             .and_modify(|c| *c += 1)
             .or_insert(1);
         self.table.track_ref(reference);
-    }
-
-    pub(super) fn max_mem_size(&self) -> usize {
-        self.table.mem_limit
-    }
-
-    pub(super) fn base(&self) -> usize {
-        self.base
-    }
-
-    pub(super) fn total_inserted(&self) -> usize {
-        self.table.total_inserted()
     }
 }
 

@@ -10,6 +10,7 @@ use super::dynamic::{
     DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
     Error as DynamicTableError,
 };
+use super::parse_error::ParseError;
 use super::prefix_int::Error as IntError;
 use super::prefix_string::Error as StringError;
 use super::static_::StaticTable;
@@ -17,7 +18,7 @@ use super::stream::{
     DecoderInstruction, Duplicate, DynamicTableSizeUpdate, HeaderAck, InsertCountIncrement,
     InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
-use super::{HeaderField, ParseError};
+use super::HeaderField;
 
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
