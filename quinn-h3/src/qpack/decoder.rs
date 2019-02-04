@@ -15,7 +15,7 @@ use super::stream::{
     Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck, InsertCountIncrement,
     InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
-use super::ParseError;
+use super::parse_error::ParseError;
 
 use super::prefix_int;
 use super::prefix_string;

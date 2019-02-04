@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut};
 
 use super::prefix_int::{self, Error as IntError};
 use super::prefix_string::{self, Error as StringError};
-use super::ParseError;
+use super::parse_error::ParseError;
 
 pub enum EncoderInstruction {
     InsertWithNameRef,
@@ -29,7 +29,7 @@ impl EncoderInstruction {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) enum InsertWithNameRef {
+pub enum InsertWithNameRef {
     Static { index: usize, value: Vec<u8> },
     Dynamic { index: usize, value: Vec<u8> },
 }
@@ -86,7 +86,7 @@ impl InsertWithNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct InsertWithoutNameRef {
+pub struct InsertWithoutNameRef {
     pub name: Vec<u8>,
     pub value: Vec<u8>,
 }
@@ -121,7 +121,7 @@ impl InsertWithoutNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct Duplicate(pub usize);
+pub struct Duplicate(pub usize);
 
 impl Duplicate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -140,7 +140,7 @@ impl Duplicate {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct DynamicTableSizeUpdate(pub usize);
+pub struct DynamicTableSizeUpdate(pub usize);
 
 impl DynamicTableSizeUpdate {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -181,7 +181,7 @@ impl DecoderInstruction {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct InsertCountIncrement(pub usize);
+pub struct InsertCountIncrement(pub usize);
 
 impl InsertCountIncrement {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -200,7 +200,7 @@ impl InsertCountIncrement {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct HeaderAck(pub u64);
+pub struct HeaderAck(pub u64);
 
 impl HeaderAck {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {
@@ -219,7 +219,7 @@ impl HeaderAck {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct StreamCancel(pub u64);
+pub struct StreamCancel(pub u64);
 
 impl StreamCancel {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Option<Self>, ParseError> {

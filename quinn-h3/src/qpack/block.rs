@@ -2,9 +2,9 @@ use bytes::{Buf, BufMut};
 
 use super::prefix_int;
 use super::prefix_string;
-use super::ParseError;
+use super::parse_error::ParseError;
 
-pub(super) enum HeaderBlockField {
+pub enum HeaderBlockField {
     Indexed,
     IndexedWithPostBase,
     LiteralWithNameRef,
@@ -32,7 +32,7 @@ impl HeaderBlockField {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct HeaderPrefix {
+pub struct HeaderPrefix {
     encoded_insert_count: usize,
     sign_negative: bool,
     delta_base: usize,
@@ -72,7 +72,7 @@ impl HeaderPrefix {
         }
     }
 
-    pub(super) fn get(
+    pub fn get(
         self,
         total_inserted: usize,
         max_table_size: usize,
@@ -113,7 +113,7 @@ impl HeaderPrefix {
         Ok((required, base))
     }
 
-    pub(super) fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         let (_, encoded_insert_count) = prefix_int::decode(8, buf)?;
         let (sign_negative, delta_base) = prefix_int::decode(7, buf)?;
         Ok(Self {
@@ -123,7 +123,7 @@ impl HeaderPrefix {
         })
     }
 
-    pub(super) fn encode<W: BufMut>(&self, buf: &mut W) {
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
         let sign_bit = if self.sign_negative { 1 } else { 0 };
         prefix_int::encode(8, 0, self.encoded_insert_count, buf);
         prefix_int::encode(7, sign_bit, self.delta_base, buf);
@@ -131,7 +131,7 @@ impl HeaderPrefix {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) enum Indexed {
+pub enum Indexed {
     Static(usize),
     Dynamic(usize),
 }
@@ -157,20 +157,20 @@ impl Indexed {
 pub struct IndexedWithPostBase(pub usize);
 
 impl IndexedWithPostBase {
-    pub(super) fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
+    pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         match prefix_int::decode(4, buf)? {
             (0b0001, i) => Ok(IndexedWithPostBase(i)),
             (f, _) => Err(ParseError::InvalidPrefix(f)),
         }
     }
 
-    pub(super) fn encode<W: BufMut>(&self, buf: &mut W) {
+    pub fn encode<W: BufMut>(&self, buf: &mut W) {
         prefix_int::encode(4, 0b0001, self.0, buf)
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) enum LiteralWithNameRef {
+pub enum LiteralWithNameRef {
     Static { index: usize, value: Vec<u8> },
     Dynamic { index: usize, value: Vec<u8> },
 }
@@ -220,7 +220,7 @@ impl LiteralWithNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct LiteralWithPostBaseNameRef {
+pub struct LiteralWithPostBaseNameRef {
     pub index: usize,
     pub value: Vec<u8>,
 }
@@ -251,7 +251,7 @@ impl LiteralWithPostBaseNameRef {
 }
 
 #[derive(Debug, PartialEq)]
-pub(super) struct Literal {
+pub struct Literal {
     pub name: Vec<u8>,
     pub value: Vec<u8>,
 }

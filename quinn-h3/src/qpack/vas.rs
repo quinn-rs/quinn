@@ -78,7 +78,7 @@ pub enum Error {
 }
 
 #[derive(Debug)]
-pub(super) struct VirtualAddressSpace {
+pub struct VirtualAddressSpace {
     inserted: usize,
     dropped: usize,
     delta: usize,
