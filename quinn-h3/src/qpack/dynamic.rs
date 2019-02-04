@@ -3,6 +3,8 @@ use std::collections::btree_map::Entry as BTEntry;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use err_derive::Error;
+
 use super::field::HeaderField;
 use super::static_::StaticTable;
 use crate::qpack::vas::{self, VirtualAddressSpace};
@@ -19,15 +21,23 @@ pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
  */
 const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Error)]
 pub enum Error {
+    #[error(display = "bad relative index: {}", _0)]
     BadRelativeIndex(usize),
+    #[error(display = "bad post base index: {}", _0)]
     BadPostbaseIndex(usize),
+    #[error(display = "decoded index out of bounds: {}", _0)]
     BadIndex(usize),
+    #[error(display = "tried to insert a field greater than dynamic table available size")]
     MaxTableSizeReached,
+    #[error(display = "table size setting is greater than maximum authorized")]
     MaximumTableSizeTooLarge,
+    #[error(display = "stream id '{}' is unknown or has already been acknowledged or canceled", _0)]
     UnknownStreamId(u64),
+    #[error(display = "tried to acknowledge encoder stream but no encoder data has been sent")]
     NoTrackingData,
+    #[error(display = "internal reference tracking error")]
     InvalidTrackingCount,
 }
 
@@ -858,9 +868,9 @@ mod tests {
 
         insert_fields(&mut table, vec![HeaderField::new("Name-C", "Value-C")]);
 
-        assert_eq!(table.get(0), Ok(&HeaderField::new("Name-B", "Value-B")));
-        assert_eq!(table.get(1), Ok(&HeaderField::new("Name-C", "Value-C")));
-        assert_eq!(table.get(2), Err(Error::BadIndex(2)));
+        assert_eq!(table.fields.get(0), Some(&HeaderField::new("Name-B", "Value-B")));
+        assert_eq!(table.fields.get(1), Some(&HeaderField::new("Name-C", "Value-C")));
+        assert_eq!(table.fields.get(2), None);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use bytes::{Buf, BufMut};
 use std::io::Cursor;
 
+use err_derive::Error;
+
 use super::static_::{Error as StaticError, StaticTable};
 use super::vas;
 use super::{
@@ -20,16 +22,25 @@ use super::parse_error::ParseError;
 use super::prefix_int;
 use super::prefix_string;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Error)]
 pub enum Error {
+    #[error(display = "failed to parse integer: {:?}", _0)]
     InvalidInteger(prefix_int::Error),
+    #[error(display = "failed to parse string: {:?}", _0)]
     InvalidString(prefix_string::Error),
+    #[error(display = "index is out of dynamic table bounds: {:?}", _0)]
     InvalidIndex(vas::Error),
+    #[error(display = "dynamic table error: {}", _0)]
     DynamicTableError(DynamicTableError),
+    #[error(display = "index '{}' is out of static table bounds", _0)]
     InvalidStaticIndex(usize),
+    #[error(display = "invalid data prefix")]
     UnknownPrefix,
+    #[error(display = "missing references from dynamic table to decode header block")]
     MissingRefs,
+    #[error(display = "header prefix contains invalid base index: {:?}", _0)]
     BadBaseIndex(isize),
+    #[error(display = "data is unexpectedly truncated")]
     UnexpectedEnd,
 }
 
