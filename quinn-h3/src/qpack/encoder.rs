@@ -19,7 +19,6 @@ use super::stream::{
 };
 use super::{HeaderField, ParseError};
 
-#[allow(dead_code)]
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
     block: &mut W,
@@ -120,7 +119,6 @@ fn encode_field<W: BufMut>(
     Ok(reference)
 }
 
-#[allow(dead_code)]
 pub fn on_decoder_recv<R: Buf>(table: &mut DynamicTable, read: &mut R) -> Result<(), Error> {
     while let Some(instruction) = parse_instruction(read)? {
         match instruction {
@@ -164,7 +162,6 @@ enum Instruction {
     Untrack(u64),
 }
 
-#[allow(dead_code)]
 pub fn set_dynamic_table_size<W: BufMut>(
     table: &mut DynamicTable,
     encoder: &mut W,
