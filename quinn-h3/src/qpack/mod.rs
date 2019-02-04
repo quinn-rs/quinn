@@ -3,18 +3,19 @@ pub use self::decoder::{
 };
 pub use self::dynamic::{
     DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter,
-    Error as DynamicTableError,
 };
 pub use self::encoder::{encode, on_decoder_recv, set_dynamic_table_size, Error as EncoderError};
 pub use self::field::HeaderField;
 
+use self::dynamic::Error as DynamicTableError;
+
 mod block;
 mod dynamic;
 mod field;
+mod parse_error;
 mod static_;
 mod stream;
 mod vas;
-mod parse_error;
 
 mod decoder;
 mod encoder;

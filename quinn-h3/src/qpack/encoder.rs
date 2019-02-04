@@ -1,6 +1,9 @@
-use bytes::{Buf, BufMut};
 use std::cmp;
 use std::io::Cursor;
+
+use bytes::{Buf, BufMut};
+
+use err_derive::Error;
 
 use super::block::{
     HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
@@ -19,6 +22,18 @@ use super::stream::{
     InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
 use super::HeaderField;
+
+#[derive(Debug, PartialEq, Error)]
+pub enum Error {
+    #[error(display = "failed to insert in dynamic table: {}", _0)]
+    Insertion(DynamicTableError),
+    #[error(display = "prefixed string: {:?}", _0)]
+    InvalidString(StringError),
+    #[error(display = "prefixed integer: {:?}", _0)]
+    InvalidInteger(IntError),
+    #[error(display = "invalid data prefix")]
+    UnknownPrefix,
+}
 
 pub fn encode<W: BufMut>(
     table: &mut DynamicTableEncoder,
@@ -171,14 +186,6 @@ pub fn set_dynamic_table_size<W: BufMut>(
     table.inserter().set_max_mem_size(size)?;
     DynamicTableSizeUpdate(size).encode(encoder);
     Ok(())
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    Insertion(DynamicTableError),
-    InvalidString(StringError),
-    InvalidInteger(IntError),
-    UnknownPrefix,
 }
 
 impl From<DynamicTableError> for Error {
