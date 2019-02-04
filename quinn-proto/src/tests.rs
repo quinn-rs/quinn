@@ -687,8 +687,12 @@ fn zero_rtt_rejection() {
         .unwrap();
     pair.drive();
     pair.server.assert_accept();
+    assert_matches!(pair.server.poll(), Some((_, Event::Connected)));
+    assert_matches!(pair.server.poll(), None);
     pair.client.close(pair.time, client_conn, 0, [][..].into());
     pair.drive();
+    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { .. })));
+    assert_matches!(pair.server.poll(), None);
 
     // Changing protocols invalidates 0-RTT
     Arc::get_mut(&mut config)
@@ -706,8 +710,12 @@ fn zero_rtt_rejection() {
     pair.drive();
     assert!(!pair.client.connection(client_conn).accepted_0rtt());
     let server_conn = pair.server.assert_accept();
-    assert_matches!(
-        pair.server.read_unordered(server_conn, s),
+    assert_matches!(pair.server.poll(), Some((_, Event::Connected)));
+    assert_matches!(pair.server.poll(), None);
+    let s2 = pair.client.open(client_conn, Directionality::Uni).unwrap();
+    assert_eq!(s, s2);
+    assert_eq!(
+        pair.server.read_unordered(server_conn, s2),
         Err(ReadError::Blocked)
     );
     assert_eq!(pair.client.connection(client_conn).lost_packets(), 0);
