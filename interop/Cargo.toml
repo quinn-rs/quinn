@@ -15,7 +15,7 @@ tokio = "0.1.6"
 tokio-current-thread = "0.1"
 tokio-reactor = "0.1"
 rustls = { version = "0.15", features = ["dangerous_configuration"] }
-failure = "0.1"
+err-ctx = "0.2"
 slog = "2.2"
 futures-preview = { version = "0.3.0-alpha.11", features = ["compat"] }
 webpki = "0.19"
