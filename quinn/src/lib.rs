@@ -82,7 +82,8 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
 
 pub use crate::quinn::{
-    ConnectError, ConnectionError, ConnectionId, ServerConfig, TransportConfig, ALPN_QUIC_HTTP,
+    ConnectError, ConnectionError, ConnectionId, ServerConfig, TransportConfig, ALPN_QUIC_H3,
+    ALPN_QUIC_HTTP,
 };
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 

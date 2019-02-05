@@ -54,6 +54,9 @@ pub const VERSION: u32 = 0xff00_0012;
 /// TLS ALPN value for HTTP over QUIC
 pub const ALPN_QUIC_HTTP: &[u8] = b"hq-17";
 
+/// TLS ALPN value for H3
+pub const ALPN_QUIC_H3: &[u8] = b"h3-17";
+
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Side {

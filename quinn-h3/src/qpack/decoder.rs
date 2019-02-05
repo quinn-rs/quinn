@@ -13,11 +13,11 @@ use super::block::{
     HeaderBlockField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
     LiteralWithPostBaseNameRef,
 };
+use super::parse_error::ParseError;
 use super::stream::{
     Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck, InsertCountIncrement,
     InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
 };
-use super::parse_error::ParseError;
 
 use super::prefix_int;
 use super::prefix_string;
