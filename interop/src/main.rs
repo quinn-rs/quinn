@@ -3,10 +3,13 @@ use std::str;
 use std::sync::{Arc, Mutex};
 
 use futures::Future;
+use quinn_h3::qpack;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
+use bytes::{BufMut, BytesMut};
 use failure::{format_err, Error};
+use quinn_h3::frame::{HeadersFrame, HttpFrame, SettingsFrame};
 use slog::{o, warn, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -69,7 +72,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    tls_config.alpn_protocols = vec![str::from_utf8(quinn::ALPN_QUIC_HTTP).unwrap().into()];
+    tls_config.alpn_protocols = vec![
+        str::from_utf8(quinn::ALPN_QUIC_HTTP).unwrap().into(),
+        str::from_utf8(quinn::ALPN_QUIC_H3).unwrap().into(),
+    ];
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
@@ -176,6 +182,50 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         }
     }
 
+    let mut h3 = false;
+    let result = runtime.block_on(
+        endpoint
+            .connect_with(&client_config, &remote, &options.host)?
+            .map_err(|e| format_err!("failed to connect: {}", e))
+            .and_then(|conn| {
+                assert!(state.lock().unwrap().saw_cert);
+                handshake = true;
+                let conn = conn.connection;
+                let control_stream = conn.open_uni();
+                let control_fut = control_stream
+                    .map_err(|e| format_err!("failed to open control stream: {}", e))
+                    .and_then(move |stream| {
+                        let mut buf = BytesMut::new();
+                        buf.put(0x43u8);
+                        HttpFrame::Settings(SettingsFrame {
+                            max_header_list_size: 4096,
+                            num_placeholders: 0,
+                        })
+                        .encode(&mut buf);
+                        tokio::io::write_all(stream, buf)
+                            .map_err(|e| format_err!("failed to send Settings frame: {}", e))
+                            .and_then(move |(_, _)| futures::future::ok(()))
+                    });
+
+                let req_stream = conn.open_bi();
+                let req_fut = req_stream
+                    .map_err(|e| format_err!("failed to open request stream: {}", e))
+                    .and_then(|req_stream| h3_get(req_stream))
+                    .and_then(move |data| {
+                        println!(
+                            "read {} bytes: \n\n{}\n\n closing",
+                            data.len(),
+                            String::from_utf8_lossy(&data)
+                        );
+                        conn.close(0, b"done").map_err(|_| unreachable!())
+                    });
+                control_fut.and_then(|_| req_fut).map(|_| h3 = true)
+            }),
+    );
+    if let Err(e) = result {
+        println!("failure: {}", e);
+    }
+
     if handshake {
         print!("VH");
     }
@@ -197,10 +247,72 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     if key_update {
         print!("U");
     }
+    if h3 {
+        print!("3");
+    }
 
     println!("");
 
     Ok(())
+}
+
+fn h3_get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
+    let header = [
+        (":method", "GET"),
+        (":path", "/"),
+        ("user-agent", "quinn interop tool"),
+    ]
+    .iter()
+    .map(|(k, v)| qpack::HeaderField::new(*k, *v))
+    .collect::<Vec<_>>();
+
+    let mut table = qpack::DynamicTable::new();
+    table
+        .inserter()
+        .set_max_mem_size(0)
+        .expect("set dynamic table size");
+
+    let mut block = BytesMut::new();
+    let mut enc = BytesMut::new();
+    qpack::encode(&mut table.encoder(0), &mut block, &mut enc, &header).expect("encoder failed");
+
+    let mut buf = BytesMut::new();
+    HttpFrame::Headers(HeadersFrame {
+        encoded: block.into(),
+    })
+    .encode(&mut buf);
+
+    tokio::io::write_all(stream, buf)
+        .map_err(|e| format_err!("failed to send Request frame: {}", e))
+        .and_then(|(stream, _)| {
+            quinn::read_to_end(stream, usize::max_value())
+                .map_err(|e| format_err!("failed to send Request frame: {}", e))
+        })
+        .and_then(move |(_, data)| h3_resp(&table, data))
+}
+
+fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
+    let mut cur = std::io::Cursor::new(data);
+    match HttpFrame::decode(&mut cur) {
+        Ok(HttpFrame::Headers(text)) => {
+            let mut resp_block = std::io::Cursor::new(&text.encoded);
+            match qpack::decode_header(table, &mut resp_block) {
+                Ok(_) => (),
+                Err(e) => return Err(format_err!("failed to decode response header {}", e)),
+            }
+        }
+        Ok(f) => {
+            println!("response basd frame type {:?}", f);
+            return Err(format_err!("response frame bad type {:?}", f));
+        }
+        Err(e) => return Err(format_err!("failed to decode response frame {:?}", e)),
+    }
+
+    match HttpFrame::decode(&mut cur) {
+        Ok(HttpFrame::Data(text)) => Ok(Box::from(text.payload.as_ref())),
+        Ok(f) => Err(format_err!("response frame bad type {:?}", f)),
+        Err(e) => Err(format_err!("failed to decode response frame {:?}", e)),
+    }
 }
 
 fn get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {

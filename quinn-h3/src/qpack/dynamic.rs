@@ -33,7 +33,10 @@ pub enum Error {
     MaxTableSizeReached,
     #[error(display = "table size setting is greater than maximum authorized")]
     MaximumTableSizeTooLarge,
-    #[error(display = "stream id '{}' is unknown or has already been acknowledged or canceled", _0)]
+    #[error(
+        display = "stream id '{}' is unknown or has already been acknowledged or canceled",
+        _0
+    )]
     UnknownStreamId(u64),
     #[error(display = "tried to acknowledge encoder stream but no encoder data has been sent")]
     NoTrackingData,
@@ -868,8 +871,14 @@ mod tests {
 
         insert_fields(&mut table, vec![HeaderField::new("Name-C", "Value-C")]);
 
-        assert_eq!(table.fields.get(0), Some(&HeaderField::new("Name-B", "Value-B")));
-        assert_eq!(table.fields.get(1), Some(&HeaderField::new("Name-C", "Value-C")));
+        assert_eq!(
+            table.fields.get(0),
+            Some(&HeaderField::new("Name-B", "Value-B"))
+        );
+        assert_eq!(
+            table.fields.get(1),
+            Some(&HeaderField::new("Name-C", "Value-C"))
+        );
         assert_eq!(table.fields.get(2), None);
     }
 
