@@ -301,6 +301,9 @@ impl EncodedFile {
             match qpack::decode_header(&mut table, &mut cur) {
                 Ok(d) => decoded.push(d),
                 Err(qpack::DecoderError::MissingRefs) => {
+                    if blocked.len() >= self.max_blocked {
+                        return Err(Error::MaxBlockedStreamReached);
+                    }
                     blocked.push(buf.bytes().into());
                 }
                 Err(e) => Err(e)?,
@@ -313,6 +316,7 @@ impl EncodedFile {
     pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<(), Error> {
         let mut table = qpack::DynamicTable::new();
         table.inserter().set_max_mem_size(self.table_size)?;
+        table.set_max_blocked(self.max_blocked);
 
         let mut buf = vec![];
         let mut stream_count = 1;
@@ -350,15 +354,15 @@ impl EncodedFile {
                 qpack::on_decoder_recv(&mut table, &mut cur)?;
             }
 
+            stream_count.encode(&mut buf);
+            (block_chunk.len() as u32).encode(&mut buf);
+            buf.append(&mut block_chunk);
+
             if encoder_chunk.len() > 0 {
                 0u64.encode(&mut buf);
                 (encoder_chunk.len() as u32).encode(&mut buf);
                 buf.append(&mut encoder_chunk);
             }
-
-            stream_count.encode(&mut buf);
-            (block_chunk.len() as u32).encode(&mut buf);
-            buf.append(&mut block_chunk);
 
             stream_count += 1;
         }
@@ -590,6 +594,7 @@ enum Error {
     NotMatching(String, String),
     SomeFailures,
     Encode(qpack::EncoderError),
+    MaxBlockedStreamReached,
 }
 
 impl From<std::io::Error> for Error {
