@@ -411,7 +411,7 @@ impl DynamicTable {
 
     pub(super) fn untrack_block(&mut self, stream_id: u64) -> Result<(), Error> {
         if self.track_blocks.is_none() || self.track_map.is_none() {
-            return Err(Error::NoTrackingData);
+            return Ok(());
         }
 
         if let Some(bloc_entry) = self.track_blocks.as_mut().unwrap().remove(&stream_id) {
