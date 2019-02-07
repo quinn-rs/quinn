@@ -929,24 +929,31 @@ fn instant_close_2() {
 
 #[test]
 fn idle_timeout() {
-    let mut pair = Pair::default();
+    const IDLE_TIMEOUT: u64 = 10;
+    let server = ServerConfig {
+        transport_config: Arc::new(TransportConfig {
+            idle_timeout: IDLE_TIMEOUT,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
     pair.client.ping(client_ch);
+    let start = pair.time;
 
-    let mut next = None;
     while !pair.client.connection(client_ch).is_closed()
         || !pair.server.connection(server_ch).is_closed()
     {
         if !pair.step() {
-            next = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup());
-            if let Some(t) = next {
+            if let Some(t) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
                 pair.time = t;
             }
         }
         pair.client.inbound.clear(); // Simulate total S->C packet loss
     }
 
-    assert!(next.is_some());
+    assert!(pair.time - start < 2 * Duration::from_secs(IDLE_TIMEOUT));
     assert_matches!(
         pair.client.poll(),
         Some((

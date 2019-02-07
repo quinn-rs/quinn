@@ -521,8 +521,10 @@ impl Connection {
             }
             Timer::Idle => {
                 self.close_common(now);
+                self.io.timer_stop(Timer::Close);
                 self.events.push_back(ConnectionError::TimedOut.into());
-                self.state = State::Draining;
+                self.state = State::Drained;
+                return self.app_closed;
             }
             Timer::KeepAlive => {
                 trace!(self.log, "sending keep-alive");
