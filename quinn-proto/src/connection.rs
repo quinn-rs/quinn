@@ -683,7 +683,8 @@ impl Connection {
             } else {
                 2 * Duration::from_micros(self.config.initial_rtt)
             };
-            let timeout = cmp::max(timeout, TIMER_GRANULARITY) * 2u32.pow(self.crypto_count);
+            let timeout = cmp::max(timeout, TIMER_GRANULARITY)
+                * 2u32.pow(cmp::min(self.crypto_count, MAX_BACKOFF_EXPONENT));
             self.io.timer_start(
                 Timer::LossDetection,
                 self.time_of_last_sent_crypto_packet + timeout,
@@ -703,7 +704,7 @@ impl Connection {
         }
 
         // Calculate PTO duration
-        let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_PTO_EXPONENT));
+        let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_BACKOFF_EXPONENT));
         self.io.timer_start(
             Timer::LossDetection,
             self.time_of_last_sent_ack_eliciting_packet + timeout,
@@ -3576,4 +3577,5 @@ fn micros_from(x: Duration) -> u64 {
     x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
 }
 
-const MAX_PTO_EXPONENT: u32 = 24; // 2^24μs = ~17 seconds
+// Prevents overflow and improves behavior in extreme circumstances
+const MAX_BACKOFF_EXPONENT: u32 = 16;
