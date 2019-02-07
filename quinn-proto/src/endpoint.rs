@@ -133,14 +133,11 @@ impl Endpoint {
         }
         loop {
             let &ch = self.needs_transmit.iter().next()?;
-            loop {
-                if let Some(transmit) = self.connections[ch].poll_transmit(now) {
-                    self.dirty_timers.insert(ch);
-                    return Some(transmit);
-                } else {
-                    self.needs_transmit.remove(&ch);
-                    break;
-                }
+            if let Some(transmit) = self.connections[ch].poll_transmit(now) {
+                self.dirty_timers.insert(ch);
+                return Some(transmit);
+            } else {
+                self.needs_transmit.remove(&ch);
             }
         }
     }
