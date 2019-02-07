@@ -718,7 +718,7 @@ impl Connection {
         let rtt = self
             .rtt
             .smoothed
-            .unwrap_or(Duration::from_micros(self.config.initial_rtt));
+            .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
         let computed = rtt + 4 * self.rtt.var + self.max_ack_delay();
         cmp::max(computed, TIMER_GRANULARITY)
     }
@@ -863,9 +863,7 @@ impl Connection {
         let params = self
             .tls
             .transport_parameters()?
-            .ok_or(TransportError::PROTOCOL_VIOLATION(
-                "transport parameters missing",
-            ))?;
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("transport parameters missing"))?;
         self.set_params(params)?;
         self.write_tls();
         self.init_0rtt();
@@ -1274,9 +1272,9 @@ impl Connection {
 
                         if self.side.is_client() {
                             // Client-only beceause server params were set from the client's Initial
-                            let params = self.tls.transport_parameters()?.ok_or(
-                                TransportError::PROTOCOL_VIOLATION("transport parameters missing"),
-                            )?;
+                            let params = self.tls.transport_parameters()?.ok_or_else(|| {
+                                TransportError::PROTOCOL_VIOLATION("transport parameters missing")
+                            })?;
 
                             if self.has_0rtt() {
                                 if !self.tls.early_data_accepted().unwrap() {
@@ -2330,12 +2328,15 @@ impl Connection {
         } else {
             unreachable!("tried to send {:?} packet without keys", space_id);
         };
-        let mut padded = false;
-        if self.side.is_client() && space_id == SpaceId::Initial {
+
+        let mut padded = if self.side.is_client() && space_id == SpaceId::Initial {
             // Initial-only packets MUST be padded
             buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
-            padded = true;
-        }
+            true
+        } else {
+            false
+        };
+
         let pn_len = number.len();
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
