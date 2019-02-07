@@ -49,7 +49,7 @@ mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 
 /// The QUIC protocol version implemented
-pub const VERSION: u32 = 0xff00_0011;
+pub const VERSION: u32 = 0xff00_0012;
 
 /// TLS ALPN value for HTTP over QUIC
 pub const ALPN_QUIC_HTTP: &[u8] = b"hq-17";
