@@ -7,9 +7,10 @@ use quinn_h3::qpack;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use failure::{format_err, Error};
 use quinn_h3::frame::{HeadersFrame, HttpFrame, SettingsFrame};
+use quinn_h3::StreamType;
 use slog::{o, warn, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -196,7 +197,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     .map_err(|e| format_err!("failed to open control stream: {}", e))
                     .and_then(move |stream| {
                         let mut buf = BytesMut::new();
-                        buf.put(0x43u8);
+                        StreamType::CONTROL.encode(&mut buf);
                         HttpFrame::Settings(SettingsFrame {
                             max_header_list_size: 4096,
                             num_placeholders: 0,
