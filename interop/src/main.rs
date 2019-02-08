@@ -196,7 +196,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .connect_with(&h3_client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
-                assert!(state.lock().unwrap().saw_cert);
                 let conn = conn.connection;
                 let control_stream = conn.open_uni();
                 let control_fut = control_stream
