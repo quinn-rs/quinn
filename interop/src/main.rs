@@ -1,5 +1,4 @@
 use std::net::ToSocketAddrs;
-use std::str;
 use std::sync::{Arc, Mutex};
 
 use futures::Future;
@@ -73,10 +72,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    tls_config.alpn_protocols = vec![
-        str::from_utf8(quinn::ALPN_QUIC_HTTP).unwrap().into(),
-        str::from_utf8(quinn::ALPN_QUIC_H3).unwrap().into(),
-    ];
+    tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_HTTP.into()];
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
@@ -183,14 +179,24 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         }
     }
 
+    let mut h3_tls_config = rustls::ClientConfig::new();
+    h3_tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+    h3_tls_config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
+    h3_tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_H3.into()];
+    let h3_client_config = quinn::ClientConfig {
+        tls_config: Arc::new(h3_tls_config),
+        transport: Default::default(),
+    };
+
     let mut h3 = false;
     let result = runtime.block_on(
         endpoint
-            .connect_with(&client_config, &remote, &options.host)?
+            .connect_with(&h3_client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|conn| {
                 assert!(state.lock().unwrap().saw_cert);
-                handshake = true;
                 let conn = conn.connection;
                 let control_stream = conn.open_uni();
                 let control_fut = control_stream
@@ -303,7 +309,6 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
             }
         }
         Ok(f) => {
-            println!("response basd frame type {:?}", f);
             return Err(format_err!("response frame bad type {:?}", f));
         }
         Err(e) => return Err(format_err!("failed to decode response frame {:?}", e)),
