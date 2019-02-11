@@ -31,5 +31,5 @@ lazy_static = "1"
 err-derive = "0.1.5"
 
 [dev-dependencies]
-proptest = "0.6.0"
+proptest = "0.9.1"
 assert_matches = "1.1"
