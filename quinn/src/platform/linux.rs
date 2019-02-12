@@ -93,17 +93,13 @@ impl super::UdpExt for UdpSocket {
             SocketAddr::V4(_) => true,
             SocketAddr::V6(ref addr) => addr.ip().segments().starts_with(&[0, 0, 0, 0, 0, 0xffff]),
         };
+        let mut encoder = cmsg::Encoder::new(&mut hdr, &mut ctrl);
         if is_ipv4 {
-            cmsg::encode(&mut hdr, &mut ctrl, libc::IPPROTO_IP, libc::IP_TOS, ecn);
+            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn);
         } else {
-            cmsg::encode(
-                &mut hdr,
-                &mut ctrl,
-                libc::IPPROTO_IPV6,
-                libc::IPV6_TCLASS,
-                ecn,
-            );
+            encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
         }
+        encoder.finish();
         loop {
             let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
             if n == -1 {
