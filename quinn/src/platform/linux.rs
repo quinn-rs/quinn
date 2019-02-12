@@ -89,7 +89,11 @@ impl super::UdpExt for UdpSocket {
             msg_flags: 0,
         };
         let mut ctrl: [u8; CMSG_LEN] = unsafe { mem::uninitialized() };
-        if remote.is_ipv4() {
+        let is_ipv4 = match remote {
+            SocketAddr::V4(_) => true,
+            SocketAddr::V6(ref addr) => addr.ip().segments().starts_with(&[0, 0, 0, 0, 0, 0xffff]),
+        };
+        if is_ipv4 {
             cmsg::encode(&mut hdr, &mut ctrl, libc::IPPROTO_IP, libc::IP_TOS, ecn);
         } else {
             cmsg::encode(
