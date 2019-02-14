@@ -25,6 +25,10 @@ impl super::UdpExt for UdpSocket {
         assert_eq!(CMSG_LEN, unsafe {
             libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize
         });
+        assert!(
+            mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
+            "control message buffers will be misaligned"
+        );
 
         let addr = self.local_addr()?;
 
@@ -88,12 +92,13 @@ impl super::UdpExt for UdpSocket {
             msg_controllen: 0,
             msg_flags: 0,
         };
-        let mut ctrl: [u8; CMSG_LEN] = unsafe { mem::uninitialized() };
+        let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
+            cmsg::Aligned(unsafe { mem::uninitialized() });
         let is_ipv4 = match remote {
             SocketAddr::V4(_) => true,
             SocketAddr::V6(ref addr) => addr.ip().segments().starts_with(&[0, 0, 0, 0, 0, 0xffff]),
         };
-        let mut encoder = cmsg::Encoder::new(&mut hdr, &mut ctrl);
+        let mut encoder = unsafe { cmsg::Encoder::new(&mut hdr, &mut ctrl.0) };
         if is_ipv4 {
             encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn);
         } else {
@@ -119,13 +124,14 @@ impl super::UdpExt for UdpSocket {
             iov_base: buf.as_ptr() as *mut _,
             iov_len: buf.len(),
         };
-        let mut ctrl: [u8; CMSG_LEN] = unsafe { mem::uninitialized() };
+        let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
+            cmsg::Aligned(unsafe { mem::uninitialized() });
         let mut hdr = libc::msghdr {
             msg_name: &mut name as *mut _ as _,
             msg_namelen: mem::size_of::<libc::sockaddr_storage>() as _,
             msg_iov: &mut iov,
             msg_iovlen: 1,
-            msg_control: ctrl.as_mut_ptr() as _,
+            msg_control: ctrl.0.as_mut_ptr() as _,
             msg_controllen: CMSG_LEN as _,
             msg_flags: 0,
         };

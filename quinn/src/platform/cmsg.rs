@@ -1,5 +1,8 @@
 use std::{mem, ptr};
 
+#[repr(align(8))] // Conservative bound for align_of<cmsghdr>
+pub struct Aligned<T>(pub T);
+
 /// Helper to encode a series of control messages ("cmsgs") to a buffer for use in `sendmsg`.
 ///
 /// The operation must be "finished" for the msghdr to be usable, either by calling `finish`
