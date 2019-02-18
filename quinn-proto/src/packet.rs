@@ -339,10 +339,11 @@ impl Header {
         w.put_slice(src_cid);
     }
 
-    pub fn is_retry(&self) -> bool {
+    /// Whether the packet is encrypted on the wire
+    pub fn is_protected(&self) -> bool {
         match *self {
-            Header::Retry { .. } => true,
-            _ => false,
+            Header::Retry { .. } | Header::VersionNegotiate { .. } => false,
+            _ => true,
         }
     }
 
