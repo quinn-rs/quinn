@@ -2657,8 +2657,8 @@ impl Connection {
         now: Instant,
         packet: &mut Packet,
     ) -> Result<Option<u64>, Option<TransportError>> {
-        if packet.header.is_retry() {
-            // Retry packets are not encrypted and have no packet number
+        if !packet.header.is_protected() {
+            // Unprotected packets also don't have packet numbers
             return Ok(None);
         }
         let space = packet.header.space();

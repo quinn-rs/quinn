@@ -369,7 +369,7 @@ impl ::std::ops::DerefMut for TestEndpoint {
 }
 
 #[test]
-fn version_negotiate() {
+fn version_negotiate_server() {
     let log = logger();
     let client_addr = "[::2]:7890".parse().unwrap();
     let mut server = Endpoint::new(
@@ -402,6 +402,50 @@ fn version_negotiate() {
     }
     assert_matches!(server.poll_transmit(now), None);
     assert_matches!(server.poll(), None);
+}
+
+#[test]
+fn version_negotiate_client() {
+    let log = logger();
+    let server_addr = "[::2]:7890".parse().unwrap();
+    let mut client = Endpoint::new(
+        log.new(o!("peer" => "client")),
+        Arc::new(EndpointConfig {
+            local_cid_len: 0,
+            ..Default::default()
+        }),
+        None,
+    )
+    .unwrap();
+    client
+        .connect(
+            server_addr,
+            Default::default(),
+            client_config(),
+            "localhost",
+        )
+        .unwrap();
+    let now = Instant::now();
+    client.handle(
+        now,
+        server_addr,
+        None,
+        // Version negotiation packet for reserved version
+        hex!(
+            "80 00000000 00
+             0a1a2a3a"
+        )[..]
+            .into(),
+    );
+    assert_matches!(
+        client.poll(),
+        Some((
+            _,
+            Event::ConnectionLost {
+                reason: ConnectionError::VersionMismatch,
+            },
+        ))
+    );
 }
 
 #[test]
