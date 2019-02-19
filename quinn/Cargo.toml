@@ -47,9 +47,14 @@ tokio-current-thread = "0.1"
 url = "1.7"
 rcgen = "0.2"
 directories = "1.0.2"
+criterion = "0.2.10"
 
 [[example]]
 name = "server"
 
 [[example]]
 name = "client"
+
+[[bench]]
+name = "bench"
+harness = false
