@@ -66,7 +66,10 @@ impl<'a> Drop for Encoder<'a> {
 
 pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
-    debug_assert_eq!(cmsg.cmsg_len, libc::CMSG_LEN(mem::size_of::<T>() as _) as _);
+    debug_assert_eq!(
+        cmsg.cmsg_len as usize,
+        libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
+    );
     ptr::read(libc::CMSG_DATA(cmsg) as *const T)
 }
 
