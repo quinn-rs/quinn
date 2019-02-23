@@ -253,6 +253,12 @@ impl Endpoint {
 /// A future that drives IO on an endpoint.
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
+/// Maximum number of send/recv calls to make before moving on to other processing
+///
+/// This helps ensure we don't starve anything when the CPU is slower than the link. Value selected
+/// more or less arbitrarily.
+const IO_LOOP_BOUND: usize = 10;
+
 impl Future for Driver {
     type Item = ();
     type Error = io::Error;
@@ -264,6 +270,8 @@ impl Future for Driver {
         }
         let now = Instant::now();
         loop {
+            let mut keep_going = false;
+            let mut recvd = 0;
             loop {
                 match endpoint.socket.poll_recv(&mut buf) {
                     Ok(Async::Ready((n, addr, ecn))) => {
@@ -280,6 +288,11 @@ impl Future for Driver {
                     Err(e) => {
                         return Err(e);
                     }
+                }
+                recvd += 1;
+                if recvd >= IO_LOOP_BOUND {
+                    keep_going = true;
+                    break;
                 }
             }
             while let Some((ch, event)) = endpoint.inner.poll() {
@@ -394,6 +407,7 @@ impl Future for Driver {
                 }
             }
             if !blocked {
+                let mut sent = 0;
                 while let Some(x) = endpoint.inner.poll_transmit(now) {
                     match endpoint.socket.poll_send(&x.destination, x.ecn, &x.packet) {
                         Ok(Async::Ready(_)) => {}
@@ -409,9 +423,13 @@ impl Future for Driver {
                             return Err(e);
                         }
                     }
+                    sent += 1;
+                    if sent >= IO_LOOP_BOUND {
+                        keep_going = true;
+                        break;
+                    }
                 }
             }
-            let mut timer_fired = false;
             loop {
                 match endpoint.timers.poll() {
                     Ok(Async::Ready(Some(Some((ch, timer))))) => {
@@ -430,7 +448,8 @@ impl Future for Driver {
                                 }
                             }
                         }
-                        timer_fired = true;
+                        // Timeout call may have queued sends
+                        keep_going = true;
                     }
                     Ok(Async::Ready(Some(None))) => {}
                     Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
@@ -485,7 +504,7 @@ impl Future for Driver {
                     }
                 }
             }
-            if !timer_fired {
+            if !keep_going {
                 break;
             }
         }
