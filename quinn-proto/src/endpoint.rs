@@ -214,7 +214,7 @@ impl Endpoint {
             if !had_1rtt
                 && (self.connections[ch].has_1rtt() || !self.connections[ch].is_handshaking())
             {
-                self.conn_ready(ch);
+                self.issue_identifiers(ch);
             }
             self.needs_transmit.insert(ch);
             self.dirty_timers.insert(ch);
@@ -559,7 +559,8 @@ impl Endpoint {
                 self.incoming_handshakes += 1;
                 self.needs_transmit.insert(ch);
                 if self.connections[ch].has_1rtt() {
-                    self.conn_ready(ch);
+                    self.incoming.push_back(ch);
+                    self.issue_identifiers(ch);
                 }
             }
             Err(e) => {
@@ -575,10 +576,7 @@ impl Endpoint {
     }
 
     /// Connection is either ready to accept data or failed.
-    fn conn_ready(&mut self, ch: ConnectionHandle) {
-        if self.connections[ch].side().is_server() {
-            self.incoming.push_back(ch);
-        }
+    fn issue_identifiers(&mut self, ch: ConnectionHandle) {
         if self.config.local_cid_len != 0 && !self.connections[ch].is_closed() {
             /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
             /// connection IDs
