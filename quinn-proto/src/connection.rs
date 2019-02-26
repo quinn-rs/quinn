@@ -519,12 +519,14 @@ impl Connection {
         match timer {
             Timer::Close => {
                 self.state = State::Drained;
+                self.send_closed_event();
             }
             Timer::Idle => {
                 self.close_common(now);
                 self.io.timer_stop(Timer::Close);
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Drained;
+                self.send_closed_event();
             }
             Timer::KeepAlive => {
                 trace!(self.log, "sending keep-alive");
@@ -2415,6 +2417,10 @@ impl Connection {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: Instant, error_code: u16, reason: Bytes) {
+        if self.state.is_drained() {
+            self.send_closed_event();
+        }
+
         let was_closed = self.state.is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
@@ -2830,6 +2836,12 @@ impl Connection {
         self.key_phase = !self.key_phase;
     }
 
+    fn send_closed_event(&mut self) {
+        self.endpoint_events.push_back(EndpointEvent::Closed {
+            remote: self.remote(),
+        });
+    }
+
     pub fn is_handshaking(&self) -> bool {
         self.state.is_handshake()
     }
@@ -2848,10 +2860,6 @@ impl Connection {
 
     pub fn has_1rtt(&self) -> bool {
         self.spaces[SpaceId::Data as usize].crypto.is_some()
-    }
-
-    pub fn is_drained(&self) -> bool {
-        self.state.is_drained()
     }
 
     /// Look up whether we're the client or server of this Connection
@@ -3243,6 +3251,9 @@ pub enum ConnectionEvent {
 /// Events to be sent to the Endpoint
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
+    Closed {
+        remote: SocketAddr,
+    },
     NeedIdentifiers,
     /// Stop routing connection ID for this sequence number to this `Connection`
     RetireConnectionId(u64),

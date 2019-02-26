@@ -103,7 +103,15 @@ impl Endpoint {
         let mut conns = mem::replace(&mut self.endpoint_eventful_conns, FnvHashSet::default());
         for ch in conns.drain() {
             while let Some(event) = self.connections[ch].conn.poll_endpoint_events() {
+                let done = if let EndpointEvent::Closed { .. } = &event {
+                    true
+                } else {
+                    false
+                };
                 self.handle_event(ch, event);
+                if done {
+                    break;
+                }
             }
         }
         mem::replace(&mut self.endpoint_eventful_conns, conns);
@@ -159,6 +167,27 @@ impl Endpoint {
                     self.connection_ids.remove(&cid);
                     self.send_new_identifiers(ch, 1);
                 }
+            }
+            EndpointEvent::Closed { remote } => {
+                if !self.connections[ch].app_closed {
+                    return;
+                }
+
+                let init_cid = self.connections[ch].init_cid;
+                if init_cid.len() > 0 {
+                    self.connection_ids_initial.remove(&init_cid);
+                }
+
+                for cid in self.connections[ch].loc_cids.values() {
+                    self.connection_ids.remove(&cid);
+                }
+
+                self.connection_remotes.remove(&remote);
+                self.dirty_timers.remove(&ch);
+                self.eventful_conns.remove(&ch);
+                self.endpoint_eventful_conns.remove(&ch);
+                self.needs_transmit.remove(&ch);
+                self.connections.remove(ch.0);
             }
         }
     }
@@ -615,7 +644,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.forget(ch);
+                self.handle_event(ch, EndpointEvent::Closed { remote });
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -626,34 +655,12 @@ impl Endpoint {
         }
     }
 
-    fn forget(&mut self, ch: ConnectionHandle) {
-        if self.connections[ch].conn.side().is_server() {
-            self.connection_ids_initial
-                .remove(&self.connections[ch].init_cid);
-        }
-        if self.config.local_cid_len > 0 {
-            for cid in self.connections[ch].loc_cids.values() {
-                self.connection_ids.remove(cid);
-            }
-        }
-        self.connection_remotes
-            .remove(&self.connections[ch].conn.remote());
-        self.dirty_timers.remove(&ch);
-        self.eventful_conns.remove(&ch);
-        self.needs_transmit.remove(&ch);
-        self.connections.remove(ch.0);
-    }
-
     /// Handle a timer expiring
     pub fn timeout(&mut self, now: Instant, ch: ConnectionHandle, timer: Timer) {
         self.connections[ch]
             .conn
             .handle_event(ConnectionEvent::Timer(now, timer));
-        if self.connections[ch].app_closed {
-            self.forget(ch);
-            return;
-        }
-
+        self.endpoint_eventful_conns.insert(ch);
         self.dirty_timers.insert(ch);
         match timer {
             Timer::LossDetection | Timer::KeepAlive => {
@@ -772,13 +779,10 @@ impl Endpoint {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: Instant, ch: ConnectionHandle, error_code: u16, reason: Bytes) {
-        if self.connections[ch].conn.is_drained() {
-            self.forget(ch);
-            return;
-        }
         self.connections[ch].conn.close(now, error_code, reason);
         self.connections[ch].app_closed = true;
         self.needs_transmit.insert(ch);
+        self.endpoint_eventful_conns.insert(ch);
     }
 
     /// Free a handshake slot for reuse
