@@ -58,11 +58,14 @@ pub struct Connection {
     blocked_streams: FnvHashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
     max_data: u64,
+    /// Sum of current offsets of all send streams.
     data_sent: u64,
-    /// Sum of end offsets of all streams. Includes gaps, so it's an upper bound.
+    /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
     data_recvd: u64,
     /// Limit on incoming data
     local_max_data: u64,
+    /// Stream data we're sending that hasn't been acknowledged or reset yet
+    unacked_data: u64,
     client_config: Option<ClientConfig>,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
@@ -213,6 +216,7 @@ impl Connection {
             data_sent: 0,
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
+            unacked_data: 0,
             client_config,
             orig_rem_cid: None,
             lost_packets: 0,
@@ -503,6 +507,7 @@ impl Connection {
                 continue;
             };
             ss.bytes_in_flight -= frame.data.len() as u64;
+            self.unacked_data -= frame.data.len() as u64;
             if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
                 ss.state = stream::SendState::DataRecvd;
                 self.maybe_cleanup(frame.id);
@@ -802,6 +807,7 @@ impl Connection {
         ss.offset += data.len() as u64;
         ss.bytes_in_flight += data.len() as u64;
         self.data_sent += data.len() as u64;
+        self.unacked_data += data.len() as u64;
         self.space_mut(SpaceId::Data)
             .pending
             .stream
@@ -2144,6 +2150,7 @@ impl Connection {
                 .get(&stream.id)
                 .map_or(true, |s| s.send().unwrap().state.was_reset())
             {
+                self.unacked_data -= stream.data.len() as u64;
                 continue;
             }
             let len = cmp::min(
@@ -2649,7 +2656,9 @@ impl Connection {
     }
 
     fn blocked(&self) -> bool {
-        self.data_sent >= self.max_data || self.congestion_blocked()
+        self.data_sent >= self.max_data
+            || self.congestion_blocked()
+            || self.unacked_data >= self.config.send_window
     }
 
     fn decrypt_packet(
@@ -2799,7 +2808,10 @@ impl Connection {
             }
         };
 
-        let conn_budget = self.max_data - self.data_sent;
+        let conn_budget = cmp::min(
+            self.max_data - self.data_sent,
+            self.config.send_window - self.unacked_data,
+        );
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.queue_stream_data(stream, (&data[0..n]).into());
         trace!(
