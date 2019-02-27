@@ -959,6 +959,7 @@ impl Read for BiStream {
                 self.recvd = true;
                 Err(ReadError::Finished)
             }
+            Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
     }
 
@@ -983,6 +984,7 @@ impl Read for BiStream {
                 self.recvd = true;
                 Err(ReadError::Finished)
             }
+            Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
     }
 
@@ -1062,6 +1064,10 @@ impl io::Read for BiStream {
             Err(ConnectionClosed(e)) => Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 format!("connection closed: {}", e),
+            )),
+            Err(UnknownStream) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("unknown stream"),
             )),
         }
     }
@@ -1255,6 +1261,9 @@ pub enum ReadError {
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
+    /// Unknown stream
+    #[error(display = "unknown stream")]
+    UnknownStream,
 }
 
 /// Trait of writable streams

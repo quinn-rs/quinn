@@ -2595,7 +2595,7 @@ impl Connection {
         let rs = self
             .streams
             .get_recv_mut(id)
-            .expect("not an open recv stream");
+            .ok_or(ReadError::UnknownStream)?;
         let (buf, len) = rs.read_unordered()?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
@@ -2614,7 +2614,7 @@ impl Connection {
         let rs = self
             .streams
             .get_recv_mut(id)
-            .expect("not an open recv stream");
+            .ok_or(ReadError::UnknownStream)?;
         let len = rs.read(buf)?;
         // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
         // reduce overhead
