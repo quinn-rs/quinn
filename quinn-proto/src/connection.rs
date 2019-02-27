@@ -2510,7 +2510,7 @@ impl Connection {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, id: StreamId) {
+    fn maybe_cleanup(&mut self, id: StreamId) {
         match self.streams.streams.entry(id) {
             hash_map::Entry::Vacant(_) => unreachable!(),
             hash_map::Entry::Occupied(e) => {
@@ -2592,15 +2592,31 @@ impl Connection {
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let (buf, len, more) = self.streams.read_unordered(id)?;
+        let (buf, len, more) = self
+            .streams
+            .read_unordered(id)
+            .map_err(|e| self.read_error_cleanup(id, e))?;
         self.add_read_credits(id, len, more);
         Ok((buf, len))
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let (len, more) = self.streams.read(id, buf)?;
+        let (len, more) = self
+            .streams
+            .read(id, buf)
+            .map_err(|e| self.read_error_cleanup(id, e))?;
         self.add_read_credits(id, len as u64, more);
         Ok(len)
+    }
+
+    fn read_error_cleanup(&mut self, id: StreamId, err: ReadError) -> ReadError {
+        match err {
+            ReadError::Finished | ReadError::Reset { .. } => {
+                self.maybe_cleanup(id);
+            }
+            _ => {}
+        }
+        err
     }
 
     fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
