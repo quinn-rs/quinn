@@ -276,6 +276,9 @@ pub enum ReadError {
     /// The data on this stream has been fully delivered and no more will be transmitted.
     #[error(display = "finished")]
     Finished,
+    /// Unknown stream
+    #[error(display = "unknown stream")]
+    UnknownStream,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
