@@ -23,7 +23,7 @@ use crate::packet::{
     PartialDecode, SpaceId, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
-use crate::stream::{self, ReadError, Stream, WriteError};
+use crate::stream::{self, ReadError, Stream, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
@@ -2977,77 +2977,6 @@ where
     crypto.encrypt(packet_number as u64, &mut buf, header_len);
     partial_encode.finish(&mut buf, header_crypto);
     buf.into()
-}
-
-struct Streams {
-    // Set of streams that are currently open, or could be immediately opened by the peer
-    streams: FnvHashMap<StreamId, Stream>,
-    next_uni: u64,
-    next_bi: u64,
-    // Locally initiated
-    max_uni: u64,
-    max_bi: u64,
-    // Maximum that can be remotely initiated
-    max_remote_uni: u64,
-    max_remote_bi: u64,
-    // Lowest that hasn't actually been opened
-    next_remote_uni: u64,
-    next_remote_bi: u64,
-    // Next to report to the application, once opened
-    next_reported_remote_uni: u64,
-    next_reported_remote_bi: u64,
-}
-
-impl Streams {
-    fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
-        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
-        Ok((rs.read(buf)?, rs.receiving_unknown_size()))
-    }
-
-    fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64, bool), ReadError> {
-        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
-        let (buf, len) = rs.read_unordered()?;
-        Ok((buf, len, rs.receiving_unknown_size()))
-    }
-
-    fn get_recv_stream(
-        &mut self,
-        side: Side,
-        id: StreamId,
-    ) -> Result<Option<&mut Stream>, TransportError> {
-        if side == id.initiator() {
-            match id.directionality() {
-                Directionality::Uni => {
-                    return Err(TransportError::STREAM_STATE_ERROR(
-                        "illegal operation on send-only stream",
-                    ));
-                }
-                Directionality::Bi if id.index() >= self.next_bi => {
-                    return Err(TransportError::STREAM_STATE_ERROR(
-                        "operation on unopened stream",
-                    ));
-                }
-                Directionality::Bi => {}
-            };
-        } else {
-            let limit = match id.directionality() {
-                Directionality::Bi => self.max_remote_bi,
-                Directionality::Uni => self.max_remote_uni,
-            };
-            if id.index() >= limit {
-                return Err(TransportError::STREAM_LIMIT_ERROR(""));
-            }
-        }
-        Ok(self.streams.get_mut(&id))
-    }
-
-    fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut stream::Recv> {
-        self.streams.get_mut(&id)?.recv_mut()
-    }
-
-    fn get_send_mut(&mut self, id: StreamId) -> Option<&mut stream::Send> {
-        self.streams.get_mut(&id)?.send_mut()
-    }
 }
 
 /// Retransmittable data queue
