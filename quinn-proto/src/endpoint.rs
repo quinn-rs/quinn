@@ -830,6 +830,13 @@ pub struct TransportConfig {
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
     pub receive_window: u64,
+    /// Maximum number of bytes to transmit to a peer without acknowledgment
+    ///
+    /// Provides an upper bound on memory when communicating with peers that issue large amounts of
+    /// flow control credit. Endpoints that wish to handle large numbers of connections robustly
+    /// should take care to set this low enough to guarantee memory exhaustion does not occur if
+    /// every connection uses the entire window.
+    pub send_window: u64,
 
     /// Maximum number of tail loss probes before an RTO fires.
     pub max_tlps: u32,
@@ -883,6 +890,7 @@ impl Default for TransportConfig {
             idle_timeout: 10,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
+            send_window: 8 * STREAM_RWND,
 
             max_tlps: 2,
             packet_threshold: 3,
