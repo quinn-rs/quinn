@@ -671,13 +671,7 @@ impl Endpoint {
         buf: &mut [u8],
     ) -> Result<usize, ReadError> {
         self.needs_transmit.insert(ch); // May need to send flow control frames after reading
-        match self.connections[ch].read(stream, buf) {
-            x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[ch].maybe_cleanup(stream);
-                x
-            }
-            x => x,
-        }
+        self.connections[ch].read(stream, buf)
     }
 
     /// Read data from a stream out of order
@@ -698,13 +692,7 @@ impl Endpoint {
         stream: StreamId,
     ) -> Result<(Bytes, u64), ReadError> {
         self.needs_transmit.insert(ch); // May need to send flow control frames after reading
-        match self.connections[ch].read_unordered(stream) {
-            x @ Err(ReadError::Finished) | x @ Err(ReadError::Reset { .. }) => {
-                self.connections[ch].maybe_cleanup(stream);
-                x
-            }
-            x => x,
-        }
+        self.connections[ch].read_unordered(stream)
     }
 
     /// Abandon transmitting data on a stream
