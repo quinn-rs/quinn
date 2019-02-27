@@ -2592,40 +2592,25 @@ impl Connection {
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let rs = self
-            .streams
-            .get_recv_mut(id)
-            .ok_or(ReadError::UnknownStream)?;
-        let (buf, len) = rs.read_unordered()?;
-        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
-        // reduce overhead
-        self.local_max_data += buf.len() as u64; // BUG: Don't issue credit for
-                                                 // already-received data!
-        let space = &mut self.spaces[SpaceId::Data as usize];
-        space.pending.max_data = true;
-        if rs.receiving_unknown_size() {
-            // Only bother issuing stream credit if the peer wants to send more
-            space.pending.max_stream_data.insert(id);
-        }
+        let (buf, len, more) = self.streams.read_unordered(id)?;
+        self.add_read_credits(id, len, more);
         Ok((buf, len))
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let rs = self
-            .streams
-            .get_recv_mut(id)
-            .ok_or(ReadError::UnknownStream)?;
-        let len = rs.read(buf)?;
-        // TODO: Reduce granularity of flow control credit, while still avoiding stalls, to
-        // reduce overhead
-        self.local_max_data += len as u64;
+        let (len, more) = self.streams.read(id, buf)?;
+        self.add_read_credits(id, len as u64, more);
+        Ok(len)
+    }
+
+    fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
+        self.local_max_data += len;
         let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
-        if rs.receiving_unknown_size() {
+        if more {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
-        Ok(len)
     }
 
     pub fn stop_sending(&mut self, id: StreamId, error_code: u16) {
@@ -3026,6 +3011,17 @@ struct Streams {
 }
 
 impl Streams {
+    fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
+        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        Ok((rs.read(buf)?, rs.receiving_unknown_size()))
+    }
+
+    fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64, bool), ReadError> {
+        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let (buf, len) = rs.read_unordered()?;
+        Ok((buf, len, rs.receiving_unknown_size()))
+    }
+
     fn get_recv_stream(
         &mut self,
         side: Side,
