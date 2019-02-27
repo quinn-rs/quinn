@@ -2,8 +2,81 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use err_derive::Error;
+use fnv::FnvHashMap;
 
 use crate::range_set::RangeSet;
+use crate::{Directionality, Side, StreamId, TransportError};
+
+pub struct Streams {
+    // Set of streams that are currently open, or could be immediately opened by the peer
+    pub streams: FnvHashMap<StreamId, Stream>,
+    pub next_uni: u64,
+    pub next_bi: u64,
+    // Locally initiated
+    pub max_uni: u64,
+    pub max_bi: u64,
+    // Maximum that can be remotely initiated
+    pub max_remote_uni: u64,
+    pub max_remote_bi: u64,
+    // Lowest that hasn't actually been opened
+    pub next_remote_uni: u64,
+    pub next_remote_bi: u64,
+    // Next to report to the application, once opened
+    pub next_reported_remote_uni: u64,
+    pub next_reported_remote_bi: u64,
+}
+
+impl Streams {
+    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
+        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        Ok((rs.read(buf)?, rs.receiving_unknown_size()))
+    }
+
+    pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64, bool), ReadError> {
+        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let (buf, len) = rs.read_unordered()?;
+        Ok((buf, len, rs.receiving_unknown_size()))
+    }
+
+    pub fn get_recv_stream(
+        &mut self,
+        side: Side,
+        id: StreamId,
+    ) -> Result<Option<&mut Stream>, TransportError> {
+        if side == id.initiator() {
+            match id.directionality() {
+                Directionality::Uni => {
+                    return Err(TransportError::STREAM_STATE_ERROR(
+                        "illegal operation on send-only stream",
+                    ));
+                }
+                Directionality::Bi if id.index() >= self.next_bi => {
+                    return Err(TransportError::STREAM_STATE_ERROR(
+                        "operation on unopened stream",
+                    ));
+                }
+                Directionality::Bi => {}
+            };
+        } else {
+            let limit = match id.directionality() {
+                Directionality::Bi => self.max_remote_bi,
+                Directionality::Uni => self.max_remote_uni,
+            };
+            if id.index() >= limit {
+                return Err(TransportError::STREAM_LIMIT_ERROR(""));
+            }
+        }
+        Ok(self.streams.get_mut(&id))
+    }
+
+    pub fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
+        self.streams.get_mut(&id)?.recv_mut()
+    }
+
+    pub fn get_send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
+        self.streams.get_mut(&id)?.send_mut()
+    }
+}
 
 #[derive(Debug)]
 pub enum Stream {
