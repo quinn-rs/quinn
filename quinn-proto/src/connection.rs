@@ -364,20 +364,28 @@ impl Connection {
     fn on_ack_received(&mut self, now: Instant, space: SpaceId, ack: frame::Ack) {
         trace!(self.log, "handling ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         let was_blocked = self.blocked();
-        let largest_acked_packet = &mut self.space_mut(space).largest_acked_packet;
-        let prev_largest = *largest_acked_packet;
-        *largest_acked_packet = cmp::max(ack.largest, *largest_acked_packet);
+        let new_largest = {
+            let space = self.space_mut(space);
+            if ack.largest > space.largest_acked_packet {
+                space.largest_acked_packet = ack.largest;
+                if let Some(info) = space.sent_packets.get(&ack.largest) {
+                    // This should always succeed, but a misbehaving peer might ACK a packet we
+                    // haven't sent. At worst, that will result in us spuriously reducing the
+                    // congestion window.
+                    space.largest_acked_packet_sent = info.time_sent;
+                }
+                true
+            } else {
+                false
+            }
+        };
 
-        let largest_acked_time_sent;
-        if let Some(info) = self.space(space).sent_packets.get(&ack.largest).cloned() {
+        if let Some(info) = self.space(space).sent_packets.get(&ack.largest) {
             if info.ack_eliciting {
                 let delay = Duration::from_micros(ack.delay << self.params.ack_delay_exponent);
                 self.rtt
                     .update(cmp::min(delay, self.max_ack_delay()), now - info.time_sent);
             }
-            largest_acked_time_sent = Some(info.time_sent);
-        } else {
-            largest_acked_time_sent = None;
         }
 
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
@@ -415,14 +423,9 @@ impl Connection {
                 // order, allowing us to compute an increase in ECN counts to compare against the number
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
-                if ack.largest > prev_largest {
-                    self.process_ecn(
-                        now,
-                        space,
-                        newly_acked.len() as u64,
-                        ecn,
-                        largest_acked_time_sent.unwrap(),
-                    );
+                if new_largest {
+                    let sent = self.space(space).largest_acked_packet_sent;
+                    self.process_ecn(now, space, newly_acked.len() as u64, ecn, sent);
                 }
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
@@ -621,6 +624,9 @@ impl Connection {
 
         let mut lost_ack_eliciting = false;
         let mut largest_lost_time = None;
+        let mut in_persistent_congestion = false;
+        let persistent_congestion_period =
+            self.pto() * 2u32.pow(self.config.persistent_congestion_threshold);
         for space in self.spaces.iter_mut().filter(|x| x.crypto.is_some()) {
             lost_packets.clear();
             let lost_pn = space
@@ -654,10 +660,18 @@ impl Connection {
                 }
                 // Don't apply congestion penalty for lost ack-only packets
                 lost_ack_eliciting |= old_bytes_in_flight != self.in_flight.bytes;
+
+                // InPersistentCongestion: Determine if all packets in the window before the newest
+                // lost packet, including the edges, are marked lost
+                in_persistent_congestion |= space.largest_acked_packet_sent
+                    < largest_lost_time.unwrap() - persistent_congestion_period;
             }
         }
         if lost_ack_eliciting {
             self.congestion_event(now, largest_lost_time.unwrap());
+            if in_persistent_congestion {
+                self.congestion_window = self.config.minimum_window;
+            }
         }
     }
 
@@ -673,9 +687,6 @@ impl Connection {
             (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
         self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
         self.ssthresh = self.congestion_window;
-        if self.pto_count > self.config.persistent_congestion_threshold {
-            self.congestion_window = self.config.minimum_window;
-        }
     }
 
     fn in_recovery(&self, sent_time: Instant) -> bool {
@@ -3315,6 +3326,7 @@ struct PacketSpace {
     next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
     largest_acked_packet: u64,
+    largest_acked_packet_sent: Instant,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     sent_packets: BTreeMap<u64, SentPacket>,
@@ -3346,6 +3358,7 @@ impl PacketSpace {
 
             next_packet_number: 0,
             largest_acked_packet: 0,
+            largest_acked_packet_sent: Instant::now(),
             sent_packets: BTreeMap::new(),
             ecn_feedback: frame::EcnCounts::ZERO,
 
