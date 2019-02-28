@@ -36,9 +36,6 @@ pub struct Connection {
     config: Arc<TransportConfig>,
     rng: OsRng,
     tls: TlsSession,
-    app_closed: bool,
-    /// DCID of Initial packet
-    pub(crate) init_cid: ConnectionId,
     loc_cids: HashMap<u64, ConnectionId>,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
@@ -197,8 +194,6 @@ impl Connection {
             endpoint_config,
             rng,
             tls,
-            app_closed: false,
-            init_cid,
             loc_cids,
             handshake_cid: loc_cid,
             rem_cid,
@@ -522,18 +517,16 @@ impl Connection {
         self.space_mut(space).pending_acks.subtract(&info.acks);
     }
 
-    pub fn timeout(&mut self, now: Instant, timer: Timer) -> bool {
+    pub fn timeout(&mut self, now: Instant, timer: Timer) {
         match timer {
             Timer::Close => {
                 self.state = State::Drained;
-                return self.app_closed;
             }
             Timer::Idle => {
                 self.close_common(now);
                 self.io.timer_stop(Timer::Close);
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Drained;
-                return self.app_closed;
             }
             Timer::KeepAlive => {
                 trace!(self.log, "sending keep-alive");
@@ -568,7 +561,6 @@ impl Connection {
                 }
             }
         }
-        false
     }
 
     fn set_key_discard_timer(&mut self, now: Instant) {
@@ -2423,7 +2415,6 @@ impl Connection {
             self.io.close = true;
         }
 
-        self.app_closed = true;
         match self.state {
             State::Handshake(_) | State::Established => {
                 self.state = State::Closed(state::Closed { reason });
