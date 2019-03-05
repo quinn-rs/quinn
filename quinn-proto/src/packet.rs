@@ -89,9 +89,7 @@ impl PartialDecode {
         self.plain_header.dst_cid()
     }
 
-    /// Length of data being decoded
-    ///
-    /// May account for multiple packets.
+    /// Length of QUIC packet being decoded
     pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }
