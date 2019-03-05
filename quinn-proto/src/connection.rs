@@ -140,6 +140,7 @@ pub struct Connection {
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
     remote_validated: bool,
+    /// Total UDP datagram bytes received, tracked for handshake anti-amplification
     total_recvd: u64,
     total_sent: u64,
 
@@ -735,10 +736,8 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
         spin: bool,
-        size: usize,
     ) {
         self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
-        self.total_recvd = self.total_recvd.wrapping_add(size as u64);
         self.reset_keep_alive(now);
         self.reset_idle_timeout(now);
         self.permit_idle_reset = true;
@@ -861,7 +860,9 @@ impl Connection {
         remaining: Option<BytesMut>,
     ) -> Result<(), TransportError> {
         let len = packet.header_data.len() + packet.payload.len();
-        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false, len);
+        self.total_recvd = len as u64;
+
+        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false);
         self.process_early_payload(now, packet)?;
         if self.state.is_closed() {
             return Ok(());
@@ -1015,6 +1016,8 @@ impl Connection {
             return;
         }
 
+        self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
+
         self.handle_decode(now, remote, ecn, first_decode);
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
@@ -1028,6 +1031,7 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) {
+        self.total_recvd = self.total_recvd.wrapping_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
             match PartialDecode::new(data, self.endpoint_config.local_cid_len) {
@@ -1144,14 +1148,7 @@ impl Connection {
                         } else {
                             false
                         };
-                        self.on_packet_authenticated(
-                            now,
-                            packet.header.space(),
-                            ecn,
-                            number,
-                            spin,
-                            packet.header_data.len() + packet.payload.len(),
-                        );
+                        self.on_packet_authenticated(now, packet.header.space(), ecn, number, spin);
                     }
                     self.handle_connected_inner(now, remote, number, packet)
                 }
