@@ -34,3 +34,4 @@ assert_matches = "1.1"
 hex-literal = "0.1.1"
 untrusted = "0.6.2"
 rcgen = "0.2"
+#slog = { version = "2.2", features = ["max_level_trace"] } # For debugging
