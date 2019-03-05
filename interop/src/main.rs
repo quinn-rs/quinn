@@ -80,7 +80,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     let client_config = quinn::ClientConfig {
         tls_config: Arc::new(tls_config),
-        transport: Default::default(),
+        transport: Arc::new(quinn::TransportConfig {
+            idle_timeout: 2,
+            ..Default::default()
+        }),
     };
 
     builder.logger(log.clone());
@@ -110,7 +113,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
             println!("attempting resumption");
             state.lock().unwrap().saw_cert = false;
-            let conn = endpoint.connect_with(&client_config, &remote, &options.host)?;
+            let conn = endpoint.connect_with(&client_config, &remote, &host)?;
             let conn = match conn.into_zero_rtt() {
                 Ok((conn, _)) => {
                     let stream = await!(conn.open_bi()).ctx("failed to open 0-RTT stream")?;
@@ -130,20 +133,44 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             };
             resumption = !state.lock().unwrap().saw_cert;
             println!("updating keys");
-            conn.force_key_update();
-            let stream = await!(conn.open_bi()).ctx("failed to open stream")?;
-            await!(get(stream)).ctx("request failed")?;
-            key_update = true;
-            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-            let addr = socket.local_addr().unwrap();
-            println!("rebinding to {}", addr);
-            endpoint
-                .rebind(socket, &tokio_reactor::Handle::default())
-                .expect("rebind failed");
-            let stream = await!(conn.open_bi()).ctx("failed to open stream")?;
-            await!(get(stream)).ctx("request failed")?;
-            rebinding = true;
-            await!(conn.close(0, b"done"));
+            let result: Result<()> = await!(
+                async {
+                    conn.force_key_update();
+                    let stream = await!(conn.open_bi()).ctx("failed to open stream")?;
+                    await!(get(stream)).ctx("request failed")?;
+                    key_update = true;
+                    await!(conn.close(0, b"done"));
+                    Ok(())
+                }
+            );
+            if let Err(e) = result {
+                println!("key update failure: {}", e);
+            }
+
+            let result: Result<()> = await!(
+                async {
+                    let (conn, _) = await!(endpoint
+                        .connect_with(&client_config, &remote, host)?
+                        .establish())
+                    .ctx("establishing initial connection")?;
+                    await!(get(await!(conn.open_bi())?)).ctx("request failed")?;
+                    let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+                    let addr = socket.local_addr().unwrap();
+                    println!("rebinding to {}", addr);
+                    endpoint
+                        .rebind(socket, &tokio_reactor::Handle::default())
+                        .expect("rebind failed");
+                    let stream = await!(conn.open_bi()).ctx("failed to open stream")?;
+                    await!(get(stream)).ctx("request failed")?;
+                    rebinding = true;
+                    await!(conn.close(0, b"done"));
+                    Ok(())
+                }
+            );
+            if let Err(e) = result {
+                println!("rebind failure: {}", e);
+            }
+
             Ok(())
         }
             .boxed()
