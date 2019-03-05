@@ -47,22 +47,22 @@ fn throughput(c: &mut Criterion) {
 
     runtime.spawn(
         async move {
-            let conn = await!(server_incoming.next()).unwrap();
-            let (_, mut incoming) = await!(conn.establish()).unwrap();
-            let mut buf = [0; 4096];
-            while let Some(stream) = await!(incoming.next()) {
-                let mut stream = if let NewStream::Uni(recv) = stream {
-                    recv
-                } else {
-                    unreachable!("only benchmarking uni streams")
-                };
-                loop {
-                    match await!(stream.read(&mut buf)) {
-                        Ok(_) => {}
-                        Err(quinn::ReadError::Finished) => {
-                            break;
+            while let Some(conn) = await!(server_incoming.next()) {
+                let (_, mut incoming) = await!(conn.establish()).unwrap();
+                while let Some(stream) = await!(incoming.next()) {
+                    let mut stream = if let NewStream::Uni(recv) = stream {
+                        recv
+                    } else {
+                        unreachable!("only benchmarking uni streams")
+                    };
+                    loop {
+                        match await!(stream.read_unordered()) {
+                            Ok(_) => {}
+                            Err(quinn::ReadError::Finished) => {
+                                break;
+                            }
+                            Err(e) => unreachable!(e),
                         }
-                        Err(e) => unreachable!(e),
                     }
                 }
             }
@@ -83,11 +83,58 @@ fn throughput(c: &mut Criterion) {
         )
         .unwrap();
 
-    const DATA: &[u8] = &[0xAB; 128 * 1024];
     let runtime = Rc::new(RefCell::new(runtime));
+    {
+        const DATA: &[u8] = &[0xAB; 128 * 1024];
+        let runtime = runtime.clone();
+        c.bench(
+            "throughput",
+            Benchmark::new("128kB", move |b| {
+                b.iter_batched(
+                    || {
+                        runtime
+                            .borrow_mut()
+                            .block_on(conn.open_uni().boxed().compat())
+                            .unwrap()
+                    },
+                    |mut stream| {
+                        runtime
+                            .borrow_mut()
+                            .block_on(
+                                async {
+                                    await!(stream.write_all(DATA)).unwrap();
+                                    await!(stream.finish()).unwrap();
+                                    let result: Result<(), ()> = Ok(());
+                                    result
+                                }
+                                    .boxed()
+                                    .compat(),
+                            )
+                            .unwrap()
+                    },
+                    BatchSize::PerIteration,
+                )
+            })
+            .throughput(Throughput::Bytes(DATA.len() as u32)),
+        );
+    }
+
+    let (conn, _) = runtime
+        .borrow_mut()
+        .block_on(
+            async {
+                let conn = client.connect(&server_addr, "localhost").unwrap();
+                await!(conn.establish())
+            }
+                .boxed()
+                .compat(),
+        )
+        .unwrap();
+
+    const DATA: &[u8] = &[0xAB; 32];
     c.bench(
         "throughput",
-        Benchmark::new("128k", move |b| {
+        Benchmark::new("32B", move |b| {
             b.iter_batched(
                 || {
                     runtime
