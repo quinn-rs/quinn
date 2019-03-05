@@ -973,9 +973,11 @@ fn instant_close_2() {
     pair.drive();
     assert_matches!(pair.client.poll(), None);
     pair.server.assert_accept();
-    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
-        reason: ApplicationClose { error_code: 42, ref reason }
-    }})) if reason.is_empty());
+    assert_matches!(pair.server.poll(), Some((_, Event::ConnectionLost {
+        reason: ConnectionError::ApplicationClosed {
+            reason: ApplicationClose { error_code: 42, ref reason }
+        }
+    })) if reason.is_empty());
 }
 
 #[test]
