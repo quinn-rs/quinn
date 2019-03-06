@@ -1,4 +1,4 @@
-use std::collections::{hash_map, BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -496,7 +496,7 @@ impl Connection {
                 self.streams.get_send_mut(id).unwrap().state =
                     stream::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
-                    self.maybe_cleanup(id);
+                    self.streams.maybe_cleanup(id);
                 }
             }
         }
@@ -510,7 +510,7 @@ impl Connection {
             self.unacked_data -= frame.data.len() as u64;
             if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
                 ss.state = stream::SendState::DataRecvd;
-                self.maybe_cleanup(frame.id);
+                self.streams.maybe_cleanup(frame.id);
                 self.events
                     .push_back(Event::StreamFinished { stream: frame.id });
             }
@@ -2507,20 +2507,6 @@ impl Connection {
         self.ping_pending = true;
     }
 
-    /// Discard state for a stream if it's fully closed.
-    ///
-    /// Called when one side of a stream transitions to a closed state
-    fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.streams.streams.entry(id) {
-            hash_map::Entry::Vacant(_) => unreachable!(),
-            hash_map::Entry::Occupied(e) => {
-                if e.get().is_closed() {
-                    e.remove_entry();
-                }
-            }
-        }
-    }
-
     /// Permit an additional remote `ty` stream.
     fn alloc_remote_stream(&mut self, ty: Directionality) {
         let space = &mut self.spaces[SpaceId::Data as usize];
@@ -2612,7 +2598,7 @@ impl Connection {
     fn read_error_cleanup(&mut self, id: StreamId, err: ReadError) -> ReadError {
         match err {
             ReadError::Finished | ReadError::Reset { .. } => {
-                self.maybe_cleanup(id);
+                self.streams.maybe_cleanup(id);
             }
             _ => {}
         }
@@ -2796,7 +2782,7 @@ impl Connection {
         let stream_budget = match budget_res {
             Ok(budget) => budget,
             Err(e @ WriteError::Stopped { .. }) => {
-                self.maybe_cleanup(stream);
+                self.streams.maybe_cleanup(stream);
                 return Err(e);
             }
             Err(e @ WriteError::Blocked) => {
