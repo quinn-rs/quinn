@@ -16,7 +16,8 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    self, initial_close, ClientConfig, Connection, ConnectionError, EndpointEvent, TimerUpdate,
+    self, initial_close, ClientConfig, Connection, ConnectionError, ConnectionEvent, EndpointEvent,
+    TimerUpdate,
 };
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
@@ -26,8 +27,8 @@ use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeErro
 use crate::stream::{ReadError, WriteError};
 use crate::transport_parameters::TransportParameters;
 use crate::{
-    varint, Directionality, Side, StreamId, Transmit, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
-    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
+    varint, Directionality, Side, StreamId, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE,
+    MIN_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// The main entry point to the library
@@ -127,13 +128,7 @@ impl Endpoint {
                                         cid = cid,
                                     );
                                     self.connection_ids.remove(&cid);
-                                    let new_cid = self.new_cid();
-                                    self.connection_ids.insert(new_cid, ch);
-                                    let meta = &mut self.connections[ch];
-                                    meta.cids_issued += 1;
-                                    let new_seq = meta.cids_issued;
-                                    meta.loc_cids.insert(new_seq, new_cid);
-                                    meta.conn.issue_cid(new_seq, new_cid);
+                                    self.send_new_identifiers(ch, 1);
                                 }
                                 continue;
                             }
@@ -167,18 +162,8 @@ impl Endpoint {
         match event {
             EndpointEvent::NeedIdentifiers => {
                 if self.config.local_cid_len != 0 {
-                    /// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
-                    /// connection IDs
-                    const LOCAL_CID_COUNT: usize = 8;
                     // We've already issued one CID as part of the normal handshake process.
-                    for _ in 1..LOCAL_CID_COUNT {
-                        let cid = self.new_cid();
-                        self.connection_ids.insert(cid, ch);
-                        let meta = &mut self.connections[ch];
-                        meta.cids_issued += 1;
-                        meta.loc_cids.insert(meta.cids_issued, cid);
-                        meta.conn.issue_cid(meta.cids_issued, cid);
-                    }
+                    self.send_new_identifiers(ch, LOC_CID_COUNT - 1);
                 }
             }
         }
@@ -393,6 +378,22 @@ impl Endpoint {
         )?;
         self.needs_transmit.insert(ch);
         Ok(ch)
+    }
+
+    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: usize) {
+        let mut ids = vec![];
+        for _ in 0..num {
+            let cid = self.new_cid();
+            self.connection_ids.insert(cid, ch);
+            let meta = &mut self.connections[ch];
+            meta.cids_issued += 1;
+            let seq = meta.cids_issued;
+            meta.loc_cids.insert(seq, cid);
+            ids.push((seq, cid));
+        }
+        self.connections[ch]
+            .conn
+            .handle_event(ConnectionEvent::NewIdentifiers(ids));
     }
 
     fn new_cid(&mut self) -> ConnectionId {

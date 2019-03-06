@@ -1005,6 +1005,17 @@ impl Connection {
         }
     }
 
+    pub fn handle_event(&mut self, event: ConnectionEvent) {
+        use self::ConnectionEvent::*;
+        match event {
+            NewIdentifiers(ids) => {
+                ids.into_iter().for_each(|(seq, cid)| {
+                    self.issue_cid(seq, cid);
+                });
+            }
+        }
+    }
+
     pub fn handle_dgram(
         &mut self,
         now: Instant,
@@ -1462,7 +1473,7 @@ impl Connection {
         Ok(())
     }
 
-    pub fn issue_cid(&mut self, sequence: u64, cid: ConnectionId) {
+    fn issue_cid(&mut self, sequence: u64, cid: ConnectionId) {
         let token = reset_token_for(&self.endpoint_config.reset_key, &cid);
         self.cids_issued += 1;
         self.space_mut(SpaceId::Data)
@@ -3220,6 +3231,11 @@ struct SentPacket {
 
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
+
+/// Events to be sent to the Connection
+pub enum ConnectionEvent {
+    NewIdentifiers(Vec<(u64, ConnectionId)>),
+}
 
 /// Events to be sent to the Endpoint
 #[derive(Clone, Debug)]
