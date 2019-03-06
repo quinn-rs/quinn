@@ -1,3 +1,4 @@
+use std::collections::hash_map;
 use std::collections::VecDeque;
 
 use bytes::Bytes;
@@ -67,6 +68,20 @@ impl Streams {
             }
         }
         Ok(self.streams.get_mut(&id))
+    }
+
+    /// Discard state for a stream if it's fully closed.
+    ///
+    /// Called when one side of a stream transitions to a closed state
+    pub fn maybe_cleanup(&mut self, id: StreamId) {
+        match self.streams.entry(id) {
+            hash_map::Entry::Vacant(_) => unreachable!(),
+            hash_map::Entry::Occupied(e) => {
+                if e.get().is_closed() {
+                    e.remove_entry();
+                }
+            }
+        }
     }
 
     pub fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
