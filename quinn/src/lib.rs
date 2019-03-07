@@ -757,8 +757,7 @@ impl Connection {
             .endpoint
             .borrow()
             .inner
-            .connection(self.0.handle)
-            .loc_cids()
+            .loc_cids(self.0.handle)
             .cloned()
             .collect::<Vec<_>>()
             .into_iter()

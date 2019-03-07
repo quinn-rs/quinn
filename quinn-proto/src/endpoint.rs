@@ -1,5 +1,5 @@
 use std::cmp;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
@@ -104,11 +104,23 @@ impl Endpoint {
                         ch,
                         match io {
                             connection::Io::TimerUpdate(x) => x,
-                            connection::Io::RetireConnectionId { connection_id } => {
-                                self.connection_ids.remove(&connection_id);
-                                let new_cid = self.new_cid();
-                                self.connection_ids.insert(new_cid, ch);
-                                self.connections[ch].conn.issue_cid(new_cid);
+                            connection::Io::RetireConnectionId(seq) => {
+                                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
+                                    trace!(
+                                        self.log,
+                                        "peer retired CID {sequence}: {cid}",
+                                        sequence = seq,
+                                        cid = cid,
+                                    );
+                                    self.connection_ids.remove(&cid);
+                                    let new_cid = self.new_cid();
+                                    self.connection_ids.insert(new_cid, ch);
+                                    let meta = &mut self.connections[ch];
+                                    meta.cids_issued += 1;
+                                    let new_seq = meta.cids_issued;
+                                    meta.loc_cids.insert(new_seq, new_cid);
+                                    meta.conn.issue_cid(new_seq, new_cid);
+                                }
                                 continue;
                             }
                         },
@@ -416,6 +428,8 @@ impl Endpoint {
         let id = self.connections.insert(ConnectionMeta {
             conn,
             init_cid,
+            cids_issued: 0,
+            loc_cids: HashMap::new(),
             app_closed: false,
         });
         let ch = ConnectionHandle(id);
@@ -598,7 +612,10 @@ impl Endpoint {
             for _ in 1..LOCAL_CID_COUNT {
                 let cid = self.new_cid();
                 self.connection_ids.insert(cid, ch);
-                self.connections[ch].conn.issue_cid(cid);
+                let meta = &mut self.connections[ch];
+                meta.cids_issued += 1;
+                meta.loc_cids.insert(meta.cids_issued, cid);
+                meta.conn.issue_cid(meta.cids_issued, cid);
             }
         }
     }
@@ -609,7 +626,7 @@ impl Endpoint {
                 .remove(&self.connections[ch].init_cid);
         }
         if self.config.local_cid_len > 0 {
-            for cid in self.connections[ch].conn.loc_cids() {
+            for cid in self.connections[ch].loc_cids.values() {
                 self.connection_ids.remove(cid);
             }
         }
@@ -776,6 +793,10 @@ impl Endpoint {
         self.ping(ch);
     }
 
+    pub fn loc_cids(&self, ch: ConnectionHandle) -> impl Iterator<Item = &ConnectionId> {
+        self.connections[ch].loc_cids.values()
+    }
+
     pub fn connection(&self, ch: ConnectionHandle) -> &Connection {
         &self.connections[ch].conn
     }
@@ -784,6 +805,9 @@ impl Endpoint {
 pub(crate) struct ConnectionMeta {
     pub(crate) conn: Connection,
     init_cid: ConnectionId,
+    /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
+    cids_issued: u64,
+    loc_cids: HashMap<u64, ConnectionId>,
     app_closed: bool,
 }
 
