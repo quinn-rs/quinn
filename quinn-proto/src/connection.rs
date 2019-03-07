@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,7 +36,6 @@ pub struct Connection {
     config: Arc<TransportConfig>,
     rng: OsRng,
     tls: TlsSession,
-    loc_cids: HashMap<u64, ConnectionId>,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
     rem_cid: ConnectionId,
@@ -183,8 +182,6 @@ impl Connection {
                 Stream::new_bi(),
             );
         }
-        let mut loc_cids = HashMap::new();
-        loc_cids.insert(0, loc_cid);
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             token: None,
@@ -194,7 +191,6 @@ impl Connection {
             endpoint_config,
             rng,
             tls,
-            loc_cids,
             handshake_cid: loc_cid,
             rem_cid,
             rem_handshake_cid: rem_cid,
@@ -290,8 +286,8 @@ impl Connection {
             }
         }
 
-        if let Some(cid) = self.io.retired_cids.pop() {
-            return Some(Io::RetireConnectionId { connection_id: cid });
+        if let Some(seq) = self.io.retired_cids.pop() {
+            return Some(Io::RetireConnectionId(seq));
         }
 
         None
@@ -1457,10 +1453,9 @@ impl Connection {
         Ok(())
     }
 
-    pub fn issue_cid(&mut self, cid: ConnectionId) {
+    pub fn issue_cid(&mut self, sequence: u64, cid: ConnectionId) {
         let token = reset_token_for(&self.endpoint_config.reset_key, &cid);
         self.cids_issued += 1;
-        let sequence = self.cids_issued;
         self.space_mut(SpaceId::Data)
             .pending
             .new_cids
@@ -1469,7 +1464,6 @@ impl Connection {
                 sequence,
                 reset_token: token,
             });
-        self.loc_cids.insert(self.cids_issued, cid);
     }
 
     fn process_payload(
@@ -1776,15 +1770,7 @@ impl Connection {
                             "RETIRE_CONNECTION_ID for unissued sequence number",
                         ));
                     }
-                    if let Some(old) = self.loc_cids.remove(&sequence) {
-                        trace!(
-                            self.log,
-                            "peer retired CID {sequence}: {id}",
-                            sequence = sequence,
-                            id = old
-                        );
-                        self.io.retired_cids.push(old);
-                    }
+                    self.io.retired_cids.push(sequence);
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -2856,11 +2842,6 @@ impl Connection {
         self.side
     }
 
-    /// The `ConnectionId`s defined for this Connection locally.
-    pub fn loc_cids(&self) -> impl Iterator<Item = &ConnectionId> {
-        self.loc_cids.values()
-    }
-
     /// The `ConnectionId` defined for this Connection by the peer.
     pub fn rem_cid(&self) -> ConnectionId {
         self.rem_cid
@@ -3241,8 +3222,8 @@ const MAX_ACK_BLOCKS: usize = 64;
 pub enum Io {
     /// Stop or (re)start a timer
     TimerUpdate(TimerUpdate),
-    /// Stop routing `connection_id` to this `Connection`
-    RetireConnectionId { connection_id: ConnectionId },
+    /// Stop routing connection id for this sequence number to this `Connection`
+    RetireConnectionId(u64),
 }
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
@@ -3257,7 +3238,7 @@ struct IoQueue {
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
     timers: [Option<TimerSetting>; Timer::COUNT],
-    retired_cids: Vec<ConnectionId>,
+    retired_cids: Vec<u64>,
 }
 
 impl IoQueue {
