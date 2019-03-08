@@ -240,6 +240,7 @@ struct TestEndpoint {
     outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
     inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
+    accepted: Option<ConnectionHandle>,
 }
 
 impl TestEndpoint {
@@ -263,6 +264,7 @@ impl TestEndpoint {
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
             inbound: VecDeque::new(),
+            accepted: None,
         }
     }
 
@@ -293,8 +295,12 @@ impl TestEndpoint {
         }
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (_, ecn, packet) = self.inbound.pop_front().unwrap();
-            self.endpoint
-                .handle(now, remote, ecn, Vec::from(packet).into());
+            if let Some(ch) = self
+                .endpoint
+                .handle(now, remote, ecn, Vec::from(packet).into())
+            {
+                self.accepted = Some(ch);
+            }
         }
         while let Some(x) = self.endpoint.poll_transmit(now) {
             self.outbound.push_back(x);
@@ -346,7 +352,7 @@ impl TestEndpoint {
     }
 
     fn assert_accept(&mut self) -> ConnectionHandle {
-        if let Some((c, Event::Handshaking)) = self.poll() {
+        if let Some(c) = self.accepted.take() {
             self.accept();
             c
         } else {
