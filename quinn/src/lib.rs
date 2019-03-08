@@ -280,7 +280,22 @@ impl Future for Driver {
             loop {
                 match endpoint.socket.poll_recv(&mut buf) {
                     Ok(Async::Ready((n, addr, ecn))) => {
-                        endpoint.inner.handle(now, addr, ecn, (&buf[0..n]).into());
+                        if let Some(ch) = endpoint.inner.handle(now, addr, ecn, (&buf[0..n]).into())
+                        {
+                            endpoint.pending.insert(ch, Pending::new(None));
+                            match endpoint.incoming.poll_ready() {
+                                Ok(Async::Ready(())) => {
+                                    endpoint
+                                        .incoming
+                                        .start_send(NewConnection::new(self.0.clone(), ch))
+                                        .unwrap();
+                                    endpoint.inner.accept();
+                                }
+                                _ => {
+                                    endpoint.buffered_incoming.push_back(ch);
+                                }
+                            }
+                        }
                     }
                     Ok(Async::NotReady) => {
                         break;
@@ -364,21 +379,6 @@ impl Future for Driver {
                             .remove(&stream)
                             .unwrap()
                             .send(None);
-                    }
-                    Handshaking => {
-                        endpoint.pending.insert(ch, Pending::new(None));
-                        match endpoint.incoming.poll_ready() {
-                            Ok(Async::Ready(())) => {
-                                endpoint
-                                    .incoming
-                                    .start_send(NewConnection::new(self.0.clone(), ch))
-                                    .unwrap();
-                                endpoint.inner.accept();
-                            }
-                            _ => {
-                                endpoint.buffered_incoming.push_back(ch);
-                            }
-                        }
                     }
                 }
             }

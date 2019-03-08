@@ -39,7 +39,6 @@ pub struct Endpoint {
     log: Logger,
     rng: OsRng,
     transmits: VecDeque<Transmit>,
-    incoming: VecDeque<ConnectionHandle>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddr, ConnectionHandle>,
@@ -67,7 +66,6 @@ impl Endpoint {
             log,
             rng,
             transmits: VecDeque::new(),
-            incoming: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
@@ -87,9 +85,6 @@ impl Endpoint {
 
     /// Get an application-facing event
     pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        if let Some(ch) = self.incoming.pop_front() {
-            return Some((ch, Event::Handshaking));
-        }
         while let Some(&ch) = self.eventful_conns.iter().next() {
             if let Some(e) = self.connections[ch].poll() {
                 return Some((ch, e));
@@ -149,7 +144,7 @@ impl Endpoint {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) {
+    ) -> Option<ConnectionHandle> {
         let datagram_len = data.len();
         let (partial_decode, rest) = match PartialDecode::new(data, self.config.local_cid_len) {
             Ok(x) => x,
@@ -159,7 +154,7 @@ impl Endpoint {
             }) => {
                 if !self.is_server() {
                     debug!(self.log, "dropping packet with unsupported version");
-                    return;
+                    return None;
                 }
                 trace!(self.log, "sending version negotiation");
                 // Negotiate versions
@@ -177,11 +172,11 @@ impl Endpoint {
                     ecn: None,
                     packet: buf.into(),
                 });
-                return;
+                return None;
             }
             Err(e) => {
                 trace!(self.log, "malformed header"; "reason" => %e);
-                return;
+                return None;
             }
         };
 
@@ -219,7 +214,7 @@ impl Endpoint {
             self.needs_transmit.insert(ch);
             self.dirty_timers.insert(ch);
             self.eventful_conns.insert(ch);
-            return;
+            return None;
         }
 
         //
@@ -233,7 +228,7 @@ impl Endpoint {
                 connection = dst_cid
             );
             self.stateless_reset(datagram_len, remote, &dst_cid);
-            return;
+            return None;
         }
 
         if partial_decode.has_long_header() {
@@ -244,27 +239,35 @@ impl Endpoint {
                         "ignoring short initial on {connection}",
                         connection = partial_decode.dst_cid()
                     );
-                    return;
+                    return None;
                 }
 
                 let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
                 let header_crypto = crypto.header_crypto();
                 match partial_decode.finish(Some(&header_crypto)) {
                     Ok(packet) => {
-                        self.handle_initial(now, remote, ecn, packet, rest, &crypto, &header_crypto)
+                        return self.handle_initial(
+                            now,
+                            remote,
+                            ecn,
+                            packet,
+                            rest,
+                            &crypto,
+                            &header_crypto,
+                        );
                     }
                     Err(e) => {
                         trace!(self.log, "unable to decode packet"; "reason" => %e);
                     }
                 }
-                return;
+                return None;
             } else {
                 debug!(
                     self.log,
                     "ignoring non-initial packet for unknown connection {connection}",
                     connection = dst_cid
                 );
-                return;
+                return None;
             }
         }
 
@@ -278,6 +281,7 @@ impl Endpoint {
         } else {
             trace!(self.log, "dropping unrecognized short packet without ID");
         }
+        None
     }
 
     fn stateless_reset(
@@ -424,7 +428,7 @@ impl Endpoint {
         rest: Option<BytesMut>,
         crypto: &Crypto,
         header_crypto: &RingHeaderCrypto,
-    ) {
+    ) -> Option<ConnectionHandle> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
                 src_cid,
@@ -445,7 +449,7 @@ impl Endpoint {
             .is_err()
         {
             debug!(self.log, "failed to authenticate initial packet"; "pn" => packet_number);
-            return;
+            return None;
         };
 
         // Local CID used for stateless packets
@@ -466,7 +470,7 @@ impl Endpoint {
                     TransportError::SERVER_BUSY(""),
                 ),
             });
-            return;
+            return None;
         }
 
         if dst_cid.len() < 8
@@ -489,7 +493,7 @@ impl Endpoint {
                     TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
                 ),
             });
-            return;
+            return None;
         }
 
         let mut retry_cid = None;
@@ -528,7 +532,7 @@ impl Endpoint {
                     ecn: None,
                     packet: buf.into(),
                 });
-                return;
+                return None;
             }
         }
 
@@ -559,9 +563,9 @@ impl Endpoint {
                 self.incoming_handshakes += 1;
                 self.needs_transmit.insert(ch);
                 if self.connections[ch].has_1rtt() {
-                    self.incoming.push_back(ch);
                     self.issue_identifiers(ch);
                 }
+                Some(ch)
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
@@ -571,6 +575,7 @@ impl Endpoint {
                     ecn: None,
                     packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
+                None
             }
         }
     }
@@ -1023,8 +1028,6 @@ pub enum ConfigError {
 /// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
-    /// An incoming connection has begun handshake procedure
-    Handshaking,
     /// A connection was successfully established.
     Connected,
     /// A connection was lost.
