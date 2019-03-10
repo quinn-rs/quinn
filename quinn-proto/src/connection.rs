@@ -287,11 +287,6 @@ impl Connection {
                 return Some(Io::TimerUpdate(TimerUpdate { timer, update }));
             }
         }
-
-        if let Some(seq) = self.io.retired_cids.pop() {
-            return Some(Io::RetireConnectionId(seq));
-        }
-
         None
     }
 
@@ -1790,7 +1785,8 @@ impl Connection {
                             "RETIRE_CONNECTION_ID for unissued sequence number",
                         ));
                     }
-                    self.io.retired_cids.push(sequence);
+                    self.endpoint_events
+                        .push_back(EndpointEvent::RetireConnectionId(sequence));
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -3246,6 +3242,8 @@ pub enum ConnectionEvent {
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
     NeedIdentifiers,
+    /// Stop routing connection ID for this sequence number to this `Connection`
+    RetireConnectionId(u64),
 }
 
 /// I/O operations to be immediately executed the backend.
@@ -3253,8 +3251,6 @@ pub enum EndpointEvent {
 pub enum Io {
     /// Stop or (re)start a timer
     TimerUpdate(TimerUpdate),
-    /// Stop routing connection id for this sequence number to this `Connection`
-    RetireConnectionId(u64),
 }
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
@@ -3269,7 +3265,6 @@ struct IoQueue {
     /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
     /// indexing.
     timers: [Option<TimerSetting>; Timer::COUNT],
-    retired_cids: Vec<u64>,
 }
 
 impl IoQueue {
@@ -3278,7 +3273,6 @@ impl IoQueue {
             probes: 0,
             close: false,
             timers: [None; Timer::COUNT],
-            retired_cids: Vec::new(),
         }
     }
 
