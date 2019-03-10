@@ -274,17 +274,17 @@ impl Connection {
         this
     }
 
-    /// Returns I/O actions to execute immediately
+    /// Returns timer updates
     ///
-    /// Connections should be polled for I/O after:
+    /// Connections should be polled for timer updates after:
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
     /// - a packet is transmitted
     /// - any timer expires
-    pub fn poll_io(&mut self) -> Option<Io> {
+    pub fn poll_timers(&mut self) -> Option<TimerUpdate> {
         for (&timer, update) in Timer::VALUES.iter().zip(self.io.timers.iter_mut()) {
             if let Some(update) = update.take() {
-                return Some(Io::TimerUpdate(TimerUpdate { timer, update }));
+                return Some(TimerUpdate { timer, update });
             }
         }
         None
@@ -3239,13 +3239,6 @@ pub enum EndpointEvent {
     NeedIdentifiers,
     /// Stop routing connection ID for this sequence number to this `Connection`
     RetireConnectionId(u64),
-}
-
-/// I/O operations to be immediately executed the backend.
-#[derive(Debug)]
-pub enum Io {
-    /// Stop or (re)start a timer
-    TimerUpdate(TimerUpdate),
 }
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls

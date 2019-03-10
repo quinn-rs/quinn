@@ -16,7 +16,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{
-    self, initial_close, ClientConfig, Connection, ConnectionError, ConnectionEvent, EndpointEvent,
+    initial_close, ClientConfig, Connection, ConnectionError, ConnectionEvent, EndpointEvent,
     TimerUpdate,
 };
 use crate::crypto::{
@@ -114,13 +114,8 @@ impl Endpoint {
         loop {
             let &ch = self.dirty_timers.iter().next()?;
             loop {
-                if let Some(io) = self.connections[ch].conn.poll_io() {
-                    return Some((
-                        ch,
-                        match io {
-                            connection::Io::TimerUpdate(x) => x,
-                        },
-                    ));
+                if let Some(update) = self.connections[ch].conn.poll_timers() {
+                    return Some((ch, update));
                 } else {
                     self.dirty_timers.remove(&ch);
                     break;
