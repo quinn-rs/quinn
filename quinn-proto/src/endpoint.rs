@@ -201,7 +201,7 @@ impl Endpoint {
         data: BytesMut,
     ) -> Option<ConnectionHandle> {
         let datagram_len = data.len();
-        let (partial_decode, rest) = match PartialDecode::new(data, self.config.local_cid_len) {
+        let (first_decode, remaining) = match PartialDecode::new(data, self.config.local_cid_len) {
             Ok(x) => x,
             Err(PacketDecodeError::UnsupportedVersion {
                 source,
@@ -239,7 +239,7 @@ impl Endpoint {
         // Handle packet on existing connection, if any
         //
 
-        let dst_cid = partial_decode.dst_cid();
+        let dst_cid = first_decode.dst_cid();
         let known_ch = {
             let ch = if self.config.local_cid_len > 0 {
                 self.connection_ids.get(&dst_cid)
@@ -250,7 +250,7 @@ impl Endpoint {
                 .or_else(|| {
                     // If CIDs are in use, only stateless resets (which use short headers) will
                     // legitimately have unknown CIDs.
-                    if self.config.local_cid_len == 0 || !partial_decode.has_long_header() {
+                    if self.config.local_cid_len == 0 || !first_decode.has_long_header() {
                         self.connection_remotes.get(&remote)
                     } else {
                         None
@@ -261,7 +261,7 @@ impl Endpoint {
         if let Some(ch) = known_ch {
             self.connections[ch]
                 .conn
-                .handle_dgram(now, remote, ecn, partial_decode, rest);
+                .handle_dgram(now, remote, ecn, first_decode, remaining);
             self.needs_transmit.insert(ch);
             self.dirty_timers.insert(ch);
             self.endpoint_eventful_conns.insert(ch);
@@ -283,27 +283,27 @@ impl Endpoint {
             return None;
         }
 
-        if partial_decode.has_long_header() {
-            if partial_decode.is_initial() {
+        if first_decode.has_long_header() {
+            if first_decode.is_initial() {
                 if datagram_len < MIN_INITIAL_SIZE {
                     debug!(
                         self.log,
                         "ignoring short initial on {connection}",
-                        connection = partial_decode.dst_cid()
+                        connection = dst_cid
                     );
                     return None;
                 }
 
-                let crypto = Crypto::new_initial(&partial_decode.dst_cid(), Side::Server);
+                let crypto = Crypto::new_initial(&dst_cid, Side::Server);
                 let header_crypto = crypto.header_crypto();
-                match partial_decode.finish(Some(&header_crypto)) {
+                match first_decode.finish(Some(&header_crypto)) {
                     Ok(packet) => {
                         return self.handle_initial(
                             now,
                             remote,
                             ecn,
                             packet,
-                            rest,
+                            remaining,
                             &crypto,
                             &header_crypto,
                         );
