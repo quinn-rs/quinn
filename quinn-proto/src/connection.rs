@@ -1005,37 +1005,35 @@ impl Connection {
     pub fn handle_event(&mut self, event: ConnectionEvent) {
         use self::ConnectionEvent::*;
         match event {
+            Datagram {
+                now,
+                remote,
+                ecn,
+                first_decode,
+                remaining,
+            } => {
+                if remote != self.remote && self.side.is_client() {
+                    trace!(
+                        self.log,
+                        "discarding packet from unknown server {address}",
+                        address = format!("{}", remote)
+                    );
+                    return;
+                }
+
+                self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
+
+                self.handle_decode(now, remote, ecn, first_decode);
+                if let Some(data) = remaining {
+                    self.handle_coalesced(now, remote, ecn, data);
+                }
+            }
             NewIdentifiers(ids) => {
                 ids.into_iter().for_each(|(seq, cid)| {
                     self.issue_cid(seq, cid);
                 });
             }
             Timer(now, timer) => self.timeout(now, timer),
-        }
-    }
-
-    pub fn handle_dgram(
-        &mut self,
-        now: Instant,
-        remote: SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        first_decode: PartialDecode,
-        remaining: Option<BytesMut>,
-    ) {
-        if remote != self.remote && self.side.is_client() {
-            trace!(
-                self.log,
-                "discarding packet from unknown server {address}",
-                address = format!("{}", remote)
-            );
-            return;
-        }
-
-        self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
-
-        self.handle_decode(now, remote, ecn, first_decode);
-        if let Some(data) = remaining {
-            self.handle_coalesced(now, remote, ecn, data);
         }
     }
 
@@ -3239,6 +3237,13 @@ const MAX_ACK_BLOCKS: usize = 64;
 
 /// Events to be sent to the Connection
 pub enum ConnectionEvent {
+    Datagram {
+        now: Instant,
+        remote: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        first_decode: PartialDecode,
+        remaining: Option<BytesMut>,
+    },
     NewIdentifiers(Vec<(u64, ConnectionId)>),
     Timer(Instant, Timer),
 }

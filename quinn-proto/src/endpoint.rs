@@ -259,9 +259,14 @@ impl Endpoint {
                 .cloned()
         };
         if let Some(ch) = known_ch {
-            self.connections[ch]
-                .conn
-                .handle_dgram(now, remote, ecn, first_decode, remaining);
+            let event = ConnectionEvent::Datagram {
+                now,
+                remote,
+                ecn,
+                first_decode,
+                remaining,
+            };
+            self.connections[ch].conn.handle_event(event);
             self.needs_transmit.insert(ch);
             self.dirty_timers.insert(ch);
             self.endpoint_eventful_conns.insert(ch);
