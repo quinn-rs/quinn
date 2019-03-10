@@ -56,3 +56,7 @@ name = "server"
 
 [[example]]
 name = "client"
+
+[[example]]
+name = "insecure_connection"
+required-features = ["rustls/dangerous_configuration"]
