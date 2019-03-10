@@ -119,19 +119,6 @@ impl Endpoint {
                         ch,
                         match io {
                             connection::Io::TimerUpdate(x) => x,
-                            connection::Io::RetireConnectionId(seq) => {
-                                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
-                                    trace!(
-                                        self.log,
-                                        "peer retired CID {sequence}: {cid}",
-                                        sequence = seq,
-                                        cid = cid,
-                                    );
-                                    self.connection_ids.remove(&cid);
-                                    self.send_new_identifiers(ch, 1);
-                                }
-                                continue;
-                            }
                         },
                     ));
                 } else {
@@ -164,6 +151,18 @@ impl Endpoint {
                 if self.config.local_cid_len != 0 {
                     // We've already issued one CID as part of the normal handshake process.
                     self.send_new_identifiers(ch, LOC_CID_COUNT - 1);
+                }
+            }
+            EndpointEvent::RetireConnectionId(seq) => {
+                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
+                    trace!(
+                        self.log,
+                        "peer retired CID {sequence}: {cid}",
+                        sequence = seq,
+                        cid = cid,
+                    );
+                    self.connection_ids.remove(&cid);
+                    self.send_new_identifiers(ch, 1);
                 }
             }
         }
