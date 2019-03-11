@@ -72,6 +72,7 @@ use bytes::Bytes;
 use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::stream::FuturesUnordered;
+use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use futures::Stream as FuturesStream;
@@ -316,7 +317,7 @@ struct EndpointInner {
     // TODO: Replace this with something custom that avoids using oneshots to cancel
     timers: FuturesUnordered<Timer>,
     buffered_incoming: VecDeque<ConnectionHandle>,
-    incoming: futures::sync::mpsc::Sender<NewConnection>,
+    incoming: mpsc::Sender<NewConnection>,
     driver: Option<Task>,
     ipv6: bool,
 }
@@ -646,7 +647,7 @@ impl Pending {
 }
 
 /// Stream of incoming connections.
-pub type Incoming = futures::sync::mpsc::Receiver<NewConnection>;
+pub type Incoming = mpsc::Receiver<NewConnection>;
 
 /// A connection initiated by a remote client.
 pub struct NewConnection {

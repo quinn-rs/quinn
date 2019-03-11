@@ -10,6 +10,7 @@ use std::sync::Arc;
 use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::stream::futures_unordered::FuturesUnordered;
+use futures::sync::mpsc;
 use quinn_proto as quinn;
 use rustls::{KeyLogFile, ProtocolVersion, TLSError};
 use slog::Logger;
@@ -60,7 +61,7 @@ impl<'a> EndpointBuilder<'a> {
         };
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
-        let (send, recv) = futures::sync::mpsc::channel(4);
+        let (send, recv) = mpsc::channel(4);
         let rc = Rc::new(RefCell::new(EndpointInner {
             log: self.logger.clone(),
             socket,
