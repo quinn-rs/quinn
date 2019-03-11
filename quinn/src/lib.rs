@@ -323,6 +323,27 @@ struct EndpointInner {
 }
 
 impl EndpointInner {
+    pub(crate) fn new(
+        log: Logger,
+        socket: UdpSocket,
+        inner: quinn::Endpoint,
+        incoming: mpsc::Sender<NewConnection>,
+        ipv6: bool,
+    ) -> Self {
+        Self {
+            log,
+            socket,
+            inner,
+            incoming,
+            ipv6,
+            outgoing: None,
+            pending: FnvHashMap::default(),
+            timers: FuturesUnordered::new(),
+            buffered_incoming: VecDeque::new(),
+            driver: None,
+        }
+    }
+
     /// Wake up a blocked `Driver` task to process I/O
     fn notify(&self) {
         if let Some(x) = self.driver.as_ref() {

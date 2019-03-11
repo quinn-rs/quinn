@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::io;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
@@ -8,8 +7,6 @@ use std::str;
 use std::sync::Arc;
 
 use err_derive::Error;
-use fnv::FnvHashMap;
-use futures::stream::futures_unordered::FuturesUnordered;
 use futures::sync::mpsc;
 use quinn_proto as quinn;
 use rustls::{KeyLogFile, ProtocolVersion, TLSError};
@@ -62,22 +59,17 @@ impl<'a> EndpointBuilder<'a> {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
         let (send, recv) = mpsc::channel(4);
-        let rc = Rc::new(RefCell::new(EndpointInner {
-            log: self.logger.clone(),
+        let rc = Rc::new(RefCell::new(EndpointInner::new(
+            self.logger.clone(),
             socket,
-            inner: quinn::Endpoint::new(
+            quinn::Endpoint::new(
                 self.logger,
                 Arc::new(self.config),
                 self.server_config.map(Arc::new),
             )?,
-            outgoing: None,
-            pending: FnvHashMap::default(),
-            timers: FuturesUnordered::new(),
-            buffered_incoming: VecDeque::new(),
-            incoming: send,
-            driver: None,
-            ipv6: addr.is_ipv6(),
-        }));
+            send,
+            addr.is_ipv6(),
+        )));
         Ok((
             Endpoint {
                 inner: rc.clone(),
