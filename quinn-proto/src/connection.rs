@@ -1498,12 +1498,12 @@ impl Connection {
             }
             if is_0rtt {
                 match frame {
-                    Frame::Padding | Frame::Stream { .. } => {}
-                    _ => {
+                    Frame::Crypto(_) | Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "illegal frame type in 0-RTT",
                         ));
                     }
+                    _ => {}
                 }
             }
             match frame {
@@ -1981,7 +1981,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + frame::Crypto::SIZE_BOUND < max_size {
+        while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
             let mut frame = if let Some(x) = space.pending.crypto.pop_front() {
                 x
             } else {
@@ -2010,53 +2010,48 @@ impl Connection {
             }
         }
 
-        // The application might reasonably decide to abandon a (potentially bidirectional) stream
-        // before the connection is established, but these frame types are forbidden in 0-RTT, so
-        // they must be deferred until the handshake completes.
-        if !is_0rtt {
-            // RESET_STREAM
-            while buf.len() + frame::ResetStream::SIZE_BOUND < max_size {
-                let (id, error_code) = if let Some(x) = space.pending.rst_stream.pop() {
-                    x
-                } else {
-                    break;
-                };
-                let stream = if let Some(x) = self.streams.streams.get(&id) {
-                    x
-                } else {
-                    continue;
-                };
-                trace!(self.log, "RESET_STREAM"; "stream" => id.0);
-                sent.rst_stream.push((id, error_code));
-                frame::ResetStream {
-                    id,
-                    error_code,
-                    final_offset: stream.send().unwrap().offset,
-                }
-                .encode(buf);
+        // RESET_STREAM
+        while buf.len() + frame::ResetStream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let (id, error_code) = if let Some(x) = space.pending.rst_stream.pop() {
+                x
+            } else {
+                break;
+            };
+            let stream = if let Some(x) = self.streams.streams.get(&id) {
+                x
+            } else {
+                continue;
+            };
+            trace!(self.log, "RESET_STREAM"; "stream" => id.0);
+            sent.rst_stream.push((id, error_code));
+            frame::ResetStream {
+                id,
+                error_code,
+                final_offset: stream.send().unwrap().offset,
             }
+            .encode(buf);
+        }
 
-            // STOP_SENDING
-            while buf.len() + 11 < max_size {
-                let (id, error_code) = if let Some(x) = space.pending.stop_sending.pop() {
-                    x
-                } else {
-                    break;
-                };
-                let stream = if let Some(x) = self.streams.streams.get(&id) {
-                    x.recv().unwrap()
-                } else {
-                    continue;
-                };
-                if stream.is_finished() {
-                    continue;
-                }
-                trace!(self.log, "STOP_SENDING"; "stream" => id.0);
-                sent.stop_sending.push((id, error_code));
-                buf.write(frame::Type::STOP_SENDING);
-                buf.write(id);
-                buf.write(error_code);
+        // STOP_SENDING
+        while buf.len() + 11 < max_size && space_id == SpaceId::Data {
+            let (id, error_code) = if let Some(x) = space.pending.stop_sending.pop() {
+                x
+            } else {
+                break;
+            };
+            let stream = if let Some(x) = self.streams.streams.get(&id) {
+                x.recv().unwrap()
+            } else {
+                continue;
+            };
+            if stream.is_finished() {
+                continue;
             }
+            trace!(self.log, "STOP_SENDING"; "stream" => id.0);
+            sent.stop_sending.push((id, error_code));
+            buf.write(frame::Type::STOP_SENDING);
+            buf.write(id);
+            buf.write(error_code);
         }
 
         // MAX_DATA
