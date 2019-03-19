@@ -9,6 +9,20 @@ use std::{
 use tokio;
 
 #[test]
+fn local_addr() {
+    let port = 56987;
+    let (ep, _, _) = Endpoint::new()
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
+        .expect("Could not bind to localhost");
+    assert_eq!(
+        port,
+        ep.local_addr()
+            .expect("Could not obtain our local endpoint")
+            .port()
+    );
+}
+
+#[test]
 fn echo_v6() {
     run_echo(
         SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),

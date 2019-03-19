@@ -57,4 +57,8 @@ impl UdpSocket {
             Err(e) => Err(e),
         }
     }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.io.get_ref().local_addr()
+    }
 }

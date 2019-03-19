@@ -171,6 +171,11 @@ impl Endpoint {
         Ok(())
     }
 
+    /// Get the local endpoint the underlying socket is bound to
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.borrow().socket.local_addr()
+    }
+
     /*
     /// Connect to a remote endpoint, with support for transmitting data before the connection is
     /// established
