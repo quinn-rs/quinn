@@ -171,7 +171,7 @@ impl Endpoint {
         Ok(())
     }
 
-    /// Get the local endpoint the underlying socket is bound to
+    /// Get the local `SocketAddr` the underlying socket is bound to
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.inner.borrow().socket.local_addr()
     }
