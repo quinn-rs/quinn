@@ -438,9 +438,6 @@ impl Future for Driver {
                         if timer == quinn::Timer::Close {
                             // Connection drained
                             if let hash_map::Entry::Occupied(mut p) = endpoint.pending.entry(ch) {
-                                if let Some(x) = p.get_mut().closing.take() {
-                                    let _ = x.send(());
-                                }
                                 if p.get().dropped {
                                     p.remove();
                                 } else {
@@ -558,7 +555,7 @@ struct Pending {
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
-    closing: Option<oneshot::Sender<()>>,
+    closing: bool,
     dropped: bool,
     drained: bool,
 }
@@ -575,7 +572,7 @@ impl Pending {
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
-            closing: None,
+            closing: false,
             dropped: false,
             drained: false,
         }
@@ -712,28 +709,22 @@ impl Connection {
     /// # Panics
     /// - If called more than once on handles to the same connection
     // FIXME: Infallible
-    pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
-        let (send, recv) = oneshot::channel();
-        {
-            let endpoint = &mut *self.0.endpoint.borrow_mut();
+    pub fn close(&self, error_code: u16, reason: &[u8]) {
+        let endpoint = &mut *self.0.endpoint.borrow_mut();
 
-            let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
-            assert!(
-                pending.closing.is_none(),
-                "a connection can only be closed once"
-            );
-            pending.closing = Some(send);
+        let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
+        assert!(!pending.closing, "a connection can only be closed once");
+        pending.closing = true;
+        pending.fail(ConnectionError::ApplicationClosed {
+            reason: quinn::ApplicationClose {
+                error_code,
+                reason: reason.into(),
+            },
+        });
 
-            endpoint
-                .inner
-                .close(Instant::now(), self.0.handle, error_code, reason.into());
-        }
-        let handle = self.clone();
-        recv.then(move |_| {
-            // Ensure the connection isn't dropped until it's fully drained.
-            let _ = handle;
-            Ok(())
-        })
+        endpoint
+            .inner
+            .close(Instant::now(), self.0.handle, error_code, reason.into());
     }
 
     /// The peer's UDP address.
@@ -805,13 +796,20 @@ impl Drop for ConnectionInner {
                 return;
             }
             pending.get_mut().dropped = true;
-            if pending.get().closing.is_none() {
+            if !pending.get().closing {
                 endpoint
                     .inner
                     .close(Instant::now(), self.handle, 0, (&[][..]).into());
                 if let Some(x) = endpoint.driver.as_ref() {
                     x.notify();
                 }
+                pending
+                    .get_mut()
+                    .fail(ConnectionError::TransportError(quinn::TransportError {
+                        code: quinn::TransportErrorCode::INTERNAL_ERROR,
+                        frame: None,
+                        reason: "all references to the connection were dropped".to_string(),
+                    }));
             }
         }
     }

@@ -1031,7 +1031,7 @@ pub enum Event {
     Connected,
     /// A connection was lost.
     ///
-    /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
+    /// Not emitted for locally-closed connections.
     ConnectionLost { reason: ConnectionError },
     /// One or more new streams has been opened and is readable
     StreamOpened,

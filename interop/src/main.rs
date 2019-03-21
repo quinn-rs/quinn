@@ -106,13 +106,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| get(stream))
-                    .and_then(move |data| {
+                    .map(move |data| {
                         println!("read {} bytes, closing", data.len());
                         *stream_data = true;
-                        conn.close(0, b"done").map_err(|_| unreachable!())
-                    })
-                    .map(|()| {
-                        close = true;
+                        conn.close(0, b"done");
                     })
             })
             .and_then(|_| {
@@ -146,9 +143,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                     .map_err(|e| format_err!("failed to open stream: {}", e))
                                     .and_then(move |stream| get(stream))
                             })
-                            .and_then(move |_| {
+                            .map(move |_| {
                                 *rebinding = true;
-                                conn.close(0, b"done").map_err(|_| unreachable!())
+                                conn.close(0, b"done");
                             })
                     })
             }),
@@ -164,16 +161,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .to_socket_addrs()?
             .next()
             .ok_or(format_err!("couldn't resolve to an address"))?;
-        let result = runtime.block_on(
-            endpoint
-                .connect_with(&client_config, &remote, host)?
-                .and_then(|conn| {
-                    retry = true;
-                    conn.connection
-                        .close(0, b"done")
-                        .map_err(|_| unreachable!())
-                }),
-        );
+        let result = runtime.block_on(endpoint.connect_with(&client_config, &remote, host)?.map(
+            |conn| {
+                retry = true;
+                conn.connection.close(0, b"done")
+            },
+        ));
         if let Err(e) = result {
             println!("failure: {}", e);
         }
@@ -217,13 +210,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let req_fut = req_stream
                     .map_err(|e| format_err!("failed to open request stream: {}", e))
                     .and_then(|req_stream| h3_get(req_stream))
-                    .and_then(move |data| {
+                    .map(move |data| {
                         println!(
                             "read {} bytes: \n\n{}\n\n closing",
                             data.len(),
                             String::from_utf8_lossy(&data)
                         );
-                        conn.close(0, b"done").map_err(|_| unreachable!())
+                        conn.close(0, b"done");
                     });
                 control_fut.and_then(|_| req_fut).map(|_| h3 = true)
             }),
