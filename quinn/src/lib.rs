@@ -713,7 +713,10 @@ impl Connection {
         let endpoint = &mut *self.0.endpoint.borrow_mut();
 
         let pending = endpoint.pending.get_mut(&self.0.handle).unwrap();
-        assert!(!pending.closing, "a connection can only be closed once");
+        if pending.closing {
+            debug!(endpoint.log, "connection closed redundantly");
+            return;
+        }
         pending.closing = true;
         pending.fail(ConnectionError::ApplicationClosed {
             reason: quinn::ApplicationClose {
