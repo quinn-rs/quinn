@@ -1,13 +1,13 @@
+use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use std::{cmp, mem};
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use err_derive::Error;
-use fnv::{FnvHashMap, FnvHashSet};
+use fnv::FnvHashMap;
 use rand::{rngs::OsRng, Rng, RngCore};
 use ring::digest;
 use ring::hmac::SigningKey;
@@ -17,14 +17,12 @@ use slog::{self, Logger};
 use crate::coding::BufMutExt;
 use crate::connection::{
     initial_close, ClientConfig, Connection, ConnectionError, ConnectionEvent, EndpointEvent,
-    TimerUpdate,
 };
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
     TokenKey,
 };
 use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PartialDecode};
-use crate::stream::{ReadError, WriteError};
 use crate::transport_parameters::TransportParameters;
 use crate::{
     varint, Directionality, Side, StreamId, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE,
@@ -43,17 +41,9 @@ pub struct Endpoint {
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_remotes: FnvHashMap<SocketAddr, ConnectionHandle>,
-    pub(crate) connections: Slab<ConnectionMeta>,
+    connections: Slab<ConnectionMeta>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
-    /// Connections that might have timer updates to apply perform
-    dirty_timers: FnvHashSet<ConnectionHandle>,
-    /// Connections that might have packets to send
-    needs_transmit: FnvHashSet<ConnectionHandle>,
-    /// Connections that might have endpoint-facing events to report
-    endpoint_eventful_conns: FnvHashSet<ConnectionHandle>,
-    /// Connections that might have application-facing events to report
-    eventful_conns: FnvHashSet<ConnectionHandle>,
     incoming_handshakes: usize,
 }
 
@@ -73,10 +63,6 @@ impl Endpoint {
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
             connections: Slab::new(),
-            dirty_timers: FnvHashSet::default(),
-            needs_transmit: FnvHashSet::default(),
-            endpoint_eventful_conns: FnvHashSet::default(),
-            eventful_conns: FnvHashSet::default(),
             incoming_handshakes: 0,
             config,
             server_config,
@@ -87,73 +73,21 @@ impl Endpoint {
         self.server_config.is_some()
     }
 
-    /// Get an application-facing event
-    pub fn poll(&mut self) -> Option<(ConnectionHandle, Event)> {
-        self.handle_endpoint_events();
-        while let Some(&ch) = self.eventful_conns.iter().next() {
-            if let Some(e) = self.connections[ch].conn.poll() {
-                return Some((ch, e));
-            }
-            self.eventful_conns.remove(&ch);
-        }
-        None
-    }
-
-    pub(crate) fn handle_endpoint_events(&mut self) {
-        let mut conns = mem::replace(&mut self.endpoint_eventful_conns, FnvHashSet::default());
-        for ch in conns.drain() {
-            while let Some(event) = self.connections[ch].conn.poll_endpoint_events() {
-                let done = if let EndpointEvent::Closed { .. } = &event {
-                    true
-                } else {
-                    false
-                };
-                self.handle_event(ch, event);
-                if done {
-                    break;
-                }
-            }
-        }
-        mem::replace(&mut self.endpoint_eventful_conns, conns);
-    }
-
-    /// Get a pending timer update
-    pub fn poll_timers(&mut self) -> Option<(ConnectionHandle, TimerUpdate)> {
-        loop {
-            let &ch = self.dirty_timers.iter().next()?;
-            loop {
-                if let Some(update) = self.connections[ch].conn.poll_timers() {
-                    return Some((ch, update));
-                } else {
-                    self.dirty_timers.remove(&ch);
-                    break;
-                }
-            }
-        }
-    }
-
     /// Get the next packet to transmit
-    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
-        if let Some(x) = self.transmits.pop_front() {
-            return Some(x);
-        }
-        loop {
-            let &ch = self.needs_transmit.iter().next()?;
-            if let Some(transmit) = self.connections[ch].conn.poll_transmit(now) {
-                self.dirty_timers.insert(ch);
-                return Some(transmit);
-            } else {
-                self.needs_transmit.remove(&ch);
-            }
-        }
+    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+        self.transmits.pop_front()
     }
 
-    pub fn handle_event(&mut self, ch: ConnectionHandle, event: EndpointEvent) {
+    pub fn handle_event(
+        &mut self,
+        ch: ConnectionHandle,
+        event: EndpointEvent,
+    ) -> Option<ConnectionEvent> {
         match event {
             EndpointEvent::NeedIdentifiers => {
                 if self.config.local_cid_len != 0 {
                     // We've already issued one CID as part of the normal handshake process.
-                    self.send_new_identifiers(ch, LOC_CID_COUNT - 1);
+                    return Some(self.send_new_identifiers(ch, LOC_CID_COUNT - 1));
                 }
             }
             EndpointEvent::RetireConnectionId(seq) => {
@@ -165,14 +99,10 @@ impl Endpoint {
                         cid = cid,
                     );
                     self.connection_ids.remove(&cid);
-                    self.send_new_identifiers(ch, 1);
+                    return Some(self.send_new_identifiers(ch, 1));
                 }
             }
             EndpointEvent::Closed { remote } => {
-                if !self.connections[ch].app_closed {
-                    return;
-                }
-
                 let init_cid = self.connections[ch].init_cid;
                 if init_cid.len() > 0 {
                     self.connection_ids_initial.remove(&init_cid);
@@ -183,13 +113,10 @@ impl Endpoint {
                 }
 
                 self.connection_remotes.remove(&remote);
-                self.dirty_timers.remove(&ch);
-                self.eventful_conns.remove(&ch);
-                self.endpoint_eventful_conns.remove(&ch);
-                self.needs_transmit.remove(&ch);
                 self.connections.remove(ch.0);
             }
         }
+        None
     }
 
     /// Process an incoming UDP datagram
@@ -199,7 +126,7 @@ impl Endpoint {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) -> Option<ConnectionHandle> {
+    ) -> Option<(ConnectionHandle, DatagramEvent)> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(data, self.config.local_cid_len) {
             Ok(x) => x,
@@ -259,19 +186,16 @@ impl Endpoint {
                 .cloned()
         };
         if let Some(ch) = known_ch {
-            let event = ConnectionEvent::Datagram {
-                now,
-                remote,
-                ecn,
-                first_decode,
-                remaining,
-            };
-            self.connections[ch].conn.handle_event(event);
-            self.needs_transmit.insert(ch);
-            self.dirty_timers.insert(ch);
-            self.endpoint_eventful_conns.insert(ch);
-            self.eventful_conns.insert(ch);
-            return None;
+            return Some((
+                ch,
+                DatagramEvent::ConnectionEvent(ConnectionEvent::Datagram {
+                    now,
+                    remote,
+                    ecn,
+                    first_decode,
+                    remaining,
+                }),
+            ));
         }
 
         //
@@ -289,7 +213,7 @@ impl Endpoint {
         }
 
         if first_decode.has_long_header() {
-            if first_decode.is_initial() {
+            return if first_decode.is_initial() {
                 if datagram_len < MIN_INITIAL_SIZE {
                     debug!(
                         self.log,
@@ -302,8 +226,8 @@ impl Endpoint {
                 let crypto = Crypto::new_initial(&dst_cid, Side::Server);
                 let header_crypto = crypto.header_crypto();
                 match first_decode.finish(Some(&header_crypto)) {
-                    Ok(packet) => {
-                        return self.handle_initial(
+                    Ok(packet) => self
+                        .handle_initial(
                             now,
                             remote,
                             ecn,
@@ -311,21 +235,21 @@ impl Endpoint {
                             remaining,
                             &crypto,
                             &header_crypto,
-                        );
-                    }
+                        )
+                        .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                     Err(e) => {
                         trace!(self.log, "unable to decode packet"; "reason" => %e);
+                        None
                     }
                 }
-                return None;
             } else {
                 debug!(
                     self.log,
                     "ignoring non-initial packet for unknown connection {connection}",
                     connection = dst_cid
                 );
-                return None;
-            }
+                None
+            };
         }
 
         //
@@ -390,11 +314,11 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
         crypto_config: Arc<crypto::ClientConfig>,
         server_name: &str,
-    ) -> Result<ConnectionHandle, ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         transport_config.validate(&self.log)?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
-        let ch = self.add_connection(
+        let (ch, conn) = self.add_connection(
             remote_id,
             remote_id,
             remote,
@@ -404,11 +328,10 @@ impl Endpoint {
                 server_name: server_name.into(),
             }),
         )?;
-        self.needs_transmit.insert(ch);
-        Ok(ch)
+        Ok((ch, conn))
     }
 
-    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: usize) {
+    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: usize) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
             let cid = self.new_cid();
@@ -419,9 +342,7 @@ impl Endpoint {
             meta.loc_cids.insert(seq, cid);
             ids.push((seq, cid));
         }
-        self.connections[ch]
-            .conn
-            .handle_event(ConnectionEvent::NewIdentifiers(ids));
+        ConnectionEvent::NewIdentifiers(ids)
     }
 
     fn new_cid(&mut self) -> ConnectionId {
@@ -441,7 +362,7 @@ impl Endpoint {
         remote: SocketAddr,
         transport_config: Arc<TransportConfig>,
         opts: ConnectionOpts,
-    ) -> Result<ConnectionHandle, ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         let loc_cid = self.new_cid();
         let params = TransportParameters::new(&transport_config);
         let (tls, client_config) = match opts {
@@ -484,11 +405,9 @@ impl Endpoint {
             remote_validated,
         );
         let id = self.connections.insert(ConnectionMeta {
-            conn,
             init_cid,
             cids_issued: 0,
             loc_cids: HashMap::new(),
-            app_closed: false,
         });
         let ch = ConnectionHandle(id);
 
@@ -496,7 +415,7 @@ impl Endpoint {
             self.connection_ids.insert(loc_cid, ch);
         }
         self.connection_remotes.insert(remote, ch);
-        Ok(ch)
+        Ok((ch, conn))
     }
 
     fn handle_initial(
@@ -508,7 +427,7 @@ impl Endpoint {
         rest: Option<BytesMut>,
         crypto: &Crypto,
         header_crypto: &RingHeaderCrypto,
-    ) -> Option<ConnectionHandle> {
+    ) -> Option<(ConnectionHandle, Connection)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
                 src_cid,
@@ -616,7 +535,7 @@ impl Endpoint {
             }
         }
 
-        let ch = self
+        let (ch, mut conn) = self
             .add_connection(
                 dst_cid,
                 src_cid,
@@ -630,22 +549,16 @@ impl Endpoint {
         if dst_cid.len() != 0 {
             self.connection_ids_initial.insert(dst_cid, ch);
         }
-        match self.connections[ch].conn.handle_initial(
-            now,
-            remote,
-            ecn,
-            packet_number as u64,
-            packet,
-            rest,
-        ) {
+        match conn.handle_initial(now, remote, ecn, packet_number as u64, packet, rest) {
             Ok(()) => {
                 trace!(self.log, "connection incoming; ICID {icid}", icid = dst_cid);
                 self.incoming_handshakes += 1;
-                self.needs_transmit.insert(ch);
-                if self.connections[ch].conn.has_1rtt() {
-                    self.handle_event(ch, EndpointEvent::NeedIdentifiers);
+                if conn.has_1rtt() {
+                    if let Some(event) = self.handle_event(ch, EndpointEvent::NeedIdentifiers) {
+                        conn.handle_event(event);
+                    }
                 }
-                Some(ch)
+                return Some((ch, conn));
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
@@ -655,139 +568,9 @@ impl Endpoint {
                     ecn: None,
                     packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
-                None
+                return None;
             }
         }
-    }
-
-    /// Handle a timer expiring
-    pub fn timeout(&mut self, now: Instant, ch: ConnectionHandle, timer: Timer) {
-        self.connections[ch]
-            .conn
-            .handle_event(ConnectionEvent::Timer(now, timer));
-        self.endpoint_eventful_conns.insert(ch);
-        self.dirty_timers.insert(ch);
-        match timer {
-            Timer::LossDetection | Timer::KeepAlive => {
-                self.needs_transmit.insert(ch);
-            }
-            Timer::Idle => {
-                self.eventful_conns.insert(ch);
-            }
-            Timer::PathValidation | Timer::Close | Timer::KeyDiscard => {}
-        }
-    }
-
-    /// Transmit data on a stream
-    ///
-    /// Returns the number of bytes written on success.
-    ///
-    /// # Panics
-    /// - when applied to a stream that does not have an active outgoing channel
-    pub fn write(
-        &mut self,
-        ch: ConnectionHandle,
-        stream: StreamId,
-        data: &[u8],
-    ) -> Result<usize, WriteError> {
-        let result = self.connections[ch].conn.write(stream, data);
-        self.needs_transmit.insert(ch);
-        result
-    }
-
-    /// Indicate that no more data will be sent on a stream
-    ///
-    /// All previously transmitted data will still be delivered. Incoming data on bidirectional
-    /// streams is unaffected.
-    ///
-    /// # Panics
-    /// - when applied to a stream that does not have an active outgoing channel
-    pub fn finish(&mut self, ch: ConnectionHandle, stream: StreamId) {
-        self.connections[ch].conn.finish(stream);
-        self.needs_transmit.insert(ch);
-    }
-
-    /// Read data from a stream
-    ///
-    /// Treats a stream like a simple pipe, similar to a TCP connection. Subject to head-of-line
-    /// blocking within the stream. Consider `read_unordered` for higher throughput.
-    ///
-    /// # Panics
-    /// - when applied to a stream that does not have an active incoming channel
-    pub fn read(
-        &mut self,
-        ch: ConnectionHandle,
-        stream: StreamId,
-        buf: &mut [u8],
-    ) -> Result<usize, ReadError> {
-        self.needs_transmit.insert(ch); // May need to send flow control frames after reading
-        self.connections[ch].conn.read(stream, buf)
-    }
-
-    /// Read data from a stream out of order
-    ///
-    /// Unlike `read`, this interface is not subject to head-of-line blocking within the stream,
-    /// and hence can achieve higher throughput over lossy links.
-    ///
-    /// Some segments may be received multiple times.
-    ///
-    /// On success, returns `Ok((data, offset))` where `offset` is the position `data` begins in
-    /// the stream.
-    ///
-    /// # Panics
-    /// - when applied to a stream that does not have an active incoming channel
-    pub fn read_unordered(
-        &mut self,
-        ch: ConnectionHandle,
-        stream: StreamId,
-    ) -> Result<(Bytes, u64), ReadError> {
-        self.needs_transmit.insert(ch); // May need to send flow control frames after reading
-        self.connections[ch].conn.read_unordered(stream)
-    }
-
-    /// Abandon transmitting data on a stream
-    ///
-    /// # Panics
-    /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[ch].conn.reset(stream, error_code);
-        self.needs_transmit.insert(ch);
-    }
-
-    /// Instruct the peer to abandon transmitting data on a stream
-    ///
-    /// # Panics
-    /// - when applied to a stream that has not begun receiving data
-    pub fn stop_sending(&mut self, ch: ConnectionHandle, stream: StreamId, error_code: u16) {
-        self.connections[ch].conn.stop_sending(stream, error_code);
-        self.needs_transmit.insert(ch);
-    }
-
-    /// Create a new stream
-    ///
-    /// Returns `None` if the maximum number of streams currently permitted by the remote endpoint
-    /// are already open.
-    pub fn open(&mut self, ch: ConnectionHandle, direction: Directionality) -> Option<StreamId> {
-        self.connections[ch].conn.open(direction)
-    }
-
-    /// Ping the remote endpoint
-    ///
-    /// Useful for preventing an otherwise idle connection from timing out.
-    pub fn ping(&mut self, ch: ConnectionHandle) {
-        self.connections[ch].conn.ping();
-        self.needs_transmit.insert(ch);
-    }
-
-    /// Close a connection immediately
-    ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility
-    /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: Instant, ch: ConnectionHandle, error_code: u16, reason: Bytes) {
-        self.connections[ch].conn.close(now, error_code, reason);
-        self.connections[ch].app_closed = true;
-        self.needs_transmit.insert(ch);
-        self.endpoint_eventful_conns.insert(ch);
     }
 
     /// Free a handshake slot for reuse
@@ -798,35 +581,13 @@ impl Endpoint {
     pub fn accept(&mut self) {
         self.incoming_handshakes -= 1;
     }
-
-    pub fn accept_stream(&mut self, ch: ConnectionHandle) -> Option<StreamId> {
-        let id = self.connections[ch].conn.accept()?;
-        self.needs_transmit.insert(ch);
-        Some(id)
-    }
-
-    #[doc(hidden)]
-    pub fn force_key_update(&mut self, ch: ConnectionHandle) {
-        self.connections[ch].conn.force_key_update();
-        self.ping(ch);
-    }
-
-    pub fn loc_cids(&self, ch: ConnectionHandle) -> impl Iterator<Item = &ConnectionId> {
-        self.connections[ch].loc_cids.values()
-    }
-
-    pub fn connection(&self, ch: ConnectionHandle) -> &Connection {
-        &self.connections[ch].conn
-    }
 }
 
 pub(crate) struct ConnectionMeta {
-    pub(crate) conn: Connection,
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
     loc_cids: HashMap<u64, ConnectionId>,
-    app_closed: bool,
 }
 
 /// Parameters governing the core QUIC state machine
@@ -1165,6 +926,11 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
     fn index_mut(&mut self, ch: ConnectionHandle) -> &mut ConnectionMeta {
         &mut self[ch.0]
     }
+}
+
+pub enum DatagramEvent {
+    ConnectionEvent(ConnectionEvent),
+    NewConnection(Connection),
 }
 
 enum ConnectionOpts {
