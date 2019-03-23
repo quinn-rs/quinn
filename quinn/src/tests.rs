@@ -75,6 +75,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
     runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
     runtime.spawn(server_incoming.for_each(move |conn| {
+        tokio_current_thread::spawn(conn.driver.map_err(|_| ()));
         tokio_current_thread::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
         Ok(())
     }));
@@ -87,6 +88,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .unwrap()
                 .map_err(|e| panic!("connection failed: {}", e))
                 .and_then(move |conn| {
+                    tokio_current_thread::spawn(conn.driver.map_err(|e| panic!(e)));
                     let conn = conn.connection;
                     let stream = conn.open_bi();
                     stream

@@ -515,7 +515,7 @@ impl Connection {
         self.space_mut(space).pending_acks.subtract(&info.acks);
     }
 
-    fn timeout(&mut self, now: Instant, timer: Timer) {
+    pub(crate) fn timeout(&mut self, now: Instant, timer: Timer) {
         match timer {
             Timer::Close => {
                 self.state = State::Drained;
