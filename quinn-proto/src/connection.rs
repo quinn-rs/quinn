@@ -1459,9 +1459,10 @@ impl Connection {
                     return Ok(());
                 }
                 _ => {
-                    return Err(TransportError::PROTOCOL_VIOLATION(
-                        "illegal frame type in handshake",
-                    ));
+                    let mut err =
+                        TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
+                    err.frame = Some(frame.ty());
+                    return Err(err);
                 }
             }
         }
