@@ -2292,7 +2292,7 @@ impl Connection {
         let partial_encode = header.encode(&mut buf);
         let header_len = buf.len();
 
-        if probe && ack_only && !self.state.is_handshake() {
+        if probe && ack_only && header.is_1rtt() {
             // Nothing ack-eliciting to send, so we need to make something up
             self.ping_pending = true;
         }
