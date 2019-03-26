@@ -1097,6 +1097,12 @@ impl Drop for BiStream {
             Directionality::Bi => (true, true),
             Directionality::Uni => (ours, !ours),
         };
+
+        let pending = endpoint.pending.get_mut(&self.conn.handle).unwrap();
+        if pending.closing.is_some() || pending.drained {
+            return;
+        }
+
         if send && !self.finished {
             endpoint.inner.reset(self.conn.handle, self.stream, 0);
         }
