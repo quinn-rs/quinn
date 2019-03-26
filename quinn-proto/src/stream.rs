@@ -1,5 +1,5 @@
-use std::collections::hash_map;
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{hash_map, BinaryHeap};
 
 use bytes::Bytes;
 use err_derive::Error;
@@ -220,7 +220,6 @@ pub enum WriteError {
 pub struct Recv {
     pub state: RecvState,
     pub recvd: RangeSet,
-    pub buffered: VecDeque<(Bytes, u64)>,
     /// Whether any unordered reads have been performed, making this stream unusable for ordered
     /// reads
     pub unordered: bool,
@@ -235,7 +234,6 @@ impl Recv {
         Self {
             state: RecvState::Recv { size: None },
             recvd: RangeSet::new(),
-            buffered: VecDeque::new(),
             unordered: false,
             assembler: Assembler::new(),
             bytes_read: 0,
@@ -248,14 +246,10 @@ impl Recv {
             "cannot perform ordered reads following unordered reads on a stream"
         );
 
-        for (data, offset) in self.buffered.drain(..) {
-            self.assembler.insert(offset, &data);
-        }
-
-        if !self.assembler.blocked() {
-            let n = self.assembler.read(buf);
-            self.bytes_read += n as u64;
-            Ok(n)
+        let read = self.assembler.read(buf);
+        if read > 0 {
+            self.bytes_read += read as u64;
+            Ok(read)
         } else {
             Err(self.read_blocked())
         }
@@ -263,12 +257,11 @@ impl Recv {
 
     pub fn read_unordered(&mut self) -> Result<(Bytes, u64), ReadError> {
         self.unordered = true;
-        // TODO: Drain rs.assembler to handle ordered-then-unordered reads reliably
 
         // Return data we already have buffered, regardless of state
-        if let Some(x) = self.buffered.pop_front() {
-            self.bytes_read += x.0.len() as u64;
-            Ok(x)
+        if let Some((offset, bytes)) = self.assembler.pop() {
+            self.bytes_read += bytes.len() as u64;
+            Ok((bytes, offset))
         } else {
             Err(self.read_blocked())
         }
@@ -309,12 +302,12 @@ impl Recv {
         self.state == self::RecvState::Closed
     }
 
-    pub fn buffer(&mut self, data: Bytes, offset: u64) {
+    pub fn buffer(&mut self, bytes: Bytes, offset: u64) {
         // TODO: Dedup
-        if data.is_empty() {
+        if bytes.is_empty() {
             return;
         }
-        self.buffered.push_back((data, offset));
+        self.assembler.insert(offset, bytes);
     }
 
     /// Offset after the largest byte received
@@ -343,7 +336,6 @@ impl Recv {
         // issue flow control credit redundant to that already issued. We could instead special-case
         // reset streams during read, but it's unclear if there's any benefit to retaining data for
         // reset streams.
-        self.buffered.clear();
         self.assembler.clear();
     }
 }
@@ -395,68 +387,77 @@ pub enum RecvState {
 #[derive(Debug)]
 pub struct Assembler {
     offset: u64,
-    data: VecDeque<u8>,
-    /// bitmap of data bytes; 0 = written, 1 = not
-    written: VecDeque<u8>,
-    /// number of bits of written to skip; always < 8
-    written_offset: u8,
+    data: BinaryHeap<Chunk>,
 }
 
 impl Assembler {
     pub fn new() -> Self {
         Self {
             offset: 0,
-            data: VecDeque::new(),
-            written: VecDeque::new(),
-            written_offset: 0,
+            data: BinaryHeap::new(),
         }
-    }
-
-    /// Whether `read` will return nonzero
-    pub fn blocked(&self) -> bool {
-        let mask = !0 >> self.written_offset;
-        self.written.front().map_or(true, |x| x & mask == mask)
-    }
-
-    /// Leading written bytes
-    fn prefix_len(&self) -> usize {
-        for i in 0..self.written.len() {
-            let x = self.written[i];
-            if x == 0 || (i == 0 && x << self.written_offset == 0) {
-                continue;
-            }
-            return (i * 8 + x.leading_zeros() as usize) - self.written_offset as usize;
-        }
-        self.written.len()
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> usize {
-        let (a, b) = self.data.as_slices();
-        let available = self.prefix_len();
-        let a_len = a.len().min(available);
-        let (a, b) = (&a[0..a_len], &b[0..(available - a_len)]);
-        let a_n = a.len().min(buf.len());
-        buf[0..a_n].copy_from_slice(&a[0..a_n]);
-        let b_n = b.len().min(buf.len().saturating_sub(a.len()));
-        buf[a_n..(a_n + b_n)].copy_from_slice(&b[0..b_n]);
-        let n = a_n + b_n;
+        let mut read = 0;
+        loop {
+            if self.consume(buf, &mut read) {
+                self.data.pop();
+            } else {
+                break;
+            }
+            if read == buf.len() {
+                break;
+            }
+        }
+        read
+    }
 
-        self.offset += n as u64;
-        self.data.drain(0..n);
-        let q = n / 8;
-        let r = n % 8;
-        let carry = (self.written_offset as usize + r) / 8;
-        self.written.drain(0..(q + carry));
-        self.written_offset = (self.written_offset as usize + r - carry * 8) as u8;
+    // Read as much from the first chunk in the heap as fits in the buffer.
+    // Takes the buffer to read into and the amount of bytes that has already
+    // been read into it. Returns whether the first chunk has been fully consumed.
+    fn consume(&mut self, buf: &mut [u8], read: &mut usize) -> bool {
+        let mut chunk = if let Some(chunk) = self.data.peek_mut() {
+            chunk
+        } else {
+            return false;
+        };
 
-        n
+        // If this chunk is either after the current offset or fully before it,
+        // return directly, indicating whether the chunk can be discarded.
+        if chunk.offset > self.offset {
+            return false;
+        } else if (chunk.offset + chunk.bytes.len() as u64) < self.offset {
+            return true;
+        }
+
+        // Determine `start` and `len` of slice to read from chunk
+        let start = (self.offset - chunk.offset) as usize;
+        let left = buf.len() - *read;
+        let len = left.min(chunk.bytes.len() - start) as usize;
+
+        // Actually write into the buffer and update the related state
+        (&mut buf[*read..*read + len]).copy_from_slice(&chunk.bytes[start..start + len]);
+        *read += len;
+        self.offset += len as u64;
+
+        return if start + len == chunk.bytes.len() {
+            // This chunk has been fully consumed and can be discarded
+            true
+        } else {
+            // Mutate the chunk; `peek_mut()` is documented to update the heap's ordering
+            // accordingly if necessary on dropping the `PeekMut`. Don't pop the chunk.
+            chunk.offset = chunk.offset + start as u64 + len as u64;
+            chunk.bytes.advance(start + len);
+            false
+        };
     }
 
     #[cfg(test)]
-    fn next(&mut self) -> Option<Box<[u8]>> {
-        let mut buf = Vec::new();
-        buf.resize(self.prefix_len(), 0);
-        self.read(&mut buf);
+    fn next(&mut self, size: usize) -> Option<Box<[u8]>> {
+        let mut buf = vec![0; size];
+        let read = self.read(&mut buf);
+        buf.resize(read, 0);
         if !buf.is_empty() {
             Some(buf.into())
         } else {
@@ -464,28 +465,12 @@ impl Assembler {
         }
     }
 
-    pub fn insert(&mut self, mut offset: u64, mut data: &[u8]) {
-        if let Some(advance) = self.offset.checked_sub(offset) {
-            if advance >= data.len() as u64 {
-                return;
-            }
-            data = &data[advance as usize..];
-            offset += advance;
-        }
-        let start = (offset - self.offset) as usize;
-        let end = start + data.len();
-        if end > self.data.len() {
-            self.data.resize(end, 0);
-            // 1 extra to leave room for written_extra
-            self.written
-                .resize(end / 8 + (end % 8 != 0) as usize + 1, !0);
-        }
-        for (i, b) in data.iter().enumerate() {
-            let position = start + i;
-            self.data[position] = *b;
-            let bit = self.written_offset as usize + position;
-            self.written[bit / 8] &= !(1 << (7 - bit % 8));
-        }
+    pub fn pop(&mut self) -> Option<(u64, Bytes)> {
+        self.data.pop().map(|x| (x.offset, x.bytes))
+    }
+
+    pub fn insert(&mut self, offset: u64, bytes: Bytes) {
+        self.data.push(Chunk { offset, bytes });
     }
 
     /// Current position in the stream
@@ -495,8 +480,36 @@ impl Assembler {
 
     /// Discard all buffered data
     pub fn clear(&mut self) {
-        self.written = VecDeque::new();
-        self.data = VecDeque::new();
+        self.data.clear();
+    }
+}
+
+#[derive(Debug, Eq)]
+struct Chunk {
+    offset: u64,
+    bytes: Bytes,
+}
+
+impl Ord for Chunk {
+    // Invert ordering based on offset (max-heap, min offset first),
+    // prioritize longer chunks at the same offset.
+    fn cmp(&self, other: &Chunk) -> Ordering {
+        self.offset
+            .cmp(&other.offset)
+            .reverse()
+            .then(self.bytes.len().cmp(&other.bytes.len()))
+    }
+}
+
+impl PartialOrd for Chunk {
+    fn partial_cmp(&self, other: &Chunk) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Chunk {
+    fn eq(&self, other: &Chunk) -> bool {
+        (self.offset, self.bytes.len()) == (other.offset, other.bytes.len())
     }
 }
 
@@ -507,80 +520,81 @@ mod test {
     #[test]
     fn assemble_ordered() {
         let mut x = Assembler::new();
-        assert_matches!(x.next(), None);
-        x.insert(0, &b"123"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        x.insert(3, &b"456"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"456");
-        x.insert(6, &b"789"[..]);
-        x.insert(9, &b"10"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"78910");
-        assert_matches!(x.next(), None);
+        assert_matches!(x.next(32), None);
+        x.insert(0, Bytes::from_static(b"123"));
+        assert_matches!(x.next(1), Some(ref y) if &y[..] == b"1");
+        assert_matches!(x.next(3), Some(ref y) if &y[..] == b"23");
+        x.insert(3, Bytes::from_static(b"456"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"456");
+        x.insert(6, Bytes::from_static(b"789"));
+        x.insert(9, Bytes::from_static(b"10"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"78910");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_unordered() {
         let mut x = Assembler::new();
-        x.insert(3, &b"456"[..]);
-        assert_matches!(x.next(), None);
-        x.insert(0, &b"123"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
-        assert_matches!(x.next(), None);
+        x.insert(3, Bytes::from_static(b"456"));
+        assert_matches!(x.next(32), None);
+        x.insert(0, Bytes::from_static(b"123"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_duplicate() {
         let mut x = Assembler::new();
-        x.insert(0, &b"123"[..]);
-        x.insert(0, &b"123"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123");
-        assert_matches!(x.next(), None);
+        x.insert(0, Bytes::from_static(b"123"));
+        x.insert(0, Bytes::from_static(b"123"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_contained() {
         let mut x = Assembler::new();
-        x.insert(0, &b"12345"[..]);
-        x.insert(1, &b"234"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(), None);
+        x.insert(0, Bytes::from_static(b"12345"));
+        x.insert(1, Bytes::from_static(b"234"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_contains() {
         let mut x = Assembler::new();
-        x.insert(1, &b"234"[..]);
-        x.insert(0, &b"12345"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(), None);
+        x.insert(1, Bytes::from_static(b"234"));
+        x.insert(0, Bytes::from_static(b"12345"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_overlapping() {
         let mut x = Assembler::new();
-        x.insert(0, &b"123"[..]);
-        x.insert(1, &b"234"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
-        assert_matches!(x.next(), None);
+        x.insert(0, Bytes::from_static(b"123"));
+        x.insert(1, Bytes::from_static(b"234"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_complex() {
         let mut x = Assembler::new();
-        x.insert(0, &b"1"[..]);
-        x.insert(2, &b"3"[..]);
-        x.insert(4, &b"5"[..]);
-        x.insert(0, &b"123456"[..]);
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"123456");
-        assert_matches!(x.next(), None);
+        x.insert(0, Bytes::from_static(b"1"));
+        x.insert(2, Bytes::from_static(b"3"));
+        x.insert(4, Bytes::from_static(b"5"));
+        x.insert(0, Bytes::from_static(b"123456"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(x.next(32), None);
     }
 
     #[test]
     fn assemble_old() {
         let mut x = Assembler::new();
-        x.insert(0, b"1234");
-        assert_matches!(x.next(), Some(ref y) if &y[..] == b"1234");
-        x.insert(0, b"1234");
-        assert_matches!(x.next(), None);
+        x.insert(0, Bytes::from_static(b"1234"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        x.insert(0, Bytes::from_static(b"1234"));
+        assert_matches!(x.next(32), None);
     }
 }

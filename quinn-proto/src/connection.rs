@@ -932,7 +932,9 @@ impl Connection {
         }
 
         let space = &mut self.spaces[space as usize];
-        space.crypto_stream.insert(crypto.offset, &crypto.data);
+        space
+            .crypto_stream
+            .insert(crypto.offset, crypto.data.clone());
         let mut buf = [0; 8192];
         loop {
             let n = space.crypto_stream.read(&mut buf);
