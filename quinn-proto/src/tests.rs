@@ -906,11 +906,11 @@ fn key_update_reordered() {
     assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
     assert_matches!(
         pair.server.read_unordered(server_ch, s),
-        Ok((ref data, 1)) if data == MSG2
+        Ok((ref data, 0)) if data == MSG1
     );
     assert_matches!(
         pair.server.read_unordered(server_ch, s),
-        Ok((ref data, 0)) if data == MSG1
+        Ok((ref data, 1)) if data == MSG2
     );
 
     assert_eq!(pair.client.connection(client_ch).lost_packets(), 0);
