@@ -387,6 +387,10 @@ impl Header {
         }
     }
 
+    pub fn is_1rtt(&self) -> bool {
+        self.is_short()
+    }
+
     pub fn is_0rtt(&self) -> bool {
         match *self {
             Header::Long {
