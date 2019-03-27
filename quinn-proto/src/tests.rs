@@ -904,7 +904,6 @@ fn key_update_reordered() {
 
     assert_matches!(pair.server.poll(), Some((conn, Event::StreamOpened)) if conn == server_ch);
     assert_matches!(pair.server.accept_stream(server_ch), Some(stream) if stream == s);
-    assert_matches!(pair.server.poll(), None);
     assert_matches!(
         pair.server.read_unordered(server_ch, s),
         Ok((ref data, 1)) if data == MSG2
