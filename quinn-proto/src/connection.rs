@@ -2434,11 +2434,9 @@ impl Connection {
 
     fn close_common(&mut self, now: Instant) {
         trace!(self.log, "connection closed");
-        self.io.timer_stop(Timer::LossDetection);
-        self.io.timer_stop(Timer::Idle);
-        self.io.timer_stop(Timer::KeyDiscard);
-        self.io.timer_stop(Timer::PathValidation);
-        self.io.timer_stop(Timer::KeepAlive);
+        for &timer in &Timer::VALUES {
+            self.io.timer_stop(timer);
+        }
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
