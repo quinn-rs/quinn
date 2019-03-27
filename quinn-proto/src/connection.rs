@@ -1126,10 +1126,11 @@ impl Connection {
                 Err(e.into())
             }
             Err(None) => {
-                debug!(self.log, "failed to authenticate packet");
                 if stateless_reset {
+                    debug!(self.log, "got stateless reset");
                     Err(ConnectionError::Reset)
                 } else {
+                    debug!(self.log, "failed to authenticate packet");
                     return;
                 }
             }
@@ -1175,7 +1176,6 @@ impl Connection {
                 ConnectionError::ConnectionClosed { reason } => State::closed(reason),
                 ConnectionError::Reset => {
                     if !self.state.is_drained() {
-                        debug!(self.log, "got stateless reset");
                         for &timer in &Timer::VALUES {
                             self.io.timer_stop(timer);
                         }
