@@ -65,6 +65,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
 
     let mut client_config = ClientConfigBuilder::default();
     client_config.add_certificate_authority(cert).unwrap();
+    client_config.enable_keylog();
     let mut client = Endpoint::new();
     client.logger(log.clone());
     client.default_client_config(client_config.build());
