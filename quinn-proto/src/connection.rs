@@ -1546,7 +1546,6 @@ impl Connection {
                         _ => {}
                     }
                     let rs = self.streams.get_recv_mut(frame.id).unwrap();
-                    let was_blocked = rs.is_blocked();
                     if rs.is_finished() {
                         trace!(self.log, "dropping frame for finished stream");
                         continue;
@@ -1581,7 +1580,7 @@ impl Connection {
                         }
                     }
 
-                    self.on_stream_frame(was_blocked, frame.id);
+                    self.on_stream_frame(true, frame.id);
                     self.data_recvd += new_bytes;
                 }
                 Frame::Ack(ack) => {
@@ -1696,7 +1695,6 @@ impl Connection {
                         }
                         Ok(Some(stream)) => stream.recv_mut().unwrap(),
                     };
-                    let was_blocked = rs.is_blocked();
                     let limit = rs.limit();
 
                     // Validate final_offset
@@ -1722,7 +1720,7 @@ impl Connection {
                     }
 
                     // Notify application
-                    self.on_stream_frame(was_blocked, id);
+                    self.on_stream_frame(true, id);
                 }
                 Frame::DataBlocked { offset } => {
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);

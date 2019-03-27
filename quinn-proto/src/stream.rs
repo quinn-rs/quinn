@@ -242,11 +242,6 @@ impl Recv {
         }
     }
 
-    /// Whether a read is guaranteed to fail now, but might succeed later
-    pub fn is_blocked(&self) -> bool {
-        self.buffered.is_empty() && self.assembler.blocked() && !self.is_finished()
-    }
-
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
         assert!(
             !self.unordered,
