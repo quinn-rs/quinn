@@ -1927,9 +1927,10 @@ impl Connection {
             .tag_len();
         let max_size = self.mtu as usize - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
+        let is_1rtt = space_id == SpaceId::Data && space.crypto.is_some();
 
         // PING
-        if mem::replace(&mut self.ping_pending, false) {
+        if is_1rtt && mem::replace(&mut self.ping_pending, false) {
             trace!(self.log, "PING");
             buf.write(frame::Type::PING);
         }
