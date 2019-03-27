@@ -793,7 +793,7 @@ impl Connection {
     }
 
     fn reset_keep_alive(&mut self, now: Instant) {
-        if self.config.keep_alive_interval == 0 || self.state.is_closed() {
+        if self.config.keep_alive_interval == 0 || !self.state.is_established() {
             return;
         }
         self.io.timer_start(
@@ -3149,6 +3149,13 @@ impl State {
     fn is_handshake(&self) -> bool {
         match *self {
             State::Handshake(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_established(&self) -> bool {
+        match *self {
+            State::Established => true,
             _ => false,
         }
     }
