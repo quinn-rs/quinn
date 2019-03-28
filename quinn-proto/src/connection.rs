@@ -1654,7 +1654,7 @@ impl Connection {
                             }
                             ss.max_data = offset;
                         }
-                    } else {
+                    } else if id.initiator() == self.side() && self.streams.is_local_unopened(id) {
                         debug!(
                             self.log,
                             "got MAX_STREAM_DATA on unopened {stream}",
