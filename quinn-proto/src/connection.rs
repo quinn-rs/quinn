@@ -1197,6 +1197,9 @@ impl Connection {
             self.close_common(now);
         }
         if !was_drained && self.state.is_drained() {
+            if was_closed {
+                self.send_closed_event();
+            }
             // Close timer may have been started previously, or if an established connection was
             // reset, just above.
             self.io.timer_stop(Timer::Close);
