@@ -2490,17 +2490,7 @@ impl Connection {
     }
 
     pub fn accept(&mut self) -> Option<StreamId> {
-        let id = if self.streams.next_remote_uni > self.streams.next_reported_remote_uni {
-            let x = self.streams.next_reported_remote_uni;
-            self.streams.next_reported_remote_uni = x + 1;
-            StreamId::new(!self.side, Directionality::Uni, x)
-        } else if self.streams.next_remote_bi > self.streams.next_reported_remote_bi {
-            let x = self.streams.next_reported_remote_bi;
-            self.streams.next_reported_remote_bi = x + 1;
-            StreamId::new(!self.side, Directionality::Bi, x)
-        } else {
-            return None;
-        };
+        let id = self.streams.accept(self.side)?;
         self.alloc_remote_stream(id.directionality());
         Some(id)
     }
