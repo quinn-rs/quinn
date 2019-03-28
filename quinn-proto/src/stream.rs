@@ -593,7 +593,7 @@ impl Assembler {
         *read += len;
         self.offset += len as u64;
 
-        return if start + len == chunk.bytes.len() {
+        if start + len == chunk.bytes.len() {
             // This chunk has been fully consumed and can be discarded
             true
         } else {
@@ -602,7 +602,7 @@ impl Assembler {
             chunk.offset = chunk.offset + start as u64 + len as u64;
             chunk.bytes.advance(start + len);
             false
-        };
+        }
     }
 
     #[cfg(test)]

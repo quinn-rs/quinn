@@ -474,7 +474,7 @@ impl ConnectionInner {
                     timer,
                     update: quinn::TimerSetting::Stop,
                 } => {
-                    if let Some(_) = self.timers[timer as usize].take() {
+                    if self.timers[timer as usize].take().is_some() {
                         trace!(self.log, "{timer:?} timer stop", timer = timer);
                     }
                 }
@@ -764,7 +764,7 @@ impl io::Read for BiStream {
             )),
             Err(UnknownStream) => Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
-                format!("unknown stream"),
+                "unknown stream".to_string(),
             )),
         }
     }

@@ -558,7 +558,7 @@ impl Endpoint {
                         conn.handle_event(event);
                     }
                 }
-                return Some((ch, conn));
+                Some((ch, conn))
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
@@ -568,7 +568,7 @@ impl Endpoint {
                     ecn: None,
                     packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
-                return None;
+                None
             }
         }
     }
