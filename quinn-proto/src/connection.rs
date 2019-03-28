@@ -6,7 +6,7 @@ use std::{cmp, io, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 use err_derive::Error;
-use fnv::{FnvHashMap, FnvHashSet};
+use fnv::FnvHashSet;
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
@@ -23,7 +23,7 @@ use crate::packet::{
     PartialDecode, SpaceId, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
-use crate::stream::{self, ReadError, Stream, Streams, WriteError};
+use crate::stream::{self, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
@@ -170,19 +170,6 @@ impl Connection {
             crypto: Some(CryptoSpace::new(Crypto::new_initial(&init_cid, side))),
             ..PacketSpace::new()
         };
-        let mut streams = FnvHashMap::default();
-        for i in 0..config.stream_window_uni {
-            streams.insert(
-                StreamId::new(!side, Directionality::Uni, u64::from(i)),
-                stream::Recv::new().into(),
-            );
-        }
-        for i in 0..config.stream_window_bidi {
-            streams.insert(
-                StreamId::new(!side, Directionality::Bi, i as u64),
-                Stream::new_bi(),
-            );
-        }
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             token: None,
@@ -250,19 +237,7 @@ impl Connection {
             total_recvd: 0,
             total_sent: 0,
 
-            streams: Streams {
-                streams,
-                next_uni: 0,
-                next_bi: 0,
-                max_uni: 0,
-                max_bi: 0,
-                max_remote_uni: config.stream_window_uni,
-                max_remote_bi: config.stream_window_bidi,
-                next_remote_uni: 0,
-                next_remote_bi: 0,
-                next_reported_remote_uni: 0,
-                next_reported_remote_bi: 0,
-            },
+            streams: Streams::new(side, config.stream_window_uni, config.stream_window_bidi),
             config,
             rem_cids: Vec::new(),
         };
