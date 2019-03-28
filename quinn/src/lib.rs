@@ -388,6 +388,7 @@ impl EndpointInner {
         self.connections.insert(handle, conn_events_sender);
         ConnectionRef(Rc::new(RefCell::new(ConnectionInner {
             log: self.log.clone(),
+            epoch: Instant::now(),
             side: conn.side(),
             inner: conn,
             handle,
@@ -650,6 +651,7 @@ impl Connection {
 
 struct ConnectionInner {
     log: Logger,
+    epoch: Instant,
     inner: quinn::Connection,
     driver: Option<Task>,
     handle: ConnectionHandle,
@@ -792,11 +794,11 @@ impl ConnectionInner {
                     update: quinn::TimerSetting::Start(time),
                 } => match self.timers[timer as usize] {
                     ref mut x @ None => {
-                        trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time);
+                        trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
                         *x = Some(Delay::new(time));
                     }
                     Some(ref mut x) => {
-                        trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time);
+                        trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time.duration_since(self.epoch));
                         x.reset(time);
                     }
                 },
