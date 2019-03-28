@@ -91,6 +91,15 @@ impl Streams {
     pub fn get_send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
         self.streams.get_mut(&id)?.send_mut()
     }
+
+    /// Whether a presumed-local stream is or was previously open
+    pub fn is_local_unopened(&self, id: StreamId) -> bool {
+        id.index()
+            >= match id.directionality() {
+                Directionality::Bi => self.next_bi,
+                Directionality::Uni => self.next_uni,
+            }
+    }
 }
 
 #[derive(Debug)]

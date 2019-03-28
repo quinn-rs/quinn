@@ -1564,3 +1564,45 @@ fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
         _ => None,
     }
 }
+
+#[test]
+fn finish_stream_flow_control_reordered() {
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair
+        .client_conn_mut(client_ch)
+        .open(Directionality::Uni)
+        .unwrap();
+
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.drive_client(); // Send stream data
+    pair.server.drive(&pair.log, pair.time, pair.client.addr); // Receive
+
+    // Issue flow control credit
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(s),
+        Ok((ref data, 0)) if data == MSG
+    );
+    pair.server.drive(&pair.log, pair.time, pair.client.addr);
+    pair.server.delay_outbound(); // Delay it
+
+    pair.client_conn_mut(client_ch).finish(s);
+    pair.drive_client(); // Send FIN
+    pair.server.drive(&pair.log, pair.time, pair.client.addr); // Acknowledge
+    pair.server.finish_delay(); // Add flow control packets after
+    pair.drive();
+
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), Some(Event::StreamFinished { stream }) if stream == s);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::StreamOpened)
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(s),
+        Err(ReadError::Finished)
+    );
+}
