@@ -30,6 +30,35 @@ pub struct Streams {
 }
 
 impl Streams {
+    pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
+        let mut streams = FnvHashMap::default();
+        for i in 0..max_remote_uni {
+            streams.insert(
+                StreamId::new(!side, Directionality::Uni, u64::from(i)),
+                Recv::new().into(),
+            );
+        }
+        for i in 0..max_remote_bi {
+            streams.insert(
+                StreamId::new(!side, Directionality::Bi, i as u64),
+                Stream::new_bi(),
+            );
+        }
+        Self {
+            streams,
+            next_uni: 0,
+            next_bi: 0,
+            max_uni: 0,
+            max_bi: 0,
+            max_remote_uni,
+            max_remote_bi,
+            next_remote_uni: 0,
+            next_remote_bi: 0,
+            next_reported_remote_uni: 0,
+            next_reported_remote_bi: 0,
+        }
+    }
+
     pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
         let (id, stream) = match direction {
             Directionality::Uni if self.next_uni < self.max_uni => {
