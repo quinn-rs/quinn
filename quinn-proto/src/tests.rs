@@ -1064,19 +1064,17 @@ fn key_update_reordered() {
     pair.client.finish_delay();
     pair.drive();
 
+    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened)
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 0)) if data == MSG1
-    );
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 1)) if data == MSG2
-    );
+    let mut buf = [0; 32];
+    assert_matches!(pair.server_conn_mut(server_ch).read(s, &mut buf),
+                    Ok(n) if n == MSG1.len() + MSG2.len());
+    assert_eq!(&buf[0..MSG1.len()], MSG1);
+    assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
