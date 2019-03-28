@@ -186,7 +186,7 @@ impl Endpoint {
 /// running this task is necessary to keep the endpoint's connections running.
 ///
 /// `Driver` instances do not terminate (always yields `NotReady`) except in case of an error.
-#[must_use]
+#[must_use = "endpoint drivers must be spawned for I/O to occur"]
 pub struct Driver(Rc<RefCell<EndpointInner>>);
 
 /// Maximum number of send/recv calls to make before moving on to other processing
@@ -511,7 +511,7 @@ impl Future for ConnectingFuture {
 ///
 /// If the connection encounters an error condition, this future will yield an error. It
 /// will terminate (yielding `Ready(())`) if the connection was closed without error.
-#[must_use]
+#[must_use = "connection drivers must be spawned for their connections to function"]
 pub struct ConnectionDriver(Rc<RefCell<ConnectionInner>>);
 
 impl Future for ConnectionDriver {
