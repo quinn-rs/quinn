@@ -112,6 +112,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
                 eprintln!("connected at {:?}", start.elapsed());
+                tokio_current_thread::spawn(
+                    conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                );
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream
