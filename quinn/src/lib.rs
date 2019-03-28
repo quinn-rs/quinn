@@ -223,11 +223,7 @@ impl Drop for Driver {
     fn drop(&mut self) {
         for sender in self.0.borrow_mut().connections.values() {
             // Ignoring errors from non-existent connections
-            let _ = sender.unbounded_send(ConnectionEvent::Close(quinn::TransportError {
-                code: quinn::TransportErrorCode::INTERNAL_ERROR,
-                frame: None,
-                reason: "driver future was dropped".to_string(),
-            }));
+            let _ = sender.unbounded_send(ConnectionEvent::DriverLost);
         }
     }
 }
@@ -702,13 +698,13 @@ impl ConnectionInner {
                 Ok(Async::Ready(Some(ConnectionEvent::Proto(event)))) => {
                     self.inner.handle_event(event);
                 }
-                Ok(Async::Ready(Some(ConnectionEvent::Close(_)))) => {
+                Ok(Async::Ready(Some(ConnectionEvent::DriverLost))) => {
                     self.closed = true;
                     self.pending
                         .fail(ConnectionError::TransportError(quinn::TransportError {
-                            code: quinn::TransportErrorCode::NO_ERROR,
+                            code: quinn::TransportErrorCode::INTERNAL_ERROR,
                             frame: None,
-                            reason: "connection is closing".to_string(),
+                            reason: "driver future was dropped".to_string(),
                         }));
                 }
                 Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
@@ -1336,7 +1332,7 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
 }
 
 enum ConnectionEvent {
-    Close(quinn::TransportError),
+    DriverLost,
     Proto(quinn::ConnectionEvent),
 }
 
