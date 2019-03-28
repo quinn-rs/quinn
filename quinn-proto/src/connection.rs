@@ -1536,7 +1536,7 @@ impl Connection {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let data_recvd = self.data_recvd;
                     let max_data = self.local_max_data;
-                    match self.streams.get_recv_stream(self.side, frame.id) {
+                    let rs = match self.streams.get_recv_stream(self.side, frame.id) {
                         Err(e) => {
                             debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
                             return Err(e);
@@ -1545,9 +1545,8 @@ impl Connection {
                             trace!(self.log, "dropping frame for closed stream");
                             continue;
                         }
-                        _ => {}
-                    }
-                    let rs = self.streams.get_recv_mut(frame.id).unwrap();
+                        Ok(Some(rs)) => rs.recv_mut().unwrap(),
+                    };
                     if rs.is_finished() {
                         trace!(self.log, "dropping frame for finished stream");
                         continue;
