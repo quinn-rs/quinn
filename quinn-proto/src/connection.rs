@@ -282,7 +282,7 @@ impl Connection {
     /// - a packet is transmitted
     /// - any timer expires
     pub fn poll_timers(&mut self) -> Option<TimerUpdate> {
-        for (&timer, update) in Timer::VALUES.iter().zip(self.io.timers.iter_mut()) {
+        for (timer, update) in Timer::iter().zip(self.io.timers.iter_mut()) {
             if let Some(update) = update.take() {
                 return Some(TimerUpdate { timer, update });
             }
@@ -2433,7 +2433,7 @@ impl Connection {
 
     fn close_common(&mut self, now: Instant) {
         trace!(self.log, "connection closed");
-        for &timer in &Timer::VALUES {
+        for timer in Timer::iter() {
             self.io.timer_stop(timer);
         }
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
