@@ -1537,11 +1537,10 @@ impl Connection {
                 }
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
-                    let data_recvd = self.data_recvd;
-                    let max_data = self.local_max_data;
-                    let rs = match self.streams.get_recv_stream(self.side, frame.id) {
+                    let stream = frame.id;
+                    let rs = match self.streams.get_recv_stream(self.side, stream) {
                         Err(e) => {
-                            debug!(self.log, "received illegal stream frame"; "stream" => frame.id.0);
+                            debug!(self.log, "received illegal stream frame"; "stream" => stream.0);
                             return Err(e);
                         }
                         Ok(None) => {
@@ -1555,37 +1554,14 @@ impl Connection {
                         continue;
                     }
 
-                    let end = frame.offset + frame.data.len() as u64;
-                    if let Some(final_offset) = rs.final_offset() {
-                        if end > final_offset || (frame.fin && end != final_offset) {
-                            debug!(self.log, "final offset error"; "frame end" => end, "final offset" => final_offset);
-                            return Err(TransportError::FINAL_OFFSET_ERROR(""));
-                        }
-                    }
-                    let prev_end = rs.limit();
-                    let new_bytes = end.saturating_sub(prev_end);
-                    let stream_max_data = rs.bytes_read + self.config.stream_receive_window;
-                    if end > stream_max_data || data_recvd + new_bytes > max_data {
-                        debug!(self.log, "flow control error";
-                                   "stream" => frame.id.0, "recvd" => data_recvd, "new bytes" => new_bytes,
-                                   "max data" => max_data, "end" => end, "stream max data" => stream_max_data);
-                        return Err(TransportError::FLOW_CONTROL_ERROR(""));
-                    }
-                    if frame.fin {
-                        if let stream::RecvState::Recv { ref mut size } = rs.state {
-                            *size = Some(end);
-                        }
-                    }
-                    rs.recvd.insert(frame.offset..end);
-                    rs.buffer(frame.data, frame.offset);
-                    if let stream::RecvState::Recv { size: Some(size) } = rs.state {
-                        if rs.recvd.len() == 1 && rs.recvd.iter().next().unwrap() == (0..size) {
-                            rs.state = stream::RecvState::DataRecvd { size };
-                        }
-                    }
-
-                    self.on_stream_frame(true, frame.id);
-                    self.data_recvd += new_bytes;
+                    self.data_recvd += rs.ingest(
+                        &self.log,
+                        frame,
+                        self.data_recvd,
+                        self.local_max_data,
+                        self.config.stream_receive_window,
+                    )?;
+                    self.on_stream_frame(true, stream);
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack);
