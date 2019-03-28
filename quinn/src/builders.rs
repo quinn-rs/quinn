@@ -14,9 +14,9 @@ use slog::Logger;
 
 use quinn_proto::{EndpointConfig, ServerConfig, TransportConfig};
 
+use crate::endpoint::{Driver, Endpoint, EndpointInner, Incoming};
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
 use crate::udp::UdpSocket;
-use crate::{Driver, Endpoint, EndpointInner, Incoming};
 
 /// A helper for constructing an `Endpoint`.
 pub struct EndpointBuilder<'a> {
