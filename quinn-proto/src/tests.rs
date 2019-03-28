@@ -323,7 +323,7 @@ impl TestEndpoint {
 
         let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
         for (ch, conn) in self.connections.iter_mut() {
-            for &timer in Timer::VALUES.iter() {
+            for timer in Timer::iter() {
                 if let Some(time) = self.timers[timer as usize] {
                     if time <= now {
                         trace!(

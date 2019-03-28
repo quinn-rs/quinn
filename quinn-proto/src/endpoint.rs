@@ -885,14 +885,19 @@ pub enum Timer {
 impl Timer {
     /// Number of types of timers that a connection may start
     pub const COUNT: usize = 6;
-    pub(crate) const VALUES: [Timer; Self::COUNT] = [
-        Timer::LossDetection,
-        Timer::Idle,
-        Timer::Close,
-        Timer::KeyDiscard,
-        Timer::PathValidation,
-        Timer::KeepAlive,
-    ];
+
+    pub fn iter() -> impl Iterator<Item = Self> {
+        [
+            Timer::LossDetection,
+            Timer::Idle,
+            Timer::Close,
+            Timer::KeyDiscard,
+            Timer::PathValidation,
+            Timer::KeepAlive,
+        ]
+        .iter()
+        .cloned()
+    }
 }
 
 impl slog::Value for Timer {
