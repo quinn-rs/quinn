@@ -2842,6 +2842,10 @@ impl Connection {
         self.state.is_closed()
     }
 
+    pub fn is_drained(&self) -> bool {
+        self.state.is_drained()
+    }
+
     pub fn accepted_0rtt(&self) -> bool {
         self.accepted_0rtt
     }

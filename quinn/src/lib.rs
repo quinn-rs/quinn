@@ -841,6 +841,20 @@ impl ConnectionInner {
     }
 }
 
+impl Drop for ConnectionInner {
+    fn drop(&mut self) {
+        if !self.inner.is_drained() {
+            // Ensure the endpoint can tidy up
+            let _ = self.endpoint_events.unbounded_send((
+                self.handle,
+                EndpointEvent::Proto(quinn::EndpointEvent::Closed {
+                    remote: self.inner.remote(),
+                }),
+            ));
+        }
+    }
+}
+
 /// A stream of QUIC streams initiated by a remote peer.
 pub struct IncomingStreams(Rc<RefCell<ConnectionInner>>);
 
