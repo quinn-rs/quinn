@@ -1975,7 +1975,7 @@ impl Connection {
             } else {
                 break;
             };
-            let stream = if let Some(x) = self.streams.streams.get(&id) {
+            let stream = if let Some(x) = self.streams.get_send_mut(id) {
                 x
             } else {
                 continue;
@@ -1985,7 +1985,7 @@ impl Connection {
             frame::ResetStream {
                 id,
                 error_code,
-                final_offset: stream.send().unwrap().offset,
+                final_offset: stream.offset,
             }
             .encode(buf);
         }
@@ -1997,8 +1997,8 @@ impl Connection {
             } else {
                 break;
             };
-            let stream = if let Some(x) = self.streams.streams.get(&id) {
-                x.recv().unwrap()
+            let stream = if let Some(x) = self.streams.get_recv_mut(id) {
+                x
             } else {
                 continue;
             };
@@ -2029,8 +2029,8 @@ impl Connection {
                 break;
             };
             space.pending.max_stream_data.remove(&id);
-            let rs = if let Some(x) = self.streams.streams.get(&id) {
-                x.recv().unwrap()
+            let rs = if let Some(x) = self.streams.get_recv_mut(id) {
+                x
             } else {
                 continue;
             };
@@ -2107,9 +2107,8 @@ impl Connection {
             };
             if self
                 .streams
-                .streams
-                .get(&stream.id)
-                .map_or(true, |s| s.send().unwrap().state.was_reset())
+                .get_send_mut(stream.id)
+                .map_or(true, |s| s.state.was_reset())
             {
                 self.unacked_data -= stream.data.len() as u64;
                 continue;
@@ -2535,13 +2534,7 @@ impl Connection {
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
-        let stream = self
-            .streams
-            .streams
-            .get(&id)
-            .expect("stream must have begun sending to be stopped")
-            .recv()
-            .unwrap();
+        let stream = self.streams.get_recv_mut(id).unwrap();
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
             let space = &mut self.spaces[SpaceId::Data as usize];
