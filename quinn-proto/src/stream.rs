@@ -12,9 +12,9 @@ use crate::{Directionality, Side, StreamId, TransportError};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
-    pub streams: FnvHashMap<StreamId, Stream>,
-    pub next_uni: u64,
-    pub next_bi: u64,
+    streams: FnvHashMap<StreamId, Stream>,
+    next_uni: u64,
+    next_bi: u64,
     // Locally initiated
     pub max_uni: u64,
     pub max_bi: u64,
@@ -25,8 +25,8 @@ pub struct Streams {
     pub next_remote_uni: u64,
     pub next_remote_bi: u64,
     // Next to report to the application, once opened
-    pub next_reported_remote_uni: u64,
-    pub next_reported_remote_bi: u64,
+    next_reported_remote_uni: u64,
+    next_reported_remote_bi: u64,
 }
 
 impl Streams {
