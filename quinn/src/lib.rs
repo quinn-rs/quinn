@@ -70,7 +70,6 @@ use std::{io, mem};
 use bytes::Bytes;
 use err_derive::Error;
 use fnv::FnvHashMap;
-use futures::stream::FuturesUnordered;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
@@ -394,7 +393,7 @@ impl EndpointInner {
             handle,
             pending,
             driver: None,
-            timers: FuturesUnordered::new(),
+            timers: [None, None, None, None, None, None],
             conn_events,
             endpoint_events,
             connected: false,
@@ -408,7 +407,6 @@ struct Pending {
     blocked_readers: FnvHashMap<StreamId, Task>,
     uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    cancel_timers: [Option<oneshot::Sender<()>>; quinn::Timer::COUNT],
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     error: Option<ConnectionError>,
@@ -422,7 +420,6 @@ impl Pending {
             blocked_readers: FnvHashMap::default(),
             uni_opening: VecDeque::new(),
             bi_opening: VecDeque::new(),
-            cancel_timers: [None, None, None, None, None, None],
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
@@ -658,8 +655,7 @@ struct ConnectionInner {
     handle: ConnectionHandle,
     pending: Pending,
     side: Side,
-    // TODO: Replace this with something custom that avoids using oneshots to cancel
-    timers: FuturesUnordered<Timer>,
+    timers: [Option<Delay>; quinn::Timer::COUNT],
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     connected: bool,
@@ -765,25 +761,24 @@ impl ConnectionInner {
 
     fn drive_timers(&mut self, now: Instant) -> bool {
         let mut keep_going = false;
-        loop {
-            match self.timers.poll() {
-                Ok(Async::Ready(Some(Some(timer)))) => {
-                    trace!(self.log, "timeout"; "timer" => ?timer);
-                    self.inner
-                        .handle_event(quinn::ConnectionEvent::Timer(now, timer));
-                    if timer == quinn::Timer::Close {
-                        if let Some(x) = self.pending.closing.take() {
-                            let _ = x.send(());
+        for (timer, slot) in quinn::Timer::iter().zip(&mut self.timers) {
+            if let Some(ref mut delay) = slot {
+                match delay.poll().unwrap() {
+                    Async::Ready(()) => {
+                        *slot = None;
+                        trace!(self.log, "{timer:?} timeout", timer = timer);
+                        self.inner
+                            .handle_event(quinn::ConnectionEvent::Timer(now, timer));
+                        if timer == quinn::Timer::Close {
+                            if let Some(x) = self.pending.closing.take() {
+                                let _ = x.send(());
+                            }
                         }
+                        // Timeout call may have queued sends
+                        keep_going = true;
                     }
-                    // Timeout call may have queued sends
-                    keep_going = true;
+                    Async::NotReady => {}
                 }
-                Ok(Async::Ready(Some(None))) => {}
-                Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
-                    break;
-                }
-                Err(()) => unreachable!(),
             }
         }
         keep_going
@@ -793,40 +788,24 @@ impl ConnectionInner {
         while let Some(update) = self.inner.poll_timers() {
             match update {
                 TimerUpdate {
-                    timer: timer @ quinn::Timer::Close,
-                    update: quinn::TimerSetting::Start(time),
-                } => {
-                    self.timers.push(Timer {
-                        ty: timer,
-                        delay: Delay::new(time),
-                        cancel: None,
-                    });
-                }
-                TimerUpdate {
                     timer,
                     update: quinn::TimerSetting::Start(time),
-                } => {
-                    let cancel = &mut self.pending.cancel_timers[timer as usize];
-                    if let Some(cancel) = cancel.take() {
-                        let _ = cancel.send(());
+                } => match self.timers[timer as usize] {
+                    ref mut x @ None => {
+                        trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time);
+                        *x = Some(Delay::new(time));
                     }
-                    let (send, recv) = oneshot::channel();
-                    *cancel = Some(send);
-                    trace!(self.log, "timer start"; "timer" => ?timer, "time" => ?time);
-                    self.timers.push(Timer {
-                        ty: timer,
-                        delay: Delay::new(time),
-                        cancel: Some(recv),
-                    });
-                }
+                    Some(ref mut x) => {
+                        trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time);
+                        x.reset(time);
+                    }
+                },
                 TimerUpdate {
                     timer,
                     update: quinn::TimerSetting::Stop,
                 } => {
-                    trace!(self.log, "timer stop"; "timer" => ?timer);
-                    // If a connection was lost, we already canceled its loss/idle timers.
-                    if let Some(x) = self.pending.cancel_timers[timer as usize].take() {
-                        let _ = x.send(());
+                    if let Some(_) = self.timers[timer as usize].take() {
+                        trace!(self.log, "{timer:?} timer stop", timer = timer);
                     }
                 }
             }
@@ -1178,30 +1157,6 @@ pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
         stream: Some(stream),
         size_limit,
         buffer: Vec::new(),
-    }
-}
-
-struct Timer {
-    ty: quinn::Timer,
-    delay: Delay,
-    cancel: Option<oneshot::Receiver<()>>,
-}
-
-impl Future for Timer {
-    type Item = Option<quinn::Timer>;
-    type Error = (); // FIXME
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(ref mut cancel) = self.cancel {
-            if let Ok(Async::NotReady) = cancel.poll() {
-            } else {
-                return Ok(Async::Ready(None));
-            }
-        }
-        match self.delay.poll() {
-            Err(e) => panic!("unexpected timer error: {}", e),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(())) => Ok(Async::Ready(Some(self.ty))),
-        }
     }
 }
 
