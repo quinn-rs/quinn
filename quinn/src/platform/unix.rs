@@ -90,15 +90,14 @@ impl super::UdpExt for UdpSocket {
             iov_base: msg.as_ptr() as *const _ as *mut _,
             iov_len: msg.len(),
         };
-        let mut hdr = libc::msghdr {
-            msg_name: name,
-            msg_namelen: namelen as _,
-            msg_iov: &mut iov,
-            msg_iovlen: 1,
-            msg_control: ptr::null_mut(),
-            msg_controllen: 0,
-            msg_flags: 0,
-        };
+        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+        hdr.msg_name = name;
+        hdr.msg_namelen = namelen as _;
+        hdr.msg_iov = &mut iov;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = ptr::null_mut();
+        hdr.msg_controllen = 0;
+        hdr.msg_flags = 0;
         let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
             cmsg::Aligned(unsafe { mem::uninitialized() });
         let is_ipv4 = match remote {
@@ -133,15 +132,14 @@ impl super::UdpExt for UdpSocket {
         };
         let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
             cmsg::Aligned(unsafe { mem::uninitialized() });
-        let mut hdr = libc::msghdr {
-            msg_name: &mut name as *mut _ as _,
-            msg_namelen: mem::size_of::<libc::sockaddr_storage>() as _,
-            msg_iov: &mut iov,
-            msg_iovlen: 1,
-            msg_control: ctrl.0.as_mut_ptr() as _,
-            msg_controllen: CMSG_LEN as _,
-            msg_flags: 0,
-        };
+        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+        hdr.msg_name = &mut name as *mut _ as _;
+        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+        hdr.msg_iov = &mut iov;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+        hdr.msg_controllen = CMSG_LEN as _;
+        hdr.msg_flags = 0;
         let n = loop {
             let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
             if n == -1 {
