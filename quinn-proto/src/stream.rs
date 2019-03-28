@@ -54,6 +54,26 @@ impl Streams {
         Some(id)
     }
 
+    pub fn alloc_remote_stream(&mut self, side: Side, ty: Directionality) {
+        let (id, stream) = match ty {
+            Directionality::Bi => {
+                self.max_remote_bi += 1;
+                (
+                    StreamId::new(!side, Directionality::Bi, self.max_remote_bi - 1),
+                    Stream::new_bi(),
+                )
+            }
+            Directionality::Uni => {
+                self.max_remote_uni += 1;
+                (
+                    StreamId::new(!side, Directionality::Uni, self.max_remote_uni - 1),
+                    Recv::new().into(),
+                )
+            }
+        };
+        self.streams.insert(id, stream);
+    }
+
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         Ok((rs.read(buf)?, rs.receiving_unknown_size()))

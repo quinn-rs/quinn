@@ -2478,33 +2478,15 @@ impl Connection {
     /// Permit an additional remote `ty` stream.
     fn alloc_remote_stream(&mut self, ty: Directionality) {
         let space = &mut self.spaces[SpaceId::Data as usize];
-        let (id, stream) = match ty {
+        match ty {
             Directionality::Bi => {
-                self.streams.max_remote_bi += 1;
                 space.pending.max_bi_stream_id = true;
-                (
-                    StreamId::new(
-                        !self.side,
-                        Directionality::Bi,
-                        self.streams.max_remote_bi - 1,
-                    ),
-                    Stream::new_bi(),
-                )
             }
             Directionality::Uni => {
-                self.streams.max_remote_uni += 1;
                 space.pending.max_uni_stream_id = true;
-                (
-                    StreamId::new(
-                        !self.side,
-                        Directionality::Uni,
-                        self.streams.max_remote_uni - 1,
-                    ),
-                    stream::Recv::new().into(),
-                )
             }
-        };
-        self.streams.streams.insert(id, stream);
+        }
+        self.streams.alloc_remote_stream(self.side, ty);
     }
 
     pub fn accept(&mut self) -> Option<StreamId> {
