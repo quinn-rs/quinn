@@ -608,8 +608,8 @@ impl Connection {
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
-    /// `reason` will be truncated to fit in a single packet with overhead; to be certain it is
-    /// preserved in full, it should be kept under 1KiB.
+    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
+    /// is preserved in full, it should be kept under 1KiB.
     ///
     /// # Panics
     /// - If called more than once on handles to the same connection
