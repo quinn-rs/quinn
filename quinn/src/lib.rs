@@ -533,7 +533,7 @@ impl Future for ConnectionDriver {
             conn.forward_endpoint_events();
             conn.drive_transmit(now);
             keep_going |= conn.drive_timers(now);
-            conn.handle_timer_updates();
+            keep_going |= conn.handle_timer_updates();
             if !keep_going || conn.closed {
                 break;
             }
@@ -786,8 +786,10 @@ impl ConnectionInner {
         keep_going
     }
 
-    fn handle_timer_updates(&mut self) {
+    fn handle_timer_updates(&mut self) -> bool {
+        let mut keep_going = false;
         while let Some(update) = self.inner.poll_timers() {
+            keep_going = true; // Timers must be polled once set
             match update {
                 TimerUpdate {
                     timer,
@@ -812,6 +814,7 @@ impl ConnectionInner {
                 }
             }
         }
+        keep_going
     }
 
     /// Wake up a blocked `Driver` task to process I/O
