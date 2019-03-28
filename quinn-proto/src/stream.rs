@@ -88,6 +88,22 @@ impl Streams {
         }
     }
 
+    pub fn reset(&mut self, side: Side) {
+        // Reset all outgoing streams
+        for i in 0..self.next_bi {
+            self.streams
+                .remove(&StreamId::new(side, Directionality::Bi, i))
+                .unwrap();
+        }
+        self.next_bi = 0;
+        for i in 0..self.next_uni {
+            self.streams
+                .remove(&StreamId::new(side, Directionality::Uni, i))
+                .unwrap();
+        }
+        self.next_uni = 0;
+    }
+
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         Ok((rs.read(buf)?, rs.receiving_unknown_size()))

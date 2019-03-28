@@ -2871,21 +2871,7 @@ impl Connection {
         debug_assert!(self.side.is_client());
         debug!(self.log, "0-RTT rejected");
         self.accepted_0rtt = false;
-        // Reset all outgoing streams
-        for i in 0..self.streams.next_bi {
-            self.streams
-                .streams
-                .remove(&StreamId::new(self.side, Directionality::Bi, i))
-                .unwrap();
-        }
-        self.streams.next_bi = 0;
-        for i in 0..self.streams.next_uni {
-            self.streams
-                .streams
-                .remove(&StreamId::new(self.side, Directionality::Uni, i))
-                .unwrap();
-        }
-        self.streams.next_uni = 0;
+        self.streams.reset(self.side);
         // Discard already-queued frames
         self.space_mut(SpaceId::Data).pending = Retransmits::default();
         // Discard 0-RTT packets
