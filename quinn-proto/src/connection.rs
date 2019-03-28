@@ -1746,28 +1746,37 @@ impl Connection {
                     debug!(self.log, "peer claims to be blocked opening more than {limit} {directionality} streams", limit=limit, directionality=directionality);
                 }
                 Frame::StopSending { id, error_code } => {
-                    if id.initiator() != self.side && id.directionality() == Directionality::Uni
-                        || !self.streams.streams.contains_key(&id)
-                    {
-                        debug!(
-                            self.log,
-                            "got STOP_SENDING on invalid {stream}",
-                            stream = id
-                        );
+                    if id.initiator() != self.side {
+                        if id.directionality() == Directionality::Uni {
+                            debug!(
+                                self.log,
+                                "got STOP_SENDING on recv-only {stream}",
+                                stream = id
+                            );
+                            return Err(TransportError::STREAM_STATE_ERROR(
+                                "STOP_SENDING on recv-only stream",
+                            ));
+                        }
+                    } else if self.streams.is_local_unopened(id) {
                         return Err(TransportError::STREAM_STATE_ERROR(
-                            "STOP_SENDING on invalid stream",
+                            "STOP_SENDING on unopened stream",
                         ));
                     }
                     self.reset(id, error_code);
-                    let stream = self.streams.streams.get_mut(&id).unwrap();
-                    let ss = stream.send_mut().unwrap();
-                    ss.state = stream::SendState::ResetSent {
-                        stop_reason: Some(error_code),
-                    };
-                    if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
-                        self.events.push_back(Event::StreamWritable { stream: id });
+                    // We might have already closed this stream
+                    if let Some(ss) = self.streams.get_send_mut(id) {
+                        // Don't reopen an already-closed stream we haven't forgotten yet
+                        if !ss.is_closed() {
+                            // Store error code to return to the application on next write
+                            ss.state = stream::SendState::ResetSent {
+                                stop_reason: Some(error_code),
+                            };
+                            if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
+                                self.events.push_back(Event::StreamWritable { stream: id });
+                            }
+                            self.on_stream_frame(false, id);
+                        }
                     }
-                    self.on_stream_frame(false, id);
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {
