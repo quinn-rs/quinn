@@ -517,9 +517,6 @@ impl Future for ConnectionDriver {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let conn = &mut *self.0.borrow_mut();
-        if let Some(e) = &conn.pending.error {
-            return Err(e.clone());
-        }
 
         if conn.driver.is_none() {
             conn.driver = Some(task::current());
@@ -539,10 +536,12 @@ impl Future for ConnectionDriver {
             }
         }
 
-        if conn.closed {
-            Ok(Async::Ready(()))
-        } else {
+        if !conn.inner.is_drained() {
             Ok(Async::NotReady)
+        } else if let Some(e) = &conn.pending.error {
+            Err(e.clone())
+        } else {
+            Ok(Async::Ready(()))
         }
     }
 }
