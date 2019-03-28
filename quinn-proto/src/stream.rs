@@ -74,6 +74,20 @@ impl Streams {
         self.streams.insert(id, stream);
     }
 
+    pub fn accept(&mut self, side: Side) -> Option<StreamId> {
+        if self.next_remote_uni > self.next_reported_remote_uni {
+            let x = self.next_reported_remote_uni;
+            self.next_reported_remote_uni = x + 1;
+            Some(StreamId::new(!side, Directionality::Uni, x))
+        } else if self.next_remote_bi > self.next_reported_remote_bi {
+            let x = self.next_reported_remote_bi;
+            self.next_reported_remote_bi = x + 1;
+            Some(StreamId::new(!side, Directionality::Bi, x))
+        } else {
+            None
+        }
+    }
+
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         Ok((rs.read(buf)?, rs.receiving_unknown_size()))
