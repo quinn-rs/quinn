@@ -30,6 +30,30 @@ pub struct Streams {
 }
 
 impl Streams {
+    pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
+        let (id, stream) = match direction {
+            Directionality::Uni if self.next_uni < self.max_uni => {
+                self.next_uni += 1;
+                (
+                    StreamId::new(side, direction, self.next_uni - 1),
+                    Send::new().into(),
+                )
+            }
+            Directionality::Bi if self.next_bi < self.max_bi => {
+                self.next_bi += 1;
+                (
+                    StreamId::new(side, direction, self.next_bi - 1),
+                    Stream::new_bi(),
+                )
+            }
+            _ => {
+                return None;
+            }
+        };
+        assert!(self.streams.insert(id, stream).is_none());
+        Some(id)
+    }
+
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         Ok((rs.read(buf)?, rs.receiving_unknown_size()))

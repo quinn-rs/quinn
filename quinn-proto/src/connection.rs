@@ -2459,31 +2459,12 @@ impl Connection {
     }
 
     pub fn open(&mut self, direction: Directionality) -> Option<StreamId> {
-        let (id, mut stream) = match direction {
-            Directionality::Uni if self.streams.next_uni < self.streams.max_uni => {
-                self.streams.next_uni += 1;
-                (
-                    StreamId::new(self.side, direction, self.streams.next_uni - 1),
-                    stream::Send::new().into(),
-                )
-            }
-            Directionality::Bi if self.streams.next_bi < self.streams.max_bi => {
-                self.streams.next_bi += 1;
-                (
-                    StreamId::new(self.side, direction, self.streams.next_bi - 1),
-                    Stream::new_bi(),
-                )
-            }
-            _ => {
-                return None;
-            } // TODO: Queue STREAM_ID_BLOCKED
-        };
-        stream.send_mut().unwrap().max_data = match direction {
+        let id = self.streams.open(self.side, direction)?;
+        // TODO: Queue STREAM_ID_BLOCKED if None
+        self.streams.get_send_mut(id).unwrap().max_data = match direction {
             Directionality::Uni => self.params.initial_max_stream_data_uni,
             Directionality::Bi => self.params.initial_max_stream_data_bidi_remote,
         } as u64;
-        let old = self.streams.streams.insert(id, stream);
-        assert!(old.is_none());
         Some(id)
     }
 
