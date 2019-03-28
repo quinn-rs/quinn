@@ -233,7 +233,7 @@ struct EndpointInner {
     socket: UdpSocket,
     inner: quinn::Endpoint,
     outgoing: VecDeque<quinn::Transmit>,
-    buffered_incoming: VecDeque<(ConnectionHandle, Rc<RefCell<ConnectionInner>>)>,
+    buffered_incoming: VecDeque<(ConnectionHandle, ConnectionRef)>,
     incoming: mpsc::Sender<NewConnection>,
     driver: Option<Task>,
     ipv6: bool,
@@ -382,12 +382,12 @@ impl EndpointInner {
         &mut self,
         handle: ConnectionHandle,
         conn: quinn::Connection,
-    ) -> Rc<RefCell<ConnectionInner>> {
+    ) -> ConnectionRef {
         let pending = Pending::new();
         let (conn_events_sender, conn_events) = mpsc::unbounded();
         let endpoint_events = self.sender.clone();
         self.connections.insert(handle, conn_events_sender);
-        Rc::new(RefCell::new(ConnectionInner {
+        ConnectionRef(Rc::new(RefCell::new(ConnectionInner {
             log: self.log.clone(),
             side: conn.side(),
             inner: conn,
@@ -399,7 +399,7 @@ impl EndpointInner {
             endpoint_events,
             connected: false,
             closed: false,
-        }))
+        })))
     }
 }
 
@@ -467,7 +467,7 @@ pub struct NewConnection {
 }
 
 impl NewConnection {
-    fn new(conn: Rc<RefCell<ConnectionInner>>) -> Self {
+    fn new(conn: ConnectionRef) -> Self {
         Self {
             driver: ConnectionDriver(conn.clone()),
             connection: Connection(conn.clone()),
@@ -512,7 +512,7 @@ impl Future for ConnectingFuture {
 /// If the connection encounters an error condition, this future will yield an error. It
 /// will terminate (yielding `Ready(())`) if the connection was closed without error.
 #[must_use = "connection drivers must be spawned for their connections to function"]
-pub struct ConnectionDriver(Rc<RefCell<ConnectionInner>>);
+pub struct ConnectionDriver(ConnectionRef);
 
 impl Future for ConnectionDriver {
     type Item = ();
@@ -556,7 +556,7 @@ impl Future for ConnectionDriver {
 ///
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Clone)]
-pub struct Connection(Rc<RefCell<ConnectionInner>>);
+pub struct Connection(ConnectionRef);
 
 impl Connection {
     /// Initite a new outgoing unidirectional stream.
@@ -856,7 +856,7 @@ impl Drop for ConnectionInner {
 }
 
 /// A stream of QUIC streams initiated by a remote peer.
-pub struct IncomingStreams(Rc<RefCell<ConnectionInner>>);
+pub struct IncomingStreams(ConnectionRef);
 
 impl FuturesStream for IncomingStreams {
     type Item = NewStream;
@@ -897,7 +897,7 @@ pub enum NewStream {
 /// Similar to a TCP connection. Each direction of data flow can be reset or finished by the
 /// sending endpoint without interfering with activity in the other direction.
 pub struct BiStream {
-    conn: Rc<RefCell<ConnectionInner>>,
+    conn: ConnectionRef,
     stream: StreamId,
 
     // Send only
@@ -910,7 +910,7 @@ pub struct BiStream {
 }
 
 impl BiStream {
-    fn new(conn: Rc<RefCell<ConnectionInner>>, stream: StreamId) -> Self {
+    fn new(conn: ConnectionRef, stream: StreamId) -> Self {
         Self {
             conn,
             stream,
@@ -1353,4 +1353,27 @@ enum ConnectionEvent {
 enum EndpointEvent {
     Proto(quinn::EndpointEvent),
     Transmit(quinn::Transmit),
+}
+
+#[derive(Clone)]
+struct ConnectionRef(Rc<RefCell<ConnectionInner>>);
+
+impl Drop for ConnectionRef {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.0) == 2 {
+            // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
+            // not, we can't do any harm.
+            let conn = &mut *self.0.borrow_mut();
+            if !conn.inner.is_closed() {
+                conn.inner.close(Instant::now(), 0, Bytes::new());
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for ConnectionRef {
+    type Target = RefCell<ConnectionInner>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
