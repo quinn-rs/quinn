@@ -764,7 +764,7 @@ impl io::Read for BiStream {
             )),
             Err(UnknownStream) => Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
-                "unknown stream".to_string(),
+                "unknown stream",
             )),
         }
     }

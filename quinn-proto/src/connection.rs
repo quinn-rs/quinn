@@ -2825,7 +2825,7 @@ impl Connection {
         debug_assert!(self.side.is_client());
         debug!(self.log, "0-RTT rejected");
         self.accepted_0rtt = false;
-        self.streams.reset(self.side);
+        self.streams.zero_rtt_rejected(self.side);
         // Discard already-queued frames
         self.space_mut(SpaceId::Data).pending = Retransmits::default();
         // Discard 0-RTT packets

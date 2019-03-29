@@ -117,8 +117,8 @@ impl Streams {
         }
     }
 
-    pub fn reset(&mut self, side: Side) {
-        // Reset all outgoing streams
+    pub fn zero_rtt_rejected(&mut self, side: Side) {
+        // Revert to initial state for outgoing streams
         for i in 0..self.next_bi {
             self.streams
                 .remove(&StreamId::new(side, Directionality::Bi, i))
