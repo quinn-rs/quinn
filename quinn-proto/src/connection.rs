@@ -157,6 +157,7 @@ impl Connection {
         remote: SocketAddr,
         client_config: Option<ClientConfig>,
         tls: TlsSession,
+        now: Instant,
         remote_validated: bool,
     ) -> Self {
         let side = if client_config.is_some() {
@@ -168,7 +169,7 @@ impl Connection {
 
         let initial_space = PacketSpace {
             crypto: Some(CryptoSpace::new(Crypto::new_initial(&init_cid, side))),
-            ..PacketSpace::new()
+            ..PacketSpace::new(now)
         };
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
@@ -205,7 +206,7 @@ impl Connection {
             endpoint_events: VecDeque::new(),
             cids_issued: 0,
             spin: false,
-            spaces: [initial_space, PacketSpace::new(), PacketSpace::new()],
+            spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             path_challenge: None,
@@ -222,13 +223,13 @@ impl Connection {
             crypto_count: 0,
             pto_count: 0,
             loss_time: None,
-            time_of_last_sent_ack_eliciting_packet: Instant::now(),
-            time_of_last_sent_crypto_packet: Instant::now(),
+            time_of_last_sent_ack_eliciting_packet: now,
+            time_of_last_sent_crypto_packet: now,
             rtt: RttEstimator::new(),
 
             in_flight: InFlight::new(),
             congestion_window: config.initial_window,
-            recovery_start_time: Instant::now(),
+            recovery_start_time: now,
             ssthresh: u64::max_value(),
             ecn_counters: frame::EcnCounts::ZERO,
             sending_ecn: true,
@@ -1231,7 +1232,7 @@ impl Connection {
                             crypto: Some(CryptoSpace::new(Crypto::new_initial(
                                 &rem_cid, self.side,
                             ))),
-                            ..PacketSpace::new()
+                            ..PacketSpace::new(now)
                         };
 
                         self.write_tls();
@@ -3240,12 +3241,12 @@ struct PacketSpace {
 }
 
 impl PacketSpace {
-    fn new() -> Self {
+    fn new(now: Instant) -> Self {
         Self {
             crypto: None,
             dedup: Dedup::new(),
             rx_packet: 0,
-            rx_packet_time: Instant::now(),
+            rx_packet_time: now,
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
@@ -3253,7 +3254,7 @@ impl PacketSpace {
 
             next_packet_number: 0,
             largest_acked_packet: 0,
-            largest_acked_packet_sent: Instant::now(),
+            largest_acked_packet_sent: now,
             sent_packets: BTreeMap::new(),
             ecn_feedback: frame::EcnCounts::ZERO,
 
