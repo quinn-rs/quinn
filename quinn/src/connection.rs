@@ -1,8 +1,7 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::str;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::{io, mem};
 
@@ -49,13 +48,13 @@ impl Future for ConnectingFuture {
                     Async::Ready(()) => unreachable!("cannot close without completing"),
                     Async::NotReady => {}
                 }
-                (driver.0).borrow().connected
+                (driver.0).lock().unwrap().connected
             }
             None => panic!("polled after yielding Ready"),
         };
         if connected {
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            conn.borrow_mut().driver.take();
+            conn.lock().unwrap().driver.take();
             Ok(Async::Ready(NewConnection::new(conn)))
         } else {
             Ok(Async::NotReady)
@@ -98,7 +97,7 @@ impl Future for ConnectionDriver {
     type Item = ();
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let conn = &mut *self.0.borrow_mut();
+        let conn = &mut *self.0.lock().unwrap();
 
         if conn.driver.is_none() {
             conn.driver = Some(task::current());
@@ -142,7 +141,7 @@ impl Connection {
     pub fn open_uni(&self) -> impl Future<Item = SendStream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
-            let mut conn = self.0.borrow_mut();
+            let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Uni) {
                 let _ = send.send(Ok(x));
             } else {
@@ -161,7 +160,7 @@ impl Connection {
     pub fn open_bi(&self) -> impl Future<Item = BiStream, Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
-            let mut conn = self.0.borrow_mut();
+            let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Bi) {
                 let _ = send.send(Ok(x));
             } else {
@@ -192,7 +191,7 @@ impl Connection {
     pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
         let (send, recv) = oneshot::channel();
         {
-            let conn = &mut *self.0.borrow_mut();
+            let conn = &mut *self.0.lock().unwrap();
             assert!(
                 conn.pending.closing.is_none(),
                 "a connection can only be closed once"
@@ -210,23 +209,23 @@ impl Connection {
 
     /// The peer's UDP address.
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.borrow().inner.remote()
+        self.0.lock().unwrap().inner.remote()
     }
 
     /// The `ConnectionId` defined for `conn` by the peer.
     pub fn remote_id(&self) -> ConnectionId {
-        self.0.borrow().inner.rem_cid()
+        self.0.lock().unwrap().inner.rem_cid()
     }
 
     /// The negotiated application protocol
     pub fn protocol(&self) -> Option<Box<[u8]>> {
-        self.0.borrow().inner.protocol().map(|x| x.into())
+        self.0.lock().unwrap().inner.protocol().map(|x| x.into())
     }
 
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
-        self.0.borrow_mut().inner.force_key_update()
+        self.0.lock().unwrap().inner.force_key_update()
     }
 }
 
@@ -237,7 +236,7 @@ impl FuturesStream for IncomingStreams {
     type Item = NewStream;
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut conn = self.0.borrow_mut();
+        let mut conn = self.0.lock().unwrap();
         if conn.closed {
             return Ok(Async::Ready(None));
         }
@@ -268,7 +267,7 @@ pub enum NewStream {
 }
 
 #[derive(Clone)]
-pub struct ConnectionRef(Rc<RefCell<ConnectionInner>>);
+pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
     pub(crate) fn new(
@@ -278,7 +277,7 @@ impl ConnectionRef {
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Self {
-        Self(Rc::new(RefCell::new(ConnectionInner {
+        Self(Arc::new(Mutex::new(ConnectionInner {
             log,
             epoch: Instant::now(),
             side: conn.side(),
@@ -297,10 +296,10 @@ impl ConnectionRef {
 
 impl Drop for ConnectionRef {
     fn drop(&mut self) {
-        if Rc::strong_count(&self.0) == 2 {
+        if Arc::strong_count(&self.0) == 2 {
             // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
             // not, we can't do any harm.
-            let conn = &mut *self.0.borrow_mut();
+            let conn = &mut *self.0.lock().unwrap();
             if !conn.inner.is_closed() {
                 conn.inner.close(Instant::now(), 0, Bytes::new());
             }
@@ -309,7 +308,7 @@ impl Drop for ConnectionRef {
 }
 
 impl std::ops::Deref for ConnectionRef {
-    type Target = RefCell<ConnectionInner>;
+    type Target = Mutex<ConnectionInner>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -585,7 +584,7 @@ impl BiStream {
 impl Write for BiStream {
     fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         use crate::quinn::WriteError::*;
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         let n = match conn.inner.write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
@@ -607,7 +606,7 @@ impl Write for BiStream {
 
     fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
         if self.finishing.is_none() {
-            let mut conn = self.conn.borrow_mut();
+            let mut conn = self.conn.lock().unwrap();
             conn.inner.finish(self.stream);
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
@@ -626,7 +625,7 @@ impl Write for BiStream {
     }
 
     fn reset(&mut self, error_code: u16) {
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         conn.inner.reset(self.stream, error_code);
         conn.notify();
     }
@@ -635,7 +634,7 @@ impl Write for BiStream {
 impl Read for BiStream {
     fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         use crate::quinn::ReadError::*;
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         match conn.inner.read_unordered(self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
             Err(Blocked) => {
@@ -661,7 +660,7 @@ impl Read for BiStream {
 
     fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         use crate::quinn::ReadError::*;
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         match conn.inner.read(self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
             Err(Blocked) => {
@@ -686,7 +685,7 @@ impl Read for BiStream {
     }
 
     fn stop(&mut self, error_code: u16) {
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         conn.inner.stop_sending(self.stream, error_code);
         conn.notify();
         self.recvd = true;
@@ -727,7 +726,7 @@ impl AsyncWrite for BiStream {
 
 impl Drop for BiStream {
     fn drop(&mut self) {
-        let mut conn = self.conn.borrow_mut();
+        let mut conn = self.conn.lock().unwrap();
         let ours = self.stream.initiator() == conn.side;
         let (send, recv) = match self.stream.directionality() {
             Directionality::Bi => (true, true),

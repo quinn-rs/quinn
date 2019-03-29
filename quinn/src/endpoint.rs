@@ -1,9 +1,8 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
-use std::rc::Rc;
 use std::str;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use fnv::FnvHashMap;
@@ -35,7 +34,7 @@ use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Clone)]
 pub struct Endpoint {
-    pub(crate) inner: Rc<RefCell<EndpointInner>>,
+    pub(crate) inner: Arc<Mutex<EndpointInner>>,
     pub(crate) default_client_config: ClientConfig,
 }
 
@@ -67,7 +66,7 @@ impl Endpoint {
         addr: &SocketAddr,
         server_name: &str,
     ) -> Result<ConnectingFuture, ConnectError> {
-        let mut endpoint = self.inner.borrow_mut();
+        let mut endpoint = self.inner.lock().unwrap();
         let addr = if endpoint.ipv6 {
             SocketAddr::V6(ensure_ipv6(*addr))
         } else {
@@ -95,7 +94,7 @@ impl Endpoint {
     ) -> io::Result<()> {
         let addr = socket.local_addr()?;
         let socket = UdpSocket::from_std(socket, &reactor)?;
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
         Ok(())
@@ -103,7 +102,7 @@ impl Endpoint {
 
     /// Get the local `SocketAddr` the underlying socket is bound to
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.borrow().socket.local_addr()
+        self.inner.lock().unwrap().socket.local_addr()
     }
 }
 
@@ -117,13 +116,13 @@ impl Endpoint {
 ///
 /// `Driver` instances do not terminate (always yields `NotReady`) except in case of an error.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
-pub struct Driver(pub(crate) Rc<RefCell<EndpointInner>>);
+pub struct Driver(pub(crate) Arc<Mutex<EndpointInner>>);
 
 impl Future for Driver {
     type Item = ();
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let endpoint = &mut *self.0.borrow_mut();
+        let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(task::current());
         }
@@ -145,7 +144,7 @@ impl Future for Driver {
 
 impl Drop for Driver {
     fn drop(&mut self) {
-        for sender in self.0.borrow_mut().connections.values() {
+        for sender in self.0.lock().unwrap().connections.values() {
             // Ignoring errors from non-existent connections
             let _ = sender.unbounded_send(ConnectionEvent::DriverLost);
         }

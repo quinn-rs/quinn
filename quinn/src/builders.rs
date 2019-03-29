@@ -1,10 +1,8 @@
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::io;
 use std::net::ToSocketAddrs;
-use std::rc::Rc;
 use std::str;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use err_derive::Error;
 use futures::sync::mpsc;
@@ -59,7 +57,7 @@ impl<'a> EndpointBuilder<'a> {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
         let (send, recv) = mpsc::channel(4);
-        let rc = Rc::new(RefCell::new(EndpointInner::new(
+        let rc = Arc::new(Mutex::new(EndpointInner::new(
             self.logger.clone(),
             socket,
             quinn::Endpoint::new(
