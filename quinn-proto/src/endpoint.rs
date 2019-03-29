@@ -620,7 +620,7 @@ pub struct TransportConfig {
     pub stream_window_bidi: u64,
     /// Variant of `stream_window_bidi` affecting unidirectional streams
     pub stream_window_uni: u64,
-    /// Maximum duration of inactivity to accept before timing out the connection (s).
+    /// Maximum duration of inactivity to accept before timing out the connection (ms).
     ///
     /// The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
     pub idle_timeout: u64,
@@ -675,7 +675,7 @@ pub struct TransportConfig {
     pub loss_reduction_factor: u16,
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub persistent_congestion_threshold: u32,
-    /// Number of seconds of inactivity before sending a keep-alive packet
+    /// Number of milliseconds of inactivity before sending a keep-alive packet
     ///
     /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
     ///
@@ -697,7 +697,7 @@ impl Default for TransportConfig {
         TransportConfig {
             stream_window_bidi: 32,
             stream_window_uni: 32,
-            idle_timeout: 10,
+            idle_timeout: 10_000,
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
             send_window: 8 * STREAM_RWND,

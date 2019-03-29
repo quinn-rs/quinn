@@ -764,7 +764,7 @@ impl Connection {
             return;
         }
         self.io
-            .timer_start(Timer::Idle, now + Duration::new(self.idle_timeout, 0));
+            .timer_start(Timer::Idle, now + Duration::from_millis(self.idle_timeout));
     }
 
     fn reset_keep_alive(&mut self, now: Instant) {
@@ -773,7 +773,7 @@ impl Connection {
         }
         self.io.timer_start(
             Timer::KeepAlive,
-            now + Duration::new(self.config.keep_alive_interval as u64, 0),
+            now + Duration::from_millis(self.config.keep_alive_interval as u64),
         );
     }
 
