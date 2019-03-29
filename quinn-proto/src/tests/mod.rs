@@ -1116,7 +1116,7 @@ fn zero_length_cid() {
 
 #[test]
 fn keep_alive() {
-    const IDLE_TIMEOUT: u64 = 10;
+    const IDLE_TIMEOUT: u64 = 10_000;
     let server = ServerConfig {
         transport_config: Arc::new(TransportConfig {
             keep_alive_interval: IDLE_TIMEOUT as u32 / 2,
@@ -1128,7 +1128,7 @@ fn keep_alive() {
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
     // Run a good while longer than the idle timeout
-    let end = pair.time + Duration::new(20 * IDLE_TIMEOUT, 0);
+    let end = pair.time + Duration::from_millis(20 * IDLE_TIMEOUT);
     while pair.time < end {
         if !pair.step() {
             if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
