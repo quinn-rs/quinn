@@ -662,7 +662,10 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
+        if self.in_flight.crypto != 0
+            || self.crypto_count != 0
+            || (self.state.is_handshake() && self.side.is_client())
+        {
             // Handshake retransmission alarm.
             let timeout = if let Some(smoothed) = self.rtt.smoothed {
                 2 * smoothed
