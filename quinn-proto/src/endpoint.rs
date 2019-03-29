@@ -327,6 +327,7 @@ impl Endpoint {
                 tls_config: crypto_config,
                 server_name: server_name.into(),
             }),
+            Instant::now(),
         )?;
         Ok((ch, conn))
     }
@@ -362,6 +363,7 @@ impl Endpoint {
         remote: SocketAddr,
         transport_config: Arc<TransportConfig>,
         opts: ConnectionOpts,
+        now: Instant,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         let loc_cid = self.new_cid();
         let params = TransportParameters::new(&transport_config);
@@ -402,6 +404,7 @@ impl Endpoint {
             remote,
             client_config,
             tls,
+            now,
             remote_validated,
         );
         let id = self.connections.insert(ConnectionMeta {
@@ -544,6 +547,7 @@ impl Endpoint {
                 ConnectionOpts::Server {
                     orig_dst_cid: retry_cid,
                 },
+                now,
             )
             .unwrap();
         if dst_cid.len() != 0 {
