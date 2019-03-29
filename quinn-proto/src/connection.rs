@@ -1890,7 +1890,11 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = micros_from(now - space.rx_packet_time) >> ACK_DELAY_EXPONENT;
+            let delay = if space.rx_packet_time < now {
+                micros_from(now - space.rx_packet_time)
+            } else {
+                0
+            } >> ACK_DELAY_EXPONENT;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
