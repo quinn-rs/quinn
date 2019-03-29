@@ -71,12 +71,12 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     client.default_client_config(client_config.build());
     let (client, client_driver, _) = client.bind(client_addr).unwrap();
 
-    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
     runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
     runtime.spawn(server_incoming.for_each(move |conn| {
-        tokio_current_thread::spawn(conn.driver.map_err(|_| ()));
-        tokio_current_thread::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
+        tokio::spawn(conn.driver.map_err(|_| ()));
+        tokio::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
         Ok(())
     }));
 
@@ -88,9 +88,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .unwrap()
                 .map_err(|e| panic!("connection failed: {}", e))
                 .and_then(move |conn| {
-                    tokio_current_thread::spawn(
-                        conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
-                    );
+                    tokio::spawn(conn.driver.map_err(|e| eprintln!("connection lost: {}", e)));
                     let conn = conn.connection;
                     let stream = conn.open_bi();
                     stream
@@ -115,7 +113,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         .unwrap();
 }
 
-fn echo(stream: NewStream) -> Box<dyn Future<Item = (), Error = ()>> {
+fn echo(stream: NewStream) -> Box<impl Future<Item = (), Error = ()>> {
     match stream {
         NewStream::Bi(stream) => Box::new(
             tokio::io::read_to_end(stream, Vec::new())
