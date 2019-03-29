@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{cmp, io, mem};
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use fnv::FnvHashSet;
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
-use crate::coding::{BufExt, BufMutExt};
+use crate::coding::BufMutExt;
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto,
     RingHeaderCrypto, TlsSession, ACK_DELAY_EXPONENT,
@@ -27,7 +27,7 @@ use crate::stream::{self, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
-    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
+    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 pub struct Connection {
@@ -1333,20 +1333,6 @@ impl Connection {
                         Ok(())
                     }
                     Header::VersionNegotiate { .. } => {
-                        let mut payload = io::Cursor::new(&packet.payload[..]);
-                        if packet.payload.len() % 4 != 0 {
-                            return Err(TransportError::PROTOCOL_VIOLATION(
-                                "malformed version negotiation",
-                            )
-                            .into());
-                        }
-                        while payload.has_remaining() {
-                            let version = payload.get::<u32>().unwrap();
-                            if version == VERSION {
-                                // Our version is supported, so this packet is spurious
-                                return Ok(());
-                            }
-                        }
                         debug!(self.log, "remote doesn't support our version");
                         Err(ConnectionError::VersionMismatch)
                     }
