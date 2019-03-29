@@ -51,13 +51,13 @@ mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 
 /// The QUIC protocol version implemented
-pub const VERSION: u32 = 0xff00_0012;
+pub const VERSION: u32 = 0xff00_0013;
 
 /// TLS ALPN value for HTTP over QUIC
-pub const ALPN_QUIC_HTTP: &[u8] = b"hq-18";
+pub const ALPN_QUIC_HTTP: &[u8] = b"hq-19";
 
 /// TLS ALPN value for H3
-pub const ALPN_QUIC_H3: &[u8] = b"h3-18";
+pub const ALPN_QUIC_H3: &[u8] = b"h3-19";
 
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
