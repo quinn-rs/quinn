@@ -87,7 +87,7 @@ pub struct TransportConfig {
     pub max_datagram_size: u64,
     /// Default limit on the amount of outstanding data in bytes.
     ///
-    /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14600))`
+    /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
     pub initial_window: u64,
     /// Default minimum congestion window.
     ///
@@ -133,7 +133,7 @@ impl Default for TransportConfig {
             max_datagram_size: MAX_DATAGRAM_SIZE,
             initial_window: cmp::min(
                 10 * MAX_DATAGRAM_SIZE,
-                cmp::max(2 * MAX_DATAGRAM_SIZE, 14600),
+                cmp::max(2 * MAX_DATAGRAM_SIZE, 14720),
             ),
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
