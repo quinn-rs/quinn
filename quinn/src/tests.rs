@@ -1,4 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{fmt, io, str};
 
 use futures::{Future, Stream};
@@ -6,6 +8,49 @@ use slog::{Drain, Logger, KV};
 use tokio;
 
 use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
+
+#[test]
+fn handshake_timeout() {
+    let client = Endpoint::new();
+    let (client, client_driver, _) = client
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
+
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.spawn(client_driver.map_err(|e| panic!("client endpoint driver failed: {}", e)));
+
+    let mut client_config = crate::ClientConfig::default();
+    const IDLE_TIMEOUT: u64 = 1_000;
+    client_config.transport = Arc::new(crate::TransportConfig {
+        idle_timeout: IDLE_TIMEOUT,
+        ..Default::default()
+    });
+
+    let start = Instant::now();
+    runtime
+        .block_on(
+            client
+                .connect_with(
+                    &client_config,
+                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
+                    "localhost",
+                )
+                .unwrap()
+                .then(|x| -> Result<(), ()> {
+                    match x {
+                        Err(crate::ConnectionError::TimedOut) => {}
+                        Err(e) => panic!("unexpected error: {:?}", e),
+                        Ok(_) => panic!("unexpected success"),
+                    }
+                    Ok(())
+                }),
+        )
+        .unwrap();
+    let dt = start.elapsed();
+    assert!(
+        dt > Duration::from_millis(IDLE_TIMEOUT) && dt < 2 * Duration::from_millis(IDLE_TIMEOUT)
+    );
+}
 
 #[test]
 fn local_addr() {
