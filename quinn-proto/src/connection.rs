@@ -1567,6 +1567,8 @@ impl Connection {
                         continue;
                     }
                     trace!(self.log, "path validated");
+                    self.endpoint_events
+                        .push_back(EndpointEvent::Migrated(self.remote));
                     self.io.timer_stop(Timer::PathValidation);
                     self.path_challenge = None;
                     self.remote_validated = true;
@@ -2734,9 +2736,7 @@ impl Connection {
     }
 
     fn send_closed_event(&mut self) {
-        self.endpoint_events.push_back(EndpointEvent::Closed {
-            remote: self.remote(),
-        });
+        self.endpoint_events.push_back(EndpointEvent::Closed);
     }
 
     pub fn is_handshaking(&self) -> bool {

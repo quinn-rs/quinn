@@ -108,18 +108,22 @@ impl Endpoint {
                     return Some(self.send_new_identifiers(ch, 1));
                 }
             }
-            EndpointEvent::Closed { remote } => {
-                let init_cid = self.connections[ch].init_cid;
-                if init_cid.len() > 0 {
-                    self.connection_ids_initial.remove(&init_cid);
+            EndpointEvent::Migrated(remote) => {
+                let conn = &mut self.connections[ch];
+                let prev = self.connection_remotes.remove(&conn.remote);
+                debug_assert_eq!(prev, Some(ch));
+                conn.remote = remote;
+                self.connection_remotes.insert(remote, ch);
+            }
+            EndpointEvent::Closed => {
+                let conn = self.connections.remove(ch.0);
+                if conn.init_cid.len() > 0 {
+                    self.connection_ids_initial.remove(&conn.init_cid);
                 }
-
-                for cid in self.connections[ch].loc_cids.values() {
+                for cid in conn.loc_cids.values() {
                     self.connection_ids.remove(&cid);
                 }
-
-                self.connection_remotes.remove(&remote);
-                self.connections.remove(ch.0);
+                self.connection_remotes.remove(&conn.remote);
             }
         }
         None
@@ -415,6 +419,7 @@ impl Endpoint {
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
+            remote,
             cids_issued: 0,
             loc_cids: HashMap::new(),
         });
@@ -574,7 +579,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.handle_event(ch, EndpointEvent::Closed { remote });
+                self.handle_event(ch, EndpointEvent::Closed);
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -605,6 +610,7 @@ pub(crate) struct ConnectionMeta {
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
     loc_cids: HashMap<u64, ConnectionId>,
+    remote: SocketAddr,
 }
 
 /// Global configuration for the endpoint, affecting all connections
