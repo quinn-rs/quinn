@@ -2442,7 +2442,7 @@ impl Connection {
 
     /// Ping the remote endpoint
     ///
-    /// Useful for preventing an otherwise idle connection from timing out.
+    /// Causes an ACK-eliciting packet to be transmitted.
     pub fn ping(&mut self) {
         self.ping_pending = true;
     }
