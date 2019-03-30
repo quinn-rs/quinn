@@ -339,7 +339,7 @@ impl ConnectionInner {
 
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
-            if let quinn::EndpointEvent::Closed { .. } = &event {
+            if let quinn::EndpointEvent::Drained = event {
                 self.closed = true;
                 self.pending
                     .fail(ConnectionError::TransportError(quinn::TransportError {
@@ -499,7 +499,7 @@ impl Drop for ConnectionInner {
             // Ensure the endpoint can tidy up
             let _ = self.endpoint_events.unbounded_send((
                 self.handle,
-                EndpointEvent::Proto(quinn::EndpointEvent::Closed),
+                EndpointEvent::Proto(quinn::EndpointEvent::Drained),
             ));
         }
     }

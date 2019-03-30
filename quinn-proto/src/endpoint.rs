@@ -115,7 +115,7 @@ impl Endpoint {
                 conn.remote = remote;
                 self.connection_remotes.insert(remote, ch);
             }
-            EndpointEvent::Closed => {
+            EndpointEvent::Drained => {
                 let conn = self.connections.remove(ch.0);
                 if conn.init_cid.len() > 0 {
                     self.connection_ids_initial.remove(&conn.init_cid);
@@ -579,7 +579,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.handle_event(ch, EndpointEvent::Closed);
+                self.handle_event(ch, EndpointEvent::Drained);
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,

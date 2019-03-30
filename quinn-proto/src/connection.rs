@@ -497,13 +497,13 @@ impl Connection {
         match timer {
             Timer::Close => {
                 self.state = State::Drained;
-                self.send_closed_event();
+                self.endpoint_events.push_back(EndpointEvent::Drained);
             }
             Timer::Idle => {
                 self.close_common();
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Drained;
-                self.send_closed_event();
+                self.endpoint_events.push_back(EndpointEvent::Drained);
             }
             Timer::KeepAlive => {
                 trace!(self.log, "sending keep-alive");
@@ -1180,9 +1180,7 @@ impl Connection {
             }
         }
         if !was_drained && self.state.is_drained() {
-            if was_closed {
-                self.send_closed_event();
-            }
+            self.endpoint_events.push_back(EndpointEvent::Drained);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
             self.io.timer_stop(Timer::Close);
@@ -2372,10 +2370,6 @@ impl Connection {
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: Instant, error_code: u16, reason: Bytes) {
-        if self.state.is_drained() {
-            self.send_closed_event();
-        }
-
         let was_closed = self.state.is_closed();
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
@@ -2739,10 +2733,6 @@ impl Connection {
             update_unacked: remote,
         });
         self.key_phase = !self.key_phase;
-    }
-
-    fn send_closed_event(&mut self) {
-        self.endpoint_events.push_back(EndpointEvent::Closed);
     }
 
     pub fn is_handshaking(&self) -> bool {
