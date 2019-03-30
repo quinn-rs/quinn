@@ -2374,19 +2374,16 @@ impl Connection {
     /// to call this only when all important communications have been completed.
     pub fn close(&mut self, now: Instant, error_code: u16, reason: Bytes) {
         let was_closed = self.state.is_closed();
-        let reason =
-            state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
             self.close_common();
             self.set_close_timer(now);
             self.io.close = true;
-        }
-
-        match self.state {
-            State::Handshake(_) | State::Established => {
-                self.state = State::Closed(state::Closed { reason });
-            }
-            _ => {}
+            self.state = State::Closed(state::Closed {
+                reason: state::CloseReason::Application(frame::ApplicationClose {
+                    error_code,
+                    reason,
+                }),
+            });
         }
     }
 
