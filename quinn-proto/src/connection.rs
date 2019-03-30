@@ -595,8 +595,7 @@ impl Connection {
         let mut lost_ack_eliciting = false;
         let mut largest_lost_time = None;
         let mut in_persistent_congestion = false;
-        let persistent_congestion_period =
-            self.pto() * 2u32.pow(self.config.persistent_congestion_threshold);
+        let persistent_congestion_period = self.pto() * self.config.persistent_congestion_threshold;
         for space in self.spaces.iter_mut().filter(|x| x.crypto.is_some()) {
             lost_packets.clear();
             let lost_pn = space
