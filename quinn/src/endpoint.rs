@@ -269,7 +269,7 @@ impl EndpointInner {
             match self.events.poll() {
                 Ok(Async::Ready(Some((ch, event)))) => match event {
                     Proto(e) => {
-                        if let quinn::EndpointEvent::Closed { .. } = &e {
+                        if let quinn::EndpointEvent::Drained = e {
                             self.connections.remove(&ch);
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {

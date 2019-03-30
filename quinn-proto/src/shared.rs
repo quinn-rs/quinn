@@ -197,7 +197,7 @@ pub enum ConnectionEvent {
 /// Events to be sent to the Endpoint
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
-    Closed,
+    Drained,
     Migrated(SocketAddr),
     NeedIdentifiers,
     /// Stop routing connection ID for this sequence number to this `Connection`
