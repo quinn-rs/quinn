@@ -1,14 +1,14 @@
-use std::{cmp::Ordering, fmt, io, ops::Range, str};
+use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use err_derive::Error;
-use rand::Rng;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::crypto::{HeaderCrypto, RingHeaderCrypto};
+use crate::shared::ConnectionId;
 use crate::varint;
-use crate::{MAX_CID_SIZE, MIN_CID_SIZE, VERSION};
+use crate::VERSION;
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -770,80 +770,6 @@ impl From<coding::UnexpectedEnd> for PacketDecodeError {
     }
 }
 
-/// Protocol-level identifier for a connection.
-///
-/// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ConnectionId {
-    pub len: u8,
-    pub bytes: [u8; MAX_CID_SIZE],
-}
-
-impl ConnectionId {
-    pub fn new(bytes: &[u8]) -> Self {
-        debug_assert!(
-            bytes.is_empty() || (bytes.len() >= MIN_CID_SIZE && bytes.len() <= MAX_CID_SIZE)
-        );
-        let mut res = Self {
-            len: bytes.len() as u8,
-            bytes: [0; MAX_CID_SIZE],
-        };
-        res.bytes[..bytes.len()].clone_from_slice(&bytes);
-        res
-    }
-
-    pub fn random<R: Rng>(rng: &mut R, len: usize) -> Self {
-        debug_assert!(len <= MAX_CID_SIZE);
-        let mut res = Self {
-            len: len as u8,
-            bytes: [0; MAX_CID_SIZE],
-        };
-        let mut rng_bytes = [0; MAX_CID_SIZE];
-        rng.fill_bytes(&mut rng_bytes);
-        res.bytes[..len].clone_from_slice(&rng_bytes[..len]);
-        res
-    }
-}
-
-impl ::std::ops::Deref for ConnectionId {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        &self.bytes[0..self.len as usize]
-    }
-}
-
-impl ::std::ops::DerefMut for ConnectionId {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes[0..self.len as usize]
-    }
-}
-
-impl fmt::Debug for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.bytes[0..self.len as usize].fmt(f)
-    }
-}
-
-impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.iter() {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
-    }
-}
-
-impl slog::Value for ConnectionId {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{}", self))
-    }
-}
-
 pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize, tag_len: usize) {
     let len = packet.len() - header_len + pn_len + tag_len;
     assert!(len < 2usize.pow(14)); // Fits in reserved space
@@ -859,33 +785,6 @@ pub const SPIN_BIT: u8 = 0x20;
 pub const SHORT_RESERVED_BITS: u8 = 0x18;
 pub const LONG_RESERVED_BITS: u8 = 0x0c;
 const KEY_PHASE_BIT: u8 = 0x04;
-
-/// Explicit congestion notification codepoint
-#[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum EcnCodepoint {
-    ECT0 = 0b10,
-    ECT1 = 0b01,
-    CE = 0b11,
-}
-
-impl EcnCodepoint {
-    pub fn from_bits(x: u8) -> Option<Self> {
-        use self::EcnCodepoint::*;
-        Some(match x & 0b11 {
-            0b10 => ECT0,
-            0b01 => ECT1,
-            0b11 => CE,
-            _ => {
-                return None;
-            }
-        })
-    }
-
-    pub fn bits(self) -> u8 {
-        self as u8
-    }
-}
 
 /// Packet number space identifiers
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]

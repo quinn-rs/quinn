@@ -17,7 +17,8 @@ pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Sessi
 use webpki::DNSNameRef;
 
 use crate::coding::{BufExt, BufMutExt};
-use crate::packet::{ConnectionId, PacketNumber, LONG_HEADER_FORM};
+use crate::packet::{PacketNumber, LONG_HEADER_FORM};
+use crate::shared::ConnectionId;
 use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 

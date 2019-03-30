@@ -13,17 +13,19 @@ use slog::Logger;
 use crate::assembler::Assembler;
 use crate::coding::BufMutExt;
 use crate::crypto::{
-    self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto,
-    RingHeaderCrypto, TlsSession, ACK_DELAY_EXPONENT,
+    reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, RingHeaderCrypto,
+    TlsSession, ACK_DELAY_EXPONENT,
 };
 use crate::dedup::Dedup;
-use crate::endpoint::TransportConfig;
 use crate::frame::FrameStruct;
 use crate::packet::{
-    set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
-    PartialDecode, SpaceId, LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
+    set_payload_length, Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId,
+    LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
+use crate::shared::{
+    ClientConfig, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
+};
 use crate::stream::{self, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
@@ -3106,12 +3108,6 @@ mod state {
     }
 }
 
-#[derive(Clone)]
-pub struct ClientConfig {
-    pub server_name: String,
-    pub tls_config: Arc<crypto::ClientConfig>,
-}
-
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
 struct SentPacket {
@@ -3133,30 +3129,6 @@ struct SentPacket {
 
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
-
-/// Events to be sent to the Connection
-pub enum ConnectionEvent {
-    Datagram {
-        now: Instant,
-        remote: SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        first_decode: PartialDecode,
-        remaining: Option<BytesMut>,
-    },
-    NewIdentifiers(Vec<(u64, ConnectionId)>),
-    Timer(Instant, Timer),
-}
-
-/// Events to be sent to the Endpoint
-#[derive(Clone, Debug)]
-pub enum EndpointEvent {
-    Closed {
-        remote: SocketAddr,
-    },
-    NeedIdentifiers,
-    /// Stop routing connection ID for this sequence number to this `Connection`
-    RetireConnectionId(u64),
-}
 
 /// Encoding of I/O operations to emit on upcoming `poll_io` calls
 #[derive(Debug)]
