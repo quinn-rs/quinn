@@ -499,9 +499,7 @@ impl Drop for ConnectionInner {
             // Ensure the endpoint can tidy up
             let _ = self.endpoint_events.unbounded_send((
                 self.handle,
-                EndpointEvent::Proto(quinn::EndpointEvent::Closed {
-                    remote: self.inner.remote(),
-                }),
+                EndpointEvent::Proto(quinn::EndpointEvent::Closed),
             ));
         }
     }
