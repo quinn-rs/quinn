@@ -4,7 +4,7 @@ use bytes::{Buf, BufMut};
 use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::packet::ConnectionId;
+use crate::shared::ConnectionId;
 use crate::{
     varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
     VERSION,

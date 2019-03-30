@@ -18,6 +18,7 @@ use std::time::Duration;
 mod assembler;
 pub mod coding;
 mod dedup;
+mod packet;
 mod range_set;
 #[cfg(test)]
 mod tests;
@@ -25,10 +26,7 @@ mod transport_parameters;
 pub mod varint;
 
 mod connection;
-pub use crate::connection::{
-    Connection, ConnectionError, ConnectionEvent, EndpointEvent, Event, Timer, TimerSetting,
-    TimerUpdate,
-};
+pub use crate::connection::{Connection, ConnectionError, Event, Timer, TimerSetting, TimerUpdate};
 
 mod crypto;
 pub use crate::crypto::{ClientConfig, TokenKey};
@@ -39,12 +37,13 @@ pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use crate::endpoint::{
-    ConfigError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, EndpointConfig,
-    ServerConfig, TransportConfig,
+    ConnectError, ConnectionHandle, DatagramEvent, Endpoint, EndpointConfig, ServerConfig,
 };
 
-mod packet;
-pub use crate::packet::{ConnectionId, EcnCodepoint};
+mod shared;
+pub use crate::shared::{
+    ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
+};
 
 mod stream;
 pub use crate::stream::{ReadError, WriteError};

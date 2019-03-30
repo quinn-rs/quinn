@@ -4,8 +4,8 @@ use std::{fmt, io, mem};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
-use crate::packet::EcnCodepoint;
 use crate::range_set::RangeSet;
+use crate::shared::EcnCodepoint;
 use crate::{
     varint, ConnectionId, Directionality, StreamId, TransportError, TransportErrorCode,
     MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
