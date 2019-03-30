@@ -26,7 +26,8 @@ pub mod varint;
 
 mod connection;
 pub use crate::connection::{
-    Connection, ConnectionError, ConnectionEvent, EndpointEvent, TimerSetting, TimerUpdate,
+    Connection, ConnectionError, ConnectionEvent, EndpointEvent, Event, Timer, TimerSetting,
+    TimerUpdate,
 };
 
 mod crypto;
@@ -38,8 +39,8 @@ pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
 pub use crate::endpoint::{
-    ConfigError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, EndpointConfig, Event,
-    ServerConfig, Timer, TransportConfig,
+    ConfigError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, EndpointConfig,
+    ServerConfig, TransportConfig,
 };
 
 mod packet;
