@@ -137,7 +137,7 @@ impl Default for TransportConfig {
             ),
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
-            persistent_congestion_threshold: 2,
+            persistent_congestion_threshold: 3,
             keep_alive_interval: 0,
         }
     }
