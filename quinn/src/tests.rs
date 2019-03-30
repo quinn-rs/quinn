@@ -1,12 +1,11 @@
-use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::{fmt, io, str};
+
 use futures::{Future, Stream};
 use slog::{Drain, Logger, KV};
-use std::{
-    fmt, io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
-    str,
-};
 use tokio;
+
+use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
 
 #[test]
 fn local_addr() {
