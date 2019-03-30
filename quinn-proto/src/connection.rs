@@ -150,7 +150,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(
+    pub(crate) fn new(
         log: Logger,
         endpoint_config: Arc<EndpointConfig>,
         config: Arc<TransportConfig>,
@@ -835,7 +835,7 @@ impl Connection {
             .push((stream_id, error_code));
     }
 
-    pub fn handle_initial(
+    pub(crate) fn handle_initial(
         &mut self,
         now: Instant,
         remote: SocketAddr,
@@ -2755,11 +2755,11 @@ impl Connection {
         self.accepted_0rtt
     }
 
-    pub fn has_0rtt(&self) -> bool {
+    pub(crate) fn has_0rtt(&self) -> bool {
         self.zero_rtt_crypto.is_some()
     }
 
-    pub fn has_1rtt(&self) -> bool {
+    pub(crate) fn has_1rtt(&self) -> bool {
         self.spaces[SpaceId::Data as usize].crypto.is_some()
     }
 
@@ -2783,12 +2783,14 @@ impl Connection {
 
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
-    pub fn bytes_in_flight(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn bytes_in_flight(&self) -> u64 {
         self.in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
-    pub fn congestion_state(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn congestion_state(&self) -> u64 {
         self.congestion_window.saturating_sub(self.in_flight.bytes)
     }
 
@@ -2800,12 +2802,14 @@ impl Connection {
     }
 
     /// Total number of outgoing packets that have been deemed lost
-    pub fn lost_packets(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn lost_packets(&self) -> u64 {
         self.lost_packets
     }
 
     /// Whether explicit congestion notification is in use on outgoing packets.
-    pub fn using_ecn(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn using_ecn(&self) -> bool {
         self.sending_ecn
     }
 
