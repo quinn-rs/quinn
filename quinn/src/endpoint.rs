@@ -9,7 +9,7 @@ use fnv::FnvHashMap;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll, Sink};
+use futures::{Async, Future, Poll};
 use quinn_proto::{self as quinn, ConnectionHandle};
 use slog::Logger;
 
@@ -22,7 +22,7 @@ pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 pub use crate::builders::{
     ClientConfig, ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
-use crate::connection::{ConnectingFuture, ConnectionRef, NewConnection};
+use crate::connection::{ConnectingFuture, ConnectionDriver, ConnectionRef, NewConnection};
 use crate::udp::UdpSocket;
 use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
 
@@ -131,7 +131,6 @@ impl Future for Driver {
             let mut keep_going = false;
             keep_going |= endpoint.drive_recv(now)?;
             endpoint.drive_incoming();
-            let _ = endpoint.incoming.poll_complete();
             endpoint.handle_events()?;
             keep_going |= endpoint.drive_send()?;
             if !keep_going {
@@ -156,8 +155,8 @@ pub(crate) struct EndpointInner {
     socket: UdpSocket,
     inner: quinn::Endpoint,
     outgoing: VecDeque<quinn::Transmit>,
-    buffered_incoming: VecDeque<(ConnectionHandle, ConnectionRef)>,
-    incoming: mpsc::Sender<NewConnection>,
+    incoming: VecDeque<ConnectionDriver>,
+    blocked_incoming: Option<Task>,
     driver: Option<Task>,
     ipv6: bool,
     connections: FnvHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
@@ -167,24 +166,18 @@ pub(crate) struct EndpointInner {
 }
 
 impl EndpointInner {
-    pub(crate) fn new(
-        log: Logger,
-        socket: UdpSocket,
-        inner: quinn::Endpoint,
-        incoming: mpsc::Sender<NewConnection>,
-        ipv6: bool,
-    ) -> Self {
+    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: quinn::Endpoint, ipv6: bool) -> Self {
         let (sender, events) = mpsc::unbounded();
         Self {
             log,
             socket,
             inner,
-            incoming,
             ipv6,
             sender,
             events,
             outgoing: VecDeque::new(),
-            buffered_incoming: VecDeque::new(),
+            incoming: VecDeque::new(),
+            blocked_incoming: None,
             driver: None,
             connections: FnvHashMap::default(),
         }
@@ -199,7 +192,10 @@ impl EndpointInner {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
                             let conn = self.create_connection(handle, conn);
-                            self.buffered_incoming.push_back((handle, conn));
+                            self.incoming.push_back(ConnectionDriver(conn));
+                            if let Some(task) = self.blocked_incoming.take() {
+                                task.notify();
+                            }
                         }
                         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                             self.connections
@@ -232,13 +228,9 @@ impl EndpointInner {
     }
 
     fn drive_incoming(&mut self) {
-        while let Ok(Async::Ready(())) = self.incoming.poll_ready() {
-            if let Some((_, conn)) = self.buffered_incoming.pop_front() {
-                self.incoming.start_send(NewConnection::new(conn)).unwrap();
-                self.inner.accept();
-            } else {
-                break;
-            }
+        for conn in &mut self.incoming {
+            // It's safe to poll an already dead connection
+            let _ = conn.poll();
         }
     }
 
@@ -306,12 +298,32 @@ impl EndpointInner {
     }
 }
 
-/// Stream of incoming connections.
-pub type Incoming = mpsc::Receiver<NewConnection>;
-
 fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
     match x {
         SocketAddr::V6(x) => x,
         SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0),
+    }
+}
+
+/// Stream of incoming connections.
+pub struct Incoming(Arc<Mutex<EndpointInner>>);
+
+impl Incoming {
+    pub(crate) fn new(inner: Arc<Mutex<EndpointInner>>) -> Self {
+        Self(inner)
+    }
+}
+
+impl FuturesStream for Incoming {
+    type Item = NewConnection;
+    type Error = (); // FIXME: Infallible
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let endpoint = &mut *self.0.lock().unwrap();
+        if let Some(conn) = endpoint.incoming.pop_front() {
+            endpoint.inner.accept();
+            return Ok(Async::Ready(Some(NewConnection::new(conn.0))));
+        }
+        endpoint.blocked_incoming = Some(task::current());
+        Ok(Async::NotReady)
     }
 }
