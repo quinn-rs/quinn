@@ -156,7 +156,9 @@ pub(crate) struct EndpointInner {
     inner: quinn::Endpoint,
     outgoing: VecDeque<quinn::Transmit>,
     incoming: VecDeque<ConnectionDriver>,
-    blocked_incoming: Option<Task>,
+    incoming_reader: Option<Task>,
+    /// Whether the `Incoming` stream has not yet been dropped
+    incoming_live: bool,
     driver: Option<Task>,
     ipv6: bool,
     connections: FnvHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
@@ -177,7 +179,8 @@ impl EndpointInner {
             events,
             outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
-            blocked_incoming: None,
+            incoming_reader: None,
+            incoming_live: true,
             driver: None,
             connections: FnvHashMap::default(),
         }
@@ -191,9 +194,12 @@ impl EndpointInner {
                 Ok(Async::Ready((n, addr, ecn))) => {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = self.create_connection(handle, conn);
-                            self.incoming.push_back(ConnectionDriver(conn));
-                            if let Some(task) = self.blocked_incoming.take() {
+                            let conn = ConnectionDriver(self.create_connection(handle, conn));
+                            if !self.incoming_live {
+                                conn.0.lock().unwrap().implicit_close();
+                            }
+                            self.incoming.push_back(conn);
+                            if let Some(task) = self.incoming_reader.take() {
                                 task.notify();
                             }
                         }
@@ -228,9 +234,14 @@ impl EndpointInner {
     }
 
     fn drive_incoming(&mut self) {
-        for conn in &mut self.incoming {
-            // It's safe to poll an already dead connection
-            let _ = conn.poll();
+        for i in (0..self.incoming.len()).rev() {
+            match self.incoming[i].poll() {
+                Ok(Async::Ready(())) | Err(_) if !self.incoming_live => {
+                    let _ = self.incoming.swap_remove_back(i);
+                }
+                // It's safe to poll an already dead connection
+                _ => {}
+            }
         }
     }
 
@@ -323,7 +334,19 @@ impl FuturesStream for Incoming {
             endpoint.inner.accept();
             return Ok(Async::Ready(Some(NewConnection::new(conn.0))));
         }
-        endpoint.blocked_incoming = Some(task::current());
+        endpoint.incoming_reader = Some(task::current());
         Ok(Async::NotReady)
+    }
+}
+
+impl Drop for Incoming {
+    fn drop(&mut self) {
+        let endpoint = &mut *self.0.lock().unwrap();
+        endpoint.inner.reject_new_connections();
+        endpoint.incoming_live = false;
+        endpoint.incoming_reader = None;
+        for conn in &mut endpoint.incoming {
+            conn.0.lock().unwrap().implicit_close();
+        }
     }
 }

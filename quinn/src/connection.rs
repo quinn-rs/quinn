@@ -300,7 +300,7 @@ impl Drop for ConnectionRef {
             // not, we can't do any harm.
             let conn = &mut *self.0.lock().unwrap();
             if !conn.inner.is_closed() {
-                conn.inner.close(Instant::now(), 0, Bytes::new());
+                conn.implicit_close();
             }
         }
     }
@@ -486,6 +486,10 @@ impl ConnectionInner {
         if let Some(x) = self.driver.as_ref() {
             x.notify();
         }
+    }
+
+    pub fn implicit_close(&mut self) {
+        self.inner.close(Instant::now(), 0, Bytes::new());
     }
 }
 
