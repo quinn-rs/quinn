@@ -17,9 +17,9 @@ use std::time::Duration;
 
 mod assembler;
 pub mod coding;
-mod dedup;
 mod packet;
 mod range_set;
+mod spaces;
 #[cfg(test)]
 mod tests;
 mod transport_parameters;
