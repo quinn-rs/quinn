@@ -46,6 +46,10 @@ pub struct Endpoint {
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     incoming_handshakes: usize,
+    /// Whether incoming connections should be unconditionally rejected by a server
+    ///
+    /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
+    reject_new_connections: bool,
 }
 
 impl Endpoint {
@@ -67,6 +71,7 @@ impl Endpoint {
             incoming_handshakes: 0,
             config,
             server_config,
+            reject_new_connections: false,
         })
     }
 
@@ -459,7 +464,9 @@ impl Endpoint {
         let temp_loc_cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
         let server_config = self.server_config.as_ref().unwrap();
 
-        if self.incoming_handshakes == server_config.accept_buffer as usize {
+        if self.incoming_handshakes == server_config.accept_buffer as usize
+            || self.reject_new_connections
+        {
             debug!(self.log, "rejecting connection due to full accept buffer");
             self.transmits.push_back(Transmit {
                 destination: remote,
@@ -585,6 +592,11 @@ impl Endpoint {
     /// connection and releases the slot for reuse.
     pub fn accept(&mut self) {
         self.incoming_handshakes -= 1;
+    }
+
+    /// Unconditionally reject future incoming connections
+    pub fn reject_new_connections(&mut self) {
+        self.reject_new_connections = true;
     }
 }
 
