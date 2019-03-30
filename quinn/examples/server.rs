@@ -175,7 +175,8 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
     let log2 = log.clone();
     let root = root.clone();
 
-    tokio_current_thread::spawn(driver.map_err(|e| panic!(e)));
+    // We ignore errors from the driver because they'll be reported by the `incoming` handler anyway.
+    tokio_current_thread::spawn(driver.map_err(|_| ()));
 
     // Each stream initiated by the client constitutes a new request.
     tokio_current_thread::spawn(

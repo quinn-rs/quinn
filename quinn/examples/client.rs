@@ -142,7 +142,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                             .map_err(|e| format_err!("failed to read response: {}", e))
                             .map(move |x| (x, response_start))
                     })
-                    .and_then(move |((_, data), response_start)| {
+                    .map(move |((_, data), response_start)| {
                         let duration = response_start.elapsed();
                         eprintln!(
                             "response received in {:?} - {} KiB/s",
@@ -151,7 +151,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         );
                         io::stdout().write_all(&data).unwrap();
                         io::stdout().flush().unwrap();
-                        conn.close(0, b"done").map_err(|_| unreachable!())
+                        conn.close(0, b"done");
                     })
                     .map(|()| eprintln!("drained"))
             }),

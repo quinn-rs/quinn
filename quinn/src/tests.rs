@@ -154,9 +154,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                                 read_to_end(stream, usize::max_value())
                                     .map_err(|e| panic!("read: {}", e))
                             })
-                            .and_then(move |(_, data)| {
+                            .map(move |(_, data)| {
                                 assert_eq!(&data[..], b"foo");
-                                conn.close(0, b"done").map_err(|_| unreachable!())
+                                conn.close(0, b"done");
                             })
                     }),
             )
