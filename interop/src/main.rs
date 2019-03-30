@@ -78,7 +78,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     let client_config = quinn::ClientConfig {
         tls_config: Arc::new(tls_config),
-        transport: Default::default(),
+        transport: Arc::new(quinn::TransportConfig {
+            idle_timeout: 1_000,
+            ..Default::default()
+        }),
     };
 
     builder.logger(log.clone());
@@ -196,7 +199,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     h3_tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_H3.into()];
     let h3_client_config = quinn::ClientConfig {
         tls_config: Arc::new(h3_tls_config),
-        transport: Default::default(),
+        transport: client_config.transport.clone(),
     };
 
     let mut h3 = false;
