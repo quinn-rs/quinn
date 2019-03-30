@@ -215,7 +215,7 @@ pub struct ConnectionId {
 }
 
 impl ConnectionId {
-    pub fn new(bytes: &[u8]) -> Self {
+    pub(crate) fn new(bytes: &[u8]) -> Self {
         debug_assert!(
             bytes.is_empty() || (bytes.len() >= MIN_CID_SIZE && bytes.len() <= MAX_CID_SIZE)
         );
@@ -227,7 +227,7 @@ impl ConnectionId {
         res
     }
 
-    pub fn random<R: Rng>(rng: &mut R, len: usize) -> Self {
+    pub(crate) fn random<R: Rng>(rng: &mut R, len: usize) -> Self {
         debug_assert!(len <= MAX_CID_SIZE);
         let mut res = Self {
             len: len as u8,
