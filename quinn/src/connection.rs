@@ -106,11 +106,11 @@ impl Future for ConnectionDriver {
         loop {
             let mut keep_going = false;
             conn.process_conn_events().unwrap();
-            conn.forward_app_events();
-            conn.forward_endpoint_events();
             conn.drive_transmit(now);
             keep_going |= conn.drive_timers(now);
             keep_going |= conn.handle_timer_updates();
+            conn.forward_endpoint_events();
+            conn.forward_app_events();
             if !keep_going || conn.closed {
                 break;
             }
