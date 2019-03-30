@@ -17,7 +17,7 @@ use crate::crypto::{
     RingHeaderCrypto, TlsSession, ACK_DELAY_EXPONENT,
 };
 use crate::dedup::Dedup;
-use crate::endpoint::{Event, Timer, TransportConfig};
+use crate::endpoint::TransportConfig;
 use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, ConnectionId, EcnCodepoint, Header, LongType, Packet, PacketNumber,
@@ -3418,6 +3418,73 @@ impl RttEstimator {
             self.smoothed = Some(self.latest);
             self.var = self.latest / 2;
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub enum Timer {
+    LossDetection = 0,
+    Idle = 1,
+    /// When the close timer expires, the connection has been gracefully terminated.
+    Close = 2,
+    KeyDiscard = 3,
+    PathValidation = 4,
+    KeepAlive = 5,
+}
+
+impl Timer {
+    /// Number of types of timers that a connection may start
+    pub const COUNT: usize = 6;
+
+    pub fn iter() -> impl Iterator<Item = Self> {
+        [
+            Timer::LossDetection,
+            Timer::Idle,
+            Timer::Close,
+            Timer::KeyDiscard,
+            Timer::PathValidation,
+            Timer::KeepAlive,
+        ]
+        .iter()
+        .cloned()
+    }
+}
+
+impl slog::Value for Timer {
+    fn serialize(
+        &self,
+        _: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        serializer.emit_arguments(key, &format_args!("{:?}", self))
+    }
+}
+
+/// Events of interest to the application
+#[derive(Debug)]
+pub enum Event {
+    /// A connection was successfully established.
+    Connected,
+    /// A connection was lost.
+    ///
+    /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
+    ConnectionLost { reason: ConnectionError },
+    /// One or more new streams has been opened and is readable
+    StreamOpened,
+    /// An existing stream has data or errors waiting to be read
+    StreamReadable { stream: StreamId },
+    /// A formerly write-blocked stream might now accept a write
+    StreamWritable { stream: StreamId },
+    /// All data sent on `stream` has been received by the peer
+    StreamFinished { stream: StreamId },
+    /// At least one new stream of a certain directionality may be opened
+    StreamAvailable { directionality: Directionality },
+}
+
+impl From<ConnectionError> for Event {
+    fn from(x: ConnectionError) -> Self {
+        Event::ConnectionLost { reason: x }
     }
 }
 

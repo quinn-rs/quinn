@@ -15,9 +15,7 @@ use slab::Slab;
 use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
-use crate::connection::{
-    initial_close, ClientConfig, Connection, ConnectionError, ConnectionEvent, EndpointEvent,
-};
+use crate::connection::{initial_close, ClientConfig, Connection, ConnectionEvent, EndpointEvent};
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
     TokenKey,
@@ -25,8 +23,8 @@ use crate::crypto::{
 use crate::packet::{ConnectionId, EcnCodepoint, Header, Packet, PacketDecodeError, PartialDecode};
 use crate::transport_parameters::TransportParameters;
 use crate::{
-    varint, Directionality, Side, StreamId, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE,
-    MIN_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
+    varint, Side, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE, MIN_CID_SIZE,
+    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// The main entry point to the library
@@ -846,73 +844,6 @@ pub enum ConfigError {
     /// range
     #[error(display = "{} must be at most 2^62-1", _0)]
     VarIntBounds(&'static str),
-}
-
-/// Events of interest to the application
-#[derive(Debug)]
-pub enum Event {
-    /// A connection was successfully established.
-    Connected,
-    /// A connection was lost.
-    ///
-    /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
-    ConnectionLost { reason: ConnectionError },
-    /// One or more new streams has been opened and is readable
-    StreamOpened,
-    /// An existing stream has data or errors waiting to be read
-    StreamReadable { stream: StreamId },
-    /// A formerly write-blocked stream might now accept a write
-    StreamWritable { stream: StreamId },
-    /// All data sent on `stream` has been received by the peer
-    StreamFinished { stream: StreamId },
-    /// At least one new stream of a certain directionality may be opened
-    StreamAvailable { directionality: Directionality },
-}
-
-impl From<ConnectionError> for Event {
-    fn from(x: ConnectionError) -> Self {
-        Event::ConnectionLost { reason: x }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum Timer {
-    LossDetection = 0,
-    Idle = 1,
-    /// When the close timer expires, the connection has been gracefully terminated.
-    Close = 2,
-    KeyDiscard = 3,
-    PathValidation = 4,
-    KeepAlive = 5,
-}
-
-impl Timer {
-    /// Number of types of timers that a connection may start
-    pub const COUNT: usize = 6;
-
-    pub fn iter() -> impl Iterator<Item = Self> {
-        [
-            Timer::LossDetection,
-            Timer::Idle,
-            Timer::Close,
-            Timer::KeyDiscard,
-            Timer::PathValidation,
-            Timer::KeepAlive,
-        ]
-        .iter()
-        .cloned()
-    }
-}
-
-impl slog::Value for Timer {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
