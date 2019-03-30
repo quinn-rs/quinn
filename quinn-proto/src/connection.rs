@@ -10,6 +10,7 @@ use fnv::FnvHashSet;
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
+use crate::assembler::Assembler;
 use crate::coding::BufMutExt;
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto,
@@ -3239,7 +3240,7 @@ struct PacketSpace {
     ecn_feedback: frame::EcnCounts,
 
     /// Incoming cryptographic handshake stream
-    crypto_stream: stream::Assembler,
+    crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
     crypto_offset: u64,
 }
@@ -3262,7 +3263,7 @@ impl PacketSpace {
             sent_packets: BTreeMap::new(),
             ecn_feedback: frame::EcnCounts::ZERO,
 
-            crypto_stream: stream::Assembler::new(),
+            crypto_stream: Assembler::new(),
             crypto_offset: 0,
         }
     }

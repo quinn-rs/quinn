@@ -15,6 +15,7 @@ use std::net::SocketAddr;
 use std::ops;
 use std::time::Duration;
 
+mod assembler;
 pub mod coding;
 mod dedup;
 mod range_set;
