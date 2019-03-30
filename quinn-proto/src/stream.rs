@@ -328,6 +328,9 @@ pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
     #[error(display = "stopped by peer: error {}", error_code)]
     Stopped { error_code: u16 },
+    /// Unknown stream
+    #[error(display = "unknown stream")]
+    UnknownStream,
 }
 
 #[derive(Debug)]
