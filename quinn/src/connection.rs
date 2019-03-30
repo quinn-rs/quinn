@@ -598,6 +598,9 @@ impl Write for BiStream {
             Err(Stopped { error_code }) => {
                 return Err(WriteError::Stopped { error_code });
             }
+            Err(UnknownStream) => {
+                return Err(WriteError::UnknownStream);
+            }
         };
         conn.notify();
         Ok(Async::Ready(n))
@@ -704,6 +707,9 @@ impl io::Write for BiStream {
                 io::ErrorKind::ConnectionAborted,
                 format!("connection closed: {}", e),
             )),
+            Err(WriteError::UnknownStream) => {
+                Err(io::Error::new(io::ErrorKind::Other, "unknown stream"))
+            }
         }
     }
 
@@ -971,4 +977,7 @@ pub enum WriteError {
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
+    /// Unknown stream
+    #[error(display = "unknown stream")]
+    UnknownStream,
 }

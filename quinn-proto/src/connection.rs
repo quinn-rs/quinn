@@ -2680,7 +2680,7 @@ impl Connection {
         let budget_res = self
             .streams
             .get_send_mut(stream)
-            .expect("stream already closed")
+            .ok_or(WriteError::UnknownStream)?
             .write_budget();
 
         let stream_budget = match budget_res {
@@ -2697,6 +2697,7 @@ impl Connection {
                 );
                 return Err(e);
             }
+            Err(WriteError::UnknownStream) => unreachable!("not returned here"),
         };
 
         let conn_budget = cmp::min(
