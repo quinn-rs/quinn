@@ -48,69 +48,77 @@ fn echo_dualstack() {
 }
 
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
-    let log = logger();
-    let mut server_config = ServerConfigBuilder::default();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
-    let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
-    let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
-    server_config.certificate(cert_chain, key).unwrap();
-
-    let mut server = Endpoint::new();
-    server.logger(log.clone());
-    server.listen(server_config.build());
-    let server_sock = UdpSocket::bind(server_addr).unwrap();
-    let server_addr = server_sock.local_addr().unwrap();
-    let (_, server_driver, server_incoming) = server.from_socket(server_sock).unwrap();
-
-    let mut client_config = ClientConfigBuilder::default();
-    client_config.add_certificate_authority(cert).unwrap();
-    client_config.enable_keylog();
-    let mut client = Endpoint::new();
-    client.logger(log.clone());
-    client.default_client_config(client_config.build());
-    let (client, client_driver, _) = client.bind(client_addr).unwrap();
-
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
-    runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
-    runtime.spawn(server_incoming.for_each(move |conn| {
-        tokio::spawn(conn.driver.map_err(|_| ()));
-        tokio::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
-        Ok(())
-    }));
+    {
+        let log = logger();
+        let mut server_config = ServerConfigBuilder::default();
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+        let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+        let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
+        let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
+        server_config.certificate(cert_chain, key).unwrap();
 
-    info!(log, "connecting from {} to {}", client_addr, server_addr);
-    runtime
-        .block_on(
-            client
-                .connect(&server_addr, "localhost")
-                .unwrap()
-                .map_err(|e| panic!("connection failed: {}", e))
-                .and_then(move |conn| {
-                    tokio::spawn(conn.driver.map_err(|e| eprintln!("connection lost: {}", e)));
-                    let conn = conn.connection;
-                    let stream = conn.open_bi();
-                    stream
-                        .map_err(|_| ())
-                        .and_then(move |stream| {
-                            tokio::io::write_all(stream, b"foo".to_vec())
-                                .map_err(|e| panic!("write: {}", e))
-                        })
-                        .and_then(|(stream, _)| {
-                            tokio::io::shutdown(stream).map_err(|e| panic!("finish: {}", e))
-                        })
-                        .and_then(move |stream| {
-                            read_to_end(stream, usize::max_value())
-                                .map_err(|e| panic!("read: {}", e))
-                        })
-                        .and_then(move |(_, data)| {
-                            assert_eq!(&data[..], b"foo");
-                            conn.close(0, b"done").map_err(|_| unreachable!())
-                        })
-                }),
-        )
-        .unwrap();
+        let mut server = Endpoint::new();
+        server.logger(log.clone());
+        server.listen(server_config.build());
+        let server_sock = UdpSocket::bind(server_addr).unwrap();
+        let server_addr = server_sock.local_addr().unwrap();
+        let (_, server_driver, server_incoming) = server.from_socket(server_sock).unwrap();
+
+        let mut client_config = ClientConfigBuilder::default();
+        client_config.add_certificate_authority(cert).unwrap();
+        client_config.enable_keylog();
+        let mut client = Endpoint::new();
+        client.logger(log.clone());
+        client.default_client_config(client_config.build());
+        let (client, client_driver, _) = client.bind(client_addr).unwrap();
+
+        runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
+        runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
+        runtime.spawn(
+            server_incoming
+                .into_future()
+                .map(move |(conn, _)| {
+                    let conn = conn.unwrap();
+                    tokio::spawn(conn.driver.map_err(|_| ()));
+                    tokio::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
+                })
+                .map_err(|_| ()),
+        );
+
+        info!(log, "connecting from {} to {}", client_addr, server_addr);
+        runtime
+            .block_on(
+                client
+                    .connect(&server_addr, "localhost")
+                    .unwrap()
+                    .map_err(|e| panic!("connection failed: {}", e))
+                    .and_then(move |conn| {
+                        tokio::spawn(conn.driver.map_err(|e| eprintln!("connection lost: {}", e)));
+                        let conn = conn.connection;
+                        let stream = conn.open_bi();
+                        stream
+                            .map_err(|_| ())
+                            .and_then(move |stream| {
+                                tokio::io::write_all(stream, b"foo".to_vec())
+                                    .map_err(|e| panic!("write: {}", e))
+                            })
+                            .and_then(|(stream, _)| {
+                                tokio::io::shutdown(stream).map_err(|e| panic!("finish: {}", e))
+                            })
+                            .and_then(move |stream| {
+                                read_to_end(stream, usize::max_value())
+                                    .map_err(|e| panic!("read: {}", e))
+                            })
+                            .and_then(move |(_, data)| {
+                                assert_eq!(&data[..], b"foo");
+                                conn.close(0, b"done").map_err(|_| unreachable!())
+                            })
+                    }),
+            )
+            .unwrap();
+    }
+    runtime.shutdown_on_idle().wait().unwrap();
 }
 
 fn echo(stream: NewStream) -> Box<impl Future<Item = (), Error = ()>> {

@@ -34,7 +34,7 @@ use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Clone)]
 pub struct Endpoint {
-    pub(crate) inner: Arc<Mutex<EndpointInner>>,
+    pub(crate) inner: EndpointRef,
     pub(crate) default_client_config: ClientConfig,
 }
 
@@ -116,7 +116,7 @@ impl Endpoint {
 ///
 /// `Driver` instances do not terminate (always yields `NotReady`) except in case of an error.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
-pub struct Driver(pub(crate) Arc<Mutex<EndpointInner>>);
+pub struct Driver(pub(crate) EndpointRef);
 
 impl Future for Driver {
     type Item = ();
@@ -137,7 +137,13 @@ impl Future for Driver {
                 break;
             }
         }
-        Ok(Async::NotReady)
+        Ok(
+            if endpoint.unreferenced && endpoint.connections.is_empty() {
+                Async::Ready(())
+            } else {
+                Async::NotReady
+            },
+        )
     }
 }
 
@@ -165,27 +171,14 @@ pub(crate) struct EndpointInner {
     // Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
+    /// Whether only one reference to this endpoint remains
+    ///
+    /// We presume the final reference to always be the driver, because otherwise nothing we do will
+    /// have any effect regardless.
+    unreferenced: bool,
 }
 
 impl EndpointInner {
-    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: quinn::Endpoint, ipv6: bool) -> Self {
-        let (sender, events) = mpsc::unbounded();
-        Self {
-            log,
-            socket,
-            inner,
-            ipv6,
-            sender,
-            events,
-            outgoing: VecDeque::new(),
-            incoming: VecDeque::new(),
-            incoming_reader: None,
-            incoming_live: true,
-            driver: None,
-            connections: FnvHashMap::default(),
-        }
-    }
-
     fn drive_recv(&mut self, now: Instant) -> Result<bool, io::Error> {
         let mut buf = [0; 64 * 1024];
         let mut recvd = 0;
@@ -317,10 +310,10 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
 }
 
 /// Stream of incoming connections.
-pub struct Incoming(Arc<Mutex<EndpointInner>>);
+pub struct Incoming(EndpointRef);
 
 impl Incoming {
-    pub(crate) fn new(inner: Arc<Mutex<EndpointInner>>) -> Self {
+    pub(crate) fn new(inner: EndpointRef) -> Self {
         Self(inner)
     }
 }
@@ -348,5 +341,55 @@ impl Drop for Incoming {
         for conn in &mut endpoint.incoming {
             conn.0.lock().unwrap().implicit_close();
         }
+    }
+}
+
+pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
+
+impl EndpointRef {
+    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: quinn::Endpoint, ipv6: bool) -> Self {
+        let (sender, events) = mpsc::unbounded();
+        Self(Arc::new(Mutex::new(EndpointInner {
+            log,
+            socket,
+            inner,
+            ipv6,
+            sender,
+            events,
+            outgoing: VecDeque::new(),
+            incoming: VecDeque::new(),
+            incoming_live: true,
+            incoming_reader: None,
+            driver: None,
+            connections: FnvHashMap::default(),
+            unreferenced: false,
+        })))
+    }
+}
+
+impl Clone for EndpointRef {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl Drop for EndpointRef {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.0) == 2 {
+            // If the driver is about to be on its own, arrange for it to shut down once the last
+            // connection is gone.
+            let endpoint = &mut *self.0.lock().unwrap();
+            endpoint.unreferenced = true;
+            if let Some(task) = endpoint.driver.take() {
+                task.notify();
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for EndpointRef {
+    type Target = Mutex<EndpointInner>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

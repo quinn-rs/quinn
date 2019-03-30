@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::io;
 use std::net::ToSocketAddrs;
 use std::str;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use err_derive::Error;
 use quinn_proto as quinn;
@@ -11,7 +11,7 @@ use slog::Logger;
 
 use quinn_proto::{EndpointConfig, ServerConfig, TransportConfig};
 
-use crate::endpoint::{Driver, Endpoint, EndpointInner, Incoming};
+use crate::endpoint::{Driver, Endpoint, EndpointRef, Incoming};
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
 use crate::udp::UdpSocket;
 
@@ -55,7 +55,7 @@ impl<'a> EndpointBuilder<'a> {
         };
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
-        let rc = Arc::new(Mutex::new(EndpointInner::new(
+        let rc = EndpointRef::new(
             self.logger.clone(),
             socket,
             quinn::Endpoint::new(
@@ -64,7 +64,7 @@ impl<'a> EndpointBuilder<'a> {
                 self.server_config.map(Arc::new),
             )?,
             addr.is_ipv6(),
-        )));
+        );
         Ok((
             Endpoint {
                 inner: rc.clone(),
