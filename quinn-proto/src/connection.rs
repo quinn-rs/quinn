@@ -708,8 +708,7 @@ impl Connection {
             .rtt
             .smoothed
             .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
-        let computed = rtt + 4 * self.rtt.var + self.max_ack_delay();
-        cmp::max(computed, TIMER_GRANULARITY)
+        rtt + cmp::max(4 * self.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
     }
 
     fn on_packet_authenticated(
