@@ -90,7 +90,7 @@ impl NewConnection {
 /// If the connection encounters an error condition, this future will yield an error. It
 /// will terminate (yielding `Ready(())`) if the connection was closed without error.
 #[must_use = "connection drivers must be spawned for their connections to function"]
-pub struct ConnectionDriver(ConnectionRef);
+pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
     type Item = ();
