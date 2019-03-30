@@ -109,55 +109,55 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 let stream_data = &mut stream_data;
+
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
                     .and_then(move |stream| get(stream))
-                    .and_then(move |data| {
+                    .map(move |data| {
                         println!("read {} bytes, closing", data.len());
                         *stream_data = true;
-                        conn.close(0, b"done").map_err(|_| unreachable!())
+                        conn.close(0, b"done");
                     })
-                    .map(|()| {
-                        close = true;
-                    })
-            })
-            .and_then(|_| {
-                println!("attempting resumption");
-                state.lock().unwrap().saw_cert = false;
-                endpoint
-                    .connect_with(&client_config, &remote, host)
-                    .unwrap()
-                    .map_err(|e| format_err!("failed to connect: {}", e))
-                    .and_then(|conn| {
-                        tokio_current_thread::spawn(
-                            conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
-                        );
-                        resumption = !state.lock().unwrap().saw_cert;
-                        let conn = conn.connection;
-                        conn.force_key_update();
-                        let stream = conn.open_bi();
-                        let stream2 = conn.open_bi();
-                        let rebinding = &mut rebinding;
-                        stream
-                            .map_err(|e| format_err!("failed to open stream: {}", e))
-                            .and_then(move |stream| get(stream))
-                            .inspect(|_| {
-                                key_update = true;
-                            })
-                            .and_then(move |_| {
-                                let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                                let addr = socket.local_addr().unwrap();
-                                println!("rebinding to {}", addr);
-                                endpoint
-                                    .rebind(socket, &tokio_reactor::Handle::default())
-                                    .expect("rebind failed");
-                                stream2
+                    .and_then(|_| {
+                        println!("attempting resumption");
+                        state.lock().unwrap().saw_cert = false;
+                        endpoint
+                            .connect_with(&client_config, &remote, host)
+                            .unwrap()
+                            .map_err(|e| format_err!("failed to connect: {}", e))
+                            .and_then(|conn| {
+                                tokio_current_thread::spawn(
+                                    conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                                );
+                                resumption = !state.lock().unwrap().saw_cert;
+                                let conn = conn.connection;
+                                conn.force_key_update();
+                                let stream = conn.open_bi();
+                                let stream2 = conn.open_bi();
+                                let rebinding = &mut rebinding;
+                                stream
                                     .map_err(|e| format_err!("failed to open stream: {}", e))
                                     .and_then(move |stream| get(stream))
-                            })
-                            .and_then(move |_| {
-                                *rebinding = true;
-                                conn.close(0, b"done").map_err(|_| unreachable!())
+                                    .inspect(|_| {
+                                        key_update = true;
+                                    })
+                                    .and_then(move |_| {
+                                        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+                                        let addr = socket.local_addr().unwrap();
+                                        println!("rebinding to {}", addr);
+                                        endpoint
+                                            .rebind(socket, &tokio_reactor::Handle::default())
+                                            .expect("rebind failed");
+                                        stream2
+                                            .map_err(|e| {
+                                                format_err!("failed to open stream: {}", e)
+                                            })
+                                            .and_then(move |stream| get(stream))
+                                    })
+                                    .map(move |_| {
+                                        *rebinding = true;
+                                        conn.close(0, b"done");
+                                    })
                             })
                     })
             }),
@@ -177,13 +177,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             endpoint
                 .connect_with(&client_config, &remote, host)?
                 .and_then(|conn| {
-                    tokio_current_thread::spawn(
-                        conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
-                    );
                     retry = true;
-                    conn.connection
-                        .close(0, b"done")
-                        .map_err(|_| unreachable!())
+                    conn.connection.close(0, b"done");
+                    conn.driver
+                })
+                .map(|()| {
+                    close = true;
                 }),
         );
         if let Err(e) = result {
@@ -203,6 +202,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
 
     let mut h3 = false;
+    println!("trying h3");
     let result = runtime.block_on(
         endpoint
             .connect_with(&h3_client_config, &remote, host)?
@@ -232,13 +232,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let req_fut = req_stream
                     .map_err(|e| format_err!("failed to open request stream: {}", e))
                     .and_then(|req_stream| h3_get(req_stream))
-                    .and_then(move |data| {
+                    .map(move |data| {
                         println!(
                             "read {} bytes: \n\n{}\n\n closing",
                             data.len(),
                             String::from_utf8_lossy(&data)
                         );
-                        conn.close(0, b"done").map_err(|_| unreachable!())
+                        conn.close(0, b"done");
                     });
                 control_fut.and_then(|_| req_fut).map(|_| h3 = true)
             }),

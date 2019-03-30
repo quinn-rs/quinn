@@ -87,8 +87,10 @@ impl NewConnection {
 /// `Connection` API object to the `Endpoint` task and the related stream-related interfaces.
 /// It also keeps track of outstanding timeouts for the `Connection`.
 ///
-/// If the connection encounters an error condition, this future will yield an error. It
-/// will terminate (yielding `Ready(())`) if the connection was closed without error.
+/// If the connection encounters an error condition, this future will yield an error. It will
+/// terminate (yielding `Ok(())`) if the connection was closed without error. Unlike other
+/// connection-related futures, this waits for the draining period to complete to ensure that
+/// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
@@ -97,10 +99,6 @@ impl Future for ConnectionDriver {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let conn = &mut *self.0.lock().unwrap();
-
-        if conn.driver.is_none() {
-            conn.driver = Some(task::current());
-        }
 
         let now = Instant::now();
         loop {
@@ -111,17 +109,19 @@ impl Future for ConnectionDriver {
             keep_going |= conn.handle_timer_updates();
             conn.forward_endpoint_events();
             conn.forward_app_events();
-            if !keep_going || conn.closed {
+            if !keep_going || conn.inner.is_drained() {
                 break;
             }
         }
 
         if !conn.inner.is_drained() {
-            Ok(Async::NotReady)
-        } else if let Some(e) = &conn.pending.error {
-            Err(e.clone())
-        } else {
-            Ok(Async::Ready(()))
+            conn.driver = Some(task::current());
+            return Ok(Async::NotReady);
+        }
+        match conn.pending.error {
+            Some(ConnectionError::LocallyClosed) => Ok(Async::Ready(())),
+            Some(ref e) => Err(e.clone()),
+            None => unreachable!("drained connections always have an error"),
         }
     }
 }
@@ -176,8 +176,9 @@ impl Connection {
 
     /// Close the connection immediately.
     ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility
-    /// to call this only when all important communications have been completed.
+    /// Pending operations will fail immediately with `ConnectionError::LocallyClosed`. Delivery of
+    /// data on unfinished streams is not guaranteed, so the application must call this only when
+    /// all important communications have been completed.
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
@@ -186,24 +187,10 @@ impl Connection {
     ///
     /// # Panics
     /// - If called more than once on handles to the same connection
-    // FIXME: Infallible
-    pub fn close(&self, error_code: u16, reason: &[u8]) -> impl Future<Item = (), Error = ()> {
-        let (send, recv) = oneshot::channel();
-        {
-            let conn = &mut *self.0.lock().unwrap();
-            assert!(
-                conn.pending.closing.is_none(),
-                "a connection can only be closed once"
-            );
-            conn.pending.closing = Some(send);
-            conn.inner.close(Instant::now(), error_code, reason.into());
-        }
-        let handle = self.clone();
-        recv.then(move |_| {
-            // Ensure the connection isn't dropped until it's fully drained.
-            let _ = handle;
-            Ok(())
-        })
+    pub fn close(self, error_code: u16, reason: &[u8]) {
+        let conn = &mut *self.0.lock().unwrap();
+        conn.inner.close(Instant::now(), error_code, reason.into());
+        conn.pending.terminate(ConnectionError::LocallyClosed);
     }
 
     /// The peer's UDP address.
@@ -236,20 +223,18 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut conn = self.0.lock().unwrap();
-        if conn.closed {
-            return Ok(Async::Ready(None));
-        }
-        if let Some(x) = conn.inner.accept() {
+        if let Some(ConnectionError::LocallyClosed) = conn.pending.error {
+            Ok(Async::Ready(None))
+        } else if let Some(ref e) = conn.pending.error {
+            Err(e.clone())
+        } else if let Some(x) = conn.inner.accept() {
             let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
             } else {
                 NewStream::Bi(stream)
             };
-            return Ok(Async::Ready(Some(stream)));
-        }
-        if let Some(ref x) = conn.pending.error {
-            Err(x.clone())
+            Ok(Async::Ready(Some(stream)))
         } else {
             conn.pending.incoming_streams_reader = Some(task::current());
             Ok(Async::NotReady)
@@ -288,7 +273,6 @@ impl ConnectionRef {
             conn_events,
             endpoint_events,
             connected: false,
-            closed: false,
         })))
     }
 }
@@ -325,7 +309,6 @@ pub struct ConnectionInner {
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     connected: bool,
-    closed: bool,
 }
 
 impl ConnectionInner {
@@ -339,15 +322,6 @@ impl ConnectionInner {
 
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
-            if let quinn::EndpointEvent::Drained = event {
-                self.closed = true;
-                self.pending
-                    .fail(ConnectionError::TransportError(quinn::TransportError {
-                        code: quinn::TransportErrorCode::NO_ERROR,
-                        frame: None,
-                        reason: "connection is closing".to_string(),
-                    }));
-            }
             self.endpoint_events
                 .unbounded_send((self.handle, EndpointEvent::Proto(event)))
                 .unwrap();
@@ -361,13 +335,13 @@ impl ConnectionInner {
                     self.inner.handle_event(event);
                 }
                 Ok(Async::Ready(Some(ConnectionEvent::DriverLost))) => {
-                    self.closed = true;
-                    self.pending
-                        .fail(ConnectionError::TransportError(quinn::TransportError {
+                    self.pending.terminate(ConnectionError::TransportError(
+                        quinn::TransportError {
                             code: quinn::TransportErrorCode::INTERNAL_ERROR,
                             frame: None,
-                            reason: "driver future was dropped".to_string(),
-                        }));
+                            reason: "endpoint driver future was dropped".to_string(),
+                        },
+                    ));
                 }
                 Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
                     return Ok(());
@@ -387,7 +361,7 @@ impl ConnectionInner {
                     self.connected = true;
                 }
                 ConnectionLost { reason } => {
-                    self.pending.fail(reason);
+                    self.pending.terminate(reason);
                 }
                 StreamWritable { stream } => {
                     if let Some(writer) = self.pending.blocked_writers.remove(&stream) {
@@ -435,11 +409,6 @@ impl ConnectionInner {
                         trace!(self.log, "{timer:?} timeout", timer = timer);
                         self.inner
                             .handle_event(quinn::ConnectionEvent::Timer(now, timer));
-                        if timer == quinn::Timer::Close {
-                            if let Some(x) = self.pending.closing.take() {
-                                let _ = x.send(());
-                            }
-                        }
                         // Timeout call may have queued sends
                         keep_going = true;
                     }
@@ -512,8 +481,8 @@ pub struct Pending {
     bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
+    /// Always set to Some before the connection becomes drained
     error: Option<ConnectionError>,
-    closing: Option<oneshot::Sender<()>>,
 }
 
 impl Pending {
@@ -526,11 +495,11 @@ impl Pending {
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
-            closing: None,
         }
     }
 
-    fn fail(&mut self, reason: ConnectionError) {
+    /// Used to wake up all blocked futures when the connection becomes closed for any reason
+    fn terminate(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
         for (_, writer) in self.blocked_writers.drain() {
             writer.notify()
@@ -740,7 +709,7 @@ impl Drop for BiStream {
             Directionality::Uni => (ours, !ours),
         };
 
-        if conn.pending.closing.is_some() || conn.pending.error.is_some() {
+        if conn.pending.error.is_some() {
             return;
         }
         if send && !self.finished {
