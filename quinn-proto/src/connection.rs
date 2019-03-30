@@ -500,8 +500,7 @@ impl Connection {
                 self.send_closed_event();
             }
             Timer::Idle => {
-                self.close_common(now);
-                self.io.timer_stop(Timer::Close);
+                self.close_common();
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Drained;
                 self.send_closed_event();
@@ -1175,14 +1174,17 @@ impl Connection {
         }
 
         if !was_closed && self.state.is_closed() {
-            self.close_common(now);
+            self.close_common();
+            if !self.state.is_drained() {
+                self.set_close_timer(now);
+            }
         }
         if !was_drained && self.state.is_drained() {
             if was_closed {
                 self.send_closed_event();
             }
-            // Close timer may have been started previously, or if an established connection was
-            // reset, just above.
+            // Close timer may have been started previously, e.g. if we sent a close and got a
+            // stateless reset in response
             self.io.timer_stop(Timer::Close);
         }
 
@@ -2378,7 +2380,8 @@ impl Connection {
         let reason =
             state::CloseReason::Application(frame::ApplicationClose { error_code, reason });
         if !was_closed {
-            self.close_common(now);
+            self.close_common();
+            self.set_close_timer(now);
             self.io.close = true;
         }
 
@@ -2390,11 +2393,14 @@ impl Connection {
         }
     }
 
-    fn close_common(&mut self, now: Instant) {
+    fn close_common(&mut self) {
         trace!(self.log, "connection closed");
         for timer in Timer::iter() {
             self.io.timer_stop(timer);
         }
+    }
+
+    fn set_close_timer(&mut self, now: Instant) {
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
