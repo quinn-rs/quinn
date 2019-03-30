@@ -10,13 +10,11 @@ use fnv::FnvHashSet;
 use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
-use crate::assembler::Assembler;
 use crate::coding::BufMutExt;
 use crate::crypto::{
     reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, RingHeaderCrypto,
     TlsSession, ACK_DELAY_EXPONENT,
 };
-use crate::dedup::Dedup;
 use crate::frame::FrameStruct;
 use crate::packet::{
     set_payload_length, Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId,
@@ -26,6 +24,7 @@ use crate::range_set::RangeSet;
 use crate::shared::{
     ClientConfig, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
+use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::stream::{self, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
@@ -2889,87 +2888,6 @@ where
     buf.into()
 }
 
-/// Retransmittable data queue
-#[derive(Debug, Clone)]
-struct Retransmits {
-    max_data: bool,
-    max_uni_stream_id: bool,
-    max_bi_stream_id: bool,
-    stream: VecDeque<frame::Stream>,
-    rst_stream: Vec<(StreamId, u16)>,
-    stop_sending: Vec<(StreamId, u16)>,
-    max_stream_data: FnvHashSet<StreamId>,
-    crypto: VecDeque<frame::Crypto>,
-    new_cids: Vec<frame::NewConnectionId>,
-    retire_cids: Vec<u64>,
-}
-
-impl Retransmits {
-    fn is_empty(&self) -> bool {
-        !self.max_data
-            && !self.max_uni_stream_id
-            && !self.max_bi_stream_id
-            && self.stream.is_empty()
-            && self.rst_stream.is_empty()
-            && self.stop_sending.is_empty()
-            && self.max_stream_data.is_empty()
-            && self.crypto.is_empty()
-            && self.new_cids.is_empty()
-            && self.retire_cids.is_empty()
-    }
-}
-
-impl Default for Retransmits {
-    fn default() -> Self {
-        Self {
-            max_data: false,
-            max_uni_stream_id: false,
-            max_bi_stream_id: false,
-            stream: VecDeque::new(),
-            rst_stream: Vec::new(),
-            stop_sending: Vec::new(),
-            max_stream_data: FnvHashSet::default(),
-            crypto: VecDeque::new(),
-            new_cids: Vec::new(),
-            retire_cids: Vec::new(),
-        }
-    }
-}
-
-impl ::std::ops::AddAssign for Retransmits {
-    fn add_assign(&mut self, rhs: Self) {
-        // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
-        // STREAM and CRYPTO frames.
-        self.max_data |= rhs.max_data;
-        self.max_uni_stream_id |= rhs.max_uni_stream_id;
-        self.max_bi_stream_id |= rhs.max_bi_stream_id;
-        for stream in rhs.stream.into_iter().rev() {
-            self.stream.push_front(stream);
-        }
-        self.rst_stream.extend_from_slice(&rhs.rst_stream);
-        self.stop_sending.extend_from_slice(&rhs.stop_sending);
-        self.max_stream_data.extend(&rhs.max_stream_data);
-        for crypto in rhs.crypto.into_iter().rev() {
-            self.crypto.push_front(crypto);
-        }
-        self.new_cids.extend(&rhs.new_cids);
-        self.retire_cids.extend(rhs.retire_cids);
-    }
-}
-
-impl ::std::iter::FromIterator<Retransmits> for Retransmits {
-    fn from_iter<T>(iter: T) -> Self
-    where
-        T: IntoIterator<Item = Retransmits>,
-    {
-        let mut result = Retransmits::default();
-        for packet in iter {
-            result += packet;
-        }
-        result
-    }
-}
-
 /// Reasons why a connection might be lost.
 #[derive(Debug, Clone, Error)]
 pub enum ConnectionError {
@@ -3112,25 +3030,6 @@ mod state {
     }
 }
 
-/// Represents one or more packets subject to retransmission
-#[derive(Debug, Clone)]
-struct SentPacket {
-    /// The time the packet was sent.
-    time_sent: Instant,
-    /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
-    /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
-    /// "in flight" packet.
-    size: u16,
-    /// Whether an acknowledgement is expected directly in response to this packet.
-    ack_eliciting: bool,
-    /// Whether the packet contains cryptographic handshake messages critical to the completion of
-    /// the QUIC handshake.
-    // FIXME: Implied by retransmits + space
-    is_crypto_packet: bool,
-    acks: RangeSet,
-    retransmits: Retransmits,
-}
-
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
 
@@ -3182,126 +3081,6 @@ pub enum TimerSetting {
 pub struct TimerUpdate {
     pub timer: Timer,
     pub update: TimerSetting,
-}
-
-struct PacketSpace {
-    crypto: Option<CryptoSpace>,
-    dedup: Dedup,
-    /// Highest received packet number
-    rx_packet: u64,
-    /// Time at which the above was received
-    rx_packet_time: Instant,
-
-    /// Data to send
-    pending: Retransmits,
-    /// Packet numbers to acknowledge
-    pending_acks: RangeSet,
-    /// Set iff we have received a non-ack frame since the last ack-only packet we sent
-    permit_ack_only: bool,
-
-    /// The packet number of the next packet that will be sent, if any.
-    next_packet_number: u64,
-    /// The largest packet number the remote peer acknowledged in an ACK frame.
-    largest_acked_packet: u64,
-    largest_acked_packet_sent: Instant,
-    /// Transmitted but not acked
-    // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    sent_packets: BTreeMap<u64, SentPacket>,
-    /// Recent ECN counters sent by the peer in ACK frames
-    ///
-    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
-    /// number. Stored per-space to simplify verification, which would otherwise have difficulty
-    /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
-    /// ACK already processed in another space.
-    ecn_feedback: frame::EcnCounts,
-
-    /// Incoming cryptographic handshake stream
-    crypto_stream: Assembler,
-    /// Current offset of outgoing cryptographic handshake stream
-    crypto_offset: u64,
-}
-
-impl PacketSpace {
-    fn new(now: Instant) -> Self {
-        Self {
-            crypto: None,
-            dedup: Dedup::new(),
-            rx_packet: 0,
-            rx_packet_time: now,
-
-            pending: Retransmits::default(),
-            pending_acks: RangeSet::new(),
-            permit_ack_only: false,
-
-            next_packet_number: 0,
-            largest_acked_packet: 0,
-            largest_acked_packet_sent: now,
-            sent_packets: BTreeMap::new(),
-            ecn_feedback: frame::EcnCounts::ZERO,
-
-            crypto_stream: Assembler::new(),
-            crypto_offset: 0,
-        }
-    }
-
-    fn get_tx_number(&mut self) -> u64 {
-        // TODO: Handle packet number overflow gracefully
-        assert!(self.next_packet_number < 2u64.pow(62));
-        let x = self.next_packet_number;
-        self.next_packet_number += 1;
-        x
-    }
-
-    fn can_send(&self) -> bool {
-        !self.pending.is_empty() || (self.permit_ack_only && !self.pending_acks.is_empty())
-    }
-
-    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
-    fn detect_ecn(
-        &mut self,
-        newly_acked: u64,
-        ecn: frame::EcnCounts,
-    ) -> Result<bool, &'static str> {
-        let ect0_increase = ecn
-            .ect0
-            .checked_sub(self.ecn_feedback.ect0)
-            .ok_or("peer ECT(0) count regression")?;
-        let ect1_increase = ecn
-            .ect1
-            .checked_sub(self.ecn_feedback.ect1)
-            .ok_or("peer ECT(1) count regression")?;
-        let ce_increase = ecn
-            .ce
-            .checked_sub(self.ecn_feedback.ce)
-            .ok_or("peer CE count regression")?;
-        let total_increase = ect0_increase + ect1_increase + ce_increase;
-        if total_increase < newly_acked {
-            return Err("ECN bleaching");
-        }
-        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
-            return Err("ECN corruption");
-        }
-        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
-        // the draft so that long-term drift does not occur. If =, then the only question is whether
-        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
-        // congestion check obvious.
-        self.ecn_feedback = ecn;
-        Ok(ce_increase != 0)
-    }
-}
-
-struct CryptoSpace {
-    packet: Crypto,
-    header: RingHeaderCrypto,
-}
-
-impl CryptoSpace {
-    pub fn new(packet: Crypto) -> Self {
-        Self {
-            header: packet.header_crypto(),
-            packet,
-        }
-    }
 }
 
 struct PrevCrypto {
