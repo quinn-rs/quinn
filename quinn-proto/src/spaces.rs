@@ -45,6 +45,10 @@ pub struct PacketSpace {
     pub crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
     pub crypto_offset: u64,
+
+    /// The time at which the next packet in this space will be considered lost based on exceeding
+    /// the reordering window in time.
+    pub loss_time: Option<Instant>,
 }
 
 impl PacketSpace {
@@ -67,6 +71,8 @@ impl PacketSpace {
 
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
+
+            loss_time: None,
         }
     }
 
