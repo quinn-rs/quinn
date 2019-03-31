@@ -110,9 +110,6 @@ pub struct Connection {
     crypto_count: u32,
     /// The number of times a PTO has been sent without receiving an ack.
     pto_count: u32,
-    /// The time at which the next packet will be considered lost based on early transmit or
-    /// exceeding the reordering window in time.
-    loss_time: Option<Instant>,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_ack_eliciting_packet: Instant,
     /// The time the most recently sent handshake packet was sent.
@@ -224,7 +221,6 @@ impl Connection {
 
             crypto_count: 0,
             pto_count: 0,
-            loss_time: None,
             time_of_last_sent_ack_eliciting_packet: now,
             time_of_last_sent_crypto_packet: now,
             rtt: RttEstimator::new(),
@@ -383,7 +379,7 @@ impl Connection {
         }
 
         // Must be called before crypto/pto_count are clobbered
-        self.detect_lost_packets(now);
+        self.detect_lost_packets(now, space);
 
         self.crypto_count = 0;
         self.pto_count = 0;
@@ -571,9 +567,9 @@ impl Connection {
             trace!(self.log, "sending anti-deadlock handshake packet");
             self.io.probes += 1;
             self.crypto_count = self.crypto_count.saturating_add(1);
-        } else if self.loss_time.is_some() {
+        } else if let Some((_, pn_space)) = self.earliest_loss_time() {
             // Time threshold loss Detection
-            self.detect_lost_packets(now);
+            self.detect_lost_packets(now, pn_space);
         } else {
             trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes);
             self.io.probes += 2;
@@ -582,64 +578,67 @@ impl Connection {
         self.set_loss_detection_timer();
     }
 
-    fn detect_lost_packets(&mut self, now: Instant) {
-        self.loss_time = None;
+    fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
         let mut lost_packets = Vec::<u64>::new();
-        let mut rtt = self.rtt.latest;
-        if let Some(smoothed) = self.rtt.smoothed {
-            rtt = cmp::max(rtt, smoothed);
-        }
+        let rtt = self
+            .rtt
+            .smoothed
+            .map_or(self.rtt.latest, |x| cmp::max(x, self.rtt.latest));
         let loss_delay = rtt + ((rtt * self.config.time_threshold as u32) / 65536);
+
+        // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
+        // Packets with packet numbers before this are deemed lost.
+        let lost_pn = self
+            .space(pn_space)
+            .largest_acked_packet
+            .saturating_sub(self.config.packet_threshold as u64);
 
-        let mut lost_ack_eliciting = false;
-        let mut largest_lost_time = None;
-        let mut in_persistent_congestion = false;
-        let persistent_congestion_period = self.pto() * self.config.persistent_congestion_threshold;
-        for space in self.spaces.iter_mut().filter(|x| x.crypto.is_some()) {
-            lost_packets.clear();
-            let lost_pn = space
-                .largest_acked_packet
-                .saturating_sub(self.config.packet_threshold as u64);
-            for (&packet, info) in space.sent_packets.range(0..space.largest_acked_packet) {
-                if info.time_sent <= lost_send_time || packet <= lost_pn {
-                    lost_packets.push(packet);
-                } else {
-                    let next_loss_time = info.time_sent + loss_delay;
-                    self.loss_time = Some(self.loss_time.map_or(next_loss_time, |loss_time| {
-                        cmp::min(loss_time, next_loss_time)
-                    }));
-                }
-            }
-
-            // OnPacketsLost
-            if let Some(largest_lost) = lost_packets.last().cloned() {
-                let old_bytes_in_flight = self.in_flight.bytes;
-                let largest_lost_sent = space.sent_packets[&largest_lost].time_sent;
-                largest_lost_time =
-                    Some(largest_lost_time.map_or(largest_lost_sent, |lost_time| {
-                        cmp::max(lost_time, largest_lost_sent)
-                    }));
-                self.lost_packets += lost_packets.len() as u64;
-                trace!(self.log, "packets lost: {:?}", lost_packets);
-                for packet in &lost_packets {
-                    let info = space.sent_packets.remove(&packet).unwrap();
-                    self.in_flight.remove(&info);
-                    space.pending += info.retransmits;
-                }
-                // Don't apply congestion penalty for lost ack-only packets
-                lost_ack_eliciting |= old_bytes_in_flight != self.in_flight.bytes;
-
-                // InPersistentCongestion: Determine if all packets in the window before the newest
-                // lost packet, including the edges, are marked lost
-                in_persistent_congestion |= space.largest_acked_packet_sent
-                    < largest_lost_time.unwrap() - persistent_congestion_period;
+        let space = self.space_mut(pn_space);
+        space.loss_time = None;
+        for (&packet, info) in space.sent_packets.range(0..space.largest_acked_packet) {
+            if info.time_sent <= lost_send_time || packet <= lost_pn {
+                lost_packets.push(packet);
+            } else {
+                let next_loss_time = info.time_sent + loss_delay;
+                space.loss_time = Some(
+                    space
+                        .loss_time
+                        .map_or(next_loss_time, |x| cmp::min(x, next_loss_time)),
+                );
             }
         }
-        if lost_ack_eliciting {
-            self.congestion_event(now, largest_lost_time.unwrap());
-            if in_persistent_congestion {
-                self.congestion_window = self.config.minimum_window;
+        mem::drop(space);
+
+        // OnPacketsLost
+        if let Some(largest_lost) = lost_packets.last().cloned() {
+            let old_bytes_in_flight = self.in_flight.bytes;
+            let largest_lost_sent = self.space(pn_space).sent_packets[&largest_lost].time_sent;
+            self.lost_packets += lost_packets.len() as u64;
+            trace!(self.log, "packets lost: {:?}", lost_packets);
+            for packet in &lost_packets {
+                let info = self
+                    .space_mut(pn_space)
+                    .sent_packets
+                    .remove(&packet)
+                    .unwrap();
+                self.in_flight.remove(&info);
+                self.space_mut(pn_space).pending += info.retransmits;
+            }
+            // Don't apply congestion penalty for lost ack-only packets
+            let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
+
+            // InPersistentCongestion: Determine if all packets in the window before the newest
+            // lost packet, including the edges, are marked lost
+            let congestion_period = self.pto() * self.config.persistent_congestion_threshold;
+            let in_persistent_congestion = self.space(pn_space).largest_acked_packet_sent
+                < largest_lost_sent - congestion_period;
+
+            if lost_ack_eliciting {
+                self.congestion_event(now, largest_lost_sent);
+                if in_persistent_congestion {
+                    self.congestion_window = self.config.minimum_window;
+                }
             }
         }
     }
@@ -662,17 +661,19 @@ impl Connection {
         sent_time <= self.recovery_start_time
     }
 
+    fn earliest_loss_time(&self) -> Option<(Instant, SpaceId)> {
+        SpaceId::iter()
+            .filter_map(|id| self.space(id).loss_time.map(|x| (x, id)))
+            .min_by_key(|&(time, _)| time)
+    }
+
     fn set_loss_detection_timer(&mut self) {
-        if self.in_flight.crypto != 0
-            || self.crypto_count != 0
-            || (self.state.is_handshake() && self.side.is_client())
-        {
-            // Handshake retransmission alarm.
-            let timeout = if let Some(smoothed) = self.rtt.smoothed {
-                2 * smoothed
-            } else {
-                2 * Duration::from_micros(self.config.initial_rtt)
-            };
+        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
+            // Handshake retransmission timer.
+            let timeout = 2 * self
+                .rtt
+                .smoothed
+                .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
             let timeout = cmp::max(timeout, TIMER_GRANULARITY)
                 * 2u32.pow(cmp::min(self.crypto_count, MAX_BACKOFF_EXPONENT));
             self.io.timer_start(
@@ -687,7 +688,7 @@ impl Connection {
             return;
         }
 
-        if let Some(loss_time) = self.loss_time {
+        if let Some((loss_time, _)) = self.earliest_loss_time() {
             // Time threshold loss detection.
             self.io.timer_start(Timer::LossDetection, loss_time);
             return;
