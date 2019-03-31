@@ -2155,10 +2155,8 @@ impl Connection {
                 }
             }
             _ => {
-                let id = SpaceId::VALUES
-                    .iter()
-                    .find(|&&x| self.space(x).crypto.is_some() && self.space(x).can_send())
-                    .cloned()
+                let id = SpaceId::iter()
+                    .find(|&x| self.space(x).crypto.is_some() && self.space(x).can_send())
                     .or_else(|| {
                         if self.space(SpaceId::Data).crypto.is_some() && self.can_send_1rtt() {
                             Some(SpaceId::Data)

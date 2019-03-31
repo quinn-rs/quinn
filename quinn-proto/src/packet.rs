@@ -797,7 +797,11 @@ pub enum SpaceId {
 }
 
 impl SpaceId {
-    pub const VALUES: [Self; 3] = [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data];
+    pub fn iter() -> impl Iterator<Item = Self> {
+        [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data]
+            .into_iter()
+            .cloned()
+    }
 }
 
 impl slog::Value for SpaceId {
