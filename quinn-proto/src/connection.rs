@@ -548,7 +548,7 @@ impl Connection {
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
-        if self.in_flight.crypto != 0 {
+        if self.in_flight.crypto != 0 || self.crypto_count != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
                 if self.spaces[space_id as usize].crypto.is_none() {
@@ -668,7 +668,12 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
+        if self.in_flight.crypto != 0
+        // Account for handshake packets pending retransmit
+            || self.crypto_count != 0
+        // Handshake anti-deadlock packets
+            || (self.state.is_handshake() && self.side.is_client())
+        {
             // Handshake retransmission timer.
             let timeout = 2 * self
                 .rtt
@@ -976,6 +981,7 @@ impl Connection {
 
     fn discard_space(&mut self, space: SpaceId) {
         trace!(self.log, "discarding {space:?} keys", space = space);
+        self.crypto_count = 0; // Ensure we're not trying to retransmit forgotten handshake packets
         self.space_mut(space).crypto = None;
         let sent_packets = mem::replace(&mut self.space_mut(space).sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
