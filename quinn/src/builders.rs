@@ -11,7 +11,7 @@ use slog::Logger;
 
 use quinn_proto::{EndpointConfig, ServerConfig, TransportConfig};
 
-use crate::endpoint::{Driver, Endpoint, EndpointRef, Incoming};
+use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
 use crate::udp::UdpSocket;
 
@@ -38,7 +38,7 @@ impl<'a> EndpointBuilder<'a> {
     pub fn bind<T: ToSocketAddrs>(
         self,
         addr: T,
-    ) -> Result<(Endpoint, Driver, Incoming), EndpointError> {
+    ) -> Result<(Endpoint, EndpointDriver, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.from_socket(socket)
     }
@@ -47,7 +47,7 @@ impl<'a> EndpointBuilder<'a> {
     pub fn from_socket(
         self,
         socket: std::net::UdpSocket,
-    ) -> Result<(Endpoint, Driver, Incoming), EndpointError> {
+    ) -> Result<(Endpoint, EndpointDriver, Incoming), EndpointError> {
         let reactor = if let Some(x) = self.reactor {
             Cow::Borrowed(x)
         } else {
@@ -70,7 +70,7 @@ impl<'a> EndpointBuilder<'a> {
                 inner: rc.clone(),
                 default_client_config: self.client_config,
             },
-            Driver(rc.clone()),
+            EndpointDriver(rc.clone()),
             Incoming::new(rc),
         ))
     }

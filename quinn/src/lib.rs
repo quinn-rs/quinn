@@ -79,7 +79,7 @@ pub use connection::{
 };
 
 mod endpoint;
-pub use endpoint::{Driver, Endpoint, Incoming};
+pub use endpoint::{Endpoint, EndpointDriver, Incoming};
 
 #[cfg(test)]
 mod tests;

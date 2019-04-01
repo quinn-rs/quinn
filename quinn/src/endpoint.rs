@@ -116,9 +116,9 @@ impl Endpoint {
 ///
 /// `Driver` instances do not terminate (always yields `NotReady`) except in case of an error.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
-pub struct Driver(pub(crate) EndpointRef);
+pub struct EndpointDriver(pub(crate) EndpointRef);
 
-impl Future for Driver {
+impl Future for EndpointDriver {
     type Item = ();
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -147,7 +147,7 @@ impl Future for Driver {
     }
 }
 
-impl Drop for Driver {
+impl Drop for EndpointDriver {
     fn drop(&mut self) {
         for sender in self.0.lock().unwrap().connections.values() {
             // Ignoring errors from non-existent connections
