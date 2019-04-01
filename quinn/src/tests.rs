@@ -123,9 +123,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             server_incoming
                 .into_future()
                 .map(move |(conn, _)| {
-                    let conn = conn.unwrap();
-                    tokio::spawn(conn.driver.map_err(|_| ()));
-                    tokio::spawn(conn.incoming.map_err(|_| ()).for_each(echo));
+                    let (conn_driver, _, incoming_streams) = conn.unwrap();
+                    tokio::spawn(conn_driver.map_err(|_| ()));
+                    tokio::spawn(incoming_streams.map_err(|_| ()).for_each(echo));
                 })
                 .map_err(|_| ()),
         );
@@ -137,9 +137,8 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                     .connect(&server_addr, "localhost")
                     .unwrap()
                     .map_err(|e| panic!("connection failed: {}", e))
-                    .and_then(move |conn| {
-                        tokio::spawn(conn.driver.map_err(|e| eprintln!("connection lost: {}", e)));
-                        let conn = conn.connection;
+                    .and_then(move |(conn_driver, conn, _)| {
+                        tokio::spawn(conn_driver.map_err(|e| eprintln!("connection lost: {}", e)));
                         let stream = conn.open_bi();
                         stream
                             .map_err(|_| ())

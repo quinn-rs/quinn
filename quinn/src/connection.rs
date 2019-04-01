@@ -38,7 +38,7 @@ impl ConnectingFuture {
 }
 
 impl Future for ConnectingFuture {
-    type Item = NewConnection;
+    type Item = (ConnectionDriver, Connection, IncomingStreams);
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let connected = match &mut self.0 {
@@ -54,31 +54,21 @@ impl Future for ConnectingFuture {
         if connected {
             let ConnectionDriver(conn) = self.0.take().unwrap();
             conn.lock().unwrap().driver.take();
-            Ok(Async::Ready(NewConnection::new(conn)))
+            Ok(Async::Ready(new_connection(conn)))
         } else {
             Ok(Async::NotReady)
         }
     }
 }
 
-/// A new connection (initiated locally or remotely)
-pub struct NewConnection {
-    /// The driver for the connection; this must be spawned for the connection to make progress
-    pub driver: ConnectionDriver,
-    /// The connection itself.
-    pub connection: Connection,
-    /// The stream of QUIC streams initiated by the client.
-    pub incoming: IncomingStreams,
-}
-
-impl NewConnection {
-    pub(crate) fn new(conn: ConnectionRef) -> Self {
-        Self {
-            driver: ConnectionDriver(conn.clone()),
-            connection: Connection(conn.clone()),
-            incoming: IncomingStreams(conn),
-        }
-    }
+pub(crate) fn new_connection(
+    conn: ConnectionRef,
+) -> (ConnectionDriver, Connection, IncomingStreams) {
+    (
+        ConnectionDriver(conn.clone()),
+        Connection(conn.clone()),
+        IncomingStreams(conn),
+    )
 }
 
 /// A future that drives protocol logic for a connection

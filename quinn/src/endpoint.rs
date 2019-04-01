@@ -22,7 +22,9 @@ pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 pub use crate::builders::{
     ClientConfig, ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
-use crate::connection::{ConnectingFuture, ConnectionDriver, ConnectionRef, NewConnection};
+use crate::connection::{
+    new_connection, ConnectingFuture, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
+};
 use crate::udp::UdpSocket;
 use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
 
@@ -319,13 +321,13 @@ impl Incoming {
 }
 
 impl FuturesStream for Incoming {
-    type Item = NewConnection;
+    type Item = (ConnectionDriver, Connection, IncomingStreams);
     type Error = (); // FIXME: Infallible
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let endpoint = &mut *self.0.lock().unwrap();
         if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            return Ok(Async::Ready(Some(NewConnection::new(conn.0))));
+            return Ok(Async::Ready(Some(new_connection(conn.0))));
         }
         endpoint.incoming_reader = Some(task::current());
         Ok(Async::NotReady)
