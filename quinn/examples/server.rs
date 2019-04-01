@@ -150,7 +150,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         bail!("root path does not exist");
     }
 
-    let (endpoint_driver, _, incoming) = endpoint.bind(options.listen)?;
+    let (endpoint_driver, incoming) = {
+        let (driver, endpoint, incoming) = endpoint.bind(options.listen)?;
+        info!(log, "listening on {}", endpoint.local_addr()?);
+        (driver, incoming)
+    };
+
     let mut runtime = Runtime::new()?;
     runtime.spawn(incoming.for_each(move |conn| {
         handle_connection(&root, &log, conn);
