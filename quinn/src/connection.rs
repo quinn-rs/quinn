@@ -118,8 +118,10 @@ impl Future for ConnectionDriver {
 
 /// A QUIC connection.
 ///
-/// If a `Connection` is dropped without being explicitly closed, it will be automatically closed
-/// with an `error_code` of 0 and an empty `reason`.
+/// If all references to a connection (including every clone of the `Connection` handle, `IncomingStreams`,
+/// and the various stream types) other than the `ConnectionDriver` have been dropped, the
+/// the connection will be automatically closed with an `error_code` of 0 and an empty
+/// `reason`. You can also close the connection explicitly by calling `Connection::close()`.
 ///
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Clone)]
