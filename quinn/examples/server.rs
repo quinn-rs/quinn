@@ -161,26 +161,30 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::NewConnection) {
-    let quinn::NewConnection {
-        driver,
-        incoming,
-        connection,
-    } = conn;
+fn handle_connection(
+    root: &PathBuf,
+    log: &Logger,
+    conn: (
+        quinn::ConnectionDriver,
+        quinn::Connection,
+        quinn::IncomingStreams,
+    ),
+) {
+    let (conn_driver, conn, incoming_streams) = conn;
     let log = log.clone();
     info!(log, "got connection";
-          "remote_id" => %connection.remote_id(),
-          "address" => %connection.remote_address(),
-          "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
+          "remote_id" => %conn.remote_id(),
+          "address" => %conn.remote_address(),
+          "protocol" => conn.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
     let log2 = log.clone();
     let root = root.clone();
 
     // We ignore errors from the driver because they'll be reported by the `incoming` handler anyway.
-    tokio_current_thread::spawn(driver.map_err(|_| ()));
+    tokio_current_thread::spawn(conn_driver.map_err(|_| ()));
 
     // Each stream initiated by the client constitutes a new request.
     tokio_current_thread::spawn(
-        incoming
+        incoming_streams
             .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
             .for_each(move |stream| {
                 handle_request(&root, &log, stream);

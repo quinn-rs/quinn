@@ -99,14 +99,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         endpoint
             .connect_with(&client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|conn| {
+            .and_then(|(conn_driver, conn, _)| {
                 println!("connected");
                 tokio_current_thread::spawn(
-                    conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
                 );
                 assert!(state.lock().unwrap().saw_cert);
                 handshake = true;
-                let conn = conn.connection;
                 let stream = conn.open_bi();
                 let stream_data = &mut stream_data;
 
@@ -125,12 +124,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                             .connect_with(&client_config, &remote, host)
                             .unwrap()
                             .map_err(|e| format_err!("failed to connect: {}", e))
-                            .and_then(|conn| {
+                            .and_then(|(conn_driver, conn, _)| {
                                 tokio_current_thread::spawn(
-                                    conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
                                 );
                                 resumption = !state.lock().unwrap().saw_cert;
-                                let conn = conn.connection;
                                 conn.force_key_update();
                                 let stream = conn.open_bi();
                                 let stream2 = conn.open_bi();
@@ -176,10 +174,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         let result = runtime.block_on(
             endpoint
                 .connect_with(&client_config, &remote, host)?
-                .and_then(|conn| {
+                .and_then(|(conn_driver, conn, _)| {
                     retry = true;
-                    conn.connection.close(0, b"done");
-                    conn.driver
+                    conn.close(0, b"done");
+                    conn_driver
                 })
                 .map(|()| {
                     close = true;
@@ -207,11 +205,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         endpoint
             .connect_with(&h3_client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|conn| {
+            .and_then(|(conn_driver, conn, _)| {
                 tokio_current_thread::spawn(
-                    conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
                 );
-                let conn = conn.connection;
                 let control_stream = conn.open_uni();
                 let control_fut = control_stream
                     .map_err(|e| format_err!("failed to open control stream: {}", e))
