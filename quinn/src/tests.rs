@@ -12,7 +12,7 @@ use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigB
 #[test]
 fn handshake_timeout() {
     let client = Endpoint::new();
-    let (client, client_driver, _) = client
+    let (client_driver, client, _) = client
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
@@ -55,7 +55,7 @@ fn handshake_timeout() {
 #[test]
 fn local_addr() {
     let port = 56987;
-    let (ep, _, _) = Endpoint::new()
+    let (_, ep, _) = Endpoint::new()
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
         .expect("Could not bind to localhost");
     assert_eq!(
@@ -107,7 +107,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (_, server_driver, server_incoming) = server.from_socket(server_sock).unwrap();
+        let (server_driver, _, server_incoming) = server.from_socket(server_sock).unwrap();
 
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
@@ -115,7 +115,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         let mut client = Endpoint::new();
         client.logger(log.clone());
         client.default_client_config(client_config.build());
-        let (client, client_driver, _) = client.bind(client_addr).unwrap();
+        let (client_driver, client, _) = client.bind(client_addr).unwrap();
 
         runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
         runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));

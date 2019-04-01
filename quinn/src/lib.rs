@@ -18,8 +18,8 @@
 //! let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
 //! let mut builder = quinn::Endpoint::new();
 //! // <configure builder>
-//! let (endpoint, driver, _) = builder.bind("[::]:0").unwrap();
-//! runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+//! let (endpoint_driver, endpoint, _) = builder.bind("[::]:0").unwrap();
+//! runtime.spawn(endpoint_driver.map_err(|e| panic!("IO error: {}", e)));
 //! // ...
 //! # }
 //! ```

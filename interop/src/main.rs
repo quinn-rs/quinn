@@ -85,8 +85,8 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
 
     builder.logger(log.clone());
-    let (endpoint, driver, _) = builder.bind("[::]:0")?;
-    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
+    runtime.spawn(endpoint_driver.map_err(|e| eprintln!("IO error: {}", e)));
 
     let mut handshake = false;
     let mut stream_data = false;
