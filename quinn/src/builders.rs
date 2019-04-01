@@ -38,7 +38,7 @@ impl<'a> EndpointBuilder<'a> {
     pub fn bind<T: ToSocketAddrs>(
         self,
         addr: T,
-    ) -> Result<(Endpoint, EndpointDriver, Incoming), EndpointError> {
+    ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.from_socket(socket)
     }
@@ -47,7 +47,7 @@ impl<'a> EndpointBuilder<'a> {
     pub fn from_socket(
         self,
         socket: std::net::UdpSocket,
-    ) -> Result<(Endpoint, EndpointDriver, Incoming), EndpointError> {
+    ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
         let reactor = if let Some(x) = self.reactor {
             Cow::Borrowed(x)
         } else {
@@ -66,11 +66,11 @@ impl<'a> EndpointBuilder<'a> {
             addr.is_ipv6(),
         );
         Ok((
+            EndpointDriver(rc.clone()),
             Endpoint {
                 inner: rc.clone(),
                 default_client_config: self.client_config,
             },
-            EndpointDriver(rc.clone()),
             Incoming::new(rc),
         ))
     }

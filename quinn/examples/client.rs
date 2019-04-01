@@ -94,9 +94,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint, driver, _) = endpoint.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
-    runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    runtime.spawn(endpoint_driver.map_err(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
