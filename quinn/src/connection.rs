@@ -108,7 +108,7 @@ impl Future for ConnectionDriver {
             conn.driver = Some(task::current());
             return Ok(Async::NotReady);
         }
-        match conn.pending.error {
+        match conn.error {
             Some(ConnectionError::LocallyClosed) => Ok(Async::Ready(())),
             Some(ref e) => Err(e.clone()),
             None => unreachable!("drained connections always have an error"),
@@ -134,7 +134,7 @@ impl Connection {
             if let Some(x) = conn.inner.open(Directionality::Uni) {
                 let _ = send.send(Ok(x));
             } else {
-                conn.pending.uni_opening.push_back(send);
+                conn.uni_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
                 // streams
             }
@@ -153,7 +153,7 @@ impl Connection {
             if let Some(x) = conn.inner.open(Directionality::Bi) {
                 let _ = send.send(Ok(x));
             } else {
-                conn.pending.bi_opening.push_back(send);
+                conn.bi_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
                 // streams
             }
@@ -180,7 +180,7 @@ impl Connection {
     pub fn close(self, error_code: u16, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
         conn.inner.close(Instant::now(), error_code, reason.into());
-        conn.pending.terminate(ConnectionError::LocallyClosed);
+        conn.terminate(ConnectionError::LocallyClosed);
     }
 
     /// The peer's UDP address.
@@ -213,9 +213,9 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut conn = self.0.lock().unwrap();
-        if let Some(ConnectionError::LocallyClosed) = conn.pending.error {
+        if let Some(ConnectionError::LocallyClosed) = conn.error {
             Ok(Async::Ready(None))
-        } else if let Some(ref e) = conn.pending.error {
+        } else if let Some(ref e) = conn.error {
             Err(e.clone())
         } else if let Some(x) = conn.inner.accept() {
             let stream = BiStream::new(self.0.clone(), x);
@@ -226,7 +226,7 @@ impl FuturesStream for IncomingStreams {
             };
             Ok(Async::Ready(Some(stream)))
         } else {
-            conn.pending.incoming_streams_reader = Some(task::current());
+            conn.incoming_streams_reader = Some(task::current());
             Ok(Async::NotReady)
         }
     }
@@ -256,13 +256,19 @@ impl ConnectionRef {
             epoch: Instant::now(),
             side: conn.side(),
             inner: conn,
-            handle,
-            pending: Pending::new(),
             driver: None,
+            handle,
+            connected: false,
             timers: [None, None, None, None, None, None],
             conn_events,
             endpoint_events,
-            connected: false,
+            blocked_writers: FnvHashMap::default(),
+            blocked_readers: FnvHashMap::default(),
+            uni_opening: VecDeque::new(),
+            bi_opening: VecDeque::new(),
+            incoming_streams_reader: None,
+            finishing: FnvHashMap::default(),
+            error: None,
         })))
     }
 }
@@ -293,12 +299,19 @@ pub struct ConnectionInner {
     inner: quinn::Connection,
     driver: Option<Task>,
     handle: ConnectionHandle,
-    pending: Pending,
     side: Side,
+    connected: bool,
     timers: [Option<Delay>; quinn::Timer::COUNT],
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
-    connected: bool,
+    blocked_writers: FnvHashMap<StreamId, Task>,
+    blocked_readers: FnvHashMap<StreamId, Task>,
+    uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
+    bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
+    incoming_streams_reader: Option<Task>,
+    finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
+    /// Always set to Some before the connection becomes drained
+    error: Option<ConnectionError>,
 }
 
 impl ConnectionInner {
@@ -325,13 +338,11 @@ impl ConnectionInner {
                     self.inner.handle_event(event);
                 }
                 Ok(Async::Ready(Some(ConnectionEvent::DriverLost))) => {
-                    self.pending.terminate(ConnectionError::TransportError(
-                        quinn::TransportError {
-                            code: quinn::TransportErrorCode::INTERNAL_ERROR,
-                            frame: None,
-                            reason: "endpoint driver future was dropped".to_string(),
-                        },
-                    ));
+                    self.terminate(ConnectionError::TransportError(quinn::TransportError {
+                        code: quinn::TransportErrorCode::INTERNAL_ERROR,
+                        frame: None,
+                        reason: "endpoint driver future was dropped".to_string(),
+                    }));
                 }
                 Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
                     return Ok(());
@@ -351,27 +362,27 @@ impl ConnectionInner {
                     self.connected = true;
                 }
                 ConnectionLost { reason } => {
-                    self.pending.terminate(reason);
+                    self.terminate(reason);
                 }
                 StreamWritable { stream } => {
-                    if let Some(writer) = self.pending.blocked_writers.remove(&stream) {
+                    if let Some(writer) = self.blocked_writers.remove(&stream) {
                         writer.notify();
                     }
                 }
                 StreamOpened => {
-                    if let Some(x) = self.pending.incoming_streams_reader.take() {
+                    if let Some(x) = self.incoming_streams_reader.take() {
                         x.notify();
                     }
                 }
                 StreamReadable { stream } => {
-                    if let Some(reader) = self.pending.blocked_readers.remove(&stream) {
+                    if let Some(reader) = self.blocked_readers.remove(&stream) {
                         reader.notify();
                     }
                 }
                 StreamAvailable { directionality } => {
                     let queue = match directionality {
-                        Directionality::Uni => &mut self.pending.uni_opening,
-                        Directionality::Bi => &mut self.pending.bi_opening,
+                        Directionality::Uni => &mut self.uni_opening,
+                        Directionality::Bi => &mut self.bi_opening,
                     };
                     while let Some(connection) = queue.pop_front() {
                         if let Some(id) = self.inner.open(directionality) {
@@ -383,7 +394,7 @@ impl ConnectionInner {
                     }
                 }
                 StreamFinished { stream } => {
-                    let _ = self.pending.finishing.remove(&stream).unwrap().send(None);
+                    let _ = self.finishing.remove(&stream).unwrap().send(None);
                 }
             }
         }
@@ -447,47 +458,6 @@ impl ConnectionInner {
         }
     }
 
-    pub fn implicit_close(&mut self) {
-        self.inner.close(Instant::now(), 0, Bytes::new());
-    }
-}
-
-impl Drop for ConnectionInner {
-    fn drop(&mut self) {
-        if !self.inner.is_drained() {
-            // Ensure the endpoint can tidy up
-            let _ = self.endpoint_events.unbounded_send((
-                self.handle,
-                EndpointEvent::Proto(quinn::EndpointEvent::Drained),
-            ));
-        }
-    }
-}
-
-pub struct Pending {
-    blocked_writers: FnvHashMap<StreamId, Task>,
-    blocked_readers: FnvHashMap<StreamId, Task>,
-    uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    incoming_streams_reader: Option<Task>,
-    finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
-    /// Always set to Some before the connection becomes drained
-    error: Option<ConnectionError>,
-}
-
-impl Pending {
-    fn new() -> Self {
-        Self {
-            blocked_writers: FnvHashMap::default(),
-            blocked_readers: FnvHashMap::default(),
-            uni_opening: VecDeque::new(),
-            bi_opening: VecDeque::new(),
-            incoming_streams_reader: None,
-            finishing: FnvHashMap::default(),
-            error: None,
-        }
-    }
-
     /// Used to wake up all blocked futures when the connection becomes closed for any reason
     fn terminate(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
@@ -508,6 +478,22 @@ impl Pending {
         }
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(reason.clone()));
+        }
+    }
+
+    pub fn implicit_close(&mut self) {
+        self.inner.close(Instant::now(), 0, Bytes::new());
+    }
+}
+
+impl Drop for ConnectionInner {
+    fn drop(&mut self) {
+        if !self.inner.is_drained() {
+            // Ensure the endpoint can tidy up
+            let _ = self.endpoint_events.unbounded_send((
+                self.handle,
+                EndpointEvent::Proto(quinn::EndpointEvent::Drained),
+            ));
         }
     }
 }
@@ -548,12 +534,10 @@ impl Write for BiStream {
         let n = match conn.inner.write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
-                if let Some(ref x) = conn.pending.error {
+                if let Some(ref x) = conn.error {
                     return Err(WriteError::ConnectionClosed(x.clone()));
                 }
-                conn.pending
-                    .blocked_writers
-                    .insert(self.stream, task::current());
+                conn.blocked_writers.insert(self.stream, task::current());
                 return Ok(Async::NotReady);
             }
             Err(Stopped { error_code }) => {
@@ -573,7 +557,7 @@ impl Write for BiStream {
             conn.inner.finish(self.stream);
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
-            conn.pending.finishing.insert(self.stream, send);
+            conn.finishing.insert(self.stream, send);
             conn.notify();
         }
         let r = self.finishing.as_mut().unwrap().poll().unwrap();
@@ -601,12 +585,10 @@ impl Read for BiStream {
         match conn.inner.read_unordered(self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
             Err(Blocked) => {
-                if let Some(ref x) = conn.pending.error {
+                if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
                 }
-                conn.pending
-                    .blocked_readers
-                    .insert(self.stream, task::current());
+                conn.blocked_readers.insert(self.stream, task::current());
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
@@ -627,12 +609,10 @@ impl Read for BiStream {
         match conn.inner.read(self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
             Err(Blocked) => {
-                if let Some(ref x) = conn.pending.error {
+                if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
                 }
-                conn.pending
-                    .blocked_readers
-                    .insert(self.stream, task::current());
+                conn.blocked_readers.insert(self.stream, task::current());
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
@@ -699,7 +679,7 @@ impl Drop for BiStream {
             Directionality::Uni => (ours, !ours),
         };
 
-        if conn.pending.error.is_some() {
+        if conn.error.is_some() {
             return;
         }
         if send && !self.finished {
