@@ -483,8 +483,10 @@ impl ConnectionInner {
         }
     }
 
+    /// Close for a reason other than the application explicit request
     pub fn implicit_close(&mut self) {
         self.inner.close(Instant::now(), 0, Bytes::new());
+        self.terminate(ConnectionError::LocallyClosed);
     }
 }
 
