@@ -47,6 +47,9 @@ tokio-current-thread = "0.1"
 url = "1.7"
 rcgen = "0.2"
 directories = "1.0.2"
+rand = "0.6.5"
+crc = "1.8.1"
+unwrap = "1.2.1"
 
 [[example]]
 name = "server"
