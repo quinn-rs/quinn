@@ -38,6 +38,7 @@ script:
 - cargo clean
 - cargo build --all-features
 - RUST_BACKTRACE=1 cargo test --all-features
+- RUST_BACKTRACE=1 cargo test --all-features -- --ignored
 - if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     cargo fmt -- --check;
   fi
