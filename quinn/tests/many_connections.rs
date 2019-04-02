@@ -36,6 +36,7 @@ impl TestContext {
 }
 
 #[test]
+#[ignore]
 fn connect_n_nodes_to_1_and_send_1mb_data() {
     let mut runtime = unwrap!(Runtime::new());
 
