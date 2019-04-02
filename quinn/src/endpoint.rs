@@ -116,7 +116,8 @@ impl Endpoint {
 /// flowing between the `Endpoint` and the tasks managing `Connection`s. As such,
 /// running this task is necessary to keep the endpoint's connections running.
 ///
-/// `Driver` instances do not terminate (always yields `NotReady`) except in case of an error.
+/// `EndpointDriver` futures terminate when the `Incoming` stream and all clones of the `Endpoint`
+/// have been dropped, or when an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
 pub struct EndpointDriver(pub(crate) EndpointRef);
 
