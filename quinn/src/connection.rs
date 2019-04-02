@@ -220,6 +220,7 @@ impl FuturesStream for IncomingStreams {
         } else if let Some(ref e) = conn.error {
             Err(e.clone())
         } else if let Some(x) = conn.inner.accept() {
+            mem::drop(conn); // Release the lock so clone can take it
             let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream(stream))
@@ -242,7 +243,6 @@ pub enum NewStream {
     Bi(BiStream),
 }
 
-#[derive(Clone)]
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
@@ -271,17 +271,26 @@ impl ConnectionRef {
             incoming_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
+            ref_count: 0,
         })))
+    }
+}
+
+impl Clone for ConnectionRef {
+    fn clone(&self) -> Self {
+        self.0.lock().unwrap().ref_count += 1;
+        Self(self.0.clone())
     }
 }
 
 impl Drop for ConnectionRef {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.0) == 2 {
-            // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
-            // not, we can't do any harm.
-            let conn = &mut *self.0.lock().unwrap();
-            if !conn.inner.is_closed() {
+        let conn = &mut *self.0.lock().unwrap();
+        if let Some(x) = conn.ref_count.checked_sub(1) {
+            conn.ref_count = x;
+            if x == 0 && !conn.inner.is_closed() {
+                // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
+                // not, we can't do any harm.
                 conn.implicit_close();
             }
         }
@@ -314,6 +323,8 @@ pub struct ConnectionInner {
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     /// Always set to Some before the connection becomes drained
     error: Option<ConnectionError>,
+    /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
+    ref_count: usize,
 }
 
 impl ConnectionInner {

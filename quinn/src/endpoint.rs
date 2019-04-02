@@ -140,7 +140,7 @@ impl Future for EndpointDriver {
             }
         }
         Ok(
-            if endpoint.unreferenced && endpoint.connections.is_empty() {
+            if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
                 Async::Ready(())
             } else {
                 Async::NotReady
@@ -173,11 +173,8 @@ pub(crate) struct EndpointInner {
     // Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
-    /// Whether only one reference to this endpoint remains
-    ///
-    /// We presume the final reference to always be the driver, because otherwise nothing we do will
-    /// have any effect regardless.
-    unreferenced: bool,
+    /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
+    ref_count: usize,
 }
 
 impl EndpointInner {
@@ -364,26 +361,29 @@ impl EndpointRef {
             incoming_reader: None,
             driver: None,
             connections: FnvHashMap::default(),
-            unreferenced: false,
+            ref_count: 0,
         })))
     }
 }
 
 impl Clone for EndpointRef {
     fn clone(&self) -> Self {
+        self.0.lock().unwrap().ref_count += 1;
         Self(self.0.clone())
     }
 }
 
 impl Drop for EndpointRef {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.0) == 2 {
-            // If the driver is about to be on its own, arrange for it to shut down once the last
-            // connection is gone.
-            let endpoint = &mut *self.0.lock().unwrap();
-            endpoint.unreferenced = true;
-            if let Some(task) = endpoint.driver.take() {
-                task.notify();
+        let endpoint = &mut *self.0.lock().unwrap();
+        if let Some(x) = endpoint.ref_count.checked_sub(1) {
+            endpoint.ref_count = x;
+            if x == 0 {
+                // If the driver is about to be on its own, ensure it can shut down if the last
+                // connection is gone.
+                if let Some(task) = endpoint.driver.take() {
+                    task.notify();
+                }
             }
         }
     }
