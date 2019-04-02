@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::{fmt, io, str};
 
 use futures::{Future, Stream};
-use slog::{Drain, Logger, KV};
+use slog::{o, Drain, Logger, KV};
 use tokio;
 
 use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
@@ -103,7 +103,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server_config.certificate(cert_chain, key).unwrap();
 
         let mut server = Endpoint::new();
-        server.logger(log.clone());
+        server.logger(log.new(o!("side" => "Server")));
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
@@ -113,7 +113,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         client_config.add_certificate_authority(cert).unwrap();
         client_config.enable_keylog();
         let mut client = Endpoint::new();
-        client.logger(log.clone());
+        client.logger(log.new(o!("side" => "Client")));
         client.default_client_config(client_config.build());
         let (client_driver, client, _) = client.bind(client_addr).unwrap();
 
@@ -124,7 +124,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .into_future()
                 .map(move |(conn, _)| {
                     let (conn_driver, _, incoming_streams) = conn.unwrap();
-                    tokio::spawn(conn_driver.map_err(|_| ()));
+                    tokio::spawn(
+                        conn_driver.map_err(|e| eprintln!("incoming connection lost: {}", e)),
+                    );
                     tokio::spawn(incoming_streams.map_err(|_| ()).for_each(echo));
                 })
                 .map_err(|_| ()),
@@ -138,7 +140,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                     .unwrap()
                     .map_err(|e| panic!("connection failed: {}", e))
                     .and_then(move |(conn_driver, conn, _)| {
-                        tokio::spawn(conn_driver.map_err(|e| eprintln!("connection lost: {}", e)));
+                        tokio::spawn(
+                            conn_driver.map_err(|e| eprintln!("outgoing connection lost: {}", e)),
+                        );
                         let stream = conn.open_bi();
                         stream
                             .map_err(|_| ())
@@ -164,15 +168,13 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     runtime.shutdown_on_idle().wait().unwrap();
 }
 
-fn echo(stream: NewStream) -> Box<impl Future<Item = (), Error = ()>> {
+fn echo(stream: NewStream) -> impl Future<Item = (), Error = ()> {
     match stream {
-        NewStream::Bi(stream) => Box::new(
-            tokio::io::read_to_end(stream, Vec::new())
-                .and_then(|(stream, data)| tokio::io::write_all(stream, data))
-                .and_then(|(stream, _)| tokio::io::shutdown(stream))
-                .map_err(|_| ())
-                .map(|_| ()),
-        ),
+        NewStream::Bi(stream) => tokio::io::read_to_end(stream, Vec::new())
+            .and_then(|(stream, data)| tokio::io::write_all(stream, data))
+            .and_then(|(stream, _)| tokio::io::shutdown(stream))
+            .map_err(|_| ())
+            .map(|_| ()),
         _ => panic!("only bidi streams allowed"),
     }
 }
