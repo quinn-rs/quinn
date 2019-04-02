@@ -319,17 +319,19 @@ pub struct ConnectionInner {
 impl ConnectionInner {
     fn drive_transmit(&mut self, now: Instant) {
         while let Some(t) = self.inner.poll_transmit(now) {
-            self.endpoint_events
-                .unbounded_send((self.handle, EndpointEvent::Transmit(t)))
-                .unwrap();
+            // If the endpoint driver is gone, noop.
+            let _ = self
+                .endpoint_events
+                .unbounded_send((self.handle, EndpointEvent::Transmit(t)));
         }
     }
 
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
-            self.endpoint_events
-                .unbounded_send((self.handle, EndpointEvent::Proto(event)))
-                .unwrap();
+            // If the endpoint driver is gone, noop.
+            let _ = self
+                .endpoint_events
+                .unbounded_send((self.handle, EndpointEvent::Proto(event)));
         }
     }
 
