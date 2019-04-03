@@ -153,7 +153,7 @@ impl Future for EndpointDriver {
 impl Drop for EndpointDriver {
     fn drop(&mut self) {
         for sender in self.0.lock().unwrap().connections.values() {
-            // Ignoring errors from non-existent connections
+            // Ignoring errors from dropped connections
             let _ = sender.unbounded_send(ConnectionEvent::DriverLost);
         }
     }
@@ -197,11 +197,12 @@ impl EndpointInner {
                             }
                         }
                         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-                            self.connections
+                            // Ignoring errors from dropped connections that haven't yet been cleaned up
+                            let _ = self
+                                .connections
                                 .get_mut(&handle)
                                 .unwrap()
-                                .unbounded_send(ConnectionEvent::Proto(event))
-                                .unwrap();
+                                .unbounded_send(ConnectionEvent::Proto(event));
                         }
                         None => {}
                     }
@@ -273,11 +274,12 @@ impl EndpointInner {
                             self.connections.remove(&ch);
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
-                            self.connections
+                            // Ignoring errors from dropped connections that haven't yet been cleaned up
+                            let _ = self
+                                .connections
                                 .get_mut(&ch)
                                 .unwrap()
-                                .unbounded_send(ConnectionEvent::Proto(event))
-                                .unwrap();
+                                .unbounded_send(ConnectionEvent::Proto(event));
                         }
                     }
                     Transmit(t) => self.outgoing.push_back(t),
