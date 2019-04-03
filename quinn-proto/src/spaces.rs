@@ -46,8 +46,9 @@ pub struct PacketSpace {
     /// Current offset of outgoing cryptographic handshake stream
     pub crypto_offset: u64,
 
-    /// The time at which the next packet in this space will be considered lost based on exceeding
-    /// the reordering window in time.
+    /// The time at which the earliest sent packet in this space will be considered lost based on
+    /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
+    /// that has been acknowledged.
     pub loss_time: Option<Instant>,
 }
 
