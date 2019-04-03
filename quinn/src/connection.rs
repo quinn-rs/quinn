@@ -287,9 +287,15 @@ impl Drop for ConnectionRef {
         let conn = &mut *self.0.lock().unwrap();
         if let Some(x) = conn.ref_count.checked_sub(1) {
             conn.ref_count = x;
-            if x == 0 && !conn.inner.is_closed() {
+            if x == 0
+                && !conn.inner.is_closed()
+                && conn.uni_opening.is_empty()
+                && conn.bi_opening.is_empty()
+            {
                 // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
-                // not, we can't do any harm.
+                // not, we can't do any harm. If there were any streams being opened, then either
+                // the connection will be closed for an unrelated reason or a fresh reference will
+                // be constructed for the newly opened stream.
                 conn.implicit_close();
             }
         }
