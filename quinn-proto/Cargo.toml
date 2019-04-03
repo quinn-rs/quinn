@@ -24,7 +24,7 @@ fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.6"
 ring = "0.14.1"
-rustls = { version = "0.15", features = ["quic"] }
+rustls = { version = "0.15.2", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
 webpki = "0.19"
