@@ -181,8 +181,7 @@ impl Connection {
     /// - If called more than once on handles to the same connection
     pub fn close(self, error_code: u16, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
-        conn.inner.close(Instant::now(), error_code, reason.into());
-        conn.terminate(ConnectionError::LocallyClosed);
+        conn.close(error_code, reason);
     }
 
     /// The peer's UDP address.
@@ -496,10 +495,15 @@ impl ConnectionInner {
         }
     }
 
-    /// Close for a reason other than the application explicit request
-    pub fn implicit_close(&mut self) {
-        self.inner.close(Instant::now(), 0, Bytes::new());
+    fn close(&mut self, error_code: u16, reason: &[u8]) {
+        self.inner.close(Instant::now(), error_code, reason.into());
         self.terminate(ConnectionError::LocallyClosed);
+        self.notify();
+    }
+
+    /// Close for a reason other than the application's explicit request
+    pub fn implicit_close(&mut self) {
+        self.close(0, &[]);
     }
 }
 
