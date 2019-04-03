@@ -548,7 +548,10 @@ impl Connection {
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
-        if self.in_flight.crypto != 0 || self.crypto_count != 0 {
+        if let Some((_, pn_space)) = self.earliest_loss_time() {
+            // Time threshold loss Detection
+            self.detect_lost_packets(now, pn_space);
+        } else if self.in_flight.crypto != 0 || self.crypto_count != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
                 if self.spaces[space_id as usize].crypto.is_none() {
@@ -567,9 +570,6 @@ impl Connection {
             trace!(self.log, "sending anti-deadlock handshake packet");
             self.io.probes += 1;
             self.crypto_count = self.crypto_count.saturating_add(1);
-        } else if let Some((_, pn_space)) = self.earliest_loss_time() {
-            // Time threshold loss Detection
-            self.detect_lost_packets(now, pn_space);
         } else {
             trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes);
             self.io.probes += 2;
@@ -668,6 +668,12 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self) {
+        if let Some((loss_time, _)) = self.earliest_loss_time() {
+            // Time threshold loss detection.
+            self.io.timer_start(Timer::LossDetection, loss_time);
+            return;
+        }
+
         if self.in_flight.crypto != 0
         // Account for handshake packets pending retransmit
             || self.crypto_count != 0
@@ -690,12 +696,6 @@ impl Connection {
 
         if self.in_flight.ack_eliciting == 0 {
             self.io.timer_stop(Timer::LossDetection);
-            return;
-        }
-
-        if let Some((loss_time, _)) = self.earliest_loss_time() {
-            // Time threshold loss detection.
-            self.io.timer_start(Timer::LossDetection, loss_time);
             return;
         }
 
