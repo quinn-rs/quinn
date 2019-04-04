@@ -176,9 +176,6 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
     /// is preserved in full, it should be kept under 1KiB.
-    ///
-    /// # Panics
-    /// - If called more than once on handles to the same connection
     pub fn close(self, error_code: u16, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
         conn.close(error_code, reason);
