@@ -90,8 +90,8 @@ impl Future for ConnectionDriver {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let conn = &mut *self.0.lock().unwrap();
 
-        let now = Instant::now();
         loop {
+            let now = Instant::now();
             let mut keep_going = false;
             conn.process_conn_events().unwrap();
             conn.drive_transmit(now);

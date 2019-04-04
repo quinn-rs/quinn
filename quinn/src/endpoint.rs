@@ -129,8 +129,8 @@ impl Future for EndpointDriver {
         if endpoint.driver.is_none() {
             endpoint.driver = Some(task::current());
         }
-        let now = Instant::now();
         loop {
+            let now = Instant::now();
             let mut keep_going = false;
             keep_going |= endpoint.drive_recv(now)?;
             endpoint.drive_incoming();
