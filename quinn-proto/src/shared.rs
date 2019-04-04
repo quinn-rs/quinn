@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use std::{cmp, fmt};
 
 use bytes::BytesMut;
@@ -184,14 +183,13 @@ pub enum ConfigError {
 /// Events to be sent to the Connection
 pub enum ConnectionEvent {
     Datagram {
-        now: Instant,
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         first_decode: PartialDecode,
         remaining: Option<BytesMut>,
     },
     NewIdentifiers(Vec<(u64, ConnectionId)>),
-    Timer(Instant, Timer),
+    Timeout(Timer),
 }
 
 /// Events to be sent to the Endpoint

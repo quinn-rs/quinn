@@ -200,7 +200,6 @@ impl Endpoint {
             return Some((
                 ch,
                 DatagramEvent::ConnectionEvent(ConnectionEvent::Datagram {
-                    now,
                     remote,
                     ecn,
                     first_decode,
@@ -573,7 +572,7 @@ impl Endpoint {
                 self.incoming_handshakes += 1;
                 if conn.has_1rtt() {
                     if let Some(event) = self.handle_event(ch, EndpointEvent::NeedIdentifiers) {
-                        conn.handle_event(event);
+                        conn.handle_event(now, event);
                     }
                 }
                 Some((ch, conn))

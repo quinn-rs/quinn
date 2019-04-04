@@ -86,7 +86,7 @@ fn version_negotiate_client() {
             .into(),
     );
     if let Some((_, DatagramEvent::ConnectionEvent(event))) = opt_event {
-        client_conn.handle_event(event);
+        client_conn.handle_event(Instant::now(), event);
     }
     assert_matches!(
         client_conn.poll(),

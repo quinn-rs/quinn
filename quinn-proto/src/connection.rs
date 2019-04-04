@@ -985,11 +985,10 @@ impl Connection {
         }
     }
 
-    pub fn handle_event(&mut self, event: ConnectionEvent) {
+    pub fn handle_event(&mut self, now: Instant, event: ConnectionEvent) {
         use self::ConnectionEvent::*;
         match event {
             Datagram {
-                now,
                 remote,
                 ecn,
                 first_decode,
@@ -1016,7 +1015,7 @@ impl Connection {
                     self.issue_cid(seq, cid);
                 });
             }
-            Timer(now, timer) => self.timeout(now, timer),
+            Timeout(timer) => self.timeout(now, timer),
         }
     }
 

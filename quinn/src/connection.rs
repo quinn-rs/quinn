@@ -93,7 +93,7 @@ impl Future for ConnectionDriver {
         loop {
             let now = Instant::now();
             let mut keep_going = false;
-            conn.process_conn_events().unwrap();
+            conn.process_conn_events(now).unwrap();
             conn.drive_transmit(now);
             keep_going |= conn.drive_timers(now);
             keep_going |= conn.handle_timer_updates();
@@ -348,11 +348,11 @@ impl ConnectionInner {
         }
     }
 
-    fn process_conn_events(&mut self) -> Result<(), ()> {
+    fn process_conn_events(&mut self, now: Instant) -> Result<(), ()> {
         loop {
             match self.conn_events.poll() {
                 Ok(Async::Ready(Some(ConnectionEvent::Proto(event)))) => {
-                    self.inner.handle_event(event);
+                    self.inner.handle_event(now, event);
                 }
                 Ok(Async::Ready(Some(ConnectionEvent::DriverLost))) => {
                     self.terminate(ConnectionError::TransportError(quinn::TransportError {
@@ -426,7 +426,7 @@ impl ConnectionInner {
                         *slot = None;
                         trace!(self.log, "{timer:?} timeout", timer = timer);
                         self.inner
-                            .handle_event(quinn::ConnectionEvent::Timer(now, timer));
+                            .handle_event(now, quinn::ConnectionEvent::Timeout(timer));
                         // Timeout call may have queued sends
                         keep_going = true;
                     }
