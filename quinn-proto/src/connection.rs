@@ -351,8 +351,8 @@ impl Connection {
         if let Some(info) = self.space(space).sent_packets.get(&ack.largest) {
             if info.ack_eliciting {
                 let delay = Duration::from_micros(ack.delay << self.params.ack_delay_exponent);
-                self.rtt
-                    .update(cmp::min(delay, self.max_ack_delay()), now - info.time_sent);
+                let rtt = instant_saturating_sub(now, info.time_sent);
+                self.rtt.update(cmp::min(delay, self.max_ack_delay()), rtt);
             }
         }
 
@@ -514,7 +514,7 @@ impl Connection {
                 } else if let Some(ref prev) = self.prev_crypto {
                     if prev
                         .update_ack_time
-                        .map_or(false, |x| now - x >= self.pto() * 3)
+                        .map_or(false, |x| instant_saturating_sub(now, x) >= self.pto() * 3)
                     {
                         self.prev_crypto = None;
                     } else {
@@ -1897,11 +1897,8 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = if space.rx_packet_time < now {
-                micros_from(now - space.rx_packet_time)
-            } else {
-                0
-            } >> ACK_DELAY_EXPONENT;
+            let delay = micros_from(instant_saturating_sub(now, space.rx_packet_time))
+                >> ACK_DELAY_EXPONENT;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
@@ -3240,6 +3237,14 @@ struct PathResponse {
 
 fn micros_from(x: Duration) -> u64 {
     x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
+}
+
+fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
+    if x > y {
+        x - y
+    } else {
+        Duration::new(0, 0)
+    }
 }
 
 // Prevents overflow and improves behavior in extreme circumstances
