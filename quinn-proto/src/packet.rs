@@ -420,10 +420,9 @@ pub struct PartialEncode {
 impl PartialEncode {
     pub fn finish(self, buf: &mut [u8], header_crypto: &RingHeaderCrypto) {
         let PartialEncode { pn, .. } = self;
-        let pn_pos = if let Some(pn) = pn {
-            pn
-        } else {
-            return;
+        let pn_pos = match pn {
+            Some(pn) => pn,
+            None => return,
         };
 
         debug_assert!(

@@ -95,8 +95,8 @@ impl RangeSet {
     }
 
     pub fn remove(&mut self, x: Range<u64>) -> bool {
-        let before = if let Some((start, end)) = self.pred(x.start) {
-            if end > x.start {
+        let before = match self.pred(x.start) {
+            Some((start, end)) if end > x.start => {
                 self.0.remove(&start);
                 if start < x.start {
                     self.0.insert(start, x.start);
@@ -109,11 +109,8 @@ impl RangeSet {
                     return true;
                 }
                 true
-            } else {
-                false
             }
-        } else {
-            false
+            Some(_) | None => false,
         };
         let mut after = false;
         while let Some((start, end)) = self.succ(x.start) {

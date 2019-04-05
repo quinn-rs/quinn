@@ -438,10 +438,9 @@ impl Connection {
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
     fn on_packet_acked(&mut self, space: SpaceId, packet: u64) {
-        let info = if let Some(x) = self.space_mut(space).sent_packets.remove(&packet) {
-            x
-        } else {
-            return;
+        let info = match self.space_mut(space).sent_packets.remove(&packet) {
+            Some(x) => x,
+            None => return,
         };
         self.in_flight.remove(&info);
         if info.ack_eliciting {
@@ -472,10 +471,9 @@ impl Connection {
             }
         }
         for frame in info.retransmits.stream {
-            let ss = if let Some(x) = self.streams.get_send_mut(frame.id) {
-                x
-            } else {
-                continue;
+            let ss = match self.streams.get_send_mut(frame.id) {
+                Some(x) => x,
+                None => continue,
             };
             ss.bytes_in_flight -= frame.data.len() as u64;
             self.unacked_data -= frame.data.len() as u64;
@@ -733,10 +731,9 @@ impl Connection {
             self.ecn_counters += x;
         }
 
-        let packet = if let Some(x) = packet {
-            x
-        } else {
-            return;
+        let packet = match packet {
+            Some(x) => x,
+            None => return,
         };
         trace!(
             self.log,
@@ -816,10 +813,9 @@ impl Connection {
         );
 
         // reset is a noop on a closed stream
-        let stream = if let Some(x) = self.streams.get_send_mut(stream_id) {
-            x
-        } else {
-            return;
+        let stream = match self.streams.get_send_mut(stream_id) {
+            Some(x) => x,
+            None => return,
         };
         match stream.state {
             stream::SendState::DataRecvd
@@ -868,24 +864,24 @@ impl Connection {
     }
 
     fn init_0rtt(&mut self) {
-        let packet = if let Some(crypto) = self.tls.early_crypto() {
-            if self.side.is_client() {
-                if let Err(e) = self.tls.transport_parameters().and_then(|params| {
-                    self.set_params(
-                        params.expect("rustls didn't supply transport parameters with ticket"),
-                    )
-                }) {
-                    error!(
-                        self.log,
-                        "session ticket has malformed transport parameters: {}", e
-                    );
-                    return;
-                }
-            }
-            crypto
-        } else {
-            return;
+        let packet = match self.tls.early_crypto() {
+            Some(x) => x,
+            None => return,
         };
+        if self.side.is_client() {
+            let res = self.tls.transport_parameters().and_then(|params| {
+                self.set_params(
+                    params.expect("rustls didn't supply transport parameters with ticket"),
+                )
+            });
+            if let Err(e) = res {
+                error!(
+                    self.log,
+                    "session ticket has malformed transport parameters: {}", e
+                );
+                return;
+            }
+        }
         trace!(self.log, "0-RTT enabled");
         self.zero_rtt_crypto = Some(CryptoSpace {
             header: packet.header_crypto(),
@@ -1144,10 +1140,9 @@ impl Connection {
                     }
                 } else {
                     if !self.state.is_closed() {
-                        let spin = if let Header::Short { spin, .. } = packet.header {
-                            spin
-                        } else {
-                            false
+                        let spin = match packet.header {
+                            Header::Short { spin, .. } => spin,
+                            _ => false,
                         };
                         self.on_packet_authenticated(now, packet.header.space(), ecn, number, spin);
                     }
@@ -1946,10 +1941,9 @@ impl Connection {
 
         // CRYPTO
         while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
-            let mut frame = if let Some(x) = space.pending.crypto.pop_front() {
-                x
-            } else {
-                break;
+            let mut frame = match space.pending.crypto.pop_front() {
+                Some(x) => x,
+                None => break,
             };
             let len = cmp::min(
                 frame.data.len(),
@@ -1976,15 +1970,13 @@ impl Connection {
 
         // RESET_STREAM
         while buf.len() + frame::ResetStream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let (id, error_code) = if let Some(x) = space.pending.rst_stream.pop() {
-                x
-            } else {
-                break;
+            let (id, error_code) = match space.pending.rst_stream.pop() {
+                Some(x) => x,
+                None => break,
             };
-            let stream = if let Some(x) = self.streams.get_send_mut(id) {
-                x
-            } else {
-                continue;
+            let stream = match self.streams.get_send_mut(id) {
+                Some(x) => x,
+                None => continue,
             };
             trace!(self.log, "RESET_STREAM"; "stream" => id.0);
             sent.rst_stream.push((id, error_code));
@@ -1998,15 +1990,13 @@ impl Connection {
 
         // STOP_SENDING
         while buf.len() + 11 < max_size && space_id == SpaceId::Data {
-            let (id, error_code) = if let Some(x) = space.pending.stop_sending.pop() {
-                x
-            } else {
-                break;
+            let (id, error_code) = match space.pending.stop_sending.pop() {
+                Some(x) => x,
+                None => break,
             };
-            let stream = if let Some(x) = self.streams.get_recv_mut(id) {
-                x
-            } else {
-                continue;
+            let stream = match self.streams.get_recv_mut(id) {
+                Some(x) => x,
+                None => continue,
             };
             if stream.is_finished() {
                 continue;
@@ -2029,16 +2019,14 @@ impl Connection {
 
         // MAX_STREAM_DATA
         while buf.len() + 17 < max_size {
-            let id = if let Some(x) = space.pending.max_stream_data.iter().next() {
-                *x
-            } else {
-                break;
+            let id = match space.pending.max_stream_data.iter().next() {
+                Some(x) => *x,
+                None => break,
             };
             space.pending.max_stream_data.remove(&id);
-            let rs = if let Some(x) = self.streams.get_recv_mut(id) {
-                x
-            } else {
-                continue;
+            let rs = match self.streams.get_recv_mut(id) {
+                Some(x) => x,
+                None => continue,
             };
             if rs.is_finished() {
                 continue;
@@ -2076,10 +2064,9 @@ impl Connection {
 
         // NEW_CONNECTION_ID
         while buf.len() + 44 < max_size {
-            let frame = if let Some(x) = space.pending.new_cids.pop() {
-                x
-            } else {
-                break;
+            let frame = match space.pending.new_cids.pop() {
+                Some(x) => x,
+                None => break,
             };
             trace!(
                 self.log,
@@ -2093,10 +2080,9 @@ impl Connection {
 
         // RETIRE_CONNECTION_ID
         while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
-            let seq = if let Some(x) = space.pending.retire_cids.pop() {
-                x
-            } else {
-                break;
+            let seq = match space.pending.retire_cids.pop() {
+                Some(x) => x,
+                None => break,
             };
             trace!(self.log, "RETIRE_CONNECTION_ID {sequence}", sequence = seq);
             buf.write(frame::Type::RETIRE_CONNECTION_ID);
@@ -2106,10 +2092,9 @@ impl Connection {
 
         // STREAM
         while buf.len() + frame::Stream::SIZE_BOUND < max_size {
-            let mut stream = if let Some(x) = space.pending.stream.pop_front() {
-                x
-            } else {
-                break;
+            let mut stream = match space.pending.stream.pop_front() {
+                Some(x) => x,
+                None => break,
             };
             if self
                 .streams
