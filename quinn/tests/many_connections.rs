@@ -1,39 +1,9 @@
 use crc::crc32;
-use futures::unsync::oneshot;
 use futures::{Future, Stream};
 use rand::{self, RngCore};
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use tokio::runtime::current_thread::{self, Runtime};
 use unwrap::unwrap;
-
-struct TestContext {
-    /// Keep track of how many messages we've already received so that we'd know when test is
-    /// finished.
-    received_messages: usize,
-    expected_messages: usize,
-    done_tx: Option<oneshot::Sender<()>>,
-
-    /// Hold connections so that streams wouldn't be closed prematurely
-    connections: Vec<quinn::Connection>,
-}
-
-impl TestContext {
-    /// Constructs test context and returns test completion receiver as well..
-    fn shared() -> (Rc<RefCell<Self>>, oneshot::Receiver<()>) {
-        let (done_tx, done_rx) = oneshot::channel();
-        (
-            Rc::new(RefCell::new(Self {
-                received_messages: 0,
-                expected_messages: 0,
-                connections: Default::default(),
-                done_tx: Some(done_tx),
-            })),
-            done_rx,
-        )
-    }
-}
 
 #[test]
 #[ignore]
@@ -47,49 +17,49 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     runtime.spawn(driver.map_err(|e| panic!("Listener IO error: {}", e)));
     let listener_addr = unwrap!(endpoint.local_addr());
 
-    let (ctx, done_rx) = TestContext::shared();
-    ctx.borrow_mut().expected_messages = 50;
+    let expected_messages = 50;
 
-    let ctx2 = ctx.clone();
     let read_incoming_data = incoming_conns
         .map_err(|()| panic!("Listener failed"))
-        .for_each(move |(conn_driver, _conn, incoming)| {
+        .and_then(move |(conn_driver, conn, incoming)| {
             current_thread::spawn(conn_driver.map_err(|_| ()));
 
-            let ctx = ctx2.clone();
             let task = incoming
                 .map_err(move |e| panic!("Incoming streams failed: {}", e))
                 .for_each(move |stream| {
-                    read_from_peer(stream, ctx.clone());
+                    read_from_peer(stream, conn.clone());
                     Ok(())
                 })
                 .then(move |_| Ok(()));
             current_thread::spawn(task);
 
             Ok(())
-        });
+        })
+        .take(expected_messages as u64)
+        .for_each(|_| Ok(()));
     runtime.spawn(read_incoming_data);
 
     let client_cfg = configure_connector(&listener_cert);
 
-    for _ in 0..ctx.borrow_mut().expected_messages {
+    for _ in 0..expected_messages {
         let data = random_data_with_hash(1024 * 1024);
-        let ctx = ctx.clone();
         let task = unwrap!(endpoint.connect_with(&client_cfg, &listener_addr, "Test"))
             .map_err(|e| panic!("Connection failed: {}", e))
             .and_then(move |(conn_driver, conn, _)| {
                 current_thread::spawn(conn_driver.map_err(|_| ()));
                 write_to_peer(&conn, data);
-                ctx.borrow_mut().connections.push(conn);
                 Ok(())
             });
         runtime.spawn(task);
     }
+    // we don't need it anymore, this will make EndpointDriver finish after all connections are
+    // finished.
+    drop(endpoint);
 
-    let _ = unwrap!(runtime.block_on(done_rx));
+    unwrap!(runtime.run());
 }
 
-fn read_from_peer(stream: quinn::NewStream, ctx: Rc<RefCell<TestContext>>) {
+fn read_from_peer(stream: quinn::NewStream, conn: quinn::Connection) {
     let stream = match stream {
         quinn::NewStream::Bi(_bi) => panic!("Unexpected bidirectional stream here"),
         quinn::NewStream::Uni(uni) => uni,
@@ -99,12 +69,7 @@ fn read_from_peer(stream: quinn::NewStream, ctx: Rc<RefCell<TestContext>>) {
         .map_err(|e| panic!("read_to_end() failed: {}", e))
         .and_then(move |(_stream, data)| {
             assert!(hash_correct(&data));
-            ctx.borrow_mut().received_messages += 1;
-            if ctx.borrow().received_messages == ctx.borrow().expected_messages {
-                // TODO(povilas): unblock main thread
-                println!("done. All checks passed.");
-                unwrap!(unwrap!(ctx.borrow_mut().done_tx.take()).send(()));
-            }
+            conn.close(0, &[]);
             Ok(())
         })
         .then(|_| Ok(()));
@@ -119,7 +84,7 @@ fn write_to_peer(conn: &quinn::Connection, data: Vec<u8>) {
             tokio::io::write_all(o_stream, data).map_err(|e| panic!("write_all() failed: {}", e))
         })
         .and_then(move |(o_stream, _)| {
-            tokio::io::shutdown(o_stream).map_err(|e| panic!("shutdown() failed: {}", e))
+            tokio::io::shutdown(o_stream).map_err(|_| ()) // ignore errors, remote peer might already have hung up
         })
         .map(|_| ());
     current_thread::spawn(task);
@@ -132,7 +97,7 @@ fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
     unwrap!(peer_cfg_builder.add_certificate_authority(their_cert));
     let mut peer_cfg = peer_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));
-    transport_config.idle_timeout = 0;
+    transport_config.idle_timeout = 30_000;
     transport_config.keep_alive_interval = 10_000;
 
     peer_cfg
@@ -151,8 +116,8 @@ fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
     ));
     let mut our_cfg = our_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport_config));
-    transport_config.idle_timeout = 0;
-    transport_config.keep_alive_interval = 1000;
+    transport_config.idle_timeout = 30_000;
+    transport_config.keep_alive_interval = 10_000;
 
     (our_cfg, our_cert_der)
 }
