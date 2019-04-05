@@ -118,6 +118,10 @@ fn lifecycle() {
                         reason: ApplicationClose { error_code: 42, ref reason }
                     }}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
 }
 
 #[test]
