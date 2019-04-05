@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::iter;
 use std::net::SocketAddr;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
@@ -421,7 +422,7 @@ impl Endpoint {
             init_cid,
             remote,
             cids_issued: 0,
-            loc_cids: HashMap::new(),
+            loc_cids: iter::once((0, loc_cid)).collect(),
         });
         let ch = ConnectionHandle(id);
 
@@ -602,6 +603,19 @@ impl Endpoint {
     /// Unconditionally reject future incoming connections
     pub fn reject_new_connections(&mut self) {
         self.reject_new_connections = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn known_connections(&self) -> usize {
+        let x = self.connections.len();
+        debug_assert_eq!(x, self.connection_ids_initial.len());
+        debug_assert!(x >= self.connection_remotes.len());
+        x
+    }
+
+    #[cfg(test)]
+    pub(crate) fn known_cids(&self) -> usize {
+        self.connection_ids.len()
     }
 }
 
