@@ -151,8 +151,8 @@ impl super::UdpExt for UdpSocket {
             }
             break n;
         };
-        let ecn_bits = if let Some(cmsg) = unsafe { cmsg::Iter::new(&hdr).next() } {
-            match (cmsg.cmsg_level, cmsg.cmsg_type) {
+        let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
+            Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
                 // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
                 (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
                     cmsg::decode::<u8>(cmsg)
@@ -161,9 +161,8 @@ impl super::UdpExt for UdpSocket {
                     cmsg::decode::<libc::c_int>(cmsg) as u8
                 },
                 _ => 0,
-            }
-        } else {
-            0
+            },
+            None => 0,
         };
         let addr = match name.ss_family as libc::c_int {
             libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },

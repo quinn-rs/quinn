@@ -37,10 +37,9 @@ impl Assembler {
     // Takes the buffer to read into and the amount of bytes that has already
     // been read into it. Returns whether the first chunk has been fully consumed.
     fn consume(&mut self, buf: &mut [u8], read: &mut usize) -> bool {
-        let mut chunk = if let Some(chunk) = self.data.peek_mut() {
-            chunk
-        } else {
-            return false;
+        let mut chunk = match self.data.peek_mut() {
+            Some(chunk) => chunk,
+            None => return false,
         };
 
         // If this chunk is either after the current offset or fully before it,

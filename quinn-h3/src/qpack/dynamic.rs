@@ -93,10 +93,9 @@ impl<'a> DynamicTableInserter<'a> {
     }
 
     pub(super) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
-        let index = if let Some(index) = self.table.put_field(field.clone())? {
-            index
-        } else {
-            return Ok(());
+        let index = match self.table.put_field(field.clone())? {
+            Some(index) => index,
+            None => return Ok(()),
         };
 
         if self.table.name_map.is_none() {

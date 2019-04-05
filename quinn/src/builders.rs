@@ -48,10 +48,9 @@ impl<'a> EndpointBuilder<'a> {
         self,
         socket: std::net::UdpSocket,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
-        let reactor = if let Some(x) = self.reactor {
-            Cow::Borrowed(x)
-        } else {
-            Cow::Owned(tokio_reactor::Handle::default())
+        let reactor = match self.reactor {
+            Some(x) => Cow::Borrowed(x),
+            None => Cow::Owned(tokio_reactor::Handle::default()),
         };
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
