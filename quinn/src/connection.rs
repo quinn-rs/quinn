@@ -42,13 +42,12 @@ impl Future for ConnectingFuture {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let connected = match &mut self.0 {
-            Some(driver) => {
-                match driver.poll()? {
-                    Async::Ready(()) => unreachable!("cannot close without completing"),
-                    Async::NotReady => {}
+            Some(driver) => match driver.poll()? {
+                Async::Ready(()) => {
+                    return Err((driver.0).lock().unwrap().error.as_ref().unwrap().clone());
                 }
-                (driver.0).lock().unwrap().connected
-            }
+                Async::NotReady => (driver.0).lock().unwrap().connected,
+            },
             None => panic!("polled after yielding Ready"),
         };
         if connected {
@@ -181,7 +180,7 @@ impl Connection {
     /// is preserved in full, it should be kept under 1KiB.
     pub fn close(&self, error_code: u16, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
-        conn.close(error_code, reason);
+        conn.close(error_code, reason.into());
     }
 
     /// The peer's UDP address.
@@ -362,6 +361,9 @@ impl ConnectionInner {
                 Async::Ready(Some(ConnectionEvent::Proto(event))) => {
                     self.inner.handle_event(event);
                 }
+                Async::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
+                    self.close(error_code, reason);
+                }
                 Async::Ready(Some(ConnectionEvent::DriverLost)) => {
                     return Err(ConnectionError::TransportError(quinn::TransportError {
                         code: quinn::TransportErrorCode::INTERNAL_ERROR,
@@ -508,15 +510,15 @@ impl ConnectionInner {
         }
     }
 
-    fn close(&mut self, error_code: u16, reason: &[u8]) {
-        self.inner.close(Instant::now(), error_code, reason.into());
+    fn close(&mut self, error_code: u16, reason: Bytes) {
+        self.inner.close(Instant::now(), error_code, reason);
         self.terminate(ConnectionError::LocallyClosed);
         self.notify();
     }
 
     /// Close for a reason other than the application's explicit request
     pub fn implicit_close(&mut self) {
-        self.close(0, &[]);
+        self.close(0, Bytes::new());
     }
 }
 

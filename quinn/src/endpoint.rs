@@ -5,6 +5,7 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use bytes::Bytes;
 use fnv::FnvHashMap;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
@@ -106,6 +107,25 @@ impl Endpoint {
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.inner.lock().unwrap().socket.local_addr()
     }
+
+    /// Close all of this endpoint's connections immediately and cease accepting new connections.
+    ///
+    /// See `Connection::close` for details.
+    pub fn close(&self, error_code: u16, reason: &[u8]) {
+        let reason = Bytes::from(reason);
+        let mut endpoint = self.inner.lock().unwrap();
+        endpoint.close = Some((error_code, reason.clone()));
+        for sender in endpoint.connections.values() {
+            // Ignoring errors from dropped connections
+            let _ = sender.unbounded_send(ConnectionEvent::Close {
+                error_code,
+                reason: reason.clone(),
+            });
+        }
+        if let Some(task) = endpoint.incoming_reader.take() {
+            task.notify();
+        }
+    }
 }
 
 /// A future that drives IO on an endpoint
@@ -176,6 +196,8 @@ pub(crate) struct EndpointInner {
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
+    /// Set if the endpoint has been manually closed
+    close: Option<(u16, Bytes)>,
 }
 
 impl EndpointInner {
@@ -299,6 +321,13 @@ impl EndpointInner {
         conn: quinn::Connection,
     ) -> ConnectionRef {
         let (send, recv) = mpsc::unbounded();
+        if let Some((error_code, ref reason)) = self.close {
+            send.unbounded_send(ConnectionEvent::Close {
+                error_code,
+                reason: reason.clone(),
+            })
+            .unwrap();
+        }
         self.connections.insert(handle, send);
         ConnectionRef::new(self.log.clone(), handle, conn, self.sender.clone(), recv)
     }
@@ -328,6 +357,9 @@ impl FuturesStream for Incoming {
         if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
             return Ok(Async::Ready(Some(new_connection(conn.0))));
+        }
+        if endpoint.close.is_some() {
+            return Ok(Async::Ready(None));
         }
         endpoint.incoming_reader = Some(task::current());
         Ok(Async::NotReady)
@@ -365,6 +397,7 @@ impl EndpointRef {
             driver: None,
             connections: FnvHashMap::default(),
             ref_count: 0,
+            close: None,
         })))
     }
 }
