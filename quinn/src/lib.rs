@@ -84,7 +84,6 @@ pub use endpoint::{Endpoint, EndpointDriver, Incoming};
 mod tests;
 
 enum ConnectionEvent {
-    DriverLost,
     Close {
         error_code: u16,
         reason: bytes::Bytes,

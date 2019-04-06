@@ -364,17 +364,12 @@ impl ConnectionInner {
                 Async::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason);
                 }
-                Async::Ready(Some(ConnectionEvent::DriverLost)) => {
+                Async::Ready(None) => {
                     return Err(ConnectionError::TransportError(quinn::TransportError {
                         code: quinn::TransportErrorCode::INTERNAL_ERROR,
                         frame: None,
                         reason: "endpoint driver future was dropped".to_string(),
                     }));
-                }
-                Async::Ready(None) => {
-                    unreachable!(
-                        "DriverLost should have been issued before the sender was dropped"
-                    );
                 }
                 Async::NotReady => {
                     return Ok(());
