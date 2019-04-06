@@ -177,10 +177,9 @@ impl Drop for EndpointDriver {
         if let Some(task) = endpoint.incoming_reader.take() {
             task.notify();
         }
-        for sender in endpoint.connections.values() {
-            // Ignoring errors from dropped connections
-            let _ = sender.unbounded_send(ConnectionEvent::DriverLost);
-        }
+        // Drop all outgoing channels, signaling the termination of the endpoint to the associated
+        // connections.
+        endpoint.connections.clear();
     }
 }
 
