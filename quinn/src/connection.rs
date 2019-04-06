@@ -93,7 +93,10 @@ impl Future for ConnectionDriver {
         loop {
             let now = Instant::now();
             let mut keep_going = false;
-            conn.process_conn_events().unwrap();
+            if let Err(e) = conn.process_conn_events() {
+                conn.terminate(e.clone());
+                return Err(e);
+            }
             conn.drive_transmit(now);
             keep_going |= conn.drive_timers(now);
             keep_going |= conn.handle_timer_updates();
@@ -348,24 +351,31 @@ impl ConnectionInner {
         }
     }
 
-    fn process_conn_events(&mut self) -> Result<(), ()> {
+    /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
+    fn process_conn_events(&mut self) -> Result<(), ConnectionError> {
         loop {
-            match self.conn_events.poll() {
-                Ok(Async::Ready(Some(ConnectionEvent::Proto(event)))) => {
+            match self
+                .conn_events
+                .poll()
+                .expect("mpsc receiver is infallible")
+            {
+                Async::Ready(Some(ConnectionEvent::Proto(event))) => {
                     self.inner.handle_event(event);
                 }
-                Ok(Async::Ready(Some(ConnectionEvent::DriverLost))) => {
-                    self.terminate(ConnectionError::TransportError(quinn::TransportError {
+                Async::Ready(Some(ConnectionEvent::DriverLost)) => {
+                    return Err(ConnectionError::TransportError(quinn::TransportError {
                         code: quinn::TransportErrorCode::INTERNAL_ERROR,
                         frame: None,
                         reason: "endpoint driver future was dropped".to_string(),
                     }));
                 }
-                Ok(Async::Ready(None)) | Ok(Async::NotReady) => {
-                    return Ok(());
+                Async::Ready(None) => {
+                    unreachable!(
+                        "DriverLost should have been issued before the sender was dropped"
+                    );
                 }
-                Err(_) => {
-                    unreachable!("channel receivers never fail");
+                Async::NotReady => {
+                    return Ok(());
                 }
             }
         }
