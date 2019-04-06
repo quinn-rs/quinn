@@ -172,7 +172,12 @@ impl Future for EndpointDriver {
 
 impl Drop for EndpointDriver {
     fn drop(&mut self) {
-        for sender in self.0.lock().unwrap().connections.values() {
+        let mut endpoint = self.0.lock().unwrap();
+        endpoint.driver_lost = true;
+        if let Some(task) = endpoint.incoming_reader.take() {
+            task.notify();
+        }
+        for sender in endpoint.connections.values() {
             // Ignoring errors from dropped connections
             let _ = sender.unbounded_send(ConnectionEvent::DriverLost);
         }
@@ -198,6 +203,7 @@ pub(crate) struct EndpointInner {
     ref_count: usize,
     /// Set if the endpoint has been manually closed
     close: Option<(u16, Bytes)>,
+    driver_lost: bool,
 }
 
 impl EndpointInner {
@@ -321,14 +327,20 @@ impl EndpointInner {
         conn: quinn::Connection,
     ) -> ConnectionRef {
         let (send, recv) = mpsc::unbounded();
-        if let Some((error_code, ref reason)) = self.close {
-            send.unbounded_send(ConnectionEvent::Close {
-                error_code,
-                reason: reason.clone(),
-            })
-            .unwrap();
+        // If the endpoint driver's been dropped, new connections cannot be created. By discarding
+        // `send` here, we allow `Endpoint::connect` to construct a valid `ConnectingFuture` which
+        // will immediately fail, which lets us avoid needing a distinct `ConnectError` for this
+        // case.
+        if !self.driver_lost {
+            if let Some((error_code, ref reason)) = self.close {
+                send.unbounded_send(ConnectionEvent::Close {
+                    error_code,
+                    reason: reason.clone(),
+                })
+                .unwrap();
+            }
+            self.connections.insert(handle, send);
         }
-        self.connections.insert(handle, send);
         ConnectionRef::new(self.log.clone(), handle, conn, self.sender.clone(), recv)
     }
 }
@@ -354,15 +366,17 @@ impl FuturesStream for Incoming {
     type Error = (); // FIXME: Infallible
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let endpoint = &mut *self.0.lock().unwrap();
-        if let Some(conn) = endpoint.incoming.pop_front() {
+        if endpoint.driver_lost {
+            Ok(Async::Ready(None))
+        } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            return Ok(Async::Ready(Some(new_connection(conn.0))));
+            Ok(Async::Ready(Some(new_connection(conn.0))))
+        } else if endpoint.close.is_some() {
+            Ok(Async::Ready(None))
+        } else {
+            endpoint.incoming_reader = Some(task::current());
+            Ok(Async::NotReady)
         }
-        if endpoint.close.is_some() {
-            return Ok(Async::Ready(None));
-        }
-        endpoint.incoming_reader = Some(task::current());
-        Ok(Async::NotReady)
     }
 }
 
@@ -398,6 +412,7 @@ impl EndpointRef {
             connections: FnvHashMap::default(),
             ref_count: 0,
             close: None,
+            driver_lost: false,
         })))
     }
 }
