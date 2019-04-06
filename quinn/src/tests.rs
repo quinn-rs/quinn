@@ -53,6 +53,37 @@ fn handshake_timeout() {
 }
 
 #[test]
+fn drop_endpoint() {
+    let endpoint = Endpoint::new();
+    let (driver, endpoint, _) = endpoint
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
+
+    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+    runtime.spawn(
+        endpoint
+            .connect(
+                &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+                "localhost",
+            )
+            .unwrap()
+            .then(|x| match x {
+                Err(crate::ConnectionError::TransportError(quinn_proto::TransportError {
+                    code: quinn_proto::TransportErrorCode::INTERNAL_ERROR,
+                    ..
+                })) => Ok(()),
+                Err(e) => panic!("unexpected error: {}", e),
+                Ok(_) => {
+                    panic!("unexpected success");
+                }
+            }),
+    );
+
+    let _ = (endpoint, driver);
+    runtime.run().unwrap();
+}
+
+#[test]
 fn local_addr() {
     let port = 56987;
     let (_, ep, _) = Endpoint::new()
