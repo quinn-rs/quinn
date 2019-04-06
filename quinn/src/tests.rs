@@ -155,9 +155,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .into_future()
                 .map(move |(conn, _)| {
                     let (conn_driver, _, incoming_streams) = conn.unwrap();
-                    tokio::spawn(
-                        conn_driver.map_err(|e| eprintln!("incoming connection lost: {}", e)),
-                    );
+                    tokio::spawn(conn_driver.map_err(|_| ()));
                     tokio::spawn(incoming_streams.map_err(|_| ()).for_each(echo));
                 })
                 .map_err(|_| ()),
