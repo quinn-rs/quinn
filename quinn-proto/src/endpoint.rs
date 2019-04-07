@@ -321,6 +321,7 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(
         &mut self,
+        log: Option<Logger>,
         remote: SocketAddr,
         transport_config: Arc<TransportConfig>,
         crypto_config: Arc<crypto::ClientConfig>,
@@ -330,6 +331,7 @@ impl Endpoint {
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let (ch, conn) = self.add_connection(
+            log,
             remote_id,
             remote_id,
             remote,
@@ -369,6 +371,7 @@ impl Endpoint {
 
     fn add_connection(
         &mut self,
+        log: Option<Logger>,
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
@@ -406,7 +409,7 @@ impl Endpoint {
             cfg.use_stateless_retry && client_config.is_none()
         });
         let conn = Connection::new(
-            self.log.new(o!("connection" => loc_cid)),
+            log.unwrap_or_else(|| self.log.new(o!("connection" => loc_cid))),
             Arc::clone(&self.config),
             transport_config,
             init_cid,
@@ -554,6 +557,7 @@ impl Endpoint {
 
         let (ch, mut conn) = self
             .add_connection(
+                None,
                 dst_cid,
                 src_cid,
                 remote,

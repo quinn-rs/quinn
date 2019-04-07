@@ -248,6 +248,11 @@ impl Connection {
         this
     }
 
+    /// Replace the diagnostic logger
+    pub fn set_logger(&mut self, log: Logger) {
+        self.log = log;
+    }
+
     /// Returns timer updates
     ///
     /// Connections should be polled for timer updates after:

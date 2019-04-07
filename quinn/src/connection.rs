@@ -203,6 +203,13 @@ impl Connection {
     pub fn force_key_update(&self) {
         self.0.lock().unwrap().inner.force_key_update()
     }
+
+    /// Replace the diagnostic logger
+    pub fn set_logger(&self, log: Logger) {
+        let mut conn = self.0.lock().unwrap();
+        conn.log = log.clone();
+        conn.inner.set_logger(log);
+    }
 }
 
 /// A stream of QUIC streams initiated by a remote peer.
