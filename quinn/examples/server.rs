@@ -84,7 +84,7 @@ fn main() {
 
 fn run(log: Logger, options: Opt) -> Result<()> {
     let server_config = quinn::ServerConfig {
-        transport_config: Arc::new(quinn::TransportConfig {
+        transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 0,
             ..Default::default()
         }),

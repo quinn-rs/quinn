@@ -394,16 +394,16 @@ impl Endpoint {
             }
             ConnectionOpts::Server { orig_dst_cid } => {
                 let config = self.server_config.as_ref().unwrap();
-                let params = TransportParameters::new(&config.transport_config);
+                let params = TransportParameters::new(&config.transport);
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&self.config.reset_key, &loc_cid)),
                     original_connection_id: orig_dst_cid,
                     ..params
                 };
                 (
-                    config.tls_config.start_session(&server_params),
+                    config.crypto.start_session(&server_params),
                     None,
-                    config.transport_config.clone(),
+                    config.transport.clone(),
                     self.log.new(o!("connection" => loc_cid)),
                 )
             }
@@ -676,12 +676,12 @@ impl EndpointConfig {
 /// Parameters governing incoming connections.
 pub struct ServerConfig {
     /// Transport configuration to use for incoming connections
-    pub transport_config: Arc<TransportConfig>,
+    pub transport: Arc<TransportConfig>,
 
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub tls_config: Arc<crypto::ServerConfig>,
+    pub crypto: Arc<crypto::ServerConfig>,
 
     /// Private key used to authenticate data included in handshake tokens.
     pub token_key: TokenKey,
@@ -706,8 +706,8 @@ impl Default for ServerConfig {
         rng.fill_bytes(&mut token_value);
 
         Self {
-            transport_config: Arc::new(TransportConfig::default()),
-            tls_config: Arc::new(crypto::build_server_config()),
+            transport: Arc::new(TransportConfig::default()),
+            crypto: Arc::new(crypto::build_server_config()),
 
             token_key: TokenKey::new(&token_value),
             use_stateless_retry: false,

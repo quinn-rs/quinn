@@ -160,7 +160,7 @@ impl ServerConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        Arc::make_mut(&mut self.config.tls_config).key_log = Arc::new(KeyLogFile::new());
+        Arc::make_mut(&mut self.config.crypto).key_log = Arc::new(KeyLogFile::new());
         self
     }
 
@@ -170,7 +170,7 @@ impl ServerConfigBuilder {
         cert_chain: CertificateChain,
         key: PrivateKey,
     ) -> Result<&mut Self, TLSError> {
-        Arc::make_mut(&mut self.config.tls_config).set_single_cert(cert_chain.certs, key.inner)?;
+        Arc::make_mut(&mut self.config.crypto).set_single_cert(cert_chain.certs, key.inner)?;
         Ok(self)
     }
 
@@ -182,7 +182,7 @@ impl ServerConfigBuilder {
     ///
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        Arc::make_mut(&mut self.config.tls_config).alpn_protocols =
+        Arc::make_mut(&mut self.config.crypto).alpn_protocols =
             protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
