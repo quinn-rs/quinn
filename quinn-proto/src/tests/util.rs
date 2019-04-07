@@ -110,7 +110,7 @@ impl Pair {
         }
     }
 
-    fn drive_server(&mut self) {
+    pub fn drive_server(&mut self) {
         trace!(self.log, "server running");
         self.server.drive(&self.log, self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {

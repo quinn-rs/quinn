@@ -1138,6 +1138,10 @@ impl Connection {
                         );
                         return;
                     }
+                } else if self.state.is_handshake() && packet.header.is_short() {
+                    // TODO: SHOULD buffer these to improve reordering tolerance.
+                    trace!(self.log, "dropping short packet during handshake");
+                    return;
                 } else {
                     if !self.state.is_closed() {
                         let spin = match packet.header {
@@ -1345,11 +1349,9 @@ impl Connection {
                         debug!(self.log, "remote doesn't support our version");
                         Err(ConnectionError::VersionMismatch)
                     }
-                    // TODO: SHOULD buffer these to improve reordering tolerance.
-                    Header::Short { .. } => {
-                        trace!(self.log, "dropping short packet during handshake");
-                        Ok(())
-                    }
+                    Header::Short { .. } => unreachable!(
+                        "short packets received during handshake are discarded in handle_packet"
+                    ),
                 }
             }
             State::Established => {
