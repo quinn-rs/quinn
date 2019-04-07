@@ -678,17 +678,7 @@ impl io::Write for BiStream {
         match Write::poll_write(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(WriteError::Stopped { error_code }) => Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                format!("stream stopped by peer: error {}", error_code),
-            )),
-            Err(WriteError::ConnectionClosed(e)) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("connection closed: {}", e),
-            )),
-            Err(WriteError::UnknownStream) => {
-                Err(io::Error::new(io::ErrorKind::Other, "unknown stream"))
-            }
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -732,23 +722,11 @@ impl Drop for BiStream {
 
 impl io::Read for BiStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use ReadError::*;
         match Read::poll_read(self, buf) {
             Ok(Async::Ready(n)) => Ok(n),
-            Err(Finished) => Ok(0),
+            Err(ReadError::Finished) => Ok(0),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(Reset { error_code }) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("stream reset by peer: error {}", error_code),
-            )),
-            Err(ConnectionClosed(e)) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("connection closed: {}", e),
-            )),
-            Err(UnknownStream) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "unknown stream",
-            )),
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -921,6 +899,21 @@ pub enum ReadError {
     UnknownStream,
 }
 
+impl From<ReadError> for io::Error {
+    fn from(x: ReadError) -> Self {
+        use self::ReadError::*;
+        let kind = match x {
+            ConnectionClosed(e) => {
+                return e.into();
+            }
+            Reset { .. } => io::ErrorKind::ConnectionReset,
+            Finished => io::ErrorKind::UnexpectedEof,
+            UnknownStream => io::ErrorKind::NotConnected,
+        };
+        io::Error::new(kind, x)
+    }
+}
+
 /// Trait of writable streams
 pub trait Write {
     /// Write bytes to the stream.
@@ -959,4 +952,18 @@ pub enum WriteError {
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
+}
+
+impl From<WriteError> for io::Error {
+    fn from(x: WriteError) -> Self {
+        use self::WriteError::*;
+        let kind = match x {
+            ConnectionClosed(e) => {
+                return e.into();
+            }
+            Stopped { .. } => io::ErrorKind::ConnectionReset,
+            UnknownStream => io::ErrorKind::NotConnected,
+        };
+        io::Error::new(kind, x)
+    }
 }
