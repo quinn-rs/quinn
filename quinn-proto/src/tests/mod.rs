@@ -459,7 +459,7 @@ fn zero_rtt_rejection() {
 #[test]
 fn stream_id_backpressure() {
     let server = ServerConfig {
-        transport_config: Arc::new(TransportConfig {
+        transport: Arc::new(TransportConfig {
             stream_window_uni: 1,
             ..TransportConfig::default()
         }),
@@ -669,7 +669,7 @@ fn instant_close_2() {
 fn idle_timeout() {
     const IDLE_TIMEOUT: u64 = 10;
     let server = ServerConfig {
-        transport_config: Arc::new(TransportConfig {
+        transport: Arc::new(TransportConfig {
             idle_timeout: IDLE_TIMEOUT,
             ..TransportConfig::default()
         }),
@@ -808,7 +808,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            transport_config: Arc::new(config),
+            transport: Arc::new(config),
             ..server_config()
         },
     );
@@ -1010,7 +1010,7 @@ fn zero_length_cid() {
 fn keep_alive() {
     const IDLE_TIMEOUT: u64 = 10_000;
     let server = ServerConfig {
-        transport_config: Arc::new(TransportConfig {
+        transport: Arc::new(TransportConfig {
             keep_alive_interval: IDLE_TIMEOUT as u32 / 2,
             idle_timeout: IDLE_TIMEOUT,
             ..TransportConfig::default()

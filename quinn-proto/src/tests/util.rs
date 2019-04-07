@@ -396,7 +396,7 @@ pub fn server_config() -> ServerConfig {
         .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
         .unwrap();
     ServerConfig {
-        tls_config: Arc::new(tls_config),
+        crypto: Arc::new(tls_config),
         ..Default::default()
     }
 }
