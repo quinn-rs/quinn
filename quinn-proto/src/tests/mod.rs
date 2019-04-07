@@ -824,8 +824,9 @@ fn server_busy() {
                 },
         })
     );
-    // TODO: somehow assert that no state was left on the server?
     assert_eq!(pair.server.connections.len(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
 }
 
 #[test]
