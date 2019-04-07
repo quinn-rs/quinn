@@ -2918,21 +2918,13 @@ impl From<TransportError> for ConnectionError {
 impl From<ConnectionError> for io::Error {
     fn from(x: ConnectionError) -> io::Error {
         use self::ConnectionError::*;
-        match x {
-            TimedOut => io::Error::new(io::ErrorKind::TimedOut, "timed out"),
-            Reset => io::Error::new(io::ErrorKind::ConnectionReset, "reset by peer"),
-            ApplicationClosed { reason } => io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("closed by peer application: {}", reason),
-            ),
-            ConnectionClosed { reason } => io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("peer detected an error: {}", reason),
-            ),
-            TransportError(x) => io::Error::new(io::ErrorKind::Other, format!("{}", x)),
-            VersionMismatch => io::Error::new(io::ErrorKind::Other, "version mismatch"),
-            LocallyClosed => io::Error::new(io::ErrorKind::Other, "locally closed"),
-        }
+        let kind = match x {
+            TimedOut => io::ErrorKind::TimedOut,
+            Reset => io::ErrorKind::ConnectionReset,
+            ApplicationClosed { .. } | ConnectionClosed { .. } => io::ErrorKind::ConnectionAborted,
+            TransportError(_) | VersionMismatch | LocallyClosed => io::ErrorKind::Other,
+        };
+        io::Error::new(kind, x)
     }
 }
 
