@@ -172,6 +172,7 @@ impl DerefMut for TlsSession {
 pub fn build_server_config() -> ServerConfig {
     let mut cfg = ServerConfig::new(NoClientAuth::new());
     cfg.versions = vec![ProtocolVersion::TLSv1_3];
+    cfg.max_early_data_size = u32::max_value();
     cfg
 }
 
@@ -183,8 +184,6 @@ fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
 
 /// Value used in ACKs we transmit
 pub const ACK_DELAY_EXPONENT: u8 = 3;
-/// Magic value used to indicate 0-RTT support in NewSessionTicket
-//pub const TLS_MAX_EARLY_DATA: u32 = 0xffff_ffff;
 
 pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
     let signature = hmac::sign(key, id);

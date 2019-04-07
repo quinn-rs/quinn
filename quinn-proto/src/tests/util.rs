@@ -395,7 +395,6 @@ pub fn server_config() -> ServerConfig {
     tls_config
         .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
         .unwrap();
-    tls_config.max_early_data_size = 0xffff_ffff;
     ServerConfig {
         tls_config: Arc::new(tls_config),
         ..Default::default()
