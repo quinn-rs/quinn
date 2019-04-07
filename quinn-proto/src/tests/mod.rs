@@ -511,28 +511,6 @@ fn zero_rtt_rejection() {
 }
 
 #[test]
-fn close_during_handshake() {
-    let mut pair = Pair::default();
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
-    pair.client
-        .connections
-        .get_mut(&client_ch)
-        .unwrap()
-        .close(pair.time, 0, Bytes::new());
-    // This never actually sends the client's Initial; we may want to behave better here.
-}
-
-#[test]
 fn stream_id_backpressure() {
     let server = ServerConfig {
         transport_config: Arc::new(TransportConfig {
