@@ -156,6 +156,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             }),
     )?;
 
+    // Let the connection to finish closing gracefully
+    runtime.run()?;
+
     Ok(())
 }
 
