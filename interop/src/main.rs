@@ -77,11 +77,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let client_config = quinn::ClientConfig {
-        tls_config: Arc::new(tls_config),
+        crypto: Arc::new(tls_config),
         transport: Arc::new(quinn::TransportConfig {
             idle_timeout: 1_000,
             ..Default::default()
         }),
+        ..Default::default()
     };
 
     builder.logger(log.clone());
@@ -97,7 +98,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let endpoint = &endpoint;
     let result = runtime.block_on(
         endpoint
-            .connect_with(&client_config, &remote, host)?
+            .connect_with(client_config.clone(), &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|(conn_driver, conn, _)| {
                 println!("connected");
@@ -121,7 +122,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         println!("attempting resumption");
                         state.lock().unwrap().saw_cert = false;
                         endpoint
-                            .connect_with(&client_config, &remote, host)
+                            .connect_with(client_config.clone(), &remote, host)
                             .unwrap()
                             .map_err(|e| format_err!("failed to connect: {}", e))
                             .and_then(|(conn_driver, conn, _)| {
@@ -173,7 +174,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .ok_or(format_err!("couldn't resolve to an address"))?;
         let result = runtime.block_on(
             endpoint
-                .connect_with(&client_config, &remote, host)?
+                .connect_with(client_config.clone(), &remote, host)?
                 .and_then(|(conn_driver, conn, _)| {
                     retry = true;
                     conn.close(0, b"done");
@@ -195,15 +196,16 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
     h3_tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_H3.into()];
     let h3_client_config = quinn::ClientConfig {
-        tls_config: Arc::new(h3_tls_config),
+        crypto: Arc::new(h3_tls_config),
         transport: client_config.transport.clone(),
+        ..Default::default()
     };
 
     let mut h3 = false;
     println!("trying h3");
     let result = runtime.block_on(
         endpoint
-            .connect_with(&h3_client_config, &remote, host)?
+            .connect_with(h3_client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(|(conn_driver, conn, _)| {
                 tokio_current_thread::spawn(

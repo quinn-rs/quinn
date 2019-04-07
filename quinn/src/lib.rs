@@ -62,13 +62,13 @@ mod udp;
 use quinn_proto as quinn;
 
 pub use crate::quinn::{
-    ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig, Transmit,
-    TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
+    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
+    Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
 };
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
 pub use crate::builders::{
-    ClientConfig, ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
+    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
 
 mod connection;
