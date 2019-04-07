@@ -70,6 +70,9 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<ConnectingFuture, ConnectError> {
         let mut endpoint = self.inner.lock().unwrap();
+        if endpoint.driver_lost {
+            return Err(ConnectError::EndpointStopping);
+        }
         let addr = if endpoint.ipv6 {
             SocketAddr::V6(ensure_ipv6(*addr))
         } else {
@@ -325,20 +328,14 @@ impl EndpointInner {
         conn: quinn::Connection,
     ) -> ConnectionRef {
         let (send, recv) = mpsc::unbounded();
-        // If the endpoint driver's been dropped, new connections cannot be created. By discarding
-        // `send` here, we allow `Endpoint::connect` to construct a valid `ConnectingFuture` which
-        // will immediately fail, which lets us avoid needing a distinct `ConnectError` for this
-        // case.
-        if !self.driver_lost {
-            if let Some((error_code, ref reason)) = self.close {
-                send.unbounded_send(ConnectionEvent::Close {
-                    error_code,
-                    reason: reason.clone(),
-                })
-                .unwrap();
-            }
-            self.connections.insert(handle, send);
+        if let Some((error_code, ref reason)) = self.close {
+            send.unbounded_send(ConnectionEvent::Close {
+                error_code,
+                reason: reason.clone(),
+            })
+            .unwrap();
         }
+        self.connections.insert(handle, send);
         ConnectionRef::new(
             log.unwrap_or_else(|| self.log.clone()),
             handle,
