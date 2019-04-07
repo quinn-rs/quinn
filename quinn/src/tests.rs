@@ -84,6 +84,21 @@ fn drop_endpoint() {
 }
 
 #[test]
+fn drop_endpoint_driver() {
+    let endpoint = Endpoint::new();
+    let (_, endpoint, _) = endpoint
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
+
+    assert!(endpoint
+        .connect(
+            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            "localhost",
+        )
+        .is_err());
+}
+
+#[test]
 fn close_endpoint() {
     let endpoint = Endpoint::new();
     let (_driver, endpoint, incoming) = endpoint
