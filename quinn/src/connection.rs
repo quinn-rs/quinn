@@ -24,7 +24,7 @@ pub use crate::quinn::{
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
 pub use crate::builders::{
-    ClientConfig, ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
+    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
 use crate::{ConnectionEvent, EndpointEvent};
 

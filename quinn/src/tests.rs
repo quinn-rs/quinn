@@ -31,7 +31,7 @@ fn handshake_timeout() {
         .block_on(
             client
                 .connect_with(
-                    &client_config,
+                    client_config,
                     &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
                     "localhost",
                 )

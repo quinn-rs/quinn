@@ -22,7 +22,7 @@ use crate::crypto::{
 };
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
-    ClientConfig, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent,
+    ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent,
     TransportConfig,
 };
 use crate::transport_parameters::TransportParameters;
@@ -321,25 +321,21 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(
         &mut self,
-        log: Option<Logger>,
+        config: ClientConfig,
         remote: SocketAddr,
-        transport_config: Arc<TransportConfig>,
-        crypto_config: Arc<crypto::ClientConfig>,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
-        transport_config.validate(&self.log)?;
+        config.transport.validate(&self.log)?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
         let (ch, conn) = self.add_connection(
-            log,
             remote_id,
             remote_id,
             remote,
-            transport_config,
-            ConnectionOpts::Client(ClientConfig {
-                tls_config: crypto_config,
+            ConnectionOpts::Client {
+                config,
                 server_name: server_name.into(),
-            }),
+            },
             Instant::now(),
         )?;
         Ok((ch, conn))
@@ -371,52 +367,60 @@ impl Endpoint {
 
     fn add_connection(
         &mut self,
-        log: Option<Logger>,
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        transport_config: Arc<TransportConfig>,
         opts: ConnectionOpts,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         let loc_cid = self.new_cid();
-        let params = TransportParameters::new(&transport_config);
-        let (tls, client_config) = match opts {
-            ConnectionOpts::Client(config) => (
-                config
-                    .tls_config
-                    .start_session(&config.server_name, &params)?,
-                Some(config),
-            ),
+        let (tls, client_opts, transport_config, log) = match opts {
+            ConnectionOpts::Client {
+                config,
+                server_name,
+            } => {
+                let params = TransportParameters::new(&config.transport);
+                (
+                    config.crypto.start_session(&server_name, &params)?,
+                    Some(ClientOpts {
+                        crypto: config.crypto,
+                        server_name,
+                    }),
+                    config.transport,
+                    config
+                        .log
+                        .unwrap_or_else(|| self.log.new(o!("connection" => loc_cid))),
+                )
+            }
             ConnectionOpts::Server { orig_dst_cid } => {
+                let config = self.server_config.as_ref().unwrap();
+                let params = TransportParameters::new(&config.transport_config);
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&self.config.reset_key, &loc_cid)),
                     original_connection_id: orig_dst_cid,
                     ..params
                 };
                 (
-                    self.server_config
-                        .as_ref()
-                        .unwrap()
-                        .tls_config
-                        .start_session(&server_params),
+                    config.tls_config.start_session(&server_params),
                     None,
+                    config.transport_config.clone(),
+                    self.log.new(o!("connection" => loc_cid)),
                 )
             }
         };
 
         let remote_validated = self.server_config.as_ref().map_or(false, |cfg| {
-            cfg.use_stateless_retry && client_config.is_none()
+            cfg.use_stateless_retry && client_opts.is_none()
         });
         let conn = Connection::new(
-            log.unwrap_or_else(|| self.log.new(o!("connection" => loc_cid))),
+            log,
             Arc::clone(&self.config),
             transport_config,
             init_cid,
             loc_cid,
             rem_cid,
             remote,
-            client_config,
+            client_opts,
             tls,
             now,
             remote_validated,
@@ -557,11 +561,9 @@ impl Endpoint {
 
         let (ch, mut conn) = self
             .add_connection(
-                None,
                 dst_cid,
                 src_cid,
                 remote,
-                server_config.transport_config.clone(),
                 ConnectionOpts::Server {
                     orig_dst_cid: retry_cid,
                 },
@@ -716,6 +718,33 @@ impl Default for ServerConfig {
     }
 }
 
+/// Configuration for outgoing connections
+#[derive(Clone)]
+pub struct ClientConfig {
+    /// Transport configuration to use
+    pub transport: Arc<TransportConfig>,
+
+    /// Cryptographic configuration to use.
+    ///
+    /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
+    pub crypto: Arc<crypto::ClientConfig>,
+
+    /// Diagnostic logger
+    ///
+    /// If unset, the endpoint's logger is used.
+    pub log: Option<Logger>,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            transport: Default::default(),
+            crypto: Arc::new(crypto::build_client_config()),
+            log: None,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
 
@@ -744,8 +773,13 @@ pub enum DatagramEvent {
 }
 
 enum ConnectionOpts {
-    Client(ClientConfig),
-    Server { orig_dst_cid: Option<ConnectionId> },
+    Client {
+        config: ClientConfig,
+        server_name: String,
+    },
+    Server {
+        orig_dst_cid: Option<ConnectionId>,
+    },
 }
 
 /// Errors in the parameters being used to create a new connection

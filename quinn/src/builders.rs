@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use err_derive::Error;
 use quinn_proto as quinn;
-use rustls::{KeyLogFile, ProtocolVersion, TLSError};
+use rustls::{KeyLogFile, TLSError};
 use slog::Logger;
 
-use quinn_proto::{EndpointConfig, ServerConfig, TransportConfig};
+use quinn_proto::{ClientConfig, EndpointConfig, ServerConfig};
 
 use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
@@ -204,24 +204,13 @@ impl Default for ServerConfigBuilder {
 
 /// Helper for creating new outgoing connections.
 pub struct ClientConfigBuilder {
-    transport: TransportConfig,
-    crypto: quinn::ClientConfig,
+    config: ClientConfig,
 }
 
 impl ClientConfigBuilder {
-    /// Create a new builder with default options set.
-    pub fn new() -> Self {
-        let mut crypto = quinn::ClientConfig::new();
-        crypto
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        crypto.ct_logs = Some(&ct_logs::LOGS);
-        crypto.versions = vec![ProtocolVersion::TLSv1_3];
-        crypto.enable_early_data = true;
-        Self {
-            transport: TransportConfig::default(),
-            crypto,
-        }
+    /// Construct a builder using `config` as the initial state.
+    pub fn new(config: ClientConfig) -> Self {
+        Self { config }
     }
 
     /// Add a trusted certificate authority.
@@ -237,7 +226,7 @@ impl ClientConfigBuilder {
             let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
                 untrusted::Input::from(&cert.inner.0),
             )?;
-            self.crypto
+            Arc::make_mut(&mut self.config.crypto)
                 .root_store
                 .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
         }
@@ -248,7 +237,7 @@ impl ClientConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        self.crypto.key_log = Arc::new(KeyLogFile::new());
+        Arc::make_mut(&mut self.config.crypto).key_log = Arc::new(KeyLogFile::new());
         self
     }
 
@@ -260,45 +249,25 @@ impl ClientConfigBuilder {
     ///
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        self.crypto.alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
+        Arc::make_mut(&mut self.config.crypto).alpn_protocols =
+            protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
 
     /// Begin connecting from `endpoint` to `addr`.
     pub fn build(self) -> ClientConfig {
-        ClientConfig {
-            transport: Arc::new(self.transport),
-            tls_config: Arc::new(self.crypto),
-            log: None,
-        }
+        self.config
     }
 }
 
 impl Default for ClientConfigBuilder {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Configuration for outgoing connections
-#[derive(Clone)]
-pub struct ClientConfig {
-    /// Transport configuration to use
-    pub transport: Arc<TransportConfig>,
-
-    /// TLS configuration to use.
-    ///
-    /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
-    pub tls_config: Arc<quinn::ClientConfig>,
-
-    /// Diagnostic logger
-    ///
-    /// If unset, the endpoint's logger is used.
-    pub log: Option<Logger>,
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        ClientConfigBuilder::default().build()
+        let mut x = ClientConfig::default();
+        let crypto = Arc::make_mut(&mut x.crypto);
+        crypto
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        crypto.ct_logs = Some(&ct_logs::LOGS);
+        Self::new(x)
     }
 }

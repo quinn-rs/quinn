@@ -22,7 +22,7 @@ use crate::packet::{
 };
 use crate::range_set::RangeSet;
 use crate::shared::{
-    ClientConfig, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
+    ClientOpts, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::stream::{self, ReadError, Streams, WriteError};
@@ -64,7 +64,7 @@ pub struct Connection {
     local_max_data: u64,
     /// Stream data we're sending that hasn't been acknowledged or reset yet
     unacked_data: u64,
-    client_config: Option<ClientConfig>,
+    client_opts: Option<ClientOpts>,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -154,12 +154,12 @@ impl Connection {
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        client_config: Option<ClientConfig>,
+        client_opts: Option<ClientOpts>,
         tls: TlsSession,
         now: Instant,
         remote_validated: bool,
     ) -> Self {
-        let side = if client_config.is_some() {
+        let side = if client_opts.is_some() {
             Side::Client
         } else {
             Side::Server
@@ -197,7 +197,7 @@ impl Connection {
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
             unacked_data: 0,
-            client_config,
+            client_opts,
             orig_rem_cid: None,
             lost_packets: 0,
             io: IoQueue::new(),
@@ -1238,11 +1238,11 @@ impl Connection {
                         self.on_packet_acked(SpaceId::Initial, 0);
 
                         // Reset to initial state
-                        let client_config = self.client_config.as_ref().unwrap();
-                        self.tls = client_config
-                            .tls_config
+                        let client_opts = self.client_opts.as_ref().unwrap();
+                        self.tls = client_opts
+                            .crypto
                             .start_session(
-                                &client_config.server_name,
+                                &client_opts.server_name,
                                 &TransportParameters::new(&self.config),
                             )
                             .unwrap();

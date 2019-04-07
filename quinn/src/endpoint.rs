@@ -15,13 +15,13 @@ use quinn_proto::{self as quinn, ConnectionHandle};
 use slog::Logger;
 
 pub use crate::quinn::{
-    ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig, Transmit,
-    TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
+    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
+    Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
 };
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
 pub use crate::builders::{
-    ClientConfig, ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
+    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
 use crate::connection::{
     new_connection, ConnectingFuture, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
@@ -56,7 +56,7 @@ impl Endpoint {
         addr: &SocketAddr,
         server_name: &str,
     ) -> Result<ConnectingFuture, ConnectError> {
-        self.connect_with(&self.default_client_config, addr, server_name)
+        self.connect_with(self.default_client_config.clone(), addr, server_name)
     }
 
     /// Connect to a remote endpoint using a custom configuration.
@@ -65,7 +65,7 @@ impl Endpoint {
     /// not be established.
     pub fn connect_with(
         &self,
-        config: &ClientConfig,
+        config: ClientConfig,
         addr: &SocketAddr,
         server_name: &str,
     ) -> Result<ConnectingFuture, ConnectError> {
@@ -75,18 +75,11 @@ impl Endpoint {
         } else {
             *addr
         };
-        let (ch, conn) = endpoint.inner.connect(
-            config.log.clone(),
-            addr,
-            config.transport.clone(),
-            config.tls_config.clone(),
-            server_name,
-        )?;
-        Ok(ConnectingFuture::new(endpoint.create_connection(
-            config.log.clone(),
-            ch,
-            conn,
-        )))
+        let log = config.log.clone();
+        let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
+        Ok(ConnectingFuture::new(
+            endpoint.create_connection(log, ch, conn),
+        ))
     }
 
     /// Switch to a new UDP socket

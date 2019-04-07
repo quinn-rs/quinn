@@ -305,8 +305,9 @@ impl EcnCodepoint {
     }
 }
 
+/// Internal structure for client-specific data
 #[derive(Clone)]
-pub struct ClientConfig {
+pub struct ClientOpts {
     pub server_name: String,
-    pub tls_config: Arc<crypto::ClientConfig>,
+    pub crypto: Arc<crypto::ClientConfig>,
 }

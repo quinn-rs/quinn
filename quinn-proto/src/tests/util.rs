@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use std::{cmp, env, fmt, mem, str};
 
 use fnv::FnvHashMap;
-use rustls::{KeyLogFile, ProtocolVersion};
+use rustls::KeyLogFile;
 use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
@@ -127,17 +127,7 @@ impl Pair {
 
     pub fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         info!(self.log, "connecting");
-        let (client_ch, client_conn) = self
-            .client
-            .connect(
-                None,
-                self.server.addr,
-                Default::default(),
-                client_config(),
-                "localhost",
-            )
-            .unwrap();
-        self.client.connections.insert(client_ch, client_conn);
+        let client_ch = self.begin_connect(client_config());
         self.drive();
         let server_ch = self.server.assert_accept();
         assert_matches!(
@@ -149,6 +139,16 @@ impl Pair {
             Some(Event::Connected { .. })
         );
         (client_ch, server_ch)
+    }
+
+    /// Just start connecting the client
+    pub fn begin_connect(&mut self, config: ClientConfig) -> ConnectionHandle {
+        let (client_ch, client_conn) = self
+            .client
+            .connect(config, self.server.addr, "localhost")
+            .unwrap();
+        self.client.connections.insert(client_ch, client_conn);
+        client_ch
     }
 
     pub fn client_conn_mut(&mut self, ch: ConnectionHandle) -> &mut Connection {
@@ -401,20 +401,23 @@ pub fn server_config() -> ServerConfig {
     }
 }
 
-pub fn client_config() -> Arc<ClientConfig> {
+pub fn client_config() -> ClientConfig {
     let cert = CERTIFICATE.serialize_der();
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = ClientConfig::new();
-    tls_client_config.versions = vec![ProtocolVersion::TLSv1_3];
+    let mut tls_client_config = crypto::build_client_config();
     tls_client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     tls_client_config
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
     tls_client_config.key_log = Arc::new(KeyLogFile::new());
     tls_client_config.enable_early_data = true;
-    Arc::new(tls_client_config)
+    ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(tls_client_config),
+        ..Default::default()
+    }
 }
 
 pub fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {

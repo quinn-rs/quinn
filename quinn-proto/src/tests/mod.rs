@@ -9,7 +9,6 @@ use rand::RngCore;
 use ring::digest;
 use ring::hmac::SigningKey;
 use rustls::internal::msgs::enums::AlertDescription;
-use rustls::ProtocolVersion;
 
 use super::*;
 mod util;
@@ -66,13 +65,7 @@ fn version_negotiate_client() {
     )
     .unwrap();
     let (_, mut client_conn) = client
-        .connect(
-            None,
-            server_addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
+        .connect(client_config(), server_addr, "localhost")
         .unwrap();
     let now = Instant::now();
     let opt_event = client.handle(
@@ -308,23 +301,16 @@ fn stop_stream() {
 
 #[test]
 fn reject_self_signed_cert() {
-    let mut client_config = ClientConfig::new();
-    client_config.versions = vec![ProtocolVersion::TLSv1_3];
-    client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    let mut crypto = crypto::build_client_config();
+    crypto.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    let client_config = ClientConfig {
+        crypto: Arc::new(crypto),
+        ..Default::default()
+    };
 
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            Arc::new(client_config),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config);
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
@@ -379,17 +365,7 @@ fn zero_rtt() {
     let config = client_config();
 
     // Establish normal connection
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            config.clone(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(config.clone());
     pair.drive();
     pair.server.assert_accept();
     pair.client
@@ -404,17 +380,7 @@ fn zero_rtt() {
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!(pair.log, "resuming session");
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            config,
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(config.clone());
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair
         .client_conn_mut(client_ch)
@@ -435,17 +401,7 @@ fn zero_rtt_rejection() {
     let mut config = client_config();
 
     // Establish normal connection
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            config.clone(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(config.clone());
     pair.drive();
     let server_conn = pair.server.assert_accept();
     assert_matches!(
@@ -468,21 +424,11 @@ fn zero_rtt_rejection() {
     pair.server.connections.clear();
 
     // Changing protocols invalidates 0-RTT
-    Arc::get_mut(&mut config)
+    Arc::get_mut(&mut config.crypto)
         .unwrap()
         .set_protocols(&["foo".into()]);
     info!(pair.log, "resuming session");
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            config,
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair
         .client_conn_mut(client_ch)
@@ -667,17 +613,7 @@ fn key_update_reordered() {
 #[test]
 fn initial_retransmit() {
     let mut pair = Pair::default();
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
     pair.client.outbound.clear(); // Drop initial
     pair.drive();
@@ -691,17 +627,7 @@ fn initial_retransmit() {
 fn instant_close() {
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.client
         .connections
         .get_mut(&client_ch)
@@ -721,17 +647,7 @@ fn instant_close() {
 fn instant_close_2() {
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     // Unlike `instant_close`, the server sees a valid Initial packet first.
     pair.drive_client();
     pair.client
@@ -799,17 +715,7 @@ fn server_busy() {
             ..server_config()
         },
     );
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
@@ -832,17 +738,7 @@ fn server_busy() {
 #[test]
 fn server_hs_retransmit() {
     let mut pair = Pair::default();
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.step();
     assert!(pair.client.inbound.len() > 1); // Initial + Handshakes
     info!(
@@ -873,17 +769,7 @@ fn decode_coalesced() {
     // We can't currently generate coalesced packets natively, but we must support decoding
     // them. Hack around the problem by manually concatenating the server's first flight.
     let mut pair = Pair::default();
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.step();
     assert!(
         pair.client.inbound.len() > 1,
@@ -1191,17 +1077,7 @@ fn finish_stream_flow_control_reordered() {
 #[test]
 fn handshake_1rtt_handling() {
     let mut pair = Pair::default();
-    let (client_ch, client_conn) = pair
-        .client
-        .connect(
-            None,
-            pair.server.addr,
-            Default::default(),
-            client_config(),
-            "localhost",
-        )
-        .unwrap();
-    pair.client.connections.insert(client_ch, client_conn);
+    let client_ch = pair.begin_connect(client_config());
     pair.drive_client();
     pair.drive_server();
     let server_ch = pair.server.assert_accept();

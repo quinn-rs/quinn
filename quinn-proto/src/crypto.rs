@@ -176,6 +176,13 @@ pub fn build_server_config() -> ServerConfig {
     cfg
 }
 
+pub fn build_client_config() -> ClientConfig {
+    let mut cfg = ClientConfig::new();
+    cfg.versions = vec![ProtocolVersion::TLSv1_3];
+    cfg.enable_early_data = true;
+    cfg
+}
+
 fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
     let mut bytes = Vec::new();
     params.write(side, &mut bytes);
