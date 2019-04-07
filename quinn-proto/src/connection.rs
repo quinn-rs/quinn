@@ -545,11 +545,17 @@ impl Connection {
         self.io.timer_start(Timer::KeyDiscard, time);
     }
 
+    /// Whether there are any handshake CRYPTO frames waiting to transmit
+    fn handshake_pending(&self) -> bool {
+        !(self.space(SpaceId::Initial).pending.crypto.is_empty()
+            && self.space(SpaceId::Handshake).pending.crypto.is_empty())
+    }
+
     fn on_loss_detection_timeout(&mut self, now: Instant) {
         if let Some((_, pn_space)) = self.earliest_loss_time() {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space);
-        } else if self.in_flight.crypto != 0 || self.crypto_count != 0 {
+        } else if self.in_flight.crypto != 0 || self.handshake_pending() {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
                 if self.spaces[space_id as usize].crypto.is_none() {
@@ -674,7 +680,7 @@ impl Connection {
 
         if self.in_flight.crypto != 0
         // Account for handshake packets pending retransmit
-            || self.crypto_count != 0
+            || self.handshake_pending()
         // Handshake anti-deadlock packets
             || (self.state.is_handshake() && self.side.is_client())
         {
@@ -977,7 +983,6 @@ impl Connection {
 
     fn discard_space(&mut self, space: SpaceId) {
         trace!(self.log, "discarding {space:?} keys", space = space);
-        self.crypto_count = 0; // Ensure we're not trying to retransmit forgotten handshake packets
         self.space_mut(space).crypto = None;
         let sent_packets = mem::replace(&mut self.space_mut(space).sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
@@ -2329,7 +2334,7 @@ impl Connection {
                     } else {
                         0
                     },
-                    is_crypto_packet: space_id != SpaceId::Data && !ack_only,
+                    is_crypto_packet: space_id != SpaceId::Data && !sent.crypto.is_empty(),
                     ack_eliciting: !ack_only,
                     retransmits: sent,
                 },
