@@ -76,12 +76,17 @@ impl Endpoint {
             *addr
         };
         let (ch, conn) = endpoint.inner.connect(
+            config.log.clone(),
             addr,
             config.transport.clone(),
             config.tls_config.clone(),
             server_name,
         )?;
-        Ok(ConnectingFuture::new(endpoint.create_connection(ch, conn)))
+        Ok(ConnectingFuture::new(endpoint.create_connection(
+            config.log.clone(),
+            ch,
+            conn,
+        )))
     }
 
     /// Switch to a new UDP socket
@@ -214,7 +219,7 @@ impl EndpointInner {
                 Ok(Async::Ready((n, addr, ecn))) => {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = ConnectionDriver(self.create_connection(handle, conn));
+                            let conn = ConnectionDriver(self.create_connection(None, handle, conn));
                             if !self.incoming_live {
                                 conn.0.lock().unwrap().implicit_close();
                             }
@@ -322,6 +327,7 @@ impl EndpointInner {
 
     fn create_connection(
         &mut self,
+        log: Option<Logger>,
         handle: ConnectionHandle,
         conn: quinn::Connection,
     ) -> ConnectionRef {
@@ -340,7 +346,13 @@ impl EndpointInner {
             }
             self.connections.insert(handle, send);
         }
-        ConnectionRef::new(self.log.clone(), handle, conn, self.sender.clone(), recv)
+        ConnectionRef::new(
+            log.unwrap_or_else(|| self.log.clone()),
+            handle,
+            conn,
+            self.sender.clone(),
+            recv,
+        )
     }
 }
 

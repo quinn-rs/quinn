@@ -269,6 +269,7 @@ impl ClientConfigBuilder {
         ClientConfig {
             transport: Arc::new(self.transport),
             tls_config: Arc::new(self.crypto),
+            log: None,
         }
     }
 }
@@ -289,6 +290,11 @@ pub struct ClientConfig {
     ///
     /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
     pub tls_config: Arc<quinn::ClientConfig>,
+
+    /// Diagnostic logger
+    ///
+    /// If unset, the endpoint's logger is used.
+    pub log: Option<Logger>,
 }
 
 impl Default for ClientConfig {

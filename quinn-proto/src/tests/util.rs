@@ -130,6 +130,7 @@ impl Pair {
         let (client_ch, client_conn) = self
             .client
             .connect(
+                None,
                 self.server.addr,
                 Default::default(),
                 client_config(),

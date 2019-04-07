@@ -67,6 +67,7 @@ fn version_negotiate_client() {
     .unwrap();
     let (_, mut client_conn) = client
         .connect(
+            None,
             server_addr,
             Default::default(),
             client_config(),
@@ -316,6 +317,7 @@ fn reject_self_signed_cert() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             Arc::new(client_config),
@@ -380,6 +382,7 @@ fn zero_rtt() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             config.clone(),
@@ -403,7 +406,13 @@ fn zero_rtt() {
     info!(pair.log, "resuming session");
     let (client_ch, client_conn) = pair
         .client
-        .connect(pair.server.addr, Default::default(), config, "localhost")
+        .connect(
+            None,
+            pair.server.addr,
+            Default::default(),
+            config,
+            "localhost",
+        )
         .unwrap();
     pair.client.connections.insert(client_ch, client_conn);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
@@ -429,6 +438,7 @@ fn zero_rtt_rejection() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             config.clone(),
@@ -464,7 +474,13 @@ fn zero_rtt_rejection() {
     info!(pair.log, "resuming session");
     let (client_ch, client_conn) = pair
         .client
-        .connect(pair.server.addr, Default::default(), config, "localhost")
+        .connect(
+            None,
+            pair.server.addr,
+            Default::default(),
+            config,
+            "localhost",
+        )
         .unwrap();
     pair.client.connections.insert(client_ch, client_conn);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
@@ -500,6 +516,7 @@ fn close_during_handshake() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -675,6 +692,7 @@ fn initial_retransmit() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -698,6 +716,7 @@ fn instant_close() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -727,6 +746,7 @@ fn instant_close_2() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -804,6 +824,7 @@ fn server_busy() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -835,6 +856,7 @@ fn server_hs_retransmit() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -875,6 +897,7 @@ fn decode_coalesced() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
@@ -1192,6 +1215,7 @@ fn handshake_1rtt_handling() {
     let (client_ch, client_conn) = pair
         .client
         .connect(
+            None,
             pair.server.addr,
             Default::default(),
             client_config(),
