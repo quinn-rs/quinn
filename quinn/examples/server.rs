@@ -246,7 +246,9 @@ fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
     if x[4..].len() < 2 || &x[x.len() - 2..] != b"\r\n" {
         bail!("missing \\r\\n");
     }
-    let path = str::from_utf8(&x[4..x.len() - 2]).context("path is malformed UTF-8")?;
+    let x = &x[4..x.len() - 2];
+    let end = x.iter().position(|&c| c == b' ').unwrap_or_else(|| x.len());
+    let path = str::from_utf8(&x[..end]).context("path is malformed UTF-8")?;
     let path = Path::new(&path);
     let mut real_path = PathBuf::from(root);
     let mut components = path.components();
