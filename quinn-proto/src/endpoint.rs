@@ -33,9 +33,9 @@ use crate::{
 
 /// The main entry point to the library
 ///
-/// This object performs no I/O whatsoever. Instead, it generates a stream of I/O operations for a
-/// backend to perform via `poll_io`, and consumes incoming packets and timer expirations via
-/// `handle` and `timeout`.
+/// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
+/// `poll_transmit`, and consumes incoming packets and connection-generated events via `handle` and
+/// `handle_event`.
 pub struct Endpoint {
     log: Logger,
     rng: OsRng,
