@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut, Bytes};
 
 use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 use crate::range_set::RangeSet;
-use crate::shared::EcnCodepoint;
+use crate::shared::{EcnCodepoint, ResetToken};
 use crate::{
     varint, ConnectionId, Directionality, StreamId, TransportError, TransportErrorCode,
     MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
@@ -597,7 +597,7 @@ impl Iter {
                 Frame::NewConnectionId(NewConnectionId {
                     sequence,
                     id,
-                    reset_token,
+                    reset_token: reset_token.into(),
                 })
             }
             Type::CRYPTO => Frame::Crypto(Crypto {
@@ -714,7 +714,7 @@ impl ResetStream {
 pub struct NewConnectionId {
     pub sequence: u64,
     pub id: ConnectionId,
-    pub reset_token: [u8; 16],
+    pub reset_token: ResetToken,
 }
 
 impl NewConnectionId {

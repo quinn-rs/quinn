@@ -4,7 +4,7 @@ use bytes::{Buf, BufMut};
 use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::shared::ConnectionId;
+use crate::shared::{ConnectionId, ResetToken};
 use crate::{
     varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
     VERSION,
@@ -46,7 +46,7 @@ macro_rules! make_struct {
 
             // Server-only
             pub original_connection_id: Option<ConnectionId>,
-            pub stateless_reset_token: Option<[u8; RESET_TOKEN_SIZE]>,
+            pub stateless_reset_token: Option<ResetToken>,
             pub preferred_address: Option<PreferredAddress>,
         }
 
@@ -307,7 +307,7 @@ impl TransportParameters {
                     }
                     let mut tok = [0; RESET_TOKEN_SIZE];
                     r.copy_to_slice(&mut tok);
-                    params.stateless_reset_token = Some(tok);
+                    params.stateless_reset_token = Some(tok.into());
                 }
                 0x000c => {
                     if len != 0 || params.disable_migration {

@@ -10,7 +10,7 @@ use slog::Logger;
 
 use crate::connection::Timer;
 use crate::packet::PartialDecode;
-use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE};
+use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -310,4 +310,32 @@ impl EcnCodepoint {
 pub struct ClientOpts {
     pub server_name: String,
     pub crypto: Arc<crypto::ClientConfig>,
+}
+
+/// Stateless reset token
+///
+/// Used for an endpoint to securely communicate that it has lost state for a connection.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
+
+impl From<[u8; RESET_TOKEN_SIZE]> for ResetToken {
+    fn from(x: [u8; RESET_TOKEN_SIZE]) -> Self {
+        Self(x)
+    }
+}
+
+impl std::ops::Deref for ResetToken {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Display for ResetToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.iter() {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
 }
