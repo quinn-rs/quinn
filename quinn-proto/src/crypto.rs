@@ -18,7 +18,7 @@ use webpki::DNSNameRef;
 
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
-use crate::shared::ConnectionId;
+use crate::shared::{ConnectionId, ResetToken};
 use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
@@ -192,12 +192,12 @@ fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
 /// Value used in ACKs we transmit
 pub const ACK_DELAY_EXPONENT: u8 = 3;
 
-pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> [u8; RESET_TOKEN_SIZE] {
+pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     let signature = hmac::sign(key, id);
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
     result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
-    result
+    result.into()
 }
 
 pub struct Crypto {

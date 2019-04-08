@@ -1111,7 +1111,7 @@ impl Connection {
         let was_drained = self.state.is_drained();
         let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
             packet.payload.len() >= RESET_TOKEN_SIZE
-                && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token
+                && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token[..]
         });
 
         let result = match self.decrypt_packet(now, &mut packet) {

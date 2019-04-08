@@ -307,7 +307,7 @@ impl Endpoint {
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
-        buf.extend(&reset_token_for(&self.config.reset_key, dst_cid));
+        buf.extend_from_slice(&reset_token_for(&self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
