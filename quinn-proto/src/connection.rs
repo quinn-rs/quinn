@@ -541,7 +541,11 @@ impl Connection {
 
     fn set_key_discard_timer(&mut self, now: Instant) {
         let time = if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
-            now + self.pto() * 3
+            // Severe packet loss during this period can cause the connection to fail, so allocate
+            // lots of extra time to retry. This makes it marginally easier for an attacker that
+            // gains access to an endpoint's internal state shortly after the handshake completes to
+            // decrypt packets sent previously within the same connection.
+            now + self.pto() * 3 * 100
         } else if let Some(time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
             time + self.pto() * 3
         } else {
