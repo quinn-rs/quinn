@@ -1582,8 +1582,6 @@ impl Connection {
                         continue;
                     }
                     trace!(self.log, "path validated");
-                    self.endpoint_events
-                        .push_back(EndpointEvent::Migrated(self.remote));
                     self.io.timer_stop(Timer::PathValidation);
                     self.path_challenge = None;
                     self.remote_validated = true;
@@ -1869,6 +1867,8 @@ impl Connection {
             .push(retired);
         self.rem_cid = new.id;
         self.rem_cid_seq = new.sequence;
+        self.endpoint_events
+            .push_back(EndpointEvent::ResetToken(new.reset_token));
         self.params.stateless_reset_token = Some(new.reset_token);
     }
 
@@ -2423,6 +2423,10 @@ impl Connection {
         } else {
             cmp::min(self.config.idle_timeout, params.idle_timeout)
         };
+        if let Some(token) = params.stateless_reset_token {
+            self.endpoint_events
+                .push_back(EndpointEvent::ResetToken(token));
+        }
         self.params = params;
         Ok(())
     }

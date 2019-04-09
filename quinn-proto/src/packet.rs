@@ -49,6 +49,11 @@ impl PartialDecode {
         }
     }
 
+    /// The underlying partially-decoded packet data
+    pub fn data(&self) -> &[u8] {
+        &self.buf.get_ref()
+    }
+
     pub fn has_long_header(&self) -> bool {
         use self::PlainHeader::*;
         match self.plain_header {

@@ -23,7 +23,7 @@ use crate::crypto::{
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent,
-    TransportConfig,
+    ResetToken, TransportConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
@@ -42,7 +42,13 @@ pub struct Endpoint {
     transmits: VecDeque<Transmit>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
+    /// Identifies connections with zero-length CIDs
     connection_remotes: FnvHashMap<SocketAddr, ConnectionHandle>,
+    /// Reset tokens provided by the peer for the CID each connection is currently sending to
+    ///
+    /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
+    /// recipient, if any.
+    connection_reset_tokens: HashMap<ResetToken, ConnectionHandle>,
     connections: Slab<ConnectionMeta>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
@@ -68,6 +74,7 @@ impl Endpoint {
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
             connection_remotes: FnvHashMap::default(),
+            connection_reset_tokens: HashMap::new(),
             connections: Slab::new(),
             incoming_handshakes: 0,
             config,
@@ -97,6 +104,12 @@ impl Endpoint {
                     return Some(self.send_new_identifiers(ch, LOC_CID_COUNT - 1));
                 }
             }
+            EndpointEvent::ResetToken(token) => {
+                if let Some(old) = self.connections[ch].reset_token.replace(token) {
+                    self.connection_reset_tokens.remove(&old).unwrap();
+                }
+                self.connection_reset_tokens.insert(token, ch);
+            }
             EndpointEvent::RetireConnectionId(seq) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!(
@@ -109,13 +122,6 @@ impl Endpoint {
                     return Some(self.send_new_identifiers(ch, 1));
                 }
             }
-            EndpointEvent::Migrated(remote) => {
-                let conn = &mut self.connections[ch];
-                let prev = self.connection_remotes.remove(&conn.remote);
-                debug_assert_eq!(prev, Some(ch));
-                conn.remote = remote;
-                self.connection_remotes.insert(remote, ch);
-            }
             EndpointEvent::Drained => {
                 let conn = self.connections.remove(ch.0);
                 if conn.init_cid.len() > 0 {
@@ -124,7 +130,10 @@ impl Endpoint {
                 for cid in conn.loc_cids.values() {
                     self.connection_ids.remove(&cid);
                 }
-                self.connection_remotes.remove(&conn.remote);
+                self.connection_remotes.remove(&conn.initial_remote);
+                if let Some(token) = conn.reset_token {
+                    self.connection_reset_tokens.remove(&token).unwrap();
+                }
             }
         }
         None
@@ -186,10 +195,17 @@ impl Endpoint {
             };
             ch.or_else(|| self.connection_ids_initial.get(&dst_cid))
                 .or_else(|| {
-                    // If CIDs are in use, only stateless resets (which use short headers) will
-                    // legitimately have unknown CIDs.
-                    if self.config.local_cid_len == 0 || !first_decode.has_long_header() {
+                    if self.config.local_cid_len == 0 {
                         self.connection_remotes.get(&remote)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    let data = first_decode.data();
+                    if data.len() >= RESET_TOKEN_SIZE {
+                        self.connection_reset_tokens
+                            .get(&data[data.len() - RESET_TOKEN_SIZE..])
                     } else {
                         None
                     }
@@ -427,16 +443,18 @@ impl Endpoint {
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
-            remote,
             cids_issued: 0,
             loc_cids: iter::once((0, loc_cid)).collect(),
+            initial_remote: remote,
+            reset_token: None,
         });
         let ch = ConnectionHandle(id);
 
         if self.config.local_cid_len > 0 {
             self.connection_ids.insert(loc_cid, ch);
+        } else {
+            self.connection_remotes.insert(remote, ch);
         }
-        self.connection_remotes.insert(remote, ch);
         Ok((ch, conn))
     }
 
@@ -615,6 +633,9 @@ impl Endpoint {
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();
         debug_assert_eq!(x, self.connection_ids_initial.len());
+        // Not all connections have known reset tokens
+        debug_assert!(x >= self.connection_reset_tokens.len());
+        // Not all connections have unique remotes, and 0-length CIDs might not be in use.
         debug_assert!(x >= self.connection_remotes.len());
         x
     }
@@ -630,7 +651,13 @@ pub(crate) struct ConnectionMeta {
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
     loc_cids: HashMap<u64, ConnectionId>,
-    remote: SocketAddr,
+    /// Remote address the connection began with
+    ///
+    /// Only needed to support connections with zero-length CIDs, which cannot migrate, so we don't
+    /// bother keeping it up to date.
+    initial_remote: SocketAddr,
+    /// Reset token provided by the peer for the CID we're currently sending to
+    reset_token: Option<ResetToken>,
 }
 
 /// Global configuration for the endpoint, affecting all connections
