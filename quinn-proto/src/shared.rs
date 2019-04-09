@@ -198,7 +198,7 @@ pub enum ConnectionEvent {
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
     Drained,
-    Migrated(SocketAddr),
+    ResetToken(ResetToken),
     NeedIdentifiers,
     /// Stop routing connection ID for this sequence number to this `Connection`
     RetireConnectionId(u64),
@@ -317,6 +317,12 @@ pub struct ClientOpts {
 /// Used for an endpoint to securely communicate that it has lost state for a connection.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
+
+impl std::borrow::Borrow<[u8]> for ResetToken {
+    fn borrow(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 impl From<[u8; RESET_TOKEN_SIZE]> for ResetToken {
     fn from(x: [u8; RESET_TOKEN_SIZE]) -> Self {
