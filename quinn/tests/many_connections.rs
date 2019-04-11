@@ -109,11 +109,12 @@ fn read_from_peer(
     stream: quinn::NewStream,
 ) -> impl Future<Item = (), Error = quinn::ConnectionError> {
     let stream = match stream {
-        quinn::NewStream::Bi(_bi) => panic!("Unexpected bidirectional stream here"),
+        quinn::NewStream::Bi(_, _) => panic!("Unexpected bidirectional stream here"),
         quinn::NewStream::Uni(uni) => uni,
     };
 
-    quinn::read_to_end(stream, 1024 * 1024 * 5)
+    stream
+        .read_to_end(1024 * 1024 * 5)
         .map_err(|e| {
             use quinn::ReadError::*;
             match e {

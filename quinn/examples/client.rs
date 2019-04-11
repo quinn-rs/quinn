@@ -118,7 +118,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let stream = conn.open_bi();
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |stream| {
+                    .and_then(move |(send, recv)| {
                         if rebind {
                             let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
                             let addr = socket.local_addr().unwrap();
@@ -127,19 +127,20 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                 .rebind(socket, &tokio_reactor::Handle::default())
                                 .expect("rebind failed");
                         }
-                        tokio::io::write_all(stream, request.as_bytes().to_owned())
+
+                        tokio::io::write_all(send, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
-                    })
-                    .and_then(|(stream, _)| {
-                        tokio::io::shutdown(stream)
-                            .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                    })
-                    .and_then(move |stream| {
-                        let response_start = Instant::now();
-                        eprintln!("request sent at {:?}", response_start - start);
-                        quinn::read_to_end(stream, usize::max_value())
-                            .map_err(|e| format_err!("failed to read response: {}", e))
-                            .map(move |x| (x, response_start))
+                            .and_then(|(send, _)| {
+                                tokio::io::shutdown(send)
+                                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+                            })
+                            .and_then(move |_| {
+                                let response_start = Instant::now();
+                                eprintln!("request sent at {:?}", response_start - start);
+                                recv.read_to_end(usize::max_value())
+                                    .map_err(|e| format_err!("failed to read response: {}", e))
+                                    .map(move |x| (x, response_start))
+                            })
                     })
                     .map(move |((_, data), response_start)| {
                         let duration = response_start.elapsed();
