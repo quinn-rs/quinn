@@ -199,8 +199,8 @@ fn handle_connection(
 }
 
 fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
-    let stream = match stream {
-        quinn::NewStream::Bi(stream) => stream,
+    let (send, recv) = match stream {
+        quinn::NewStream::Bi(send, recv) => (send, recv),
         quinn::NewStream::Uni(_) => unreachable!("disabled by endpoint configuration"),
     };
     let root = root.clone();
@@ -209,9 +209,9 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
     let log3 = log.clone();
 
     tokio_current_thread::spawn(
-        quinn::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
+        recv.read_to_end(64 * 1024) // Read the request, which must be at most 64KiB
             .map_err(|e| format_err!("failed reading request: {}", e))
-            .and_then(move |(stream, req)| {
+            .and_then(move |(_, req)| {
                 let mut escaped = String::new();
                 for &x in &req[..] {
                     let part = ascii::escape_default(x).collect::<Vec<_>>();
@@ -226,12 +226,12 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
                         .into()
                 });
                 // Write the response
-                tokio::io::write_all(stream, resp)
+                tokio::io::write_all(send, resp)
                     .map_err(|e| format_err!("failed to send response: {}", e))
             })
             // Gracefully terminate the stream
-            .and_then(|(stream, _)| {
-                tokio::io::shutdown(stream)
+            .and_then(|(send, _)| {
+                tokio::io::shutdown(send)
                     .map_err(|e| format_err!("failed to shutdown stream: {}", e))
             })
             .map(move |_| info!(log3, "request complete"))

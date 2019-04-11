@@ -12,7 +12,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use quinn_proto::{self as quinn, ConnectionHandle, Directionality, Side, StreamId, TimerUpdate};
+use quinn_proto::{self as quinn, ConnectionHandle, Directionality, StreamId, TimerUpdate};
 use slog::Logger;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
@@ -146,11 +146,11 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| SendStream(BiStream::new(conn.clone(), stream)))
+            .map(move |stream| SendStream::new(conn.clone(), stream))
     }
 
     /// Initiate a new outgoing bidirectional stream.
-    pub fn open_bi(&self) -> impl Future<Item = BiStream, Error = ConnectionError> {
+    pub fn open_bi(&self) -> impl Future<Item = (SendStream, RecvStream), Error = ConnectionError> {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
@@ -165,7 +165,12 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| BiStream::new(conn.clone(), stream))
+            .map(move |stream| {
+                (
+                    SendStream::new(conn.clone(), stream),
+                    RecvStream::new(conn, stream),
+                )
+            })
     }
 
     /// Close the connection immediately.
@@ -226,11 +231,13 @@ impl FuturesStream for IncomingStreams {
             Err(e.clone())
         } else if let Some(x) = conn.inner.accept() {
             mem::drop(conn); // Release the lock so clone can take it
-            let stream = BiStream::new(self.0.clone(), x);
             let stream = if x.directionality() == Directionality::Uni {
-                NewStream::Uni(RecvStream(stream))
+                NewStream::Uni(RecvStream::new(self.0.clone(), x))
             } else {
-                NewStream::Bi(stream)
+                NewStream::Bi(
+                    SendStream::new(self.0.clone(), x),
+                    RecvStream::new(self.0.clone(), x),
+                )
             };
             Ok(Async::Ready(Some(stream)))
         } else {
@@ -245,7 +252,7 @@ pub enum NewStream {
     /// A unidirectional stream.
     Uni(RecvStream),
     /// A bidirectional stream.
-    Bi(BiStream),
+    Bi(SendStream, RecvStream),
 }
 
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
@@ -261,7 +268,6 @@ impl ConnectionRef {
         Self(Arc::new(Mutex::new(ConnectionInner {
             log,
             epoch: Instant::now(),
-            side: conn.side(),
             inner: conn,
             driver: None,
             handle,
@@ -321,7 +327,6 @@ pub struct ConnectionInner {
     inner: quinn::Connection,
     driver: Option<Task>,
     handle: ConnectionHandle,
-    side: Side,
     connected: bool,
     timers: [Option<Delay>; quinn::Timer::COUNT],
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
@@ -536,37 +541,29 @@ impl Drop for ConnectionInner {
     }
 }
 
-/// A bidirectional stream, supporting both sending and receiving data.
-///
-/// Similar to a TCP connection. Each direction of data flow can be reset or finished by the
-/// sending endpoint without interfering with activity in the other direction.
-pub struct BiStream {
+/// A stream that can only be used to send data
+pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
-
-    // Send only
     finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
     finished: bool,
-
-    // Recv only
-    // Whether data reception is complete (due to receiving finish or reset or sending stop)
-    recvd: bool,
 }
 
-impl BiStream {
+impl SendStream {
     fn new(conn: ConnectionRef, stream: StreamId) -> Self {
         Self {
             conn,
             stream,
             finishing: None,
             finished: false,
-            recvd: false,
         }
     }
-}
 
-impl Write for BiStream {
-    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
+    /// Write bytes to the stream.
+    ///
+    /// Returns the number of bytes written on success. Congestion and flow control may cause this
+    /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
+    pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         use crate::quinn::WriteError::*;
         let mut conn = self.conn.lock().unwrap();
         let n = match conn.inner.write(self.stream, buf) {
@@ -589,7 +586,11 @@ impl Write for BiStream {
         Ok(Async::Ready(n))
     }
 
-    fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
+    /// Shut down the send stream gracefully.
+    ///
+    /// No new data may be written after calling this method. Completes when the peer has
+    /// acknowledged all sent data, retransmitting data as needed.
+    pub fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
         if self.finishing.is_none() {
             let mut conn = self.conn.lock().unwrap();
             conn.inner.finish(self.stream);
@@ -609,39 +610,80 @@ impl Write for BiStream {
         }
     }
 
-    fn reset(&mut self, error_code: u16) {
+    /// Close the send stream immediately.
+    ///
+    /// No new data can be written after calling this method. Locally buffered data is dropped,
+    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
+    /// was called previously and all data has already been transmitted at least once, the peer
+    /// may still receive all written data.
+    pub fn reset(&mut self, error_code: u16) {
         let mut conn = self.conn.lock().unwrap();
         conn.inner.reset(self.stream, error_code);
         conn.notify();
     }
 }
 
-impl Read for BiStream {
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
-        use crate::quinn::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
-        match conn.inner.read_unordered(self.stream) {
-            Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Err(ReadError::ConnectionClosed(x.clone()));
-                }
-                conn.blocked_readers.insert(self.stream, task::current());
-                Ok(Async::NotReady)
-            }
-            Err(Reset { error_code }) => {
-                self.recvd = true;
-                Err(ReadError::Reset { error_code })
-            }
-            Err(Finished) => {
-                self.recvd = true;
-                Err(ReadError::Finished)
-            }
-            Err(UnknownStream) => Err(ReadError::UnknownStream),
+impl io::Write for SendStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.poll_write(buf) {
+            Ok(Async::Ready(n)) => Ok(n),
+            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
+            Err(e) => Err(e.into()),
         }
     }
 
-    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl AsyncWrite for SendStream {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.poll_finish().map_err(|e| e.into())
+    }
+}
+
+impl Drop for SendStream {
+    fn drop(&mut self) {
+        let mut conn = self.conn.lock().unwrap();
+        if conn.error.is_some() {
+            return;
+        }
+        if !self.finished {
+            conn.inner.reset(self.stream, 0);
+            conn.notify();
+        }
+    }
+}
+
+/// A stream that can only be used to receive data
+pub struct RecvStream {
+    conn: ConnectionRef,
+    stream: StreamId,
+    recvd: bool,
+}
+
+impl RecvStream {
+    fn new(conn: ConnectionRef, stream: StreamId) -> Self {
+        Self {
+            conn,
+            stream,
+            recvd: false,
+        }
+    }
+
+    /// Read data contiguously from the stream.
+    ///
+    /// Returns the number of bytes read into `buf` on success.
+    ///
+    /// Applications involving bulk data transfer should consider using unordered reads for
+    /// improved performance.
+    ///
+    /// # Panics
+    /// - If called after `poll_read_unordered` was called on the same stream.
+    ///   This is forbidden because an unordered read could consume a segment of data from a
+    ///   location other than the start of the receive buffer, making it impossible for future
+    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         use crate::quinn::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         match conn.inner.read(self.stream, buf) {
@@ -665,7 +707,56 @@ impl Read for BiStream {
         }
     }
 
-    fn stop(&mut self, error_code: u16) {
+    /// Read a segment of data from any offset in the stream.
+    ///
+    /// Returns a segment of data and their offset in the stream. Segments may be received in any
+    /// order and may overlap.
+    ///
+    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
+    /// preferred when applicable.
+    pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
+        use crate::quinn::ReadError::*;
+        let mut conn = self.conn.lock().unwrap();
+        match conn.inner.read_unordered(self.stream) {
+            Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
+            Err(Blocked) => {
+                if let Some(ref x) = conn.error {
+                    return Err(ReadError::ConnectionClosed(x.clone()));
+                }
+                conn.blocked_readers.insert(self.stream, task::current());
+                Ok(Async::NotReady)
+            }
+            Err(Reset { error_code }) => {
+                self.recvd = true;
+                Err(ReadError::Reset { error_code })
+            }
+            Err(Finished) => {
+                self.recvd = true;
+                Err(ReadError::Finished)
+            }
+            Err(UnknownStream) => Err(ReadError::UnknownStream),
+        }
+    }
+
+    /// Uses unordered reads to be more efficient than using `AsyncRead` would allow
+    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
+        ReadToEnd {
+            stream: Some(self),
+            size_limit,
+            buffer: Vec::new(),
+        }
+    }
+
+    /// Close the receive stream immediately.
+    ///
+    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
+    /// stream itself. Further data may still be received on this stream if it was already in
+    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
+    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
+    /// ignore the request entirely and continue sending until halted by flow control.
+    ///
+    /// Has no effect if the incoming stream already finished.
+    pub fn stop(&mut self, error_code: u16) {
         let mut conn = self.conn.lock().unwrap();
         conn.inner.stop_sending(self.stream, error_code);
         conn.notify();
@@ -673,145 +764,15 @@ impl Read for BiStream {
     }
 }
 
-impl io::Write for BiStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match Write::poll_write(self, buf) {
-            Ok(Async::Ready(n)) => Ok(n),
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl AsyncWrite for BiStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.poll_finish().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                format!("connection closed: {}", e),
-            )
-        })
-    }
-}
-
-impl Drop for BiStream {
-    fn drop(&mut self) {
-        let mut conn = self.conn.lock().unwrap();
-        let ours = self.stream.initiator() == conn.side;
-        let (send, recv) = match self.stream.directionality() {
-            Directionality::Bi => (true, true),
-            Directionality::Uni => (ours, !ours),
-        };
-
-        if conn.error.is_some() {
-            return;
-        }
-        if send && !self.finished {
-            conn.inner.reset(self.stream, 0);
-        }
-        if recv && !self.recvd {
-            conn.inner.stop_sending(self.stream, 0);
-        }
-        conn.notify();
-    }
-}
-
-impl io::Read for BiStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match Read::poll_read(self, buf) {
-            Ok(Async::Ready(n)) => Ok(n),
-            Err(ReadError::Finished) => Ok(0),
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(e) => Err(e.into()),
-        }
-    }
-}
-
-impl AsyncRead for BiStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-        false
-    }
-}
-
-/// A stream that can only be used to send data
-pub struct SendStream(BiStream);
-
-impl Write for SendStream {
-    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
-        Write::poll_write(&mut self.0, buf)
-    }
-    fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
-        self.0.poll_finish()
-    }
-    fn reset(&mut self, error_code: u16) {
-        self.0.reset(error_code);
-    }
-}
-
-impl io::Write for SendStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl AsyncWrite for SendStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.0.shutdown()
-    }
-}
-
-/// A stream that can only be used to receive data
-pub struct RecvStream(BiStream);
-
-impl Read for RecvStream {
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
-        self.0.poll_read_unordered()
-    }
-    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
-        Read::poll_read(&mut self.0, buf)
-    }
-    fn stop(&mut self, error_code: u16) {
-        self.0.stop(error_code)
-    }
-}
-
-impl io::Read for RecvStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl AsyncRead for RecvStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-        false
-    }
-}
-
-/// Uses unordered reads to be more efficient than using `AsyncRead` would allow
-pub fn read_to_end<T: Read>(stream: T, size_limit: usize) -> ReadToEnd<T> {
-    ReadToEnd {
-        stream: Some(stream),
-        size_limit,
-        buffer: Vec::new(),
-    }
-}
-
 /// Future produced by `read_to_end`
-pub struct ReadToEnd<T> {
-    stream: Option<T>,
+pub struct ReadToEnd {
+    stream: Option<RecvStream>,
     buffer: Vec<u8>,
     size_limit: usize,
 }
 
-impl<T: Read> Future for ReadToEnd<T> {
-    type Item = (T, Box<[u8]>);
+impl Future for ReadToEnd {
+    type Item = (RecvStream, Box<[u8]>);
     type Error = ReadError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
@@ -842,41 +803,34 @@ impl<T: Read> Future for ReadToEnd<T> {
     }
 }
 
-/// Trait of readable streams
-pub trait Read {
-    /// Read data contiguously from the stream.
-    ///
-    /// Returns the number of bytes read into `buf` on success.
-    ///
-    /// Applications involving bulk data transfer should consider using unordered reads for
-    /// improved performance.
-    ///
-    /// # Panics
-    /// - If called after `poll_read_unordered` was called on the same stream.
-    ///   This is forbidden because an unordered read could consume a segment of data from a
-    ///   location other than the start of the receive buffer, making it impossible for future
-    ///   ordered reads to proceed.
-    fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError>;
+impl io::Read for RecvStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.poll_read(buf) {
+            Ok(Async::Ready(n)) => Ok(n),
+            Err(ReadError::Finished) => Ok(0),
+            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
 
-    /// Read a segment of data from any offset in the stream.
-    ///
-    /// Returns a segment of data and their offset in the stream. Segments may be received in any
-    /// order and may overlap.
-    ///
-    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
-    /// preferred when applicable.
-    fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError>;
+impl AsyncRead for RecvStream {
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
+        false
+    }
+}
 
-    /// Close the receive stream immediately.
-    ///
-    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
-    /// stream itself. Further data may still be received on this stream if it was already in
-    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
-    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
-    /// ignore the request entirely and continue sending until halted by flow control.
-    ///
-    /// Has no effect if the incoming stream already finished.
-    fn stop(&mut self, error_code: u16);
+impl Drop for RecvStream {
+    fn drop(&mut self) {
+        let mut conn = self.conn.lock().unwrap();
+        if conn.error.is_some() {
+            return;
+        }
+        if !self.recvd {
+            conn.inner.stop_sending(self.stream, 0);
+            conn.notify();
+        }
+    }
 }
 
 /// Errors that arise from reading from a stream.
@@ -912,29 +866,6 @@ impl From<ReadError> for io::Error {
         };
         io::Error::new(kind, x)
     }
-}
-
-/// Trait of writable streams
-pub trait Write {
-    /// Write bytes to the stream.
-    ///
-    /// Returns the number of bytes written on success. Congestion and flow control may cause this
-    /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError>;
-
-    /// Shut down the send stream gracefully.
-    ///
-    /// No new data may be written after calling this method. Completes when the peer has
-    /// acknowledged all sent data, retransmitting data as needed.
-    fn poll_finish(&mut self) -> Poll<(), ConnectionError>;
-
-    /// Close the send stream immediately.
-    ///
-    /// No new data can be written after calling this method. Locally buffered data is dropped,
-    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
-    /// was called previously and all data has already been transmitted at least once, the peer
-    /// may still receive all written data.
-    fn reset(&mut self, error_code: u16);
 }
 
 /// Errors that arise from writing to a stream

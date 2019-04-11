@@ -7,7 +7,7 @@ use futures::{Future, Stream};
 use slog::{o, Drain, Logger, KV};
 use tokio;
 
-use super::{read_to_end, ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
+use super::{ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
 
 #[test]
 fn handshake_timeout() {
@@ -218,16 +218,17 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                         let stream = conn.open_bi();
                         stream
                             .map_err(|_| ())
-                            .and_then(move |stream| {
-                                tokio::io::write_all(stream, b"foo".to_vec())
+                            .and_then(move |(send, recv)| {
+                                tokio::io::write_all(send, b"foo".to_vec())
                                     .map_err(|e| panic!("write: {}", e))
-                            })
-                            .and_then(|(stream, _)| {
-                                tokio::io::shutdown(stream).map_err(|e| panic!("finish: {}", e))
-                            })
-                            .and_then(move |stream| {
-                                read_to_end(stream, usize::max_value())
-                                    .map_err(|e| panic!("read: {}", e))
+                                    .and_then(|(send, _)| {
+                                        tokio::io::shutdown(send)
+                                            .map_err(|e| panic!("finish: {}", e))
+                                    })
+                                    .and_then(move |_| {
+                                        recv.read_to_end(usize::max_value())
+                                            .map_err(|e| panic!("read: {}", e))
+                                    })
                             })
                             .map(move |(_, data)| {
                                 assert_eq!(&data[..], b"foo");
@@ -242,9 +243,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
 
 fn echo(stream: NewStream) -> impl Future<Item = (), Error = ()> {
     match stream {
-        NewStream::Bi(stream) => tokio::io::read_to_end(stream, Vec::new())
-            .and_then(|(stream, data)| tokio::io::write_all(stream, data))
-            .and_then(|(stream, _)| tokio::io::shutdown(stream))
+        NewStream::Bi(send, recv) => tokio::io::read_to_end(recv, Vec::new())
+            .and_then(|(_, data)| tokio::io::write_all(send, data))
+            .and_then(|(send, _)| tokio::io::shutdown(send))
             .map_err(|_| ())
             .map(|_| ()),
         _ => panic!("only bidi streams allowed"),

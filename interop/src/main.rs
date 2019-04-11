@@ -112,7 +112,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |stream| get(stream))
+                    .and_then(move |(send, recv)| get(send, recv))
                     .map(move |data| {
                         println!("read {} bytes, closing", data.len());
                         *stream_data = true;
@@ -136,7 +136,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                 let rebinding = &mut rebinding;
                                 stream
                                     .map_err(|e| format_err!("failed to open stream: {}", e))
-                                    .and_then(move |stream| get(stream))
+                                    .and_then(move |(send, recv)| get(send, recv))
                                     .inspect(|_| {
                                         key_update = true;
                                     })
@@ -151,7 +151,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                             .map_err(|e| {
                                                 format_err!("failed to open stream: {}", e)
                                             })
-                                            .and_then(move |stream| get(stream))
+                                            .and_then(move |(send, recv)| get(send, recv))
                                     })
                                     .map(move |_| {
                                         *rebinding = true;
@@ -230,7 +230,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 let req_stream = conn.open_bi();
                 let req_fut = req_stream
                     .map_err(|e| format_err!("failed to open request stream: {}", e))
-                    .and_then(|req_stream| h3_get(req_stream))
+                    .and_then(|(req_send, req_recv)| h3_get(req_send, req_recv))
                     .map(move |data| {
                         println!(
                             "read {} bytes: \n\n{}\n\n closing",
@@ -276,7 +276,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-fn h3_get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
+fn h3_get(
+    send: quinn::SendStream,
+    recv: quinn::RecvStream,
+) -> impl Future<Item = Box<[u8]>, Error = Error> {
     let header = [
         (":method", "GET"),
         (":path", "/"),
@@ -302,10 +305,10 @@ fn h3_get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Erro
     })
     .encode(&mut buf);
 
-    tokio::io::write_all(stream, buf)
+    tokio::io::write_all(send, buf)
         .map_err(|e| format_err!("failed to send Request frame: {}", e))
-        .and_then(|(stream, _)| {
-            quinn::read_to_end(stream, usize::max_value())
+        .and_then(|(_, _)| {
+            recv.read_to_end(usize::max_value())
                 .map_err(|e| format_err!("failed to send Request frame: {}", e))
         })
         .and_then(move |(_, data)| h3_resp(&table, data))
@@ -334,14 +337,17 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
     }
 }
 
-fn get(stream: quinn::BiStream) -> impl Future<Item = Box<[u8]>, Error = Error> {
-    tokio::io::write_all(stream, b"GET /index.html\r\n".to_owned())
+fn get(
+    send: quinn::SendStream,
+    recv: quinn::RecvStream,
+) -> impl Future<Item = Box<[u8]>, Error = Error> {
+    tokio::io::write_all(send, b"GET /index.html\r\n".to_owned())
         .map_err(|e| format_err!("failed to send request: {}", e))
-        .and_then(|(stream, _)| {
-            tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e))
+        .and_then(|(send, _)| {
+            tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e))
         })
-        .and_then(move |stream| {
-            quinn::read_to_end(stream, usize::max_value())
+        .and_then(move |_| {
+            recv.read_to_end(usize::max_value())
                 .map_err(|e| format_err!("failed to read response: {}", e))
         })
         .map(|(_, data)| data)
