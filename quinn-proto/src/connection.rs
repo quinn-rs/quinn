@@ -554,28 +554,19 @@ impl Connection {
         self.io.timer_start(Timer::KeyDiscard, time);
     }
 
-    /// Whether there are any handshake CRYPTO frames waiting to transmit
-    fn handshake_pending(&self) -> bool {
-        !(self.space(SpaceId::Initial).pending.crypto.is_empty()
-            && self.space(SpaceId::Handshake).pending.crypto.is_empty())
-    }
-
     fn on_loss_detection_timeout(&mut self, now: Instant) {
         if let Some((_, pn_space)) = self.earliest_loss_time() {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space);
-        } else if self.in_flight.crypto != 0 || self.handshake_pending() {
+        } else if self.in_flight.crypto != 0 {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
-                if self.spaces[space_id as usize].crypto.is_none() {
-                    continue;
-                }
-                let sent_packets =
-                    mem::replace(&mut self.space_mut(space_id).sent_packets, BTreeMap::new());
-                self.lost_packets += sent_packets.len() as u64;
-                for (_, packet) in sent_packets {
-                    self.in_flight.remove(&packet);
-                    self.space_mut(space_id).pending += packet.retransmits;
+                let space = self.space_mut(space_id);
+                for packet in space.sent_packets.values() {
+                    space
+                        .pending
+                        .crypto
+                        .extend(packet.retransmits.crypto.iter().cloned());
                 }
             }
             self.crypto_count = self.crypto_count.saturating_add(1);
@@ -687,12 +678,7 @@ impl Connection {
             return;
         }
 
-        if self.in_flight.crypto != 0
-        // Account for handshake packets pending retransmit
-            || self.handshake_pending()
-        // Handshake anti-deadlock packets
-            || (self.state.is_handshake() && self.side.is_client())
-        {
+        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission timer.
             let timeout = 2 * self
                 .rtt
