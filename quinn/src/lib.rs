@@ -73,8 +73,8 @@ pub use crate::builders::{
 
 mod connection;
 pub use connection::{
-    ConnectingFuture, Connection, ConnectionDriver, IncomingStreams, NewStream, ReadError,
-    ReadToEnd, RecvStream, SendStream, WriteError,
+    Connecting, Connection, ConnectionDriver, IncomingStreams, NewStream, ReadError, ReadToEnd,
+    RecvStream, SendStream, WriteError,
 };
 
 mod endpoint;

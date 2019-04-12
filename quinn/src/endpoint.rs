@@ -24,7 +24,7 @@ pub use crate::builders::{
     ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
 use crate::connection::{
-    new_connection, ConnectingFuture, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
+    new_connection, Connecting, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
 };
 use crate::udp::UdpSocket;
 use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
@@ -55,7 +55,7 @@ impl Endpoint {
         &self,
         addr: &SocketAddr,
         server_name: &str,
-    ) -> Result<ConnectingFuture, ConnectError> {
+    ) -> Result<Connecting, ConnectError> {
         self.connect_with(self.default_client_config.clone(), addr, server_name)
     }
 
@@ -68,7 +68,7 @@ impl Endpoint {
         config: ClientConfig,
         addr: &SocketAddr,
         server_name: &str,
-    ) -> Result<ConnectingFuture, ConnectError> {
+    ) -> Result<Connecting, ConnectError> {
         let mut endpoint = self.inner.lock().unwrap();
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
@@ -80,9 +80,7 @@ impl Endpoint {
         };
         let log = config.log.clone();
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(ConnectingFuture::new(
-            endpoint.create_connection(log, ch, conn),
-        ))
+        Ok(Connecting::new(endpoint.create_connection(log, ch, conn)))
     }
 
     /// Switch to a new UDP socket
