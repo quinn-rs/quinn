@@ -14,9 +14,9 @@ pub mod frame;
 pub mod qpack;
 
 use bytes::BufMut;
-use quinn_proto::coding::Codec;
+use quinn_proto::coding::BufMutExt;
 
-pub struct StreamType(u8);
+pub struct StreamType(u64);
 
 macro_rules! stream_types {
     {$($name:ident = $val:expr,)*} => {
@@ -27,14 +27,14 @@ macro_rules! stream_types {
 }
 
 stream_types! {
-    CONTROL = b'C',
-    PUSH = b'P',
-    ENCODER = b'H',
-    DECODER = b'h',
+    CONTROL = 0x00,
+    PUSH = 0x01,
+    ENCODER = 0x02,
+    DECODER = 0x03,
 }
 
 impl StreamType {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        self.0.encode(buf);
+        buf.write_var(self.0);
     }
 }
