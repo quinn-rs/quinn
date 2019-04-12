@@ -118,7 +118,7 @@ fn read_from_peer(
         .map_err(|e| {
             use quinn::ReadError::*;
             match e {
-                Finished | UnknownStream => unreachable!(),
+                Finished | UnknownStream | ZeroRttRejected => unreachable!(),
                 Reset { error_code } => panic!("unexpected stream reset: {}", error_code),
                 ConnectionClosed(e) => e,
             }
