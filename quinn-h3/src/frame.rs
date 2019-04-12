@@ -43,8 +43,8 @@ impl HttpFrame {
     }
 
     pub fn decode<T: Buf>(buf: &mut T) -> Result<Self, Error> {
+        let ty = Type::decode(buf)?;
         let len = buf.get_var()?;
-        let ty = buf.get::<Type>()?;
 
         if buf.remaining() < len as usize {
             return Err(Error::Malformed);
@@ -65,7 +65,7 @@ impl HttpFrame {
             Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
-            t if (t.0 - 0xb) % 0x1f == 0 => Ok(HttpFrame::Reserved),
+            t if t.0 > 0xb && (t.0 - 0xb) % 0x1f == 0 => Ok(HttpFrame::Reserved),
             _ => Err(Error::UnsupportedFrame),
         }
     }
@@ -91,15 +91,15 @@ frame_types! {
     DUPLICATE_PUSH = 0xE,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-struct Type(u8);
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+struct Type(u64);
 
 impl Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
-        Ok(Type(buf.get_u8()))
+        Ok(Type(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.write(self.0);
+        buf.write_var(self.0);
     }
 }
 
@@ -107,8 +107,8 @@ trait FrameHeader {
     fn len(&self) -> usize;
     const TYPE: Type;
     fn encode_header<T: BufMut>(&self, buf: &mut T) {
+        Self::TYPE.encode(buf);
         buf.write_var(self.len() as u64);
-        buf.put_u8(Self::TYPE.0);
     }
 }
 
@@ -306,8 +306,8 @@ impl SettingsFrame {
     fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
         let mut settings = SettingsFrame::default();
         while buf.has_remaining() {
-            if buf.remaining() < 3 {
-                // remains less than id + minimum-size varint
+            if buf.remaining() < 2 {
+                // remains less than 2 * minimum-size varint
                 return Err(Error::Malformed);
             }
             let identifier = buf.get::<SettingId>()?;
@@ -365,8 +365,8 @@ setting_identifiers! {
 }
 
 fn simple_frame_encode<B: BufMut>(ty: Type, id: u64, buf: &mut B) {
+    ty.encode(buf);
     buf.write_var(1);
-    buf.put_u8(ty.0);
     buf.write_var(id);
 }
 
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn unknown_frame_type() {
-        let mut buf = Cursor::new(&[04, 0xff, 0, 255, 128, 0]);
+        let mut buf = Cursor::new(&[0x2f, 4, 0, 255, 128, 0]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::UnsupportedFrame));
     }
@@ -403,22 +403,22 @@ mod tests {
         };
 
         let mut buf = Cursor::new(&[
-            18, 4, 0, 8, 128, 0, 250, 218, 0x1a, 0x2a, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218,
+            4, 18, 0, 8, 128, 0, 250, 218, 0x1a, 0x2a, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218,
         ]);
         let decoded = HttpFrame::decode(&mut buf).unwrap();
         assert_eq!(decoded, HttpFrame::Settings(settings));
     }
 
     #[test]
-    fn settings_frame_ivalid_value() {
-        let mut buf = Cursor::new(&[06, 4, 0, 255, 128, 0, 250, 218]);
+    fn settings_frame_invalid_value() {
+        let mut buf = Cursor::new(&[4, 6, 0, 255, 128, 0, 250, 218]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::InvalidFrameValue));
     }
 
     #[test]
-    fn settings_frame_ivalid_len() {
-        let mut buf = Cursor::new(&[08, 4, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
+    fn settings_frame_invalid_len() {
+        let mut buf = Cursor::new(&[4, 8, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Malformed));
     }
@@ -426,6 +426,7 @@ mod tests {
     fn codec_frame_check(frame: HttpFrame, wire: &[u8]) {
         let mut buf = Vec::new();
         frame.encode(&mut buf);
+        println!("buf: {:?}", buf);
         assert_eq!(&buf, &wire);
 
         let mut read = Cursor::new(&buf);
@@ -440,7 +441,7 @@ mod tests {
                 num_placeholders: 0xFADA,
                 max_header_list_size: 0xFADA,
             }),
-            &[12, 4, 0, 8, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
+            &[4, 12, 0, 8, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
         );
     }
 
@@ -450,7 +451,7 @@ mod tests {
             HttpFrame::Data(DataFrame {
                 payload: Bytes::from("foo bar"),
             }),
-            &[7, 0, 102, 111, 111, 32, 98, 97, 114],
+            &[0, 7, 102, 111, 111, 32, 98, 97, 114],
         );
     }
 
@@ -462,16 +463,16 @@ mod tests {
                 dependency: Priority::RequestStream(42),
                 weight: 2,
             }),
-            &[4, 2, 64, 21, 42, 2],
+            &[2, 4, 64, 21, 42, 2],
         );
     }
 
     #[test]
     fn simple_frames() {
-        codec_frame_check(HttpFrame::CancelPush(2), &[1, 3, 2]);
-        codec_frame_check(HttpFrame::Goaway(2), &[1, 7, 2]);
-        codec_frame_check(HttpFrame::MaxPushId(2), &[1, 13, 2]);
-        codec_frame_check(HttpFrame::DuplicatePush(2), &[1, 14, 2]);
+        codec_frame_check(HttpFrame::CancelPush(2), &[3, 1, 2]);
+        codec_frame_check(HttpFrame::Goaway(2), &[7, 1, 2]);
+        codec_frame_check(HttpFrame::MaxPushId(2), &[13, 1, 2]);
+        codec_frame_check(HttpFrame::DuplicatePush(2), &[14, 1, 2]);
     }
 
     #[test]
@@ -480,22 +481,24 @@ mod tests {
             HttpFrame::Headers(HeadersFrame {
                 encoded: Bytes::from("TODO QPACK"),
             }),
-            &[10, 1, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
+            &[1, 10, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
         );
         codec_frame_check(
             HttpFrame::PushPromise(PushPromiseFrame {
                 push_id: 134,
                 encoded: Bytes::from("TODO QPACK"),
             }),
-            &[12, 5, 64, 134, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
+            &[5, 12, 64, 134, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
         );
     }
 
     #[test]
     fn reserved_frame() {
-        let mut buf = Cursor::new(&[6, 0xb + 2 * 0x1f, 0, 255, 128, 0, 250, 218]);
+        let mut raw = vec![];
+        varint::write(0xb + 2 * 0x1f, &mut raw).unwrap();
+        raw.extend(&[6, 0, 255, 128, 0, 250, 218]);
+        let mut buf = Cursor::new(&raw);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Ok(HttpFrame::Reserved));
     }
-
 }
