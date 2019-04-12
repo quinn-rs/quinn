@@ -29,15 +29,15 @@ pub use crate::builders::{
 use crate::{ConnectionEvent, EndpointEvent};
 
 /// Connecting future
-pub struct ConnectingFuture(Option<ConnectionDriver>);
+pub struct Connecting(Option<ConnectionDriver>);
 
-impl ConnectingFuture {
+impl Connecting {
     pub(crate) fn new(conn: ConnectionRef) -> Self {
         Self(Some(ConnectionDriver(conn)))
     }
 }
 
-impl Future for ConnectingFuture {
+impl Future for Connecting {
     type Item = (ConnectionDriver, Connection, IncomingStreams);
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
