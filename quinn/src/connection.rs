@@ -35,6 +35,46 @@ impl Connecting {
     pub(crate) fn new(conn: ConnectionRef) -> Self {
         Self(Some(ConnectionDriver(conn)))
     }
+
+    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
+    ///
+    /// Opens up the connection for use before the handshake finishes, allowing the API user to
+    /// send data with 0-RTT encryption if the necessary key material is available. This is useful
+    /// for reducing start-up latency by beginning transmission of application data without waiting
+    /// for the handshake's cryptographic security guarantees to be established.
+    ///
+    /// # Security
+    ///
+    /// On outgoing connections, this enables transmisison of 0-RTT data, which might be vulnerable
+    /// to replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which might be
+    /// intercepted by a man-in-the-middle. If this occurs, the handshake will not complete
+    /// successfully.
+    ///
+    /// Once [`Connection::is_handshaking`] returns false, further transmissions are unaffected by
+    /// these weaknesses.
+    ///
+    /// # Errors
+    ///
+    /// Outgoing connections are only 0-RTT-capable when a cryptographic session ticket cached from
+    /// a previous connection to the same server is available, and includes a 0-RTT key. If no such
+    /// ticket is found, `self` is returned unmodified.
+    ///
+    /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
+    pub fn into_0rtt(mut self) -> Result<(ConnectionDriver, Connection, IncomingStreams), Self> {
+        if (self.0.as_mut().unwrap().0)
+            .lock()
+            .unwrap()
+            .inner
+            .has_0rtt()
+        {
+            let ConnectionDriver(conn) = self.0.take().unwrap();
+            Ok(new_connection(conn))
+        } else {
+            Err(self)
+        }
+    }
 }
 
 impl Future for Connecting {
@@ -135,7 +175,7 @@ impl Connection {
         {
             let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Uni) {
-                let _ = send.send(Ok(x));
+                let _ = send.send(Ok((x, conn.inner.is_handshaking())));
             } else {
                 conn.uni_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
@@ -145,7 +185,7 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| SendStream::new(conn.clone(), stream))
+            .map(move |(stream, is_0rtt)| SendStream::new(conn.clone(), stream, is_0rtt))
     }
 
     /// Initiate a new outgoing bidirectional stream.
@@ -154,7 +194,7 @@ impl Connection {
         {
             let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Bi) {
-                let _ = send.send(Ok(x));
+                let _ = send.send(Ok((x, conn.inner.is_handshaking())));
             } else {
                 conn.bi_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
@@ -164,10 +204,10 @@ impl Connection {
         let conn = self.0.clone();
         recv.map_err(|_| unreachable!())
             .and_then(|result| result)
-            .map(move |stream| {
+            .map(move |(stream, is_0rtt)| {
                 (
-                    SendStream::new(conn.clone(), stream),
-                    RecvStream::new(conn, stream),
+                    SendStream::new(conn.clone(), stream, is_0rtt),
+                    RecvStream::new(conn, stream, is_0rtt),
                 )
             })
     }
@@ -231,11 +271,11 @@ impl FuturesStream for IncomingStreams {
         } else if let Some(x) = conn.inner.accept() {
             mem::drop(conn); // Release the lock so clone can take it
             let stream = if x.directionality() == Directionality::Uni {
-                NewStream::Uni(RecvStream::new(self.0.clone(), x))
+                NewStream::Uni(RecvStream::new(self.0.clone(), x, false))
             } else {
                 NewStream::Bi(
-                    SendStream::new(self.0.clone(), x),
-                    RecvStream::new(self.0.clone(), x),
+                    SendStream::new(self.0.clone(), x, false),
+                    RecvStream::new(self.0.clone(), x, false),
                 )
             };
             Ok(Async::Ready(Some(stream)))
@@ -332,8 +372,8 @@ pub struct ConnectionInner {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     blocked_writers: FnvHashMap<StreamId, Task>,
     blocked_readers: FnvHashMap<StreamId, Task>,
-    uni_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
-    bi_opening: VecDeque<oneshot::Sender<Result<StreamId, ConnectionError>>>,
+    uni_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
+    bi_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
     incoming_streams_reader: Option<Task>,
     finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
     /// Always set to Some before the connection becomes drained
@@ -421,7 +461,7 @@ impl ConnectionInner {
                     };
                     while let Some(connection) = queue.pop_front() {
                         if let Some(id) = self.inner.open(directionality) {
-                            let _ = connection.send(Ok(id));
+                            let _ = connection.send(Ok((id, self.inner.is_handshaking())));
                         } else {
                             queue.push_front(connection);
                             break;
@@ -526,6 +566,13 @@ impl ConnectionInner {
     pub fn implicit_close(&mut self) {
         self.close(0, Bytes::new());
     }
+
+    fn check_0rtt(&self) -> Result<(), ()> {
+        match self.inner.is_handshaking() || self.inner.accepted_0rtt() {
+            true => Ok(()),
+            false => Err(()),
+        }
+    }
 }
 
 impl Drop for ConnectionInner {
@@ -544,15 +591,17 @@ impl Drop for ConnectionInner {
 pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
+    is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
     finished: bool,
 }
 
 impl SendStream {
-    fn new(conn: ConnectionRef, stream: StreamId) -> Self {
+    fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
+            is_0rtt,
             finishing: None,
             finished: false,
         }
@@ -565,6 +614,10 @@ impl SendStream {
     pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
         use crate::quinn::WriteError::*;
         let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt()
+                .map_err(|()| WriteError::ZeroRttRejected)?;
+        }
         let n = match conn.inner.write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
@@ -589,9 +642,13 @@ impl SendStream {
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn poll_finish(&mut self) -> Poll<(), ConnectionError> {
+    pub fn poll_finish(&mut self) -> Poll<(), FinishError> {
+        let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt()
+                .map_err(|()| FinishError::ZeroRttRejected)?;
+        }
         if self.finishing.is_none() {
-            let mut conn = self.conn.lock().unwrap();
             conn.inner.finish(self.stream);
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
@@ -604,7 +661,7 @@ impl SendStream {
                 self.finished = true;
                 Ok(Async::Ready(()))
             }
-            Async::Ready(Some(e)) => Err(e),
+            Async::Ready(Some(e)) => Err(FinishError::ConnectionLost(e)),
             Async::NotReady => Ok(Async::NotReady),
         }
     }
@@ -617,6 +674,9 @@ impl SendStream {
     /// may still receive all written data.
     pub fn reset(&mut self, error_code: u16) {
         let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt && conn.check_0rtt().is_err() {
+            return;
+        }
         conn.inner.reset(self.stream, error_code);
         conn.notify();
     }
@@ -659,14 +719,16 @@ impl Drop for SendStream {
 pub struct RecvStream {
     conn: ConnectionRef,
     stream: StreamId,
+    is_0rtt: bool,
     recvd: bool,
 }
 
 impl RecvStream {
-    fn new(conn: ConnectionRef, stream: StreamId) -> Self {
+    fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
+            is_0rtt,
             recvd: false,
         }
     }
@@ -685,6 +747,9 @@ impl RecvStream {
     pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         use crate::quinn::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
+        }
         match conn.inner.read(self.stream, buf) {
             Ok(n) => Ok(Async::Ready(n)),
             Err(Blocked) => {
@@ -716,6 +781,9 @@ impl RecvStream {
     pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         use crate::quinn::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
+        }
         match conn.inner.read_unordered(self.stream) {
             Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
             Err(Blocked) => {
@@ -757,6 +825,9 @@ impl RecvStream {
     /// Has no effect if the incoming stream already finished.
     pub fn stop(&mut self, error_code: u16) {
         let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt && conn.check_0rtt().is_err() {
+            return;
+        }
         conn.inner.stop_sending(self.stream, error_code);
         conn.notify();
         self.recvd = true;
@@ -832,6 +903,29 @@ impl Drop for RecvStream {
     }
 }
 
+/// Errors that arise from finishing a stream
+#[derive(Debug, Error, Clone)]
+pub enum FinishError {
+    /// The connection was lost.
+    #[error(display = "connection lost: {}", _0)]
+    ConnectionLost(ConnectionError),
+    /// This was a 0-RTT stream and the server rejected it.
+    ///
+    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    #[error(display = "0-RTT rejected")]
+    ZeroRttRejected,
+}
+
+impl From<FinishError> for io::Error {
+    fn from(x: FinishError) -> Self {
+        use self::FinishError::*;
+        match x {
+            ConnectionLost(e) => e.into(),
+            ZeroRttRejected => io::Error::new(io::ErrorKind::ConnectionReset, "0-RTT rejected"),
+        }
+    }
+}
+
 /// Errors that arise from reading from a stream.
 #[derive(Debug, Error, Clone)]
 pub enum ReadError {
@@ -850,6 +944,11 @@ pub enum ReadError {
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
+    /// This was a 0-RTT stream and the server rejected it.
+    ///
+    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    #[error(display = "0-RTT rejected")]
+    ZeroRttRejected,
 }
 
 impl From<ReadError> for io::Error {
@@ -859,7 +958,7 @@ impl From<ReadError> for io::Error {
             ConnectionClosed(e) => {
                 return e.into();
             }
-            Reset { .. } => io::ErrorKind::ConnectionReset,
+            Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             Finished => io::ErrorKind::UnexpectedEof,
             UnknownStream => io::ErrorKind::NotConnected,
         };
@@ -882,6 +981,11 @@ pub enum WriteError {
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
+    /// This was a 0-RTT stream and the server rejected it.
+    ///
+    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    #[error(display = "0-RTT rejected")]
+    ZeroRttRejected,
 }
 
 impl From<WriteError> for io::Error {
@@ -891,7 +995,7 @@ impl From<WriteError> for io::Error {
             ConnectionClosed(e) => {
                 return e.into();
             }
-            Stopped { .. } => io::ErrorKind::ConnectionReset,
+            Stopped { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)

@@ -2742,7 +2742,7 @@ impl Connection {
         self.accepted_0rtt
     }
 
-    pub(crate) fn has_0rtt(&self) -> bool {
+    pub fn has_0rtt(&self) -> bool {
         self.zero_rtt_crypto.is_some()
     }
 
