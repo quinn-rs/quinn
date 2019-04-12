@@ -770,8 +770,8 @@ impl Connection {
             self.io.timer_stop(Timer::Idle);
             return;
         }
-        self.io
-            .timer_start(Timer::Idle, now + Duration::from_millis(self.idle_timeout));
+        let dt = cmp::max(Duration::from_millis(self.idle_timeout), 3 * self.pto());
+        self.io.timer_start(Timer::Idle, now + dt);
     }
 
     fn reset_keep_alive(&mut self, now: Instant) {
