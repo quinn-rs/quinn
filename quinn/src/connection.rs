@@ -43,7 +43,7 @@ impl Connecting {
     ///
     /// # Security
     ///
-    /// On outgoing connections, this enables transmisison of 0-RTT data, which might be vulnerable
+    /// On outgoing connections, this enables transmission of 0-RTT data, which might be vulnerable
     /// to replay attacks, and should therefore never invoke non-idempotent operations.
     ///
     /// On incoming connections, this enables transmission of 0.5-RTT data, which might be
