@@ -9,6 +9,7 @@ use quinn_proto::varint;
 pub enum Error {
     Malformed,
     UnsupportedFrame,
+    UnexpectedEnd,
     InvalidFrameValue,
 }
 
@@ -310,9 +311,8 @@ impl SettingsFrame {
                 // remains less than 2 * minimum-size varint
                 return Err(Error::Malformed);
             }
-            let identifier = buf.get::<SettingId>()?;
-            let value = buf.get_var()?;
-            println!("frame value: {:x}", identifier.0);
+            let identifier = SettingId::decode(buf).map_err(|_| Error::Malformed)?;
+            let value = buf.get_var().map_err(|_| Error::InvalidFrameValue)?;
             match identifier {
                 id if id.0 & 0x0f0f == 0x0a0a => continue,
                 SettingId::NUM_PLACEHOLDERS => {
@@ -321,9 +321,7 @@ impl SettingsFrame {
                 SettingId::MAX_HEADER_LIST_SIZE => {
                     settings.max_header_list_size = value;
                 }
-                _ => {
-                    return Err(Error::InvalidFrameValue);
-                }
+                _ => continue,
             }
         }
         Ok(settings)
@@ -333,21 +331,22 @@ impl SettingsFrame {
 impl FrameHeader for SettingsFrame {
     const TYPE: Type = Type::SETTINGS;
     fn len(&self) -> usize {
-        size_of::<u16>() * 2
+        varint::size(SettingId::NUM_PLACEHOLDERS.0).unwrap()
             + varint::size(self.num_placeholders).unwrap()
+            + varint::size(SettingId::MAX_HEADER_LIST_SIZE.0).unwrap()
             + varint::size(self.max_header_list_size).unwrap()
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-struct SettingId(u16);
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+struct SettingId(u64);
 
 impl Codec for SettingId {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
-        Ok(SettingId(u16::decode(buf)?))
+        Ok(SettingId(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.write(self.0);
+        buf.write_var(self.0);
     }
 }
 
@@ -372,7 +371,7 @@ fn simple_frame_encode<B: BufMut>(ty: Type, id: u64, buf: &mut B) {
 
 impl From<UnexpectedEnd> for Error {
     fn from(_: UnexpectedEnd) -> Self {
-        Error::Malformed
+        Error::UnexpectedEnd
     }
 }
 
@@ -397,16 +396,19 @@ mod tests {
 
     #[test]
     fn settings_frame_ignores_0x_a_a() {
-        let settings = SettingsFrame {
-            num_placeholders: 0xfada,
-            max_header_list_size: 0xfada,
-        };
+        let mut buf = vec![4, 16, 8, 128, 0, 250, 218];
+        buf.write_var(0x1a2a);
+        buf.extend(&[128, 0, 250, 218, 6, 128, 0, 250, 218]);
 
-        let mut buf = Cursor::new(&[
-            4, 18, 0, 8, 128, 0, 250, 218, 0x1a, 0x2a, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218,
-        ]);
-        let decoded = HttpFrame::decode(&mut buf).unwrap();
-        assert_eq!(decoded, HttpFrame::Settings(settings));
+        let mut cur = Cursor::new(&buf);
+        let decoded = HttpFrame::decode(&mut cur).unwrap();
+        assert_eq!(
+            decoded,
+            HttpFrame::Settings(SettingsFrame {
+                num_placeholders: 0xfada,
+                max_header_list_size: 0xfada,
+            })
+        );
     }
 
     #[test]
@@ -421,6 +423,19 @@ mod tests {
         let mut buf = Cursor::new(&[4, 8, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Malformed));
+    }
+
+    #[test]
+    fn settings_frame_ignores_unknown_id() {
+        let mut buf = Cursor::new(&[4, 10, 0xA, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
+        let decoded = HttpFrame::decode(&mut buf);
+        assert_eq!(
+            decoded,
+            Ok(HttpFrame::Settings(SettingsFrame {
+                num_placeholders: 16,
+                max_header_list_size: 0xFADA,
+            }))
+        );
     }
 
     fn codec_frame_check(frame: HttpFrame, wire: &[u8]) {
@@ -441,7 +456,7 @@ mod tests {
                 num_placeholders: 0xFADA,
                 max_header_list_size: 0xFADA,
             }),
-            &[4, 12, 0, 8, 128, 0, 250, 218, 0, 6, 128, 0, 250, 218],
+            &[4, 10, 8, 128, 0, 250, 218, 6, 128, 0, 250, 218],
         );
     }
 
