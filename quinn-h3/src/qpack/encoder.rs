@@ -214,8 +214,14 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const TABLE_SIZE: usize = 4096;
 
-    use crate::qpack::tests::helpers::{build_table, TABLE_SIZE};
+    fn build_table() -> DynamicTable {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_blocked(100).unwrap();
+        table
+    }
 
     fn check_encode_field(
         init_fields: &[HeaderField],
