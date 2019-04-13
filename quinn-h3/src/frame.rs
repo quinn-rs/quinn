@@ -66,7 +66,7 @@ impl HttpFrame {
             Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
-            t if t.0 > 0xb && (t.0 - 0xb) % 0x1f == 0 => Ok(HttpFrame::Reserved),
+            t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => Ok(HttpFrame::Reserved),
             _ => Err(Error::UnsupportedFrame),
         }
     }
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn reserved_frame() {
         let mut raw = vec![];
-        varint::write(0xb + 2 * 0x1f, &mut raw).unwrap();
+        varint::write(0x21 + 2 * 0x1f, &mut raw).unwrap();
         raw.extend(&[6, 0, 255, 128, 0, 250, 218]);
         let mut buf = Cursor::new(&raw);
         let decoded = HttpFrame::decode(&mut buf);
