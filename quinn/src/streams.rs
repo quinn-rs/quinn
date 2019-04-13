@@ -283,7 +283,7 @@ pub struct ReadToEnd {
 }
 
 impl Future for ReadToEnd {
-    type Item = (RecvStream, Box<[u8]>);
+    type Item = (RecvStream, Vec<u8>);
     type Error = ReadError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
@@ -303,7 +303,7 @@ impl Future for ReadToEnd {
                 Err(ReadError::Finished) => {
                     return Ok(Async::Ready((
                         self.stream.take().unwrap(),
-                        mem::replace(&mut self.buffer, Vec::new()).into(),
+                        mem::replace(&mut self.buffer, Vec::new()),
                     )));
                 }
                 Err(e) => {
