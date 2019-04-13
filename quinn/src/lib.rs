@@ -72,13 +72,13 @@ pub use crate::builders::{
 };
 
 mod connection;
-pub use connection::{
-    Connecting, Connection, ConnectionDriver, IncomingStreams, NewStream, ReadError, ReadToEnd,
-    RecvStream, SendStream, WriteError,
-};
+pub use connection::{Connecting, Connection, ConnectionDriver, IncomingStreams};
 
 mod endpoint;
 pub use endpoint::{Endpoint, EndpointDriver, Incoming};
+
+mod streams;
+pub use streams::{NewStream, ReadError, ReadToEnd, RecvStream, SendStream, WriteError};
 
 #[cfg(test)]
 mod tests;
