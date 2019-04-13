@@ -52,7 +52,6 @@ impl Future for Connecting {
         };
         if connected {
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            conn.lock().unwrap().driver.take();
             Ok(Async::Ready(new_connection(conn)))
         } else {
             Ok(Async::NotReady)
