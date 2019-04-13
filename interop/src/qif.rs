@@ -301,7 +301,7 @@ impl EncodedFile {
     pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<(), Error> {
         let mut table = qpack::DynamicTable::new();
         table.inserter().set_max_mem_size(self.table_size)?;
-        table.set_max_blocked(self.max_blocked);
+        table.set_max_blocked(self.max_blocked)?;
 
         let mut buf = vec![];
         let mut stream_count = 1;
