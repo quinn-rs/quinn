@@ -221,10 +221,16 @@ impl Frame {
     }
 }
 
+/// Reason for closing the connection
+///
+/// This is distinct from the `ApplicationClose` type.
 #[derive(Debug, Clone)]
 pub struct ConnectionClose {
+    /// Class of error as encoded in the specification
     pub error_code: TransportErrorCode,
+    /// Type of frame that caused the close
     pub frame_type: Option<Type>,
+    /// Human-readable reason for the close
     pub reason: Bytes,
 }
 
@@ -254,7 +260,7 @@ impl FrameStruct for ConnectionClose {
 }
 
 impl ConnectionClose {
-    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::CONNECTION_CLOSE); // 1 byte
         out.write(self.error_code); // 2 bytes
         let ty = self.frame_type.map_or(0, |x| x.0);
@@ -269,9 +275,14 @@ impl ConnectionClose {
     }
 }
 
+/// Reason for closing the connection
+///
+/// This is distinct from the `ConnectionClose` type.
 #[derive(Debug, Clone)]
 pub struct ApplicationClose {
+    /// Application-specific reason code
     pub error_code: u16,
+    /// Human-readable reason for the close
     pub reason: Bytes,
 }
 
@@ -294,7 +305,7 @@ impl FrameStruct for ApplicationClose {
 }
 
 impl ApplicationClose {
-    pub fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::APPLICATION_CLOSE); // 1 byte
         out.write(self.error_code); // 2 bytes
         let max_len = max_len as usize - 3 - varint::size(self.reason.len() as u64).unwrap();

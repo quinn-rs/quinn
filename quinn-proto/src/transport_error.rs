@@ -7,15 +7,19 @@ use crate::coding::{self, BufExt, BufMutExt};
 use crate::frame;
 use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
 
+/// Transport-level errors occur when a peer violates the protocol specification
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Error {
+    /// Type of error
     pub code: Code,
+    /// Frame type that triggered the error
     pub frame: Option<frame::Type>,
+    /// Human-readable explanation of the reason
     pub reason: String,
 }
 
 impl Error {
-    pub fn new<T>(code: Code, frame: Option<frame::Type>, reason: T) -> Self
+    pub(crate) fn new<T>(code: Code, frame: Option<frame::Type>, reason: T) -> Self
     where
         T: Into<String>,
     {
@@ -26,7 +30,7 @@ impl Error {
         }
     }
 
-    pub fn crypto(code: u8, reason: String) -> Self {
+    pub(crate) fn crypto(code: u8, reason: String) -> Self {
         Self::new(Code::crypto(code), None, reason)
     }
 }
@@ -65,11 +69,12 @@ impl slog::Value for Error {
     }
 }
 
+/// Transport-level error code
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Code(u16);
 
 impl Code {
-    pub fn crypto(code: u8) -> Self {
+    pub(crate) fn crypto(code: u8) -> Self {
         Code(0x100 | code as u16)
     }
 }
