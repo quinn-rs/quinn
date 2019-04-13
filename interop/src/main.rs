@@ -6,7 +6,7 @@ use quinn_h3::qpack;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use failure::{format_err, Error};
 use quinn_h3::frame::{HeadersFrame, HttpFrame, SettingsFrame};
 use quinn_h3::StreamType;
@@ -304,7 +304,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 fn h3_get(
     send: quinn::SendStream,
     recv: quinn::RecvStream,
-) -> impl Future<Item = Box<[u8]>, Error = Error> {
+) -> impl Future<Item = Bytes, Error = Error> {
     let header = [
         (":method", "GET"),
         (":path", "/"),
@@ -339,7 +339,7 @@ fn h3_get(
         .and_then(move |(_, data)| h3_resp(&table, data))
 }
 
-fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
+fn h3_resp(table: &qpack::DynamicTable, data: Vec<u8>) -> Result<Bytes> {
     let mut cur = std::io::Cursor::new(data);
     match HttpFrame::decode(&mut cur) {
         Ok(HttpFrame::Headers(text)) => {
@@ -356,7 +356,7 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
     }
 
     match HttpFrame::decode(&mut cur) {
-        Ok(HttpFrame::Data(text)) => Ok(Box::from(text.payload.as_ref())),
+        Ok(HttpFrame::Data(text)) => Ok(text.payload),
         Ok(f) => Err(format_err!("response frame bad type {:?}", f)),
         Err(e) => Err(format_err!("failed to decode response frame {:?}", e)),
     }
@@ -365,7 +365,7 @@ fn h3_resp(table: &qpack::DynamicTable, data: Box<[u8]>) -> Result<Box<[u8]>> {
 fn get(
     send: quinn::SendStream,
     recv: quinn::RecvStream,
-) -> impl Future<Item = Box<[u8]>, Error = Error> {
+) -> impl Future<Item = Vec<u8>, Error = Error> {
     tokio::io::write_all(send, b"GET /index.html\r\n".to_owned())
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(send, _)| {
