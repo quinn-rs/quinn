@@ -286,8 +286,9 @@ impl Literal {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::qpack::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
     use std::io::Cursor;
+
+    const TABLE_SIZE: usize = 4096;
 
     #[test]
     fn indexed_static() {

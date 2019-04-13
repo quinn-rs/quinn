@@ -214,14 +214,17 @@ impl From<ParseError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::dynamic::SETTINGS_HEADER_TABLE_SIZE_DEFAULT as TABLE_SIZE;
+
+    use crate::qpack::tests::helpers::{build_table, TABLE_SIZE};
 
     fn check_encode_field(
         init_fields: &[HeaderField],
         field: &[HeaderField],
         check: &Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
-        check_encode_field_table(&mut DynamicTable::new(), init_fields, field, 1, check);
+        let mut table = build_table();
+        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        check_encode_field_table(&mut table, init_fields, field, 1, check);
     }
 
     fn check_encode_field_table(
@@ -319,7 +322,7 @@ mod tests {
 
     #[test]
     fn encode_literal() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(0).unwrap();
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(&mut table, &[], &[field], 1, &|mut b, e| {
@@ -330,7 +333,7 @@ mod tests {
 
     #[test]
     fn encode_literal_nameref() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
 
@@ -357,7 +360,7 @@ mod tests {
 
     #[test]
     fn encode_literal_postbase_nameref() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(
@@ -384,7 +387,7 @@ mod tests {
 
     #[test]
     fn encode_with_header_block() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         for idx in 1..5 {
             table
@@ -456,7 +459,7 @@ mod tests {
 
     #[test]
     fn decoder_block_ack() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(
@@ -488,7 +491,7 @@ mod tests {
 
     #[test]
     fn decoder_stream_cacnceled() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(
@@ -526,7 +529,7 @@ mod tests {
 
     #[test]
     fn decoder_unknown_stream() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         check_encode_field_table(
             &mut table,
@@ -558,6 +561,6 @@ mod tests {
         );
 
         let mut cur = Cursor::new(&buf);
-        assert_eq!(on_decoder_recv(&mut DynamicTable::new(), &mut cur), Ok(()));
+        assert_eq!(on_decoder_recv(&mut build_table(), &mut cur), Ok(()));
     }
 }

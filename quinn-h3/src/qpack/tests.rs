@@ -4,6 +4,34 @@ use crate::qpack::{
 };
 use std::io::Cursor;
 
+pub mod helpers {
+    use crate::qpack::{DynamicTable, HeaderField};
+
+    pub const TABLE_SIZE: usize = 4096;
+
+    pub fn build_table() -> DynamicTable {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_blocked(100).unwrap();
+        table
+    }
+
+    pub fn build_table_with_size(n_field: usize) -> DynamicTable {
+        let mut table = DynamicTable::new();
+        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_blocked(100).unwrap();
+
+        let mut inserter = table.inserter();
+        for i in 0..n_field {
+            inserter
+                .put_field(HeaderField::new(format!("foo{}", i + 1), "bar"))
+                .unwrap();
+        }
+
+        table
+    }
+}
+
 #[test]
 fn codec_basic_get() {
     let mut enc_table = DynamicTable::new();
@@ -37,10 +65,15 @@ fn codec_basic_get() {
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();
 }
 
+const TABLE_SIZE: usize = 4096;
 #[test]
 fn blocked_header() {
     let mut enc_table = DynamicTable::new();
-    let dec_table = DynamicTable::new();
+    enc_table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+    enc_table.set_max_blocked(100).unwrap();
+    let mut dec_table = DynamicTable::new();
+    dec_table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+    dec_table.set_max_blocked(100).unwrap();
 
     let mut block_buf = vec![];
     let mut enc_buf = vec![];

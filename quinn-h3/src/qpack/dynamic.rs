@@ -13,13 +13,15 @@ use crate::qpack::vas::{self, VirtualAddressSpace};
  * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
  * 4. Configuration
  */
-pub const SETTINGS_HEADER_TABLE_SIZE_DEFAULT: usize = 4096;
+pub const SETTINGS_MAX_TABLE_CAPACITY_DEFAULT: usize = 0;
 
 /**
- * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
- * 4. Configuration
+ * https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html#maximum-dynamic-table-capacity
  */
-const SETTINGS_HEADER_TABLE_SIZE_MAX: usize = 1073741823; // 2^30 -1
+const SETTINGS_MAX_TABLE_CAPACITY_MAX: usize = 1073741823; // 2^30 -1
+
+const SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT: usize = 0;
+const SETTINGS_MAX_BLOCKED_STREAMS_MAX: usize = 65535; // 2^16 - 1
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -33,6 +35,8 @@ pub enum Error {
     MaxTableSizeReached,
     #[error(display = "table size setting is greater than maximum authorized")]
     MaximumTableSizeTooLarge,
+    #[error(display = "max blocked stream setting is greater than maximum authorized")]
+    MaxBlockedStreamsTooLarge,
     #[error(
         display = "stream id '{}' is unknown or has already been acknowledged or canceled",
         _0
@@ -73,7 +77,7 @@ pub struct DynamicTableInserter<'a> {
 
 impl<'a> DynamicTableInserter<'a> {
     pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), Error> {
-        if size > SETTINGS_HEADER_TABLE_SIZE_MAX {
+        if size > SETTINGS_MAX_TABLE_CAPACITY_MAX {
             return Err(Error::MaximumTableSizeTooLarge);
         }
 
@@ -352,14 +356,14 @@ impl DynamicTable {
         DynamicTable {
             fields: VecDeque::new(),
             curr_mem_size: 0,
-            mem_limit: SETTINGS_HEADER_TABLE_SIZE_DEFAULT,
+            mem_limit: SETTINGS_MAX_TABLE_CAPACITY_DEFAULT,
             vas: VirtualAddressSpace::new(),
             name_map: None, // TODO gather in encoder data
             field_map: None,
             track_map: None,
             track_blocks: None,
             largest_known_recieved: 0,
-            blocked_max: 100,
+            blocked_max: SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT,
             blocked_count: 0,
             blocked_streams: None,
         }
@@ -399,9 +403,13 @@ impl DynamicTable {
         }
     }
 
-    pub fn set_max_blocked(&mut self, max: usize) {
+    pub fn set_max_blocked(&mut self, max: usize) -> Result<(), Error> {
         // TODO handle existing data
+        if max >= SETTINGS_MAX_BLOCKED_STREAMS_MAX {
+            return Err(Error::MaxBlockedStreamsTooLarge);
+        }
         self.blocked_max = max;
+        Ok(())
     }
 
     pub(super) fn total_inserted(&self) -> usize {
@@ -630,6 +638,7 @@ impl From<vas::Error> for Error {
 mod tests {
     use super::*;
     use crate::qpack::static_::StaticTable;
+    use crate::qpack::tests::helpers::build_table;
 
     const STREAM_ID: u64 = 0x4;
 
@@ -640,7 +649,7 @@ mod tests {
      */
     #[test]
     fn test_table_size_is_sum_of_its_entries() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         let fields: [(&'static str, &'static str); 2] = [
             ("Name", "Value"),
@@ -656,26 +665,6 @@ mod tests {
         assert_eq!(table.curr_mem_size, table_size);
     }
 
-    // Test on maximum table size
-
-    /**
-     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
-     * "The decoder determines the maximum size that the encoder is permitted
-     *  to use for the dynamic table.  In HTTP/QUIC, this value is determined
-     *  by the SETTINGS_HEADER_TABLE_SIZE setting (see Section 4.2.5.2 of
-     *  [QUIC-HTTP])."
-     *
-     * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-4
-     * "SETTINGS_HEADER_TABLE_SIZE (0x1):  An integer with a maximum value of
-     *   2^30 - 1.  The default value is 4,096 bytes.  See (todo: reference
-     *   PR#1357) for usage."
-     */
-    #[test]
-    fn test_maximum_table_size_is_not_null_nor_max_by_default() {
-        let table = DynamicTable::new();
-        assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_DEFAULT);
-    }
-
     /**
      * https://tools.ietf.org/html/draft-ietf-quic-qpack-01#section-2.2
      * "The decoder determines the maximum size that the encoder is permitted
@@ -685,8 +674,8 @@ mod tests {
      */
     #[test]
     fn test_try_set_too_large_maximum_table_size() {
-        let mut table = DynamicTable::new();
-        let invalid_size = SETTINGS_HEADER_TABLE_SIZE_MAX + 10;
+        let mut table = build_table();
+        let invalid_size = SETTINGS_MAX_TABLE_CAPACITY_MAX + 10;
         let res_change = table.inserter().set_max_mem_size(invalid_size);
         assert_eq!(res_change, Err(Error::MaximumTableSizeTooLarge));
     }
@@ -699,7 +688,7 @@ mod tests {
      */
     #[test]
     fn test_maximum_table_size_can_reach_zero() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let res_change = table.inserter().set_max_mem_size(0);
         assert!(res_change.is_ok());
         assert_eq!(table.max_mem_size(), 0);
@@ -714,12 +703,12 @@ mod tests {
      */
     #[test]
     fn test_maximum_table_size_can_reach_maximum() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let res_change = table
             .inserter()
-            .set_max_mem_size(SETTINGS_HEADER_TABLE_SIZE_MAX);
+            .set_max_mem_size(SETTINGS_MAX_TABLE_CAPACITY_MAX);
         assert!(res_change.is_ok());
-        assert_eq!(table.max_mem_size(), SETTINGS_HEADER_TABLE_SIZE_MAX);
+        assert_eq!(table.max_mem_size(), SETTINGS_MAX_TABLE_CAPACITY_MAX);
     }
 
     // Test duplicated fields
@@ -732,7 +721,7 @@ mod tests {
      */
     #[test]
     fn test_table_supports_duplicated_entries() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table
             .inserter()
             .put_field(HeaderField::new("Name", "Value"))
@@ -749,7 +738,7 @@ mod tests {
     /** functional test */
     #[test]
     fn test_add_field_fitting_free_space() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         table
             .inserter()
@@ -761,7 +750,7 @@ mod tests {
     /** functional test */
     #[test]
     fn test_add_field_reduce_free_space() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         let field = HeaderField::new("Name", "Value");
         table.inserter().put_field(field.clone()).unwrap();
@@ -777,7 +766,7 @@ mod tests {
      */
     #[test]
     fn test_add_field_drop_older_fields_to_have_enough_space() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         table
             .inserter()
@@ -808,7 +797,7 @@ mod tests {
      */
     #[test]
     fn test_try_add_field_larger_than_maximum_size() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         table
             .inserter()
@@ -839,7 +828,7 @@ mod tests {
      */
     #[test]
     fn test_set_maximum_table_size_to_zero_clear_entries() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         insert_fields(
             &mut table,
             vec![
@@ -856,7 +845,7 @@ mod tests {
     /** functional test */
     #[test]
     fn test_eviction_is_fifo() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
 
         insert_fields(
             &mut table,
@@ -883,7 +872,7 @@ mod tests {
 
     #[test]
     fn encoder_build() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let field_a = HeaderField::new("Name-A", "Value-A");
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
@@ -902,7 +891,7 @@ mod tests {
 
     #[test]
     fn encoder_find_relative() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let field_a = HeaderField::new("Name-A", "Value-A");
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
@@ -948,7 +937,7 @@ mod tests {
 
     #[test]
     fn encoder_insert() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let field_a = HeaderField::new("Name-A", "Value-A");
         let field_b = HeaderField::new("Name-B", "Value-B");
         insert_fields(&mut table, vec![field_a.clone(), field_b.clone()]);
@@ -1023,7 +1012,7 @@ mod tests {
 
     #[test]
     fn encode_insert_in_empty() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let field_a = HeaderField::new("Name-A", "Value-A");
 
         let mut encoder = table.encoder(STREAM_ID);
@@ -1045,7 +1034,7 @@ mod tests {
 
     #[test]
     fn insert_static() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let field = HeaderField::new(":method", "Value-A");
         table.inserter().put_field(field.clone()).unwrap();
 
@@ -1080,7 +1069,7 @@ mod tests {
 
     #[test]
     fn cannot_insert_field_greater_than_total_size() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(33).unwrap();
         let mut encoder = table.encoder(4);
         assert_eq!(
@@ -1093,7 +1082,7 @@ mod tests {
 
     #[test]
     fn encoder_maps_are_cleaned_on_eviction() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(64).unwrap();
 
         {
@@ -1129,7 +1118,7 @@ mod tests {
 
     #[test]
     fn encoder_can_evict_unreferenced() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(63).unwrap();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
 
@@ -1146,7 +1135,7 @@ mod tests {
 
     #[test]
     fn encoder_insertion_tracks_ref() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let mut encoder = table.encoder(4);
         assert_eq!(
             encoder.insert(&HeaderField::new("baz", "quxx")),
@@ -1170,7 +1159,7 @@ mod tests {
 
     #[test]
     fn encoder_insertion_refs_commited() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         let stream_id = 42;
         {
             let mut encoder = table.encoder(stream_id);
@@ -1197,7 +1186,7 @@ mod tests {
 
     #[test]
     fn encoder_insertion_refs_not_commited() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.track_blocks = Some(HashMap::new());
         let stream_id = 42;
         {
@@ -1218,7 +1207,7 @@ mod tests {
 
     #[test]
     fn encoder_insertion_with_ref_tracks_both() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
         table.track_blocks = Some(HashMap::new());
 
@@ -1242,7 +1231,7 @@ mod tests {
 
     #[test]
     fn encoder_ref_count_are_incremented() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
         table.track_blocks = Some(HashMap::new());
         table.track_ref(1);
@@ -1269,7 +1258,7 @@ mod tests {
 
     #[test]
     fn encoder_does_not_evict_referenced() {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.inserter().set_max_mem_size(95).unwrap();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
 
@@ -1297,7 +1286,7 @@ mod tests {
     }
 
     fn tracked_table(stream_id: u64) -> DynamicTable {
-        let mut table = DynamicTable::new();
+        let mut table = build_table();
         table.track_blocks = Some(HashMap::new());
         {
             let mut encoder = table.encoder(stream_id);
@@ -1376,7 +1365,7 @@ mod tests {
     #[test]
     fn blocked_stream_registered() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         assert_eq!(table.blocked_count, 1);
         assert_eq!(table.blocked_streams.unwrap().get(&3), Some(&1usize))
@@ -1385,7 +1374,7 @@ mod tests {
     #[test]
     fn blocked_stream_not_registered() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         table
             .encoder(44)
@@ -1400,7 +1389,7 @@ mod tests {
     #[test]
     fn blocked_stream_register_accumulate() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         {
             let mut encoder = table.encoder(44);
@@ -1423,7 +1412,7 @@ mod tests {
     #[test]
     fn blocked_stream_register_put_smaller() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         {
             let mut encoder = table.encoder(44);
@@ -1437,7 +1426,7 @@ mod tests {
     #[test]
     fn blocked_stream_register_put_larger() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         {
             let mut encoder = table.encoder(44);
@@ -1451,7 +1440,7 @@ mod tests {
     #[test]
     fn unblock_stream_smaller() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         {
             let mut encoder = table.encoder(44);
@@ -1471,7 +1460,7 @@ mod tests {
     #[test]
     fn unblock_stream_larger() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         table.encoder(44).commit(2);
         table.encoder(46).commit(5);
@@ -1489,7 +1478,7 @@ mod tests {
     #[test]
     fn unblock_stream_decrement() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(100);
+        table.set_max_blocked(100).unwrap();
 
         table.encoder(44).commit(3);
 
@@ -1505,7 +1494,7 @@ mod tests {
     #[test]
     fn no_insert_when_max_blocked_0() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(0);
+        table.set_max_blocked(0).unwrap();
 
         assert_eq!(
             table.encoder(44).insert(&HeaderField::new("foo", "bar")),
@@ -1518,7 +1507,7 @@ mod tests {
     #[test]
     fn no_insert_after_max_blocked_reached() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(2);
+        table.set_max_blocked(2).unwrap();
 
         {
             let mut encoder = table.encoder(44);
@@ -1546,7 +1535,7 @@ mod tests {
     #[test]
     fn insert_again_after_encoder_ack() {
         let mut table = tracked_table(42);
-        table.set_max_blocked(1);
+        table.set_max_blocked(1).unwrap();
 
         assert_eq!(table.blocked_count, 1);
 
