@@ -882,6 +882,8 @@ impl Connection {
                 );
                 return;
             }
+            // Previous connection's reset token is probably not applicable
+            self.params.stateless_reset_token = None;
         }
         trace!(self.log, "0-RTT enabled");
         self.zero_rtt_crypto = Some(CryptoSpace {
@@ -1307,6 +1309,9 @@ impl Connection {
                                     }
                                 }
                             }
+                            self.endpoint_events.push_back(EndpointEvent::ResetToken(
+                                params.stateless_reset_token.unwrap(),
+                            ));
                             self.set_params(params)?;
                             self.endpoint_events
                                 .push_back(EndpointEvent::NeedIdentifiers);
@@ -2413,10 +2418,6 @@ impl Connection {
         } else {
             cmp::min(self.config.idle_timeout, params.idle_timeout)
         };
-        if let Some(token) = params.stateless_reset_token {
-            self.endpoint_events
-                .push_back(EndpointEvent::ResetToken(token));
-        }
         self.params = params;
         Ok(())
     }
