@@ -69,6 +69,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut builder = quinn::Endpoint::new();
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+    tls_config.enable_early_data = true;
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
@@ -95,6 +96,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut resumption = false;
     let mut key_update = false;
     let mut rebinding = false;
+    let mut zero_rtt = false;
     let endpoint = &endpoint;
     let result = runtime.block_on(
         endpoint
@@ -158,6 +160,26 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                         conn.close(0, b"done");
                                     })
                             })
+                    })
+                    .and_then(|_| {
+                        println!("attempting 0-RTT");
+                        let (conn_driver, conn, _) = endpoint
+                            .connect_with(client_config.clone(), &remote, host)
+                            .unwrap()
+                            .into_0rtt()
+                            .map_err(|_| format_err!("0-RTT unsupported by server"))?;
+                        tokio_current_thread::spawn(
+                            conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                        );
+                        Ok(conn)
+                    })
+                    .and_then(|conn| {
+                        conn.open_bi()
+                            .map_err(|e| format_err!("failed to open 0-RTT stream: {}", e))
+                    })
+                    .and_then(|(send, recv)| get(send, recv))
+                    .map(|_| {
+                        zero_rtt = true;
                     })
             }),
     );
@@ -257,6 +279,9 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
     if resumption {
         print!("R");
+    }
+    if zero_rtt {
+        print!("Z");
     }
     if retry {
         print!("S");
