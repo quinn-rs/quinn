@@ -461,6 +461,7 @@ const INITIAL_SALT: [u8; 20] = [
     0x48, 0x5e, 0x09, 0xa0,
 ];
 
+/// Key used to sign and verify stateless resets
 pub struct TokenKey {
     // TODO: Use AEAD to hide token details from clients for better stability guarantees:
     // - ticket consists of (random, aead-encrypted-data)
@@ -471,8 +472,10 @@ pub struct TokenKey {
 }
 
 impl TokenKey {
+    /// Size of the key
     pub const SIZE: usize = 64;
 
+    /// Create a new token key with the specified key
     pub fn new(key: &[u8; Self::SIZE]) -> Self {
         let inner = SigningKey::new(&digest::SHA512_256, key);
         Self { inner }

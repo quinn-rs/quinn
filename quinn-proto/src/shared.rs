@@ -183,24 +183,39 @@ pub enum ConfigError {
 
 /// Events to be sent to the Connection
 pub enum ConnectionEvent {
+    /// A datagram has been received for the Connection
     Datagram {
+        #[doc(hidden)]
         now: Instant,
+        #[doc(hidden)]
         remote: SocketAddr,
+        #[doc(hidden)]
         ecn: Option<EcnCodepoint>,
+        #[doc(hidden)]
         first_decode: PartialDecode,
+        #[doc(hidden)]
         remaining: Option<BytesMut>,
     },
+    /// New connection identifiers have been issued for the Connection
     NewIdentifiers(Vec<(u64, ConnectionId)>),
+    /// A timeout has fired for a Connection
     Timer(Instant, Timer),
 }
 
 /// Events to be sent to the Endpoint
 #[derive(Clone, Debug)]
 pub enum EndpointEvent {
+    /// The connection has been drained
+    #[doc(hidden)]
     Drained,
+    /// A stateless reset token has been issued for the connection
+    #[doc(hidden)]
     ResetToken(ResetToken),
+    /// The connection needs connection identifiers
+    #[doc(hidden)]
     NeedIdentifiers,
-    /// Stop routing connection ID for this sequence number to this `Connection`
+    /// Stop routing connection ID for this sequence number to the connection
+    #[doc(hidden)]
     RetireConnectionId(u64),
 }
 
@@ -209,8 +224,8 @@ pub enum EndpointEvent {
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ConnectionId {
-    pub len: u8,
-    pub bytes: [u8; MAX_CID_SIZE],
+    len: u8,
+    bytes: [u8; MAX_CID_SIZE],
 }
 
 impl ConnectionId {
@@ -282,12 +297,16 @@ impl slog::Value for ConnectionId {
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EcnCodepoint {
+    #[doc(hidden)]
     ECT0 = 0b10,
+    #[doc(hidden)]
     ECT1 = 0b01,
+    #[doc(hidden)]
     CE = 0b11,
 }
 
 impl EcnCodepoint {
+    /// Create new object from the given bits
     pub fn from_bits(x: u8) -> Option<Self> {
         use self::EcnCodepoint::*;
         Some(match x & 0b11 {
@@ -298,10 +317,6 @@ impl EcnCodepoint {
                 return None;
             }
         })
-    }
-
-    pub fn bits(self) -> u8 {
-        self as u8
     }
 }
 

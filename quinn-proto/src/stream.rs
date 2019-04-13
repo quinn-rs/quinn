@@ -320,6 +320,7 @@ impl Send {
     }
 }
 
+/// Errors triggered while writing to a send stream
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
     /// The peer is not able to accept additional data, or the connection is congested.
@@ -327,7 +328,10 @@ pub enum WriteError {
     Blocked,
     /// The peer is no longer accepting data on this stream.
     #[error(display = "stopped by peer: error {}", error_code)]
-    Stopped { error_code: u16 },
+    Stopped {
+        /// Application-defined reason for stopping the stream
+        error_code: u16,
+    },
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
@@ -495,6 +499,7 @@ impl Recv {
     }
 }
 
+/// Errors triggered when reading from a recv stream
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
@@ -502,7 +507,10 @@ pub enum ReadError {
     Blocked,
     /// The peer abandoned transmitting data on this stream.
     #[error(display = "reset by peer: error {}", error_code)]
-    Reset { error_code: u16 },
+    Reset {
+        /// Application-defined reason for resetting the stream
+        error_code: u16,
+    },
     /// The data on this stream has been fully delivered and no more will be transmitted.
     #[error(display = "finished")]
     Finished,

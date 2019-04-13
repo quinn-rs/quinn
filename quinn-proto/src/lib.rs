@@ -1,3 +1,18 @@
+//! Low-level protocol logic for the QUIC protoocol
+//!
+//! quinn-proto contains a fully deterministic implementation of QUIC protocol logic. It contains
+//! no networking code and does not get any relevant timestamps from the operating system. Most
+//! users may want to use the futures-based quinn API instead.
+//!
+//! The quinn-proto API might be of interest if you want to use it from a C or C++ project
+//! through C bindings or if you want to use a different event loop than the one tokio provides.
+//!
+//! The most important types are `Endpoint`, which conceptually represents the protocol state for
+//! a single socket and mostly manages configuration and dispatches incoming datagrams to the
+//! related `Connection`. `Connection` types contain the bulk of the protocol logic related to
+//! managing a single connection and all the related state (such as streams).
+
+#![warn(missing_docs)]
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
@@ -16,6 +31,7 @@ use std::ops;
 use std::time::Duration;
 
 mod assembler;
+#[doc(hidden)]
 pub mod coding;
 mod packet;
 mod range_set;
@@ -23,6 +39,7 @@ mod spaces;
 #[cfg(test)]
 mod tests;
 mod transport_parameters;
+#[doc(hidden)]
 pub mod varint;
 
 mod connection;
@@ -206,9 +223,11 @@ impl coding::Codec for StreamId {
 /// An outgoing packet
 #[derive(Debug)]
 pub struct Transmit {
+    /// The socket this datagram should be sent to
     pub destination: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
+    /// Contents of the datagram
     pub packet: Box<[u8]>,
 }
 

@@ -60,6 +60,9 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
+    /// Create a new endpoint
+    ///
+    /// Returns `Err` if the configuration is invalid.
     pub fn new(
         log: Logger,
         config: Arc<EndpointConfig>,
@@ -92,6 +95,9 @@ impl Endpoint {
         self.transmits.pop_front()
     }
 
+    /// Process `EndpointEvent`s emitted from related `Connection`s
+    ///
+    /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
     pub fn handle_event(
         &mut self,
         ch: ConnectionHandle,
@@ -772,6 +778,7 @@ impl Default for ClientConfig {
     }
 }
 
+/// Internal identifier for a `Connection` currently associated with an endpoint
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
 
@@ -794,8 +801,11 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
     }
 }
 
+/// Event resulting from processing a single datagram
 pub enum DatagramEvent {
+    /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionEvent),
+    /// The datagram has resulted in starting a new `Connection`
     NewConnection(Connection),
 }
 

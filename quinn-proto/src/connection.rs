@@ -32,6 +32,12 @@ use crate::{
     MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
+/// Protocol state and logic for a single QUIC connection
+///
+/// Objects of this type receive `ConnectionEvent`s and emit `EndpointEvents` and application
+/// `Event`s to make progress. To handle timeouts, a `Connection` returns timer updates and
+/// expects timeouts through various methods. A number of simple getter methods are exposed
+/// to allow callers to inspect some of the connection state.
 pub struct Connection {
     log: Logger,
     endpoint_config: Arc<EndpointConfig>,
@@ -987,6 +993,11 @@ impl Connection {
         }
     }
 
+    /// Process `ConnectionEvent`s, including incoming datagrams
+    ///
+    /// Will execute protocol logic upon receipt of a connection event, in turn preparing signals
+    /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
+    /// extracted through the relevant methods.
     pub fn handle_event(&mut self, event: ConnectionEvent) {
         use self::ConnectionEvent::*;
         match event {
@@ -2422,6 +2433,9 @@ impl Connection {
         Ok(())
     }
 
+    /// Open a single stream if possible
+    ///
+    /// Returns `None` if the streams in the given direction are currently exhausted.
     pub fn open(&mut self, direction: Directionality) -> Option<StreamId> {
         let id = self.streams.open(self.side, direction)?;
         // TODO: Queue STREAM_ID_BLOCKED if None
@@ -2453,12 +2467,16 @@ impl Connection {
         self.streams.alloc_remote_stream(self.side, ty);
     }
 
+    /// Accept a remotely initiated stream if possible
+    ///
+    /// Returns `None` if there are no new incoming streams for this connection.
     pub fn accept(&mut self) -> Option<StreamId> {
         let id = self.streams.accept(self.side)?;
         self.alloc_remote_stream(id.directionality());
         Some(id)
     }
 
+    /// Finish a send stream, signalling that no more data will be sent
     pub fn finish(&mut self, id: StreamId) {
         let ss = self
             .streams
@@ -2481,6 +2499,13 @@ impl Connection {
         });
     }
 
+    /// Read from the given recv stream, in undefined order
+    ///
+    /// While stream data is usually returned to the application in order, for some applications
+    /// it can make sense to leverage the reduced latency of unordered reads. For ordered reads,
+    /// the sibling `read()` method can be used.
+    ///
+    /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
         let (buf, len, more) = self
             .streams
@@ -2490,6 +2515,7 @@ impl Connection {
         Ok((buf, len))
     }
 
+    /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
         let (len, more) = self
             .streams
@@ -2519,6 +2545,7 @@ impl Connection {
         }
     }
 
+    /// Signal to the peer that it should stop sending on the given recv stream
     pub fn stop_sending(&mut self, id: StreamId, error_code: u16) {
         assert!(
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
@@ -2635,6 +2662,7 @@ impl Connection {
         Ok(Some(number))
     }
 
+    #[doc(hidden)]
     pub fn force_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
         let update = space
@@ -2646,6 +2674,9 @@ impl Connection {
         self.update_keys(update, space.next_packet_number, false);
     }
 
+    /// Send data on the given stream
+    ///
+    /// Returns the number of bytes successfully written.
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
         if self.state.is_closed() {
@@ -2727,18 +2758,24 @@ impl Connection {
         self.key_phase = !self.key_phase;
     }
 
+    /// If the connection is currently handshaking
     pub fn is_handshaking(&self) -> bool {
         self.state.is_handshake()
     }
 
+    /// If the connection is closed
     pub fn is_closed(&self) -> bool {
         self.state.is_closed()
     }
 
+    /// If the connection is drained
     pub fn is_drained(&self) -> bool {
         self.state.is_drained()
     }
 
+    /// For clients, if the peer accepted the 0-RTT data packets
+    ///
+    /// The value is meaningless until after the handshake completes.
     pub fn accepted_0rtt(&self) -> bool {
         self.accepted_0rtt
     }
@@ -2761,10 +2798,12 @@ impl Connection {
         self.rem_cid
     }
 
+    /// The latest socket address for this connection's peer
     pub fn remote(&self) -> SocketAddr {
         self.remote
     }
 
+    /// The ALPN protocol negotiated during this connection's handshake
     pub fn protocol(&self) -> Option<&[u8]> {
         self.tls.alpn_protocol()
     }
@@ -2888,10 +2927,16 @@ pub enum ConnectionError {
     TransportError(TransportError),
     /// The peer's QUIC stack aborted the connection automatically.
     #[error(display = "aborted by peer: {}", reason)]
-    ConnectionClosed { reason: frame::ConnectionClose },
+    ConnectionClosed {
+        /// The reason for closing the connection
+        reason: frame::ConnectionClose,
+    },
     /// The peer closed the connection.
     #[error(display = "closed by peer: {}", reason)]
-    ApplicationClosed { reason: frame::ApplicationClose },
+    ApplicationClosed {
+        /// The reason for closing the connection
+        reason: frame::ApplicationClose,
+    },
     /// The peer is unable to continue processing this connection, usually due to having restarted.
     #[error(display = "reset by peer")]
     Reset,
@@ -3064,7 +3109,9 @@ pub enum TimerSetting {
 /// Change to apply to a specific timer
 #[derive(Debug, Copy, Clone)]
 pub struct TimerUpdate {
+    /// Which timer needs an update
     pub timer: Timer,
+    /// The new state for the timer
     pub update: TimerSetting,
 }
 
@@ -3161,14 +3208,20 @@ impl RttEstimator {
     }
 }
 
+/// Kinds of timeouts needed to run the protocol logic
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Timer {
+    /// When to send an ack-eliciting probe packet or declare unacked packets lost
     LossDetection = 0,
+    /// When to close the connection after no activity
     Idle = 1,
     /// When the close timer expires, the connection has been gracefully terminated.
     Close = 2,
+    /// When keys are discarded because they should not be needed anymore
     KeyDiscard = 3,
+    /// When to give up on validating a new path to the peer
     PathValidation = 4,
+    /// When to send a `PING` frame to keep the connection alive
     KeepAlive = 5,
 }
 
@@ -3176,6 +3229,7 @@ impl Timer {
     /// Number of types of timers that a connection may start
     pub const COUNT: usize = 6;
 
+    /// Iterate over all the timers
     pub fn iter() -> impl Iterator<Item = Self> {
         [
             Timer::LossDetection,
@@ -3209,17 +3263,32 @@ pub enum Event {
     /// A connection was lost.
     ///
     /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
-    ConnectionLost { reason: ConnectionError },
+    ConnectionLost {
+        /// Reason that the connection was closed
+        reason: ConnectionError,
+    },
     /// One or more new streams has been opened and is readable
     StreamOpened,
     /// An existing stream has data or errors waiting to be read
-    StreamReadable { stream: StreamId },
+    StreamReadable {
+        /// Which stream is now readable
+        stream: StreamId,
+    },
     /// A formerly write-blocked stream might now accept a write
-    StreamWritable { stream: StreamId },
+    StreamWritable {
+        /// Which stream is now writable
+        stream: StreamId,
+    },
     /// All data sent on `stream` has been received by the peer
-    StreamFinished { stream: StreamId },
+    StreamFinished {
+        /// Which stream has been finished
+        stream: StreamId,
+    },
     /// At least one new stream of a certain directionality may be opened
-    StreamAvailable { directionality: Directionality },
+    StreamAvailable {
+        /// On which direction streams are newly available
+        directionality: Directionality,
+    },
 }
 
 impl From<ConnectionError> for Event {
