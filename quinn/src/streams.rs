@@ -146,7 +146,7 @@ impl AsyncWrite for SendStream {
 impl Drop for SendStream {
     fn drop(&mut self) {
         let mut conn = self.conn.lock().unwrap();
-        if conn.error.is_some() {
+        if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
         if !self.finished {
@@ -334,7 +334,7 @@ impl AsyncRead for RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         let mut conn = self.conn.lock().unwrap();
-        if conn.error.is_some() {
+        if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
         if !self.recvd {
