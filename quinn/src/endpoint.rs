@@ -267,7 +267,11 @@ impl EndpointInner {
 
     fn drive_send(&mut self) -> Result<bool, io::Error> {
         let mut sent = 0;
-        while let Some(t) = self.outgoing.pop_front() {
+        while let Some(t) = self
+            .outgoing
+            .pop_front()
+            .or_else(|| self.inner.poll_transmit())
+        {
             match self.socket.poll_send(&t.destination, t.ecn, &t.packet) {
                 Ok(Async::Ready(_)) => {}
                 Ok(Async::NotReady) => {
