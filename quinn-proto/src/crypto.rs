@@ -124,7 +124,7 @@ impl CryptoClientConfig for Arc<ClientConfig> {
         Ok(TlsSession::Client(ClientSession::new_quic(
             self,
             pki_server_name,
-            to_vec(Side::Client, params),
+            to_vec(params),
         )))
     }
 }
@@ -141,7 +141,7 @@ pub trait CryptoClientConfig {
 impl CryptoServerConfig for Arc<ServerConfig> {
     type Session = TlsSession;
     fn start_session(&self, params: &TransportParameters) -> Self::Session {
-        TlsSession::Server(ServerSession::new_quic(self, to_vec(Side::Server, params)))
+        TlsSession::Server(ServerSession::new_quic(self, to_vec(params)))
     }
 }
 
@@ -183,9 +183,9 @@ pub fn build_client_config() -> ClientConfig {
     cfg
 }
 
-fn to_vec(side: Side, params: &TransportParameters) -> Vec<u8> {
+fn to_vec(params: &TransportParameters) -> Vec<u8> {
     let mut bytes = Vec::new();
-    params.write(side, &mut bytes);
+    params.write(&mut bytes);
     bytes
 }
 

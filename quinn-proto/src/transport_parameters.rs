@@ -7,7 +7,6 @@ use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken};
 use crate::{
     varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
-    VERSION,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -176,16 +175,7 @@ impl From<UnexpectedEnd> for Error {
 }
 
 impl TransportParameters {
-    pub fn write<W: BufMut>(&self, side: Side, w: &mut W) {
-        if side.is_server() {
-            w.write::<u32>(VERSION); // Negotiated version
-            w.write::<u8>(8); // Bytes of supported versions
-            w.write::<u32>(0x0a1a_2a3a); // Reserved version
-            w.write::<u32>(VERSION); // Real supported version
-        } else {
-            w.write::<u32>(VERSION); // Initially requested version
-        }
-
+    pub fn write<W: BufMut>(&self, w: &mut W) {
         let mut buf = Vec::new();
 
         macro_rules! write_params {
@@ -229,37 +219,10 @@ impl TransportParameters {
     }
 
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
-        if side.is_server() {
-            if r.remaining() < 26 {
-                return Err(Error::Malformed);
-            }
-            // We only support one version, so there is no validation to do here.
-            r.get::<u32>().unwrap();
-        } else {
-            if r.remaining() < 31 {
-                return Err(Error::Malformed);
-            }
-            let negotiated = r.get::<u32>().unwrap();
-            if negotiated != VERSION {
-                return Err(Error::VersionNegotiation);
-            }
-            let supported_bytes = r.get::<u8>().unwrap();
-            if supported_bytes < 4 || supported_bytes > 252 || supported_bytes % 4 != 0 {
-                return Err(Error::Malformed);
-            }
-            let mut found = false;
-            for _ in 0..(supported_bytes / 4) {
-                found |= r.get::<u32>().unwrap() == negotiated;
-            }
-            if !found {
-                return Err(Error::VersionNegotiation);
-            }
-        }
-
         // Initialize to protocol-specified defaults
         let mut params = TransportParameters::default();
 
-        let params_len = r.get::<u16>().unwrap();
+        let params_len = r.get::<u16>()?;
         if params_len as usize != r.remaining() {
             return Err(Error::Malformed);
         }
@@ -373,7 +336,7 @@ mod test {
             }),
             ..TransportParameters::default()
         };
-        params.write(Side::Server, &mut buf);
+        params.write(&mut buf);
         assert_eq!(
             TransportParameters::read(Side::Client, &mut buf.into_buf()).unwrap(),
             params
