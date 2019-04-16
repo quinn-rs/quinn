@@ -139,7 +139,7 @@ impl io::Write for SendStream {
 
 impl AsyncWrite for SendStream {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.poll_finish().map_err(|e| e.into())
+        self.poll_finish().map_err(Into::into)
     }
 }
 

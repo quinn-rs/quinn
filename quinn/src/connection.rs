@@ -558,9 +558,10 @@ impl ConnectionInner {
     }
 
     pub(crate) fn check_0rtt(&self) -> Result<(), ()> {
-        match self.inner.is_handshaking() || self.inner.accepted_0rtt() {
-            true => Ok(()),
-            false => Err(()),
+        if self.inner.is_handshaking() || self.inner.accepted_0rtt() {
+            Ok(())
+        } else {
+            Err(())
         }
     }
 }
