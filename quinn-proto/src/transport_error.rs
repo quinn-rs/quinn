@@ -75,7 +75,7 @@ pub struct Code(u16);
 
 impl Code {
     pub(crate) fn crypto(code: u8) -> Self {
-        Code(0x100 | code as u16)
+        Code(0x100 | u16::from(code))
     }
 }
 

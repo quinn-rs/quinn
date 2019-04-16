@@ -460,11 +460,11 @@ impl Connection {
             if !self.in_recovery(info.time_sent) {
                 if self.congestion_window < self.ssthresh {
                     // Slow start.
-                    self.congestion_window += info.size as u64;
+                    self.congestion_window += u64::from(info.size);
                 } else {
                     // Congestion avoidance.
-                    self.congestion_window +=
-                        self.config.max_datagram_size * info.size as u64 / self.congestion_window;
+                    self.congestion_window += self.config.max_datagram_size * u64::from(info.size)
+                        / self.congestion_window;
                 }
             }
         }
@@ -594,7 +594,7 @@ impl Connection {
             .rtt
             .smoothed
             .map_or(self.rtt.latest, |x| cmp::max(x, self.rtt.latest));
-        let loss_delay = rtt + ((rtt * self.config.time_threshold as u32) / 65536);
+        let loss_delay = rtt + ((rtt * u32::from(self.config.time_threshold)) / 65536);
 
         // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
@@ -602,7 +602,7 @@ impl Connection {
         let lost_pn = self
             .space(pn_space)
             .largest_acked_packet
-            .saturating_sub(self.config.packet_threshold as u64);
+            .saturating_sub(u64::from(self.config.packet_threshold));
 
         let space = self.space_mut(pn_space);
         space.loss_time = None;
@@ -661,7 +661,7 @@ impl Connection {
         self.recovery_start_time = now;
         // *= factor
         self.congestion_window =
-            (self.congestion_window * self.config.loss_reduction_factor as u64) >> 16;
+            (self.congestion_window * u64::from(self.config.loss_reduction_factor)) >> 16;
         self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
         self.ssthresh = self.congestion_window;
     }
@@ -785,7 +785,7 @@ impl Connection {
         }
         self.io.timer_start(
             Timer::KeepAlive,
-            now + Duration::from_millis(self.config.keep_alive_interval as u64),
+            now + Duration::from_millis(u64::from(self.config.keep_alive_interval)),
         );
     }
 
@@ -2191,7 +2191,7 @@ impl Connection {
         if self.state.is_handshake()
             && !self.remote_validated
             && self.side.is_server()
-            && self.total_recvd * 3 < self.total_sent + self.mtu as u64
+            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
         {
             trace!(self.log, "blocked by anti-amplification");
             return None;
@@ -2560,7 +2560,7 @@ impl Connection {
 
     fn congestion_blocked(&self) -> bool {
         if let State::Established = self.state {
-            self.congestion_window.saturating_sub(self.in_flight.bytes) < self.mtu as u64
+            self.congestion_window.saturating_sub(self.in_flight.bytes) < u64::from(self.mtu)
         } else {
             false
         }
@@ -2910,7 +2910,7 @@ where
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
     }
     set_payload_length(&mut buf, header_len, number.len(), crypto.tag_len());
-    crypto.encrypt(packet_number as u64, &mut buf, header_len);
+    crypto.encrypt(u64::from(packet_number), &mut buf, header_len);
     partial_encode.finish(&mut buf, header_crypto);
     buf.into()
 }
@@ -3149,16 +3149,16 @@ impl InFlight {
     }
 
     fn insert(&mut self, packet: &SentPacket) {
-        self.bytes += packet.size as u64;
-        self.crypto += packet.is_crypto_packet as u64;
-        self.ack_eliciting += packet.ack_eliciting as u64;
+        self.bytes += u64::from(packet.size);
+        self.crypto += u64::from(packet.is_crypto_packet);
+        self.ack_eliciting += u64::from(packet.ack_eliciting);
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
     fn remove(&mut self, packet: &SentPacket) {
-        self.bytes -= packet.size as u64;
-        self.crypto -= packet.is_crypto_packet as u64;
-        self.ack_eliciting -= packet.ack_eliciting as u64;
+        self.bytes -= u64::from(packet.size);
+        self.crypto -= u64::from(packet.is_crypto_packet);
+        self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }
 }
 
@@ -3303,7 +3303,7 @@ struct PathResponse {
 }
 
 fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + x.subsec_micros() as u64
+    x.as_secs() * 1000 * 1000 + u64::from(x.subsec_micros())
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {

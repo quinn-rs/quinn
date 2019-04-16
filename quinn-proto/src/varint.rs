@@ -28,27 +28,27 @@ pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
     let tag = buf[0] >> 6;
     buf[0] &= 0b0011_1111;
     Some(match tag {
-        0b00 => buf[0] as u64,
+        0b00 => u64::from(buf[0]),
         0b01 => {
             if r.remaining() < 1 {
                 return None;
             }
             r.copy_to_slice(&mut buf[1..2]);
-            BigEndian::read_u16(&buf) as u64
+            u64::from(BigEndian::read_u16(&buf))
         }
         0b10 => {
             if r.remaining() < 3 {
                 return None;
             }
             r.copy_to_slice(&mut buf[1..4]);
-            BigEndian::read_u32(&buf) as u64
+            u64::from(BigEndian::read_u32(&buf))
         }
         0b11 => {
             if r.remaining() < 7 {
                 return None;
             }
             r.copy_to_slice(&mut buf[1..8]);
-            BigEndian::read_u64(&buf) as u64
+            BigEndian::read_u64(&buf)
         }
         _ => unreachable!(),
     })
