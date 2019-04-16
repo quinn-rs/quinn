@@ -164,7 +164,7 @@ impl super::UdpExt for UdpSocket {
             },
             None => 0,
         };
-        let addr = match name.ss_family as libc::c_int {
+        let addr = match libc::c_int::from(name.ss_family) {
             libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
             libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
             _ => unreachable!(),
