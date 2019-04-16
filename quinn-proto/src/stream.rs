@@ -34,7 +34,7 @@ impl Streams {
         let mut streams = FnvHashMap::default();
         for i in 0..max_remote_uni {
             streams.insert(
-                StreamId::new(!side, Directionality::Uni, u64::from(i)),
+                StreamId::new(!side, Directionality::Uni, i),
                 Recv::new().into(),
             );
         }
@@ -253,7 +253,7 @@ impl Stream {
 
     /// Safe to free
     pub fn is_closed(&self) -> bool {
-        self.send().map_or(true, |x| x.is_closed()) && self.recv().map_or(true, |x| x.is_closed())
+        self.send().map_or(true, Send::is_closed) && self.recv().map_or(true, Recv::is_closed)
     }
 }
 
