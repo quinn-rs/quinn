@@ -157,7 +157,7 @@ impl TransportConfig {
         {
             return Err(ConfigError::VarIntBounds(name));
         }
-        if self.idle_timeout != 0 && self.keep_alive_interval as u64 >= self.idle_timeout {
+        if self.idle_timeout != 0 && u64::from(self.keep_alive_interval) >= self.idle_timeout {
             warn!(
                 log,
                 "keep-alive interval {} is ineffective due to lower idle timeout {}",

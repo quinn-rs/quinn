@@ -628,7 +628,7 @@ impl PacketNumber {
         match self {
             U8(x) => w.write(x),
             U16(x) => w.write(x),
-            U24(x) => w.put_uint_be(x as u64, 3),
+            U24(x) => w.put_uint_be(u64::from(x), 3),
             U32(x) => w.write(x),
         }
     }
@@ -663,10 +663,10 @@ impl PacketNumber {
         // From Appendix A
         use self::PacketNumber::*;
         let truncated = match self {
-            U8(x) => x as u64,
-            U16(x) => x as u64,
-            U24(x) => x as u64,
-            U32(x) => x as u64,
+            U8(x) => u64::from(x),
+            U16(x) => u64::from(x),
+            U24(x) => u64::from(x),
+            U32(x) => u64::from(x),
         };
         let nbits = self.len() * 8;
         let win = 1 << nbits;
