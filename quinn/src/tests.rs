@@ -181,7 +181,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (server_driver, _, server_incoming) = server.from_socket(server_sock).unwrap();
+        let (server_driver, _, server_incoming) = server.with_socket(server_sock).unwrap();
 
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
