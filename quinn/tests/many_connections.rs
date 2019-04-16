@@ -20,7 +20,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
-    let mut ep_builder = quinn::Endpoint::new();
+    let mut ep_builder = quinn::Endpoint::builder();
     ep_builder.listen(cfg);
     let (driver, endpoint, incoming_conns) = unwrap!(ep_builder.bind(&("127.0.0.1", 0)));
     runtime.spawn(driver.map_err(|e| panic!("Listener IO error: {}", e)));
