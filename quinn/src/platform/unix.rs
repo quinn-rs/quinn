@@ -158,7 +158,16 @@ impl super::UdpExt for UdpSocket {
                     cmsg::decode::<u8>(cmsg)
                 },
                 (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
-                    cmsg::decode::<libc::c_int>(cmsg) as u8
+                    // Temporary hack around broken macos ABI. Remove once upstream fixes it.
+                    // https://bugreport.apple.com/web/?problemID=48761855
+                    if cfg!(target_os = "macos")
+                        && cmsg.cmsg_len as usize
+                            == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
+                    {
+                        cmsg::decode::<u8>(cmsg)
+                    } else {
+                        cmsg::decode::<libc::c_int>(cmsg) as u8
+                    }
                 },
                 _ => 0,
             },
