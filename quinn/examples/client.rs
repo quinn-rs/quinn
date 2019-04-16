@@ -67,7 +67,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .next()
         .ok_or(format_err!("couldn't resolve to an address"))?;
 
-    let mut endpoint = quinn::Endpoint::new();
+    let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
     endpoint.logger(log.clone());

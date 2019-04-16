@@ -141,7 +141,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 
-    let mut endpoint = quinn::Endpoint::new();
+    let mut endpoint = quinn::Endpoint::builder();
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 

@@ -16,7 +16,7 @@
 //! # use futures::Future;
 //! # fn main() {
 //! let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-//! let mut builder = quinn::Endpoint::new();
+//! let mut builder = quinn::Endpoint::builder();
 //! // <configure builder>
 //! let (endpoint_driver, endpoint, _) = builder.bind("[::]:0").unwrap();
 //! runtime.spawn(endpoint_driver.map_err(|e| panic!("IO error: {}", e)));

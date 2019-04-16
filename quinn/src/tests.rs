@@ -11,7 +11,7 @@ use super::{ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
 
 #[test]
 fn handshake_timeout() {
-    let client = Endpoint::new();
+    let client = Endpoint::builder();
     let (client_driver, client, _) = client
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -54,7 +54,7 @@ fn handshake_timeout() {
 
 #[test]
 fn drop_endpoint() {
-    let endpoint = Endpoint::new();
+    let endpoint = Endpoint::builder();
     let (driver, endpoint, _) = endpoint
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -85,7 +85,7 @@ fn drop_endpoint() {
 
 #[test]
 fn drop_endpoint_driver() {
-    let endpoint = Endpoint::new();
+    let endpoint = Endpoint::builder();
     let (_, endpoint, _) = endpoint
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -100,7 +100,7 @@ fn drop_endpoint_driver() {
 
 #[test]
 fn close_endpoint() {
-    let endpoint = Endpoint::new();
+    let endpoint = Endpoint::builder();
     let (_driver, endpoint, incoming) = endpoint
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -129,7 +129,7 @@ fn close_endpoint() {
 #[test]
 fn local_addr() {
     let port = 56987;
-    let (_, ep, _) = Endpoint::new()
+    let (_, ep, _) = Endpoint::builder()
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
         .expect("Could not bind to localhost");
     assert_eq!(
@@ -176,7 +176,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
         server_config.certificate(cert_chain, key).unwrap();
 
-        let mut server = Endpoint::new();
+        let mut server = Endpoint::builder();
         server.logger(log.new(o!("side" => "Server")));
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
@@ -186,7 +186,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
         client_config.enable_keylog();
-        let mut client = Endpoint::new();
+        let mut client = Endpoint::builder();
         client.logger(log.new(o!("side" => "Client")));
         client.default_client_config(client_config.build());
         let (client_driver, client, _) = client.bind(client_addr).unwrap();

@@ -66,7 +66,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let state = Arc::new(Mutex::new(State { saw_cert: false }));
 
-    let mut builder = quinn::Endpoint::new();
+    let mut builder = quinn::Endpoint::builder();
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
     tls_config.enable_early_data = true;
