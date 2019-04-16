@@ -40,11 +40,11 @@ impl<'a> EndpointBuilder<'a> {
         addr: T,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
-        self.from_socket(socket)
+        self.with_socket(socket)
     }
 
     /// Build an endpoint around a pre-configured socket.
-    pub fn from_socket(
+    pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
