@@ -618,7 +618,6 @@ impl Connection {
                 );
             }
         }
-        mem::drop(space);
 
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {

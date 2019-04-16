@@ -803,7 +803,7 @@ pub enum SpaceId {
 impl SpaceId {
     pub fn iter() -> impl Iterator<Item = Self> {
         [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data]
-            .into_iter()
+            .iter()
             .cloned()
     }
 }
