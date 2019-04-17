@@ -2779,6 +2779,7 @@ impl Connection {
         self.accepted_0rtt
     }
 
+    /// Whether the connection has 0-RTT keys available
     pub fn has_0rtt(&self) -> bool {
         self.zero_rtt_crypto.is_some()
     }
