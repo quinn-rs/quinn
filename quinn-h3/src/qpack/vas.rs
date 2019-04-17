@@ -77,7 +77,7 @@ pub enum Error {
     BadIndex(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct VirtualAddressSpace {
     inserted: usize,
     dropped: usize,
@@ -85,14 +85,6 @@ pub struct VirtualAddressSpace {
 }
 
 impl VirtualAddressSpace {
-    pub fn new() -> VirtualAddressSpace {
-        VirtualAddressSpace {
-            inserted: 0,
-            dropped: 0,
-            delta: 0,
-        }
-    }
-
     pub fn add(&mut self) -> AbsoluteIndex {
         self.inserted += 1;
         self.delta += 1;
@@ -113,11 +105,7 @@ impl VirtualAddressSpace {
     }
 
     pub fn evicted(&self, index: AbsoluteIndex) -> bool {
-        if index != 0 && index <= self.dropped {
-            true
-        } else {
-            false
-        }
+        index != 0 && index <= self.dropped
     }
 
     pub fn relative_base(&self, base: usize, index: RelativeIndex) -> Result<usize, Error> {
@@ -159,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_no_relative_index_when_empty() {
-        let vas = VirtualAddressSpace::new();
+        let vas = VirtualAddressSpace::default();
         let res = vas.relative_base(0, 0);
         assert_eq!(res, Err(Error::BadRelativeIndex(0)));
     }
@@ -169,7 +157,7 @@ mod tests {
         fn test_first_insertion_without_drop(
             ref count in 1..2200usize
         ) {
-            let mut vas = VirtualAddressSpace::new();
+            let mut vas = VirtualAddressSpace::default();
             vas.add();
             (1..*count).for_each(|_| { vas.add(); });
 
@@ -180,7 +168,7 @@ mod tests {
         fn test_first_insertion_with_drop(
             ref count in 2..2200usize
         ) {
-            let mut vas = VirtualAddressSpace::new();
+            let mut vas = VirtualAddressSpace::default();
             vas.add();
             (1..*count).for_each(|_| { vas.add(); });
             (0..*count - 1).for_each(|_| vas.drop());
@@ -192,7 +180,7 @@ mod tests {
         fn test_last_insertion_without_drop(
             ref count in 1..2200usize
         ) {
-            let mut vas = VirtualAddressSpace::new();
+            let mut vas = VirtualAddressSpace::default();
             (1..*count).for_each(|_| { vas.add(); });
             vas.add();
 
@@ -204,7 +192,7 @@ mod tests {
         fn test_last_insertion_with_drop(
             ref count in 2..2200usize
         ) {
-            let mut vas = VirtualAddressSpace::new();
+            let mut vas = VirtualAddressSpace::default();
             (0..*count - 1).for_each(|_| { vas.add(); });
             vas.add();
             (0..*count - 1).for_each(|_| { vas.drop(); });
@@ -226,7 +214,7 @@ mod tests {
          * pst:  ----012
          * pos:  0123456
          */
-        let mut vas = VirtualAddressSpace::new();
+        let mut vas = VirtualAddressSpace::default();
         (0..7).for_each(|_| {
             vas.add();
         });
@@ -236,7 +224,7 @@ mod tests {
 
     #[test]
     fn largest_ref() {
-        let mut vas = VirtualAddressSpace::new();
+        let mut vas = VirtualAddressSpace::default();
         (0..7).for_each(|_| {
             vas.add();
         });
@@ -245,7 +233,7 @@ mod tests {
 
     #[test]
     fn relative() {
-        let mut vas = VirtualAddressSpace::new();
+        let mut vas = VirtualAddressSpace::default();
 
         (0..7).for_each(|_| {
             vas.add();
@@ -259,7 +247,7 @@ mod tests {
 
     #[test]
     fn absolute_from_real_index() {
-        let mut vas = VirtualAddressSpace::new();
+        let mut vas = VirtualAddressSpace::default();
         assert_eq!(vas.index(0), Err(Error::BadIndex(0)));
         vas.add();
         assert_eq!(vas.index(0), Ok(1));
@@ -277,7 +265,7 @@ mod tests {
 
     #[test]
     fn evicted() {
-        let mut vas = VirtualAddressSpace::new();
+        let mut vas = VirtualAddressSpace::default();
         assert_eq!(vas.evicted(0), false);
         assert_eq!(vas.evicted(1), false);
         vas.add();

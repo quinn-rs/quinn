@@ -10,18 +10,10 @@ use super::static_::StaticTable;
 use crate::qpack::vas::{self, VirtualAddressSpace};
 
 /**
- * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
- * 4. Configuration
- */
-pub const SETTINGS_MAX_TABLE_CAPACITY_DEFAULT: usize = 0;
-
-/**
  * https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html#maximum-dynamic-table-capacity
  */
-const SETTINGS_MAX_TABLE_CAPACITY_MAX: usize = 1073741823; // 2^30 -1
-
-const SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT: usize = 0;
-const SETTINGS_MAX_BLOCKED_STREAMS_MAX: usize = 65535; // 2^16 - 1
+const SETTINGS_MAX_TABLE_CAPACITY_MAX: usize = 1_073_741_823; // 2^30 -1
+const SETTINGS_MAX_BLOCKED_STREAMS_MAX: usize = 65_535; // 2^16 - 1
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
@@ -59,7 +51,7 @@ impl<'a> DynamicTableDecoder<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or(Error::BadIndex(real_index))
+            .ok_or_else(|| Error::BadIndex(real_index))
     }
 
     pub(super) fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
@@ -67,7 +59,7 @@ impl<'a> DynamicTableDecoder<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or(Error::BadIndex(real_index))
+            .ok_or_else(|| Error::BadIndex(real_index))
     }
 }
 
@@ -130,7 +122,7 @@ impl<'a> DynamicTableInserter<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or(Error::BadIndex(real_index))
+            .ok_or_else(|| Error::BadIndex(real_index))
     }
 
     pub(super) fn total_inserted(&self) -> usize {
@@ -179,14 +171,7 @@ impl<'a> DynamicTableEncoder<'a> {
     }
 
     pub(super) fn find(&mut self, field: &HeaderField) -> DynamicLookupResult {
-        self.lookup_result(
-            self.table
-                .field_map
-                .as_ref()
-                .unwrap()
-                .get(field)
-                .map(|x| *x),
-        )
+        self.lookup_result(self.table.field_map.as_ref().unwrap().get(field).cloned())
     }
 
     fn lookup_result(&mut self, abolute: Option<usize>) -> DynamicLookupResult {
@@ -292,7 +277,7 @@ impl<'a> DynamicTableEncoder<'a> {
             return DynamicLookupResult::Static(index);
         }
 
-        self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).map(|x| *x))
+        self.lookup_result(self.table.name_map.as_ref().unwrap().get(name).cloned())
     }
 
     fn track_ref(&mut self, reference: usize) {
@@ -336,6 +321,7 @@ pub enum DynamicInsertionResult {
     NotInserted(DynamicLookupResult),
 }
 
+#[derive(Default)]
 pub struct DynamicTable {
     fields: VecDeque<HeaderField>,
     curr_mem_size: usize,
@@ -353,31 +339,18 @@ pub struct DynamicTable {
 
 impl DynamicTable {
     pub fn new() -> DynamicTable {
-        DynamicTable {
-            fields: VecDeque::new(),
-            curr_mem_size: 0,
-            mem_limit: SETTINGS_MAX_TABLE_CAPACITY_DEFAULT,
-            vas: VirtualAddressSpace::new(),
-            name_map: None, // TODO gather in encoder data
-            field_map: None,
-            track_map: None,
-            track_blocks: None,
-            largest_known_recieved: 0,
-            blocked_max: SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT,
-            blocked_count: 0,
-            blocked_streams: None,
-        }
+        DynamicTable::default()
     }
 
-    pub fn decoder<'a>(&'a self, base: usize) -> DynamicTableDecoder<'a> {
+    pub fn decoder(&self, base: usize) -> DynamicTableDecoder {
         DynamicTableDecoder { table: self, base }
     }
 
-    pub fn inserter<'a>(&'a mut self) -> DynamicTableInserter<'a> {
+    pub fn inserter(&mut self) -> DynamicTableInserter {
         DynamicTableInserter { table: self }
     }
 
-    pub fn encoder<'a>(&'a mut self, stream_id: u64) -> DynamicTableEncoder<'a> {
+    pub fn encoder(&mut self, stream_id: u64) -> DynamicTableEncoder {
         if self.name_map.is_none() {
             self.name_map = Some(HashMap::new());
             self.field_map = Some(HashMap::new());
@@ -436,7 +409,6 @@ impl DynamicTable {
 
         match self.can_free(field.mem_size())? {
             None => return Ok(None),
-            Some(x) if x <= 0 => (),
             Some(to_evict) => {
                 self.evict(to_evict)?;
             }
@@ -456,25 +428,19 @@ impl DynamicTable {
 
             self.vas.drop();
 
-            if self.name_map.is_some() {
-                match self.name_map.as_mut().unwrap().entry(field.name.clone()) {
-                    Entry::Occupied(e) => {
-                        if self.vas.evicted(*e.get()) {
-                            e.remove();
-                        }
+            if let Some(map) = self.name_map.as_mut() {
+                if let Entry::Occupied(e) = map.entry(field.name.clone()) {
+                    if self.vas.evicted(*e.get()) {
+                        e.remove();
                     }
-                    _ => (),
                 }
             }
 
-            if self.field_map.is_some() {
-                match self.field_map.as_mut().unwrap().entry(field) {
-                    Entry::Occupied(e) => {
-                        if self.vas.evicted(*e.get()) {
-                            e.remove();
-                        }
+            if let Some(map) = self.field_map.as_mut() {
+                if let Entry::Occupied(e) = map.entry(field) {
+                    if self.vas.evicted(*e.get()) {
+                        e.remove();
                     }
-                    _ => (),
                 }
             }
         }
@@ -612,7 +578,7 @@ impl DynamicTable {
         let acked = self.blocked_streams.as_mut().unwrap();
         let blocked = acked.split_off(&(self.largest_known_recieved + 1));
 
-        if acked.len() > 0 {
+        if !acked.is_empty() {
             let total_acked = acked.iter().fold(0usize, |t, (_, v)| t + v);
             self.blocked_count -= total_acked;
         }

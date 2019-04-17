@@ -19,11 +19,11 @@ impl StaticTable {
     }
 
     pub fn find(field: &HeaderField) -> Option<usize> {
-        PREDEFINED_HEADERS_MAP.get(field).map(|i| *i)
+        PREDEFINED_HEADERS_MAP.get(field).cloned()
     }
 
     pub fn find_name(name: &[u8]) -> Option<usize> {
-        PREDEFINED_HEADERS_NAME_MAP.get(name).map(|i| *i)
+        PREDEFINED_HEADERS_NAME_MAP.get(name).cloned()
     }
 }
 

@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct BitWindow {
     pub byte: u32,
     pub bit: u32,
@@ -6,12 +6,8 @@ pub struct BitWindow {
 }
 
 impl BitWindow {
-    pub fn new() -> BitWindow {
-        BitWindow {
-            byte: 0,
-            bit: 0,
-            count: 0,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn forwards(&mut self, step: u32) {

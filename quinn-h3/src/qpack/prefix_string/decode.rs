@@ -70,8 +70,8 @@ impl HuffmanDecoder {
         };
 
         match at_value {
-            &DecodeValue::Sym(x) => Ok(Some(x)),
-            &DecodeValue::Partial(d) => d.decode_next(bit_pos, input),
+            DecodeValue::Sym(x) => Ok(Some(*x)),
+            DecodeValue::Partial(d) => d.decode_next(bit_pos, input),
         }
     }
 }
@@ -289,11 +289,11 @@ impl<'a> Iterator for DecodeIter<'a> {
 }
 
 pub trait HpackStringDecode {
-    fn hpack_decode<'a>(&'a self) -> DecodeIter<'a>;
+    fn hpack_decode(&self) -> DecodeIter;
 }
 
 impl HpackStringDecode for Vec<u8> {
-    fn hpack_decode<'a>(&'a self) -> DecodeIter<'a> {
+    fn hpack_decode(&self) -> DecodeIter {
         DecodeIter {
             bit_pos: BitWindow::new(),
             content: self,

@@ -202,8 +202,8 @@ pub struct PriorityFrame {
 impl Codec for PriorityFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         let first = buf.get_u8();
-        let pt = (0b11000000 & first) >> 6;
-        let dt = (0b00110000 & first) >> 4;
+        let pt = (0b1100_0000 & first) >> 6;
+        let dt = (0b0011_0000 & first) >> 4;
 
         let prioritized = match pt {
             0b00 => Priority::RequestStream(buf.get_var()?),
