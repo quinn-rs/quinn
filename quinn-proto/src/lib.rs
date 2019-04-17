@@ -152,7 +152,7 @@ impl slog::Value for Directionality {
 
 /// Identifier for a stream within a particular connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct StreamId(pub(crate) u64);
+pub struct StreamId(#[doc(hidden)] pub u64);
 
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
