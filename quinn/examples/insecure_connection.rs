@@ -52,7 +52,7 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Bo
 
 fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<Error>> {
     let client_cfg = configure_client();
-    let mut endpoint_builder = Endpoint::new();
+    let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
 
     let (driver, endpoint, _) = endpoint_builder.bind("0.0.0.0:0")?;

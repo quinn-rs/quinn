@@ -19,7 +19,7 @@ pub fn make_client_endpoint<A: ToSocketAddrs>(
     server_certs: &[&[u8]],
 ) -> Result<(Endpoint, EndpointDriver), Box<Error>> {
     let client_cfg = configure_client(server_certs)?;
-    let mut endpoint_builder = Endpoint::new();
+    let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
     let (driver, endpoint, _incoming) = endpoint_builder.bind(bind_addr)?;
     Ok((endpoint, driver))
@@ -37,7 +37,7 @@ pub fn make_server_endpoint<A: ToSocketAddrs>(
     bind_addr: A,
 ) -> Result<(EndpointDriver, Incoming, Vec<u8>), Box<Error>> {
     let (server_config, server_cert) = configure_server()?;
-    let mut endpoint_builder = Endpoint::new();
+    let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.listen(server_config);
     let (driver, _endpoint, incoming) = endpoint_builder.bind(bind_addr)?;
     Ok((driver, incoming, server_cert))
