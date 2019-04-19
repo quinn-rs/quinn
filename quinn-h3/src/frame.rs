@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut, Bytes};
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
 use quinn_proto::varint;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     Malformed,
     UnsupportedFrame,
@@ -13,7 +13,7 @@ pub enum Error {
     InvalidFrameValue,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum HttpFrame {
     Data(DataFrame),
     Headers(HeadersFrame),
@@ -48,7 +48,7 @@ impl HttpFrame {
         let len = buf.get_var()?;
 
         if buf.remaining() < len as usize {
-            return Err(Error::Malformed);
+            return Err(Error::UnexpectedEnd);
         }
 
         let mut payload = buf.take(len as usize);
@@ -93,7 +93,7 @@ frame_types! {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Type(u64);
+pub struct Type(pub(crate) u64);
 
 impl Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
@@ -113,7 +113,7 @@ trait FrameHeader {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct DataFrame {
     pub payload: Bytes,
 }
@@ -132,7 +132,7 @@ impl FrameHeader for DataFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct HeadersFrame {
     pub encoded: Bytes,
 }
@@ -156,7 +156,7 @@ impl HeadersFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct PushPromiseFrame {
     push_id: u64,
     encoded: Bytes,
@@ -183,7 +183,7 @@ impl PushPromiseFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Priority {
     RequestStream(u64),
     PushStream(u64),
@@ -192,7 +192,7 @@ pub enum Priority {
     TreeRoot,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct PriorityFrame {
     prioritized: Priority,
     dependency: Priority,
@@ -280,7 +280,7 @@ impl FrameHeader for PriorityFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SettingsFrame {
     pub num_placeholders: u64,
     pub max_header_list_size: u64,
@@ -296,7 +296,7 @@ impl Default for SettingsFrame {
 }
 
 impl SettingsFrame {
-    fn encode<T: BufMut>(&self, buf: &mut T) {
+    pub fn encode<T: BufMut>(&self, buf: &mut T) {
         self.encode_header(buf);
         SettingId::NUM_PLACEHOLDERS.encode(buf);
         buf.write_var(self.num_placeholders);
@@ -304,7 +304,7 @@ impl SettingsFrame {
         buf.write_var(self.max_header_list_size);
     }
 
-    fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
+    pub fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
         let mut settings = SettingsFrame::default();
 
         while buf.has_remaining() {
@@ -392,26 +392,29 @@ mod tests {
     fn buffer_too_short() {
         let mut buf = Cursor::new(&[04, 0x4, 0, 255, 128]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::Malformed));
+        assert_eq!(decoded, Err(Error::UnexpectedEnd));
     }
 
     #[test]
     fn settings_frame_ignores_0x_a_a() {
-        let mut buf = vec![4, 16, 8,  128, 0, 250, 218];
+        let mut buf = vec![4, 16, 8, 128, 0, 250, 218];
         buf.write_var(0x1a2a);
         buf.extend(&[128, 0, 250, 218, 6, 128, 0, 250, 218]);
 
         let mut cur = Cursor::new(&buf);
         let decoded = HttpFrame::decode(&mut cur).unwrap();
-        assert_eq!(decoded, HttpFrame::Settings(SettingsFrame {
-            num_placeholders: 0xfada,
-            max_header_list_size: 0xfada,
-        }));
+        assert_eq!(
+            decoded,
+            HttpFrame::Settings(SettingsFrame {
+                num_placeholders: 0xfada,
+                max_header_list_size: 0xfada,
+            })
+        );
     }
 
     #[test]
     fn settings_frame_invalid_value() {
-       let mut buf = Cursor::new(&[4, 6, 0, 255, 128, 0, 250, 218]);
+        let mut buf = Cursor::new(&[4, 6, 0, 255, 128, 0, 250, 218]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::InvalidFrameValue));
     }
