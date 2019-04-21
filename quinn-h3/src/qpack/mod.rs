@@ -3,8 +3,7 @@ pub use self::decoder::{
 };
 pub use self::dynamic::{
     DynamicTable, DynamicTableDecoder, DynamicTableEncoder, DynamicTableInserter,
-    Error as DynamicTableError, SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT,
-    SETTINGS_MAX_TABLE_CAPACITY_DEFAULT,
+    Error as DynamicTableError,
 };
 pub use self::encoder::{encode, on_decoder_recv, set_dynamic_table_size, Error as EncoderError};
 pub use self::field::HeaderField;

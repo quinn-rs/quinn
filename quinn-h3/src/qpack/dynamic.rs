@@ -9,18 +9,10 @@ use super::field::HeaderField;
 use super::static_::StaticTable;
 use crate::qpack::vas::{self, VirtualAddressSpace};
 
-/**
- * https://tools.ietf.org/html/draft-ietf-quic-qpack-01
- * 4. Configuration
- */
 pub const SETTINGS_MAX_TABLE_CAPACITY_DEFAULT: usize = 0;
-
-/**
- * https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html#maximum-dynamic-table-capacity
- */
 const SETTINGS_MAX_TABLE_CAPACITY_MAX: usize = 1073741823; // 2^30 -1
 
-const SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT: usize = 0;
+pub const SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT: usize = 0;
 const SETTINGS_MAX_BLOCKED_STREAMS_MAX: usize = 65535; // 2^16 - 1
 
 #[derive(Debug, PartialEq, Error)]
@@ -357,7 +349,7 @@ impl DynamicTable {
             fields: VecDeque::new(),
             curr_mem_size: 0,
             mem_limit: SETTINGS_MAX_TABLE_CAPACITY_DEFAULT,
-            vas: VirtualAddressSpace::new(),
+            vas: VirtualAddressSpace::default(),
             name_map: None, // TODO gather in encoder data
             field_map: None,
             track_map: None,

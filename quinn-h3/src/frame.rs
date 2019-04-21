@@ -146,12 +146,12 @@ impl FrameHeader for HeadersFrame {
 }
 
 impl HeadersFrame {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
+    pub fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(HeadersFrame {
             encoded: buf.collect(),
         })
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) {
+    pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
         buf.put(&self.encoded);
     }
@@ -294,8 +294,8 @@ impl Default for SettingsFrame {
         SettingsFrame {
             num_placeholders: 16,
             max_header_list_size: 65536,
-            qpack_max_table_capacity: qpack::SETTINGS_MAX_TABLE_CAPACITY_DEFAULT as u64,
-            qpack_blocked_streams: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
+            qpack_max_table_capacity: 0,
+            qpack_blocked_streams: 0,
         }
     }
 }
@@ -429,8 +429,8 @@ mod tests {
             HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 0xfada,
                 max_header_list_size: 0xfada,
-                qpack_max_table_capacity: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
-                qpack_blocked_streams: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
+                qpack_max_table_capacity: 0,
+                qpack_blocked_streams: 0,
             })
         );
     }

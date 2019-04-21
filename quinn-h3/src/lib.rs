@@ -14,6 +14,9 @@ pub mod connection;
 pub mod frame;
 pub mod qpack;
 
+pub use connection::Connection;
+// mod client;
+
 use bytes::{Buf, BufMut};
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
 
