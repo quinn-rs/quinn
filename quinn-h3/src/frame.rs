@@ -1,9 +1,10 @@
 use std::mem::size_of;
 
 use bytes::{Buf, BufMut, Bytes};
-
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
 use quinn_proto::varint;
+
+use crate::qpack;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
@@ -284,6 +285,8 @@ impl FrameHeader for PriorityFrame {
 pub struct SettingsFrame {
     pub num_placeholders: u64,
     pub max_header_list_size: u64,
+    pub qpack_max_table_capacity: u64,
+    pub qpack_blocked_streams: u64,
 }
 
 impl Default for SettingsFrame {
@@ -291,6 +294,8 @@ impl Default for SettingsFrame {
         SettingsFrame {
             num_placeholders: 16,
             max_header_list_size: 65536,
+            qpack_max_table_capacity: qpack::SETTINGS_MAX_TABLE_CAPACITY_DEFAULT as u64,
+            qpack_blocked_streams: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
         }
     }
 }
@@ -302,6 +307,10 @@ impl SettingsFrame {
         buf.write_var(self.num_placeholders);
         SettingId::MAX_HEADER_LIST_SIZE.encode(buf);
         buf.write_var(self.max_header_list_size);
+        SettingId::QPACK_MAX_TABLE_CAPACITY.encode(buf);
+        buf.write_var(self.qpack_max_table_capacity);
+        SettingId::QPACK_BLOCKED_STREAMS.encode(buf);
+        buf.write_var(self.qpack_blocked_streams);
     }
 
     pub fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
@@ -322,6 +331,12 @@ impl SettingsFrame {
                 SettingId::MAX_HEADER_LIST_SIZE => {
                     settings.max_header_list_size = value;
                 }
+                SettingId::QPACK_MAX_TABLE_CAPACITY => {
+                    settings.qpack_max_table_capacity = value;
+                }
+                SettingId::QPACK_BLOCKED_STREAMS => {
+                    settings.qpack_blocked_streams = value;
+                }
                 _ => continue,
             }
         }
@@ -336,6 +351,10 @@ impl FrameHeader for SettingsFrame {
             + varint::size(self.num_placeholders).unwrap()
             + varint::size(SettingId::MAX_HEADER_LIST_SIZE.0).unwrap()
             + varint::size(self.max_header_list_size).unwrap()
+            + varint::size(SettingId::QPACK_MAX_TABLE_CAPACITY.0).unwrap()
+            + varint::size(self.qpack_max_table_capacity).unwrap()
+            + varint::size(SettingId::QPACK_BLOCKED_STREAMS.0).unwrap()
+            + varint::size(self.qpack_blocked_streams).unwrap()
     }
 }
 
@@ -360,6 +379,8 @@ macro_rules! setting_identifiers {
 }
 
 setting_identifiers! {
+    QPACK_MAX_TABLE_CAPACITY = 0x1,
+    QPACK_BLOCKED_STREAMS = 0x7,
     NUM_PLACEHOLDERS = 0x8,
     MAX_HEADER_LIST_SIZE = 0x6,
 }
@@ -408,6 +429,8 @@ mod tests {
             HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 0xfada,
                 max_header_list_size: 0xfada,
+                qpack_max_table_capacity: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
+                qpack_blocked_streams: qpack::SETTINGS_MAX_BLOCKED_STREAMS_DEFAULT as u64,
             })
         );
     }
@@ -428,12 +451,17 @@ mod tests {
 
     #[test]
     fn settings_frame_ignores_unknown_id() {
-        let mut buf = Cursor::new(&[4, 10, 0xA, 128, 0, 250, 218, 6, 128, 0, 250, 218],);
+        let mut buf = Cursor::new(&[4, 10, 0xA, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Ok(HttpFrame::Settings(SettingsFrame {
+        assert_eq!(
+            decoded,
+            Ok(HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 16,
                 max_header_list_size: 0xFADA,
-            })));
+                qpack_max_table_capacity: 0,
+                qpack_blocked_streams: 0,
+            }))
+        );
     }
 
     fn codec_frame_check(frame: HttpFrame, wire: &[u8]) {
@@ -451,10 +479,15 @@ mod tests {
     fn settings_frame() {
         codec_frame_check(
             HttpFrame::Settings(SettingsFrame {
-                num_placeholders: 0xFADA,
-                max_header_list_size: 0xFADA,
+                num_placeholders: 0xfada,
+                max_header_list_size: 0xfad1,
+                qpack_max_table_capacity: 0xfad2,
+                qpack_blocked_streams: 0xfad3,
             }),
-            &[4, 10, 8, 128, 0, 250, 218, 6, 128, 0, 250, 218],
+            &[
+                4, 20, 8, 128, 0, 250, 218, 6, 128, 0, 250, 209, 1, 128, 0, 250, 210, 7, 128, 0,
+                250, 211,
+            ],
         );
     }
 
