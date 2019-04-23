@@ -123,7 +123,7 @@ fn read_from_peer(
                 ConnectionClosed(e) => e,
             }
         })
-        .and_then(move |(_stream, data)| {
+        .and_then(move |data| {
             assert!(hash_correct(&data));
             Ok(())
         })
