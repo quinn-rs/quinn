@@ -1,5 +1,5 @@
+use std::io;
 use std::str;
-use std::{io, mem};
 
 use bytes::Bytes;
 use err_derive::Error;
@@ -251,7 +251,8 @@ impl RecvStream {
         ReadToEnd {
             stream: Some(self),
             size_limit,
-            buffer: Vec::new(),
+            read: Vec::new(),
+            len: 0,
         }
     }
 
@@ -278,7 +279,8 @@ impl RecvStream {
 /// Future produced by `read_to_end`
 pub struct ReadToEnd {
     stream: Option<RecvStream>,
-    buffer: Vec<u8>,
+    read: Vec<(Bytes, usize)>,
+    len: usize,
     size_limit: usize,
 }
 
@@ -289,22 +291,22 @@ impl Future for ReadToEnd {
         loop {
             match self.stream.as_mut().unwrap().poll_read_unordered() {
                 Ok(Async::Ready((data, offset))) => {
-                    let len = self.buffer.len().max(offset as usize + data.len());
-                    if len > self.size_limit {
+                    let end = data.len() as u64 + offset;
+                    if end > self.size_limit as u64 {
                         return Err(ReadError::Finished);
                     }
-                    self.buffer.resize(len, 0);
-                    self.buffer[offset as usize..offset as usize + data.len()]
-                        .copy_from_slice(&data);
+                    self.len = self.len.max(end as usize);
+                    self.read.push((data, offset as usize));
                 }
                 Ok(Async::NotReady) => {
                     return Ok(Async::NotReady);
                 }
                 Err(ReadError::Finished) => {
-                    return Ok(Async::Ready((
-                        self.stream.take().unwrap(),
-                        mem::replace(&mut self.buffer, Vec::new()),
-                    )));
+                    let mut buffer = vec![0; self.len];
+                    for (data, offset) in self.read.drain(..) {
+                        buffer[offset..offset + data.len()].copy_from_slice(&data);
+                    }
+                    return Ok(Async::Ready((self.stream.take().unwrap(), buffer)));
                 }
                 Err(e) => {
                     return Err(e);
