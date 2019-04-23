@@ -142,7 +142,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                     .map(move |x| (x, response_start))
                             })
                     })
-                    .map(move |((_, data), response_start)| {
+                    .map(move |(data, response_start)| {
                         let duration = response_start.elapsed();
                         eprintln!(
                             "response received in {:?} - {} KiB/s",

@@ -249,7 +249,7 @@ impl RecvStream {
     /// Uses unordered reads to be more efficient than using `AsyncRead` would allow
     pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
         ReadToEnd {
-            stream: Some(self),
+            stream: self,
             size_limit,
             read: Vec::new(),
             len: 0,
@@ -278,18 +278,18 @@ impl RecvStream {
 
 /// Future produced by `read_to_end`
 pub struct ReadToEnd {
-    stream: Option<RecvStream>,
+    stream: RecvStream,
     read: Vec<(Bytes, usize)>,
     len: usize,
     size_limit: usize,
 }
 
 impl Future for ReadToEnd {
-    type Item = (RecvStream, Vec<u8>);
+    type Item = Vec<u8>;
     type Error = ReadError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
-            match self.stream.as_mut().unwrap().poll_read_unordered() {
+            match self.stream.poll_read_unordered() {
                 Ok(Async::Ready((data, offset))) => {
                     let end = data.len() as u64 + offset;
                     if end > self.size_limit as u64 {
@@ -306,7 +306,7 @@ impl Future for ReadToEnd {
                     for (data, offset) in self.read.drain(..) {
                         buffer[offset..offset + data.len()].copy_from_slice(&data);
                     }
-                    return Ok(Async::Ready((self.stream.take().unwrap(), buffer)));
+                    return Ok(Async::Ready(buffer));
                 }
                 Err(e) => {
                     return Err(e);

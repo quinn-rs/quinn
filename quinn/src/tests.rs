@@ -230,7 +230,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                                             .map_err(|e| panic!("read: {}", e))
                                     })
                             })
-                            .map(move |(_, data)| {
+                            .map(move |data| {
                                 assert_eq!(&data[..], b"foo");
                                 conn.close(0, b"done");
                             })

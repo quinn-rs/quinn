@@ -336,7 +336,7 @@ fn h3_get(
             recv.read_to_end(usize::max_value())
                 .map_err(|e| format_err!("failed to send Request frame: {}", e))
         })
-        .and_then(move |(_, data)| h3_resp(&table, data))
+        .and_then(move |data| h3_resp(&table, data))
 }
 
 fn h3_resp(table: &qpack::DynamicTable, data: Vec<u8>) -> Result<Bytes> {
@@ -375,7 +375,7 @@ fn get(
             recv.read_to_end(usize::max_value())
                 .map_err(|e| format_err!("failed to read response: {}", e))
         })
-        .map(|(_, data)| data)
+        .map(|data| data)
 }
 
 struct InteropVerifier(Arc<Mutex<State>>);
