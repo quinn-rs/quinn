@@ -115,6 +115,7 @@ fn read_from_peer(
 
     stream
         .read_to_end(1024 * 1024 * 5)
+        .unwrap()
         .map_err(|e| {
             use quinn::ReadError::*;
             match e {

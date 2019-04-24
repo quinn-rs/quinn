@@ -138,6 +138,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                 let response_start = Instant::now();
                                 eprintln!("request sent at {:?}", response_start - start);
                                 recv.read_to_end(usize::max_value())
+                                    .unwrap()
                                     .map_err(|e| format_err!("failed to read response: {}", e))
                                     .map(move |x| (x, response_start))
                             })

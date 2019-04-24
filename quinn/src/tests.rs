@@ -227,6 +227,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                                     })
                                     .and_then(move |_| {
                                         recv.read_to_end(usize::max_value())
+                                            .unwrap()
                                             .map_err(|e| panic!("read: {}", e))
                                     })
                             })
