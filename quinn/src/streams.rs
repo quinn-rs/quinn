@@ -161,7 +161,8 @@ pub struct RecvStream {
     conn: ConnectionRef,
     stream: StreamId,
     is_0rtt: bool,
-    recvd: bool,
+    all_data_read: bool,
+    any_data_read: bool,
 }
 
 impl RecvStream {
@@ -170,7 +171,8 @@ impl RecvStream {
             conn,
             stream,
             is_0rtt,
-            recvd: false,
+            all_data_read: false,
+            any_data_read: false,
         }
     }
 
@@ -186,6 +188,7 @@ impl RecvStream {
     ///   This is forbidden because an unordered read could consume a segment of data from a
     ///   location other than the start of the receive buffer, making it impossible for future
     pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+        self.any_data_read = true;
         use crate::quinn::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
@@ -201,11 +204,11 @@ impl RecvStream {
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
-                self.recvd = true;
+                self.all_data_read = true;
                 Err(ReadError::Reset { error_code })
             }
             Err(Finished) => {
-                self.recvd = true;
+                self.all_data_read = true;
                 Err(ReadError::Finished)
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
@@ -220,6 +223,7 @@ impl RecvStream {
     /// Unordered reads have reduced overhead and higher throughput, and should therefore be
     /// preferred when applicable.
     pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
+        self.any_data_read = true;
         use crate::quinn::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
@@ -235,25 +239,32 @@ impl RecvStream {
                 Ok(Async::NotReady)
             }
             Err(Reset { error_code }) => {
-                self.recvd = true;
+                self.all_data_read = true;
                 Err(ReadError::Reset { error_code })
             }
             Err(Finished) => {
-                self.recvd = true;
+                self.all_data_read = true;
                 Err(ReadError::Finished)
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
     }
 
-    /// Uses unordered reads to be more efficient than using `AsyncRead` would allow
-    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
-        ReadToEnd {
+    /// Convenience method to read the entire stream into a buffer
+    ///
+    /// The returned future fails with `ReadError::Finished` if it's longer than `size_limit`
+    /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would
+    /// allow. `size_limit` should be set to limit worst-case memory use.
+    pub fn read_to_end(self, size_limit: usize) -> Result<ReadToEnd, AlreadyRead> {
+        if self.any_data_read {
+            return Err(AlreadyRead {});
+        }
+        Ok(ReadToEnd {
             stream: self,
             size_limit,
             read: Vec::new(),
             len: 0,
-        }
+        })
     }
 
     /// Close the receive stream immediately.
@@ -272,9 +283,14 @@ impl RecvStream {
         }
         conn.inner.stop_sending(self.stream, error_code);
         conn.notify();
-        self.recvd = true;
+        self.all_data_read = true;
     }
 }
+
+/// Error returned by `read_to_end` on a stream that's already been read from
+#[derive(Debug, Error, Clone)]
+#[error(display = "cannot read an entire stream when some data has already been read from it")]
+pub struct AlreadyRead {}
 
 /// Future produced by `read_to_end`
 pub struct ReadToEnd {
@@ -339,7 +355,7 @@ impl Drop for RecvStream {
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        if !self.recvd {
+        if !self.all_data_read {
             conn.inner.stop_sending(self.stream, 0);
             conn.notify();
         }
