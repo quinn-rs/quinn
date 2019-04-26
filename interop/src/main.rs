@@ -54,7 +54,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
         .next()
-        .ok_or(format_err!("couldn't resolve to an address"))?;
+        .ok_or_else(|| format_err!("couldn't resolve to an address"))?;
     let host = if webpki::DNSNameRef::try_from_ascii_str(&options.host).is_ok() {
         &options.host
     } else {
@@ -193,7 +193,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         let remote = format!("{}:{}", options.host, options.retry_port)
             .to_socket_addrs()?
             .next()
-            .ok_or(format_err!("couldn't resolve to an address"))?;
+            .ok_or_else(|| format_err!("couldn't resolve to an address"))?;
         let result = runtime.block_on(
             endpoint
                 .connect_with(client_config.clone(), &remote, host)?
@@ -296,7 +296,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         print!("3");
     }
 
-    println!("");
+    println!();
 
     Ok(())
 }
