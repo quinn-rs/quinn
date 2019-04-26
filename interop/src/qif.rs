@@ -26,7 +26,7 @@ fn main() -> Result<(), Error> {
     let mut success = vec![];
 
     fn parse_usizes(s: String) -> Vec<usize> {
-        s.split(",")
+        s.split(',')
             .map(|e| str::parse::<usize>(e).unwrap_or_default())
             .collect()
     }
@@ -113,11 +113,11 @@ fn main() -> Result<(), Error> {
             .take(2)
             .map(|a| {
                 a.file_name()
-                    .unwrap_or(OsStr::new("ERR"))
+                    .unwrap_or_else(|| OsStr::new("ERR"))
                     .to_str()
                     .unwrap_or("ERR")
             })
-            .map(|n| String::from(n))
+            .map(String::from)
             .collect::<Vec<String>>();
 
         name.reverse();
@@ -128,7 +128,7 @@ fn main() -> Result<(), Error> {
 
     println!("\nSuccess: {}, Failures: {}", success.len(), failures.len());
 
-    if failures.len() == 0 {
+    if failures.is_empty() {
         Ok(())
     } else {
         Err(Error::SomeFailures)
@@ -260,7 +260,7 @@ impl EncodedFile {
 
                 for (i, block) in blocked.iter_mut().enumerate() {
                     let mut cur = std::io::Cursor::new(&block);
-                    match qpack::decode_header(&mut table, &mut cur) {
+                    match qpack::decode_header(&table, &mut cur) {
                         Ok(d) => {
                             decoded.push(d);
                             unblocked.push(i);
@@ -283,7 +283,7 @@ impl EncodedFile {
             }
 
             let mut cur = std::io::Cursor::new(&buf.bytes()[..]);
-            match qpack::decode_header(&mut table, &mut cur) {
+            match qpack::decode_header(&table, &mut cur) {
                 Ok(d) => decoded.push(d),
                 Err(qpack::DecoderError::MissingRefs) => {
                     if blocked.len() >= self.max_blocked {
@@ -309,8 +309,8 @@ impl EncodedFile {
         for block in blocks {
             let block_str = String::from_utf8_lossy(&block);
             let fields = block_str
-                .split("\n")
-                .map(|f| f.split("\t"))
+                .split('\n')
+                .map(|f| f.split('\t'))
                 .filter_map(|s| {
                     let f = s.collect::<Vec<&str>>();
                     if f.len() >= 2 {
@@ -343,7 +343,7 @@ impl EncodedFile {
             (block_chunk.len() as u32).encode(&mut buf);
             buf.append(&mut block_chunk);
 
-            if encoder_chunk.len() > 0 {
+            if !encoder_chunk.is_empty() {
                 0u64.encode(&mut buf);
                 (encoder_chunk.len() as u32).encode(&mut buf);
                 buf.append(&mut encoder_chunk);
@@ -363,7 +363,7 @@ impl ImplEncodedDir {
         Ok(self
             .0
             .read_dir()?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.path().is_file())
             .map(|e| {
                 (
@@ -386,7 +386,7 @@ impl EncodedDir {
 
         Ok(path
             .read_dir()?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.path().is_dir())
             .map(|e| {
                 ImplEncodedDir(
@@ -402,9 +402,9 @@ struct QifFile(PathBuf);
 impl QifFile {
     fn compare(&self, other: &mut Iterator<Item = &qpack::HeaderField>) -> Result<(), Error> {
         let value = String::from_utf8_lossy(&fs::read(&self.0)?)
-            .split("\n")
-            .filter(|l| l.len() != 0)
-            .map(|c| Vec::from(c))
+            .split('\n')
+            .filter(|l| !l.is_empty())
+            .map(Vec::from)
             .collect::<Vec<Vec<u8>>>();
 
         for field in value.iter() {
@@ -424,8 +424,8 @@ impl QifFile {
 
         let blocks = content
             .split("\n\n")
-            .filter(|l| l.len() != 0)
-            .map(|c| Vec::from(c))
+            .filter(|l| !l.is_empty())
+            .map(Vec::from)
             .collect::<Vec<Vec<u8>>>();
         Ok(blocks)
     }
@@ -438,7 +438,7 @@ impl QifDir {
         Ok(self
             .0
             .read_dir()?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.path().is_file() && e.path().extension() == Some(OsStr::new("qif")))
             .map(|f| QifFile(f.path())))
     }
@@ -460,19 +460,14 @@ impl InputType {
         }
         let ancestors = path
             .ancestors()
-            .map(|e| e.file_name())
+            .map(Path::file_name)
             .filter_map(|e| e)
             .take(3)
             .collect::<Vec<_>>();
 
-        if ancestors.len() >= 3
+        ancestors.len() >= 3
             && ancestors[1] == OsStr::new("qpack-05")
             && ancestors[2] == OsStr::new("encoded")
-        {
-            true
-        } else {
-            false
-        }
     }
 
     fn is_encoded_dir(path: &Path) -> Result<bool, Error> {
@@ -493,7 +488,7 @@ impl InputType {
 
         Ok(path
             .read_dir()?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .any(|f| f.path().extension() == Some(OsStr::new("qif"))))
     }
 
@@ -540,8 +535,8 @@ impl InputType {
 fn find_qif(path: &Path) -> Result<Option<QifFile>, Error> {
     let name = path
         .file_name()
-        .and_then(|n| n.to_str())
-        .map(|s| s.split(".").take(1).collect::<String>())
+        .and_then(OsStr::to_str)
+        .map(|s| s.split('.').take(1).collect::<String>())
         .ok_or(Error::BadFilename)?;
 
     Ok(find_qif_dir(path)?.map(|d| QifFile(d.join(name + ".qif"))))
