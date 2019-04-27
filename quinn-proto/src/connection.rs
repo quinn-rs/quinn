@@ -57,6 +57,7 @@ pub struct Connection {
     mtu: u16,
     zero_rtt_crypto: Option<CryptoSpace>,
     key_phase: bool,
+    /// Transport parameters set by the peer
     params: TransportParameters,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
     blocked_streams: FnvHashSet<StreamId>,
@@ -196,7 +197,7 @@ impl Connection {
             mtu: MIN_MTU,
             zero_rtt_crypto: None,
             key_phase: false,
-            params: TransportParameters::new(&config),
+            params: TransportParameters::default(),
             blocked_streams: FnvHashSet::default(),
             max_data: 0,
             data_sent: 0,
@@ -862,7 +863,8 @@ impl Connection {
             .tls
             .transport_parameters()?
             .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("transport parameters missing"))?;
-        self.set_params(params)?;
+        self.validate_params(&params)?;
+        self.set_params(params);
         self.write_tls();
         self.init_0rtt();
         if let Some(data) = remaining {
@@ -877,20 +879,28 @@ impl Connection {
             None => return,
         };
         if self.side.is_client() {
-            let res = self.tls.transport_parameters().and_then(|params| {
-                self.set_params(
-                    params.expect("rustls didn't supply transport parameters with ticket"),
-                )
-            });
-            if let Err(e) = res {
-                error!(
-                    self.log,
-                    "session ticket has malformed transport parameters: {}", e
-                );
-                return;
+            match self.tls.transport_parameters() {
+                Ok(params) => {
+                    let params =
+                        params.expect("rustls didn't supply transport parameters with ticket");
+                    // Certain values must not be cached
+                    let params = TransportParameters {
+                        original_connection_id: None,
+                        preferred_address: None,
+                        stateless_reset_token: None,
+                        ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
+                        ..params
+                    };
+                    self.set_params(params);
+                }
+                Err(e) => {
+                    error!(
+                        self.log,
+                        "session ticket has malformed transport parameters: {}", e
+                    );
+                    return;
+                }
             }
-            // Previous connection's reset token is probably not applicable
-            self.params.stateless_reset_token = None;
         }
         trace!(self.log, "0-RTT enabled");
         self.zero_rtt_crypto = Some(CryptoSpace {
@@ -1324,7 +1334,8 @@ impl Connection {
                             self.endpoint_events.push_back(EndpointEvent::ResetToken(
                                 params.stateless_reset_token.unwrap(),
                             ));
-                            self.set_params(params)?;
+                            self.validate_params(&params)?;
+                            self.set_params(params);
                             self.endpoint_events
                                 .push_back(EndpointEvent::NeedIdentifiers);
                         }
@@ -2411,8 +2422,8 @@ impl Connection {
         self.io.timer_start(Timer::Close, now + 3 * self.pto());
     }
 
-    fn set_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
-        // Validate
+    /// Validate transport parameters received from the peer
+    fn validate_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
         if self.side.is_client() && self.orig_rem_cid != params.original_connection_id {
             debug!(
                 self.log,
@@ -2424,8 +2435,10 @@ impl Connection {
                 "original CID mismatch",
             ));
         }
+        Ok(())
+    }
 
-        // Apply
+    fn set_params(&mut self, params: TransportParameters) {
         self.streams.max_bi = params.initial_max_streams_bidi;
         self.streams.max_uni = params.initial_max_streams_uni;
         self.max_data = params.initial_max_data as u64;
@@ -2440,7 +2453,6 @@ impl Connection {
             cmp::min(self.config.idle_timeout, params.idle_timeout)
         };
         self.params = params;
-        Ok(())
     }
 
     /// Open a single stream if possible
