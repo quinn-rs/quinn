@@ -168,7 +168,7 @@ impl Endpoint {
                 // Negotiate versions
                 let mut buf = Vec::<u8>::new();
                 Header::VersionNegotiate {
-                    random: self.rng.gen(),
+                    random: self.rng.gen::<u8>() | 0x40,
                     src_cid: destination,
                     dst_cid: source,
                 }
