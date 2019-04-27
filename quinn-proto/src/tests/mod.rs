@@ -216,10 +216,13 @@ fn finish_stream() {
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
-    pair.client_conn_mut(client_ch).finish(s);
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
 
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), Some(Event::StreamFinished { stream }) if stream == s);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -481,9 +484,12 @@ fn stream_id_backpressure() {
         "only one stream is permitted at a time"
     );
     // Close the first stream to make room for the second
-    pair.client_conn_mut(client_ch).finish(s);
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), Some(Event::StreamFinished { stream }) if stream == s);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -512,7 +518,7 @@ fn stream_id_backpressure() {
         .unwrap()
         .open(Directionality::Uni)
         .expect("didn't get stream id budget");
-    pair.client_conn_mut(client_ch).finish(s);
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
     // Make sure the server actually processes data on the newly-available stream
     assert_matches!(
@@ -1055,13 +1061,16 @@ fn finish_stream_flow_control_reordered() {
     pair.server.drive(&pair.log, pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
 
-    pair.client_conn_mut(client_ch).finish(s);
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive_client(); // Send FIN
     pair.server.drive(&pair.log, pair.time, pair.client.addr); // Acknowledge
     pair.server.finish_delay(); // Add flow control packets after
     pair.drive();
 
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), Some(Event::StreamFinished { stream }) if stream == s);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1093,7 +1102,7 @@ fn handshake_1rtt_handling() {
         .unwrap();
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
-    pair.client_conn_mut(client_ch).finish(s);
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.client.drive(&pair.log, pair.time, pair.server.addr);
 
     // Add the handshake flight back on.

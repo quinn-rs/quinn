@@ -25,7 +25,7 @@ use crate::shared::{
     ClientOpts, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
-use crate::stream::{self, ReadError, Streams, WriteError};
+use crate::stream::{self, FinishError, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
@@ -491,8 +491,10 @@ impl Connection {
             if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
                 ss.state = stream::SendState::DataRecvd;
                 self.streams.maybe_cleanup(frame.id);
-                self.events
-                    .push_back(Event::StreamFinished { stream: frame.id });
+                self.events.push_back(Event::StreamFinished {
+                    stream: frame.id,
+                    stop_reason: None,
+                });
             }
         }
         self.space_mut(space).pending_acks.subtract(&info.acks);
@@ -1733,14 +1735,23 @@ impl Connection {
                     if let Some(ss) = self.streams.get_send_mut(id) {
                         // Don't reopen an already-closed stream we haven't forgotten yet
                         if !ss.is_closed() {
-                            // Store error code to return to the application on next write
-                            ss.state = stream::SendState::ResetSent {
-                                stop_reason: Some(error_code),
-                            };
-                            if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
-                                self.events.push_back(Event::StreamWritable { stream: id });
+                            if ss.state == stream::SendState::DataSent {
+                                ss.state = stream::SendState::DataRecvd;
+                                self.streams.maybe_cleanup(id);
+                                self.events.push_back(Event::StreamFinished {
+                                    stream: id,
+                                    stop_reason: Some(error_code),
+                                });
+                            } else {
+                                if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
+                                    self.events.push_back(Event::StreamWritable { stream: id });
+                                }
+                                // Store error code to return to the application on next write
+                                ss.state = stream::SendState::ResetSent {
+                                    stop_reason: Some(error_code),
+                                };
+                                self.on_stream_frame(false, id);
                             }
-                            self.on_stream_frame(false, id);
                         }
                     }
                 }
@@ -2476,18 +2487,17 @@ impl Connection {
     }
 
     /// Finish a send stream, signalling that no more data will be sent
-    pub fn finish(&mut self, id: StreamId) {
+    pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let ss = self
             .streams
             .get_send_mut(id)
-            .expect("unknown or recv-only stream");
-        assert_eq!(ss.state, stream::SendState::Ready);
-        ss.state = stream::SendState::DataSent;
+            .ok_or(FinishError::UnknownStream)?;
+        ss.finish()?;
         let space = &mut self.spaces[SpaceId::Data as usize];
         for frame in &mut space.pending.stream {
             if frame.id == id && frame.offset + frame.data.len() as u64 == ss.offset {
                 frame.fin = true;
-                return;
+                return Ok(());
             }
         }
         space.pending.stream.push_back(frame::Stream {
@@ -2496,6 +2506,7 @@ impl Connection {
             offset: ss.offset,
             fin: true,
         });
+        Ok(())
     }
 
     /// Read from the given recv stream, in undefined order
@@ -3279,10 +3290,12 @@ pub enum Event {
         /// Which stream is now writable
         stream: StreamId,
     },
-    /// All data sent on `stream` has been received by the peer
+    /// A finished stream has been fully acknowledged or stopped
     StreamFinished {
         /// Which stream has been finished
         stream: StreamId,
+        /// Error code supplied by the peer if the stream was stopped
+        stop_reason: Option<u16>,
     },
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {
