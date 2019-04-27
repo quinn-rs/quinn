@@ -28,8 +28,9 @@ use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::stream::{self, FinishError, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    frame, Directionality, EndpointConfig, Frame, ServerConfig, Side, StreamId, Transmit,
+    TransportError, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
+    TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection
@@ -41,6 +42,7 @@ use crate::{
 pub struct Connection {
     log: Logger,
     endpoint_config: Arc<EndpointConfig>,
+    server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
     rng: OsRng,
     tls: TlsSession,
@@ -156,6 +158,7 @@ impl Connection {
     pub(crate) fn new(
         log: Logger,
         endpoint_config: Arc<EndpointConfig>,
+        server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -184,6 +187,7 @@ impl Connection {
         let mut this = Self {
             log,
             endpoint_config,
+            server_config,
             rng,
             tls,
             handshake_cid: loc_cid,
@@ -1257,7 +1261,7 @@ impl Connection {
                             .crypto
                             .start_session(
                                 &client_opts.server_name,
-                                &TransportParameters::new(&self.config),
+                                &TransportParameters::new(&self.config, None),
                             )
                             .unwrap();
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -1823,10 +1827,13 @@ impl Connection {
         }
 
         if remote != self.remote && !is_probing_packet {
-            debug_assert!(
-                self.side.is_server(),
-                "packets from unknown remote should be dropped by clients"
-            );
+            let server_config = self
+                .server_config
+                .as_ref()
+                .expect("packets from unknown remote should be dropped by clients");
+            if !server_config.migration {
+                return Err(TransportError::INVALID_MIGRATION(""));
+            }
             self.migrate(now, remote);
             // Break linkability, if possible
             if let Some(cid) = self.rem_cids.pop() {

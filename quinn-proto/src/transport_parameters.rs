@@ -4,6 +4,7 @@ use bytes::{Buf, BufMut};
 use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
+use crate::endpoint::ServerConfig;
 use crate::shared::{ConnectionId, ResetToken};
 use crate::{
     varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
@@ -69,7 +70,7 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub fn new(config: &TransportConfig) -> Self {
+    pub fn new(config: &TransportConfig, server_config: Option<&ServerConfig>) -> Self {
         TransportParameters {
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,
@@ -79,6 +80,7 @@ impl TransportParameters {
             initial_max_stream_data_uni: config.stream_receive_window,
             idle_timeout: config.idle_timeout,
             max_ack_delay: 0, // Unimplemented
+            disable_migration: server_config.map_or(false, |c| !c.migration),
             ..Self::default()
         }
     }
