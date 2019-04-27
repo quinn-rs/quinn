@@ -303,10 +303,13 @@ impl TransportParameters {
             }
         }
 
+        // Semantic validation
         if params.ack_delay_exponent > 20
             || params.max_ack_delay >= 1 << 14
             || (side.is_server()
-                && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
+                && (params.original_connection_id.is_some()
+                    || params.stateless_reset_token.is_some()
+                    || params.preferred_address.is_some()))
         {
             return Err(Error::IllegalValue);
         }
