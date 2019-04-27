@@ -401,7 +401,7 @@ impl Endpoint {
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new(&config.transport);
+                let params = TransportParameters::new(&config.transport, None);
                 (
                     config.crypto.start_session(&server_name, &params)?,
                     Some(ClientOpts {
@@ -416,7 +416,7 @@ impl Endpoint {
             }
             ConnectionOpts::Server { orig_dst_cid } => {
                 let config = self.server_config.as_ref().unwrap();
-                let params = TransportParameters::new(&config.transport);
+                let params = TransportParameters::new(&config.transport, Some(config));
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&self.config.reset_key, &loc_cid)),
                     original_connection_id: orig_dst_cid,
@@ -437,6 +437,7 @@ impl Endpoint {
         let conn = Connection::new(
             log,
             Arc::clone(&self.config),
+            self.server_config.as_ref().map(Arc::clone),
             transport_config,
             init_cid,
             loc_cid,
@@ -729,6 +730,12 @@ pub struct ServerConfig {
     ///
     /// Accepting a connection removes it from the buffer, so this does not need to be large.
     pub accept_buffer: u32,
+
+    /// Whether to allow clients to migrate to new addresses
+    ///
+    /// Improves behavior for clients that move between different internet connections or suffer NAT
+    /// rebinding. Enabled by default.
+    pub migration: bool,
 }
 
 impl Default for ServerConfig {
@@ -747,6 +754,8 @@ impl Default for ServerConfig {
             retry_token_lifetime: 15_000_000,
 
             accept_buffer: 1024,
+
+            migration: true,
         }
     }
 }
