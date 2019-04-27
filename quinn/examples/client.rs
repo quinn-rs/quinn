@@ -131,7 +131,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         tokio::io::write_all(send, request.as_bytes().to_owned())
                             .map_err(|e| format_err!("failed to send request: {}", e))
                             .and_then(|(send, _)| {
-                                tokio::io::shutdown(send)
+                                send.finish()
                                     .map_err(|e| format_err!("failed to shutdown stream: {}", e))
                             })
                             .and_then(move |_| {
