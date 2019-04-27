@@ -280,7 +280,8 @@ impl RecvStream {
     /// manage to finish the stream before it receives the reset, and a misbehaving peer might
     /// ignore the request entirely and continue sending until halted by flow control.
     ///
-    /// Has no effect if the incoming stream already finished.
+    /// Has no effect if the incoming stream already finished, even if the local application hasn't
+    /// yet read all buffered data.
     pub fn stop(&mut self, error_code: u16) {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
