@@ -455,11 +455,11 @@ impl ConnectionInner {
                     stream,
                     stop_reason,
                 } => {
-                    let _ = self
-                        .finishing
-                        .remove(&stream)
-                        .unwrap()
-                        .send(stop_reason.map(|e| WriteError::Stopped { error_code: e }));
+                    if let Some(finishing) = self.finishing.remove(&stream) {
+                        // If the finishing stream was already dropped, there's nothing more to do.
+                        let _ = finishing
+                            .send(stop_reason.map(|e| WriteError::Stopped { error_code: e }));
+                    }
                 }
             }
         }
