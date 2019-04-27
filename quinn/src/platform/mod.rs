@@ -1,5 +1,5 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
-use quinn_proto::EcnCodepoint;
+use proto::EcnCodepoint;
 use std::{io, net::SocketAddr};
 
 #[cfg(unix)]

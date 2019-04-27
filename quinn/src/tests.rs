@@ -68,8 +68,8 @@ fn drop_endpoint() {
             )
             .unwrap()
             .then(|x| match x {
-                Err(crate::ConnectionError::TransportError(quinn_proto::TransportError {
-                    code: quinn_proto::TransportErrorCode::INTERNAL_ERROR,
+                Err(crate::ConnectionError::TransportError(proto::TransportError {
+                    code: proto::TransportErrorCode::INTERNAL_ERROR,
                     ..
                 })) => Ok(()),
                 Err(e) => panic!("unexpected error: {}", e),

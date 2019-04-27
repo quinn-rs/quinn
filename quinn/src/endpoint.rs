@@ -11,7 +11,7 @@ use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use quinn_proto::{self as quinn, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
+use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 use slog::Logger;
 
 use crate::builders::EndpointBuilder;
@@ -177,8 +177,8 @@ impl Drop for EndpointDriver {
 pub(crate) struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
-    inner: quinn::Endpoint,
-    outgoing: VecDeque<quinn::Transmit>,
+    inner: proto::Endpoint,
+    outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<ConnectionDriver>,
     incoming_reader: Option<Task>,
     /// Whether the `Incoming` stream has not yet been dropped
@@ -292,7 +292,7 @@ impl EndpointInner {
             match self.events.poll() {
                 Ok(Async::Ready(Some((ch, event)))) => match event {
                     Proto(e) => {
-                        if let quinn::EndpointEvent::Drained = e {
+                        if let proto::EndpointEvent::Drained = e {
                             self.connections.remove(&ch);
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
@@ -319,7 +319,7 @@ impl EndpointInner {
         &mut self,
         log: Option<Logger>,
         handle: ConnectionHandle,
-        conn: quinn::Connection,
+        conn: proto::Connection,
     ) -> ConnectionRef {
         let (send, recv) = mpsc::unbounded();
         if let Some((error_code, ref reason)) = self.close {
@@ -390,7 +390,7 @@ impl Drop for Incoming {
 pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
-    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: quinn::Endpoint, ipv6: bool) -> Self {
+    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             log,

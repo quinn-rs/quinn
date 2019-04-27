@@ -6,7 +6,7 @@ use mio;
 
 use tokio_reactor::{Handle, PollEvented};
 
-use quinn_proto::EcnCodepoint;
+use proto::EcnCodepoint;
 
 use crate::platform::UdpExt;
 

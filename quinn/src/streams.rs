@@ -6,11 +6,10 @@ use err_derive::Error;
 use futures::sync::oneshot;
 use futures::task;
 use futures::{Async, Future, Poll};
-use quinn_proto::StreamId;
+use proto::{ConnectionError, StreamId};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::connection::ConnectionRef;
-use crate::quinn::ConnectionError;
 
 /// A stream initiated by a remote peer.
 pub enum NewStream {
@@ -45,7 +44,7 @@ impl SendStream {
     /// Returns the number of bytes written on success. Congestion and flow control may cause this
     /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
     pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
-        use crate::quinn::WriteError::*;
+        use proto::WriteError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt()
@@ -83,10 +82,8 @@ impl SendStream {
         }
         if self.finishing.is_none() {
             conn.inner.finish(self.stream).map_err(|e| match e {
-                quinn_proto::FinishError::UnknownStream => WriteError::UnknownStream,
-                quinn_proto::FinishError::Stopped { error_code } => {
-                    WriteError::Stopped { error_code }
-                }
+                proto::FinishError::UnknownStream => WriteError::UnknownStream,
+                proto::FinishError::Stopped { error_code } => WriteError::Stopped { error_code },
             })?;
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
@@ -207,7 +204,7 @@ impl RecvStream {
     ///   location other than the start of the receive buffer, making it impossible for future
     pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
         self.any_data_read = true;
-        use crate::quinn::ReadError::*;
+        use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
@@ -242,7 +239,7 @@ impl RecvStream {
     /// preferred when applicable.
     pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
         self.any_data_read = true;
-        use crate::quinn::ReadError::*;
+        use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
