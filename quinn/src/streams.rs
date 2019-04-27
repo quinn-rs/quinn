@@ -177,6 +177,10 @@ impl Future for Finish {
 }
 
 /// A stream that can only be used to receive data
+///
+/// `stop(0)` is implicitly called on drop unless:
+/// - `ReadError::Finished` has been emitted, or
+/// - `stop` was called explicitly
 pub struct RecvStream {
     conn: ConnectionRef,
     stream: StreamId,
