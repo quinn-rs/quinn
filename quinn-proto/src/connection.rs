@@ -815,6 +815,11 @@ impl Connection {
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
     pub fn reset(&mut self, stream_id: StreamId, error_code: u16) {
+        self.reset_inner(stream_id, error_code, false);
+    }
+
+    /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
+    fn reset_inner(&mut self, stream_id: StreamId, error_code: u16, stopped: bool) {
         assert!(
             stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
@@ -825,15 +830,35 @@ impl Connection {
             Some(x) => x,
             None => return,
         };
+        let stop_reason = if stopped { Some(error_code) } else { None };
+
+        use stream::SendState::*;
         match stream.state {
-            stream::SendState::DataRecvd
-            | stream::SendState::ResetSent { .. }
-            | stream::SendState::ResetRecvd { .. } => {
+            DataRecvd | ResetSent { .. } | ResetRecvd { .. } => {
+                // Nothing to do
                 return;
-            } // Nothing to do
-            _ => {}
+            }
+            DataSent => {
+                self.events.push_back(Event::StreamFinished {
+                    stream: stream_id,
+                    stop_reason,
+                });
+                // No need to hold on to the stop_reason since it's propagated above
+                stream.state = ResetSent { stop_reason: None };
+            }
+            _ => {
+                // If this is an implicit reset due to `STOP_SENDING` and the caller might have a
+                // blocked write task, notify the caller to try writing again so they'll receive the
+                // `WriteError::Stopped` and the stream can be disposed of.
+                if stopped
+                    && (self.blocked_streams.remove(&stream_id) || stream.offset == stream.max_data)
+                {
+                    self.events
+                        .push_back(Event::StreamWritable { stream: stream_id });
+                }
+                stream.state = ResetSent { stop_reason };
+            }
         }
-        stream.state = stream::SendState::ResetSent { stop_reason: None };
 
         self.spaces[SpaceId::Data as usize]
             .pending
@@ -1730,28 +1755,12 @@ impl Connection {
                             "STOP_SENDING on unopened stream",
                         ));
                     }
-                    self.reset(id, error_code);
+                    self.reset_inner(id, error_code, true);
                     // We might have already closed this stream
                     if let Some(ss) = self.streams.get_send_mut(id) {
                         // Don't reopen an already-closed stream we haven't forgotten yet
                         if !ss.is_closed() {
-                            if ss.state == stream::SendState::DataSent {
-                                ss.state = stream::SendState::DataRecvd;
-                                self.streams.maybe_cleanup(id);
-                                self.events.push_back(Event::StreamFinished {
-                                    stream: id,
-                                    stop_reason: Some(error_code),
-                                });
-                            } else {
-                                if self.blocked_streams.remove(&id) || ss.offset == ss.max_data {
-                                    self.events.push_back(Event::StreamWritable { stream: id });
-                                }
-                                // Store error code to return to the application on next write
-                                ss.state = stream::SendState::ResetSent {
-                                    stop_reason: Some(error_code),
-                                };
-                                self.on_stream_frame(false, id);
-                            }
+                            self.on_stream_frame(false, id);
                         }
                     }
                 }
