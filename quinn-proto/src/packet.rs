@@ -876,16 +876,20 @@ mod tests {
         set_payload_length(&mut buf, header_len, 1, client_crypto.tag_len());
         assert_eq!(
             buf[..],
-            hex!("c0ff0000135006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
+            hex!("c0ff0000145006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
         );
 
         client_crypto.encrypt(0, &mut buf, header_len);
         encode.finish(&mut buf, &client_header_crypto);
+        for byte in &buf {
+            print!("{:02x}", byte);
+        }
+        println!();
         assert_eq!(
             buf[..],
             hex!(
-                "c2ff0000135006b858ec6f80452b004021f4
-                 f037a410591e943c31d1eefad0927b97d09dc68f6dde223d348e28eecc0e35b1"
+                "c5ff0000145006b858ec6f80452b00402126
+                 f037a410591e943c31d1eefad0927b9790055f482bf974cbe1f0e03df07845b6"
             )[..]
         );
 
@@ -895,7 +899,7 @@ mod tests {
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],
-            hex!("c0ff0000135006b858ec6f80452b00402100")[..]
+            hex!("c0ff0000145006b858ec6f80452b00402100")[..]
         );
         server_crypto
             .decrypt(0, &packet.header_data, &mut packet.payload)
