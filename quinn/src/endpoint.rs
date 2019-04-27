@@ -11,18 +11,10 @@ use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use quinn_proto::{self as quinn, ConnectionHandle};
+use quinn_proto::{self as quinn, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 use slog::Logger;
 
-pub use crate::quinn::{
-    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
-    Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
-};
-pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
-
-pub use crate::builders::{
-    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
-};
+use crate::builders::EndpointBuilder;
 use crate::connection::{
     new_connection, Connecting, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
 };

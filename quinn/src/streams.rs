@@ -9,16 +9,8 @@ use futures::{Async, Future, Poll};
 use quinn_proto::StreamId;
 use tokio_io::{AsyncRead, AsyncWrite};
 
-pub use crate::quinn::{
-    ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig, Transmit,
-    TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
-};
-pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
-
-pub use crate::builders::{
-    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
-};
 use crate::connection::ConnectionRef;
+use crate::quinn::ConnectionError;
 
 /// A stream initiated by a remote peer.
 pub enum NewStream {

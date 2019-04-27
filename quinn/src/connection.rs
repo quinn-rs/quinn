@@ -14,15 +14,8 @@ use quinn_proto::{self as quinn, ConnectionHandle, Directionality, StreamId, Tim
 use slog::Logger;
 use tokio_timer::Delay;
 
-pub use crate::quinn::{
-    ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig, Transmit,
-    TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
-};
-pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
+use crate::quinn::{ConnectionError, ConnectionId};
 
-pub use crate::builders::{
-    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
-};
 use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent};
 
