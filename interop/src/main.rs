@@ -370,7 +370,8 @@ fn get(
     tokio::io::write_all(send, b"GET /index.html\r\n".to_owned())
         .map_err(|e| format_err!("failed to send request: {}", e))
         .and_then(|(send, _)| {
-            tokio::io::shutdown(send).map_err(|e| format_err!("failed to shutdown stream: {}", e))
+            send.finish()
+                .map_err(|e| format_err!("failed to shutdown stream: {}", e))
         })
         .and_then(move |_| {
             recv.read_to_end(usize::max_value())

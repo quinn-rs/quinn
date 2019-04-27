@@ -112,6 +112,13 @@ impl SendStream {
         }
     }
 
+    /// Shut down the stream gracefully
+    ///
+    /// See `poll_finish` for details.
+    pub fn finish(self) -> Finish {
+        Finish { stream: self }
+    }
+
     /// Close the send stream immediately.
     ///
     /// No new data can be written after calling this method. Locally buffered data is dropped,
@@ -158,6 +165,20 @@ impl Drop for SendStream {
             conn.inner.reset(self.stream, 0);
             conn.notify();
         }
+    }
+}
+
+/// Future produced by `SendStream::finish`
+pub struct Finish {
+    stream: SendStream,
+}
+
+impl Future for Finish {
+    type Item = ();
+    type Error = WriteError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.stream.poll_finish()
     }
 }
 

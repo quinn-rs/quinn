@@ -232,7 +232,7 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
             })
             // Gracefully terminate the stream
             .and_then(|(send, _)| {
-                tokio::io::shutdown(send)
+                send.finish()
                     .map_err(|e| format_err!("failed to shutdown stream: {}", e))
             })
             .map(move |_| info!(log3, "request complete"))
