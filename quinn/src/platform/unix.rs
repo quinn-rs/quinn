@@ -6,8 +6,7 @@ use std::{
 };
 
 use mio::net::UdpSocket;
-
-use quinn_proto::EcnCodepoint;
+use proto::EcnCodepoint;
 
 use super::cmsg;
 

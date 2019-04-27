@@ -5,11 +5,9 @@ use std::str;
 use std::sync::Arc;
 
 use err_derive::Error;
-use quinn_proto as quinn;
+use proto::{ClientConfig, EndpointConfig, ServerConfig};
 use rustls::{KeyLogFile, TLSError};
 use slog::Logger;
-
-use quinn_proto::{ClientConfig, EndpointConfig, ServerConfig};
 
 use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::tls::{Certificate, CertificateChain, PrivateKey};
@@ -57,7 +55,7 @@ impl<'a> EndpointBuilder<'a> {
         let rc = EndpointRef::new(
             self.logger.clone(),
             socket,
-            quinn::Endpoint::new(
+            proto::Endpoint::new(
                 self.logger,
                 Arc::new(self.config),
                 self.server_config.map(Arc::new),
@@ -124,11 +122,11 @@ pub enum EndpointError {
     WebPki(webpki::Error),
     /// An error in the Quinn transport configuration
     #[error(display = "configuration error: {:?}", _0)]
-    Config(quinn::ConfigError),
+    Config(proto::ConfigError),
 }
 
-impl From<quinn::ConfigError> for EndpointError {
-    fn from(x: quinn::ConfigError) -> Self {
+impl From<proto::ConfigError> for EndpointError {
+    fn from(x: proto::ConfigError) -> Self {
         EndpointError::Config(x)
     }
 }

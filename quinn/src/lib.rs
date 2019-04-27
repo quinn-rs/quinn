@@ -59,13 +59,11 @@ mod platform;
 pub mod tls;
 mod udp;
 
-use quinn_proto as quinn;
-
-pub use crate::quinn::{
+pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
+pub use proto::{
     ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
     Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
 };
-pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 
 pub use crate::builders::{
     ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
@@ -88,12 +86,12 @@ enum ConnectionEvent {
         error_code: u16,
         reason: bytes::Bytes,
     },
-    Proto(quinn::ConnectionEvent),
+    Proto(proto::ConnectionEvent),
 }
 
 enum EndpointEvent {
-    Proto(quinn::EndpointEvent),
-    Transmit(quinn::Transmit),
+    Proto(proto::EndpointEvent),
+    Transmit(proto::Transmit),
 }
 
 /// Maximum number of send/recv calls to make before moving on to other processing

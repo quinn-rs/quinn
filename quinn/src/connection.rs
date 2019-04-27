@@ -10,11 +10,11 @@ use futures::sync::{mpsc, oneshot};
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use quinn_proto::{self as quinn, ConnectionHandle, Directionality, StreamId, TimerUpdate};
+use proto::{
+    ConnectionError, ConnectionHandle, ConnectionId, Directionality, StreamId, TimerUpdate,
+};
 use slog::Logger;
 use tokio_timer::Delay;
-
-use crate::quinn::{ConnectionError, ConnectionId};
 
 use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent};
@@ -283,7 +283,7 @@ impl ConnectionRef {
     pub(crate) fn new(
         log: Logger,
         handle: ConnectionHandle,
-        conn: quinn::Connection,
+        conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Self {
@@ -346,11 +346,11 @@ impl std::ops::Deref for ConnectionRef {
 pub struct ConnectionInner {
     log: Logger,
     epoch: Instant,
-    pub(crate) inner: quinn::Connection,
+    pub(crate) inner: proto::Connection,
     driver: Option<Task>,
     handle: ConnectionHandle,
     connected: bool,
-    timers: [Option<Delay>; quinn::Timer::COUNT],
+    timers: [Option<Delay>; proto::Timer::COUNT],
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FnvHashMap<StreamId, Task>,
@@ -399,8 +399,8 @@ impl ConnectionInner {
                     self.close(error_code, reason);
                 }
                 Async::Ready(None) => {
-                    return Err(ConnectionError::TransportError(quinn::TransportError {
-                        code: quinn::TransportErrorCode::INTERNAL_ERROR,
+                    return Err(ConnectionError::TransportError(proto::TransportError {
+                        code: proto::TransportErrorCode::INTERNAL_ERROR,
                         frame: None,
                         reason: "endpoint driver future was dropped".to_string(),
                     }));
@@ -414,7 +414,7 @@ impl ConnectionInner {
 
     fn forward_app_events(&mut self) {
         while let Some(event) = self.inner.poll() {
-            use crate::quinn::Event::*;
+            use proto::Event::*;
             match event {
                 Connected { .. } => {
                     self.connected = true;
@@ -467,14 +467,14 @@ impl ConnectionInner {
 
     fn drive_timers(&mut self, now: Instant) -> bool {
         let mut keep_going = false;
-        for (timer, slot) in quinn::Timer::iter().zip(&mut self.timers) {
+        for (timer, slot) in proto::Timer::iter().zip(&mut self.timers) {
             if let Some(ref mut delay) = slot {
                 match delay.poll().unwrap() {
                     Async::Ready(()) => {
                         *slot = None;
                         trace!(self.log, "{timer:?} timeout", timer = timer);
                         self.inner
-                            .handle_event(quinn::ConnectionEvent::Timer(now, timer));
+                            .handle_event(proto::ConnectionEvent::Timer(now, timer));
                         // Timeout call may have queued sends
                         keep_going = true;
                     }
@@ -492,7 +492,7 @@ impl ConnectionInner {
             match update {
                 TimerUpdate {
                     timer,
-                    update: quinn::TimerSetting::Start(time),
+                    update: proto::TimerSetting::Start(time),
                 } => match self.timers[timer as usize] {
                     ref mut x @ None => {
                         trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
@@ -505,7 +505,7 @@ impl ConnectionInner {
                 },
                 TimerUpdate {
                     timer,
-                    update: quinn::TimerSetting::Stop,
+                    update: proto::TimerSetting::Stop,
                 } => {
                     if self.timers[timer as usize].take().is_some() {
                         trace!(self.log, "{timer:?} timer stop", timer = timer);
@@ -572,7 +572,7 @@ impl Drop for ConnectionInner {
             // Ensure the endpoint can tidy up
             let _ = self.endpoint_events.unbounded_send((
                 self.handle,
-                EndpointEvent::Proto(quinn::EndpointEvent::Drained),
+                EndpointEvent::Proto(proto::EndpointEvent::Drained),
             ));
         }
     }
