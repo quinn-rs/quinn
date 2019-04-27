@@ -300,6 +300,10 @@ fn stop_stream() {
         pair.client_conn_mut(client_ch).write(s, b"foo"),
         Err(WriteError::Stopped { error_code: ERROR })
     );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).finish(s),
+        Err(FinishError::UnknownStream)
+    );
 }
 
 #[test]
@@ -1114,5 +1118,55 @@ fn handshake_1rtt_handling() {
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
         Ok((ref data, 0)) if data == MSG
+    );
+}
+
+#[test]
+fn stop_before_finish() {
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair
+        .client_conn_mut(client_ch)
+        .open(Directionality::Uni)
+        .unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.drive();
+
+    info!(pair.log, "stopping stream");
+    const ERROR: u16 = 42;
+    pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
+    pair.drive();
+
+    assert_matches!(
+        pair.client_conn_mut(client_ch).finish(s),
+        Err(FinishError::Stopped { error_code: ERROR })
+    );
+}
+
+#[test]
+fn stop_during_finish() {
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair
+        .client_conn_mut(client_ch)
+        .open(Directionality::Uni)
+        .unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.drive();
+
+    assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
+    info!(pair.log, "stopping and finishing stream");
+    const ERROR: u16 = 42;
+    pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
+    pair.drive_server();
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::StreamFinished { stream, stop_reason: Some(ERROR) }) if stream == s
     );
 }
