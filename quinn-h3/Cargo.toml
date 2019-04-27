@@ -33,3 +33,26 @@ err-derive = "0.1.5"
 [dev-dependencies]
 proptest = "0.9.1"
 assert_matches = "1.1"
+
+###### Example
+
+failure = "0.1"
+slog-term = "2"
+structopt = "0.2.7"
+tokio = "0.1.6"
+tokio-io = "0.1"
+tokio-current-thread = "0.1"
+tokio-reactor = "0.1.1"
+url = "1.7"
+rcgen = "0.2"
+directories = "1.0.2"
+rand = "0.6.5"
+crc = "1.8.1"
+unwrap = "1.2.1"
+# slog = { version = "2.1", features = ["max_level_trace", "release_max_level_warn"] }
+slog = "2.1"
+futures = "0.1.21"
+err-derive = "0.1.5"
+
+[[example]]
+name = "h3"
