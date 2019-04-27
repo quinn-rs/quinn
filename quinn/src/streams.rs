@@ -20,6 +20,9 @@ pub enum NewStream {
 }
 
 /// A stream that can only be used to send data
+///
+/// If dropped, streams that haven't been explicitly `reset` will continue to (re)transmit
+/// previously written data until it has been fully acknowledged or the connection is closed.
 pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
@@ -150,9 +153,11 @@ impl Drop for SendStream {
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        if !self.finished {
-            conn.inner.reset(self.stream, 0);
-            conn.notify();
+        if !self.finished && self.finishing.is_none() {
+            // Errors indicate that the stream was already reset, which is fine.
+            if conn.inner.finish(self.stream).is_ok() {
+                conn.notify();
+            }
         }
     }
 }

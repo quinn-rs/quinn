@@ -221,11 +221,8 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                             .and_then(move |(send, recv)| {
                                 tokio::io::write_all(send, b"foo".to_vec())
                                     .map_err(|e| panic!("write: {}", e))
-                                    .and_then(|(send, _)| {
-                                        tokio::io::shutdown(send)
-                                            .map_err(|e| panic!("finish: {}", e))
-                                    })
                                     .and_then(move |_| {
+                                        // Rely on send being implicitly finished when we drop it
                                         recv.read_to_end(usize::max_value())
                                             .unwrap()
                                             .map_err(|e| panic!("read: {}", e))
