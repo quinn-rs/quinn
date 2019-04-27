@@ -23,7 +23,7 @@ pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 pub use crate::builders::{
     ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
 };
-use crate::streams::{NewStream, RecvStream, SendStream};
+use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent};
 
 /// Connecting future
@@ -365,7 +365,7 @@ pub struct ConnectionInner {
     uni_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
     incoming_streams_reader: Option<Task>,
-    pub(crate) finishing: FnvHashMap<StreamId, oneshot::Sender<Option<ConnectionError>>>,
+    pub(crate) finishing: FnvHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -458,8 +458,15 @@ impl ConnectionInner {
                         }
                     }
                 }
-                StreamFinished { stream } => {
-                    let _ = self.finishing.remove(&stream).unwrap().send(None);
+                StreamFinished {
+                    stream,
+                    stop_reason,
+                } => {
+                    let _ = self
+                        .finishing
+                        .remove(&stream)
+                        .unwrap()
+                        .send(stop_reason.map(|e| WriteError::Stopped { error_code: e }));
                 }
             }
         }
@@ -542,7 +549,7 @@ impl ConnectionInner {
             x.notify();
         }
         for (_, x) in self.finishing.drain() {
-            let _ = x.send(Some(reason.clone()));
+            let _ = x.send(Some(WriteError::ConnectionClosed(reason.clone())));
         }
     }
 

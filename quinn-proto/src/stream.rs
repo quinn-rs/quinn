@@ -318,6 +318,23 @@ impl Send {
             _ => false,
         }
     }
+
+    pub fn finish(&mut self) -> Result<(), FinishError> {
+        use self::SendState::*;
+        match self.state {
+            Ready => {
+                self.state = SendState::DataSent;
+                Ok(())
+            }
+            ResetSent {
+                stop_reason: Some(error_code),
+            }
+            | ResetRecvd {
+                stop_reason: Some(error_code),
+            } => Err(FinishError::Stopped { error_code }),
+            _ => Err(FinishError::UnknownStream),
+        }
+    }
 }
 
 /// Errors triggered while writing to a send stream
@@ -544,4 +561,18 @@ pub enum RecvState {
     DataRecvd { size: u64 },
     ResetRecvd { size: u64, error_code: u16 },
     Closed,
+}
+
+/// Reasons why attempting to finish a stream might fail
+#[derive(Debug, Clone, Error)]
+pub enum FinishError {
+    /// The peer is no longer accepting data on this stream.
+    #[error(display = "stopped by peer: error {}", error_code)]
+    Stopped {
+        /// Application-defined reason for stopping the stream
+        error_code: u16,
+    },
+    /// The stream has not yet been created or is already considered destroyed
+    #[error(display = "unknown stream")]
+    UnknownStream,
 }

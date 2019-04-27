@@ -33,7 +33,7 @@ pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
     is_0rtt: bool,
-    finishing: Option<oneshot::Receiver<Option<ConnectionError>>>,
+    finishing: Option<oneshot::Receiver<Option<WriteError>>>,
     finished: bool,
 }
 
@@ -83,14 +83,19 @@ impl SendStream {
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn poll_finish(&mut self) -> Poll<(), FinishError> {
+    pub fn poll_finish(&mut self) -> Poll<(), WriteError> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt()
-                .map_err(|()| FinishError::ZeroRttRejected)?;
+                .map_err(|()| WriteError::ZeroRttRejected)?;
         }
         if self.finishing.is_none() {
-            conn.inner.finish(self.stream);
+            conn.inner.finish(self.stream).map_err(|e| match e {
+                quinn_proto::FinishError::UnknownStream => WriteError::UnknownStream,
+                quinn_proto::FinishError::Stopped { error_code } => {
+                    WriteError::Stopped { error_code }
+                }
+            })?;
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
             conn.finishing.insert(self.stream, send);
@@ -102,7 +107,7 @@ impl SendStream {
                 self.finished = true;
                 Ok(Async::Ready(()))
             }
-            Async::Ready(Some(e)) => Err(FinishError::ConnectionLost(e)),
+            Async::Ready(Some(e)) => Err(e),
             Async::NotReady => Ok(Async::NotReady),
         }
     }
@@ -358,29 +363,6 @@ impl Drop for RecvStream {
         if !self.all_data_read {
             conn.inner.stop_sending(self.stream, 0);
             conn.notify();
-        }
-    }
-}
-
-/// Errors that arise from finishing a stream
-#[derive(Debug, Error, Clone)]
-pub enum FinishError {
-    /// The connection was lost.
-    #[error(display = "connection lost: {}", _0)]
-    ConnectionLost(ConnectionError),
-    /// This was a 0-RTT stream and the server rejected it.
-    ///
-    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
-    #[error(display = "0-RTT rejected")]
-    ZeroRttRejected,
-}
-
-impl From<FinishError> for io::Error {
-    fn from(x: FinishError) -> Self {
-        use self::FinishError::*;
-        match x {
-            ConnectionLost(e) => e.into(),
-            ZeroRttRejected => io::Error::new(io::ErrorKind::ConnectionReset, "0-RTT rejected"),
         }
     }
 }
