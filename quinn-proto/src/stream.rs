@@ -288,20 +288,9 @@ impl Send {
     }
 
     pub fn write_budget(&mut self) -> Result<u64, WriteError> {
-        match self.state {
-            SendState::ResetSent {
-                ref mut stop_reason,
-            }
-            | SendState::ResetRecvd {
-                ref mut stop_reason,
-            } => {
-                if let Some(error_code) = stop_reason.take() {
-                    return Err(WriteError::Stopped { error_code });
-                }
-            }
-            _ => {}
-        };
-
+        if let Some(error_code) = self.take_stop_reason() {
+            return Err(WriteError::Stopped { error_code });
+        }
         let budget = self.max_data - self.offset;
         if budget == 0 {
             Err(WriteError::Blocked)
@@ -320,19 +309,25 @@ impl Send {
     }
 
     pub fn finish(&mut self) -> Result<(), FinishError> {
-        use self::SendState::*;
+        if self.state == SendState::Ready {
+            self.state = SendState::DataSent;
+            Ok(())
+        } else if let Some(error_code) = self.take_stop_reason() {
+            Err(FinishError::Stopped { error_code })
+        } else {
+            Err(FinishError::UnknownStream)
+        }
+    }
+
+    fn take_stop_reason(&mut self) -> Option<u16> {
         match self.state {
-            Ready => {
-                self.state = SendState::DataSent;
-                Ok(())
+            SendState::ResetSent {
+                ref mut stop_reason,
             }
-            ResetSent {
-                stop_reason: Some(error_code),
-            }
-            | ResetRecvd {
-                stop_reason: Some(error_code),
-            } => Err(FinishError::Stopped { error_code }),
-            _ => Err(FinishError::UnknownStream),
+            | SendState::ResetRecvd {
+                ref mut stop_reason,
+            } => stop_reason.take(),
+            _ => None,
         }
     }
 }
@@ -536,6 +531,8 @@ pub enum ReadError {
     UnknownStream,
 }
 
+/// `stop_reason` below should be set iff the stream was stopped and application has not yet been
+/// notified, as we never discard resources for a stream that has it set.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SendState {
     Ready,
