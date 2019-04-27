@@ -29,7 +29,7 @@ use crate::stream::{self, FinishError, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError,
-    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection
@@ -1649,6 +1649,11 @@ impl Connection {
                     directionality,
                     count,
                 } => {
+                    if count > MAX_STREAM_COUNT {
+                        return Err(TransportError::STREAM_LIMIT_ERROR(
+                            "unrepresentable stream limit",
+                        ));
+                    }
                     let current = match directionality {
                         Directionality::Uni => &mut self.streams.max_uni,
                         Directionality::Bi => &mut self.streams.max_bi,
@@ -2435,6 +2440,14 @@ impl Connection {
                 "original CID mismatch",
             ));
         }
+        if params.initial_max_streams_bidi > MAX_STREAM_COUNT
+            || params.initial_max_streams_uni > MAX_STREAM_COUNT
+        {
+            return Err(TransportError::STREAM_LIMIT_ERROR(
+                "unrepresentable initial stream limit",
+            ));
+        }
+
         Ok(())
     }
 
