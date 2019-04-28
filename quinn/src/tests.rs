@@ -195,13 +195,14 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
         runtime.spawn(
             server_incoming
+                .and_then(|connect| connect.map_err(|_| ()))
                 .into_future()
+                .map_err(|_| ())
                 .map(move |(conn, _)| {
                     let (conn_driver, _, incoming_streams) = conn.unwrap();
                     tokio::spawn(conn_driver.map_err(|_| ()));
                     tokio::spawn(incoming_streams.map_err(|_| ()).for_each(echo));
-                })
-                .map_err(|_| ()),
+                }),
         );
 
         info!(log, "connecting from {} to {}", client_addr, server_addr);

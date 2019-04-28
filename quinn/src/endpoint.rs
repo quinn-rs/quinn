@@ -15,9 +15,7 @@ use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, Datagra
 use slog::Logger;
 
 use crate::builders::EndpointBuilder;
-use crate::connection::{
-    new_connection, Connecting, Connection, ConnectionDriver, ConnectionRef, IncomingStreams,
-};
+use crate::connection::{Connecting, ConnectionDriver, ConnectionRef};
 use crate::udp::UdpSocket;
 use crate::{ConnectionEvent, EndpointEvent, IO_LOOP_BOUND};
 
@@ -357,7 +355,7 @@ impl Incoming {
 }
 
 impl FuturesStream for Incoming {
-    type Item = (ConnectionDriver, Connection, IncomingStreams);
+    type Item = Connecting;
     type Error = (); // FIXME: Infallible
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let endpoint = &mut *self.0.lock().unwrap();
@@ -365,7 +363,7 @@ impl FuturesStream for Incoming {
             Ok(Async::Ready(None))
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            Ok(Async::Ready(Some(new_connection(conn.0))))
+            Ok(Async::Ready(Some(Connecting::new(conn.0))))
         } else if endpoint.close.is_some() {
             Ok(Async::Ready(None))
         } else {

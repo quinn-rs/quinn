@@ -60,17 +60,21 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8
     let (driver, incoming, server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
     runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-    let handle_incoming_conns = incoming
-        .take(1)
-        .for_each(move |(conn_driver, conn, _incoming)| {
-            current_thread::spawn(conn_driver.map_err(|_| ()));
-            println!(
-                "[server] incoming connection: id={} addr={}",
-                conn.remote_id(),
-                conn.remote_address()
-            );
-            Ok(())
-        });
+    let handle_incoming_conns = incoming.take(1).for_each(move |incoming_conn| {
+        current_thread::spawn(
+            incoming_conn
+                .and_then(|(conn_driver, conn, _incoming)| {
+                    println!(
+                        "[server] incoming connection: id={} addr={}",
+                        conn.remote_id(),
+                        conn.remote_address()
+                    );
+                    conn_driver
+                })
+                .map_err(|_| ()),
+        );
+        Ok(())
+    });
     runtime.spawn(handle_incoming_conns);
 
     Ok(server_cert)
