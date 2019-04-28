@@ -70,7 +70,7 @@ pub use crate::builders::{
 };
 
 mod connection;
-pub use connection::{Connecting, Connection, ConnectionDriver, IncomingStreams};
+pub use connection::{Connecting, Connection, ConnectionDriver, IncomingStreams, OpenBi, OpenUni};
 
 mod endpoint;
 pub use endpoint::{Endpoint, EndpointDriver, Incoming};
