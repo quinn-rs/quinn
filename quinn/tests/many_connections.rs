@@ -31,6 +31,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let epoch = Instant::now();
     let shared2 = shared.clone();
     let read_incoming_data = incoming_conns
+        .and_then(|connect| connect.map_err(|_| ()))
         .take(expected_messages as u64)
         .map_err(|()| panic!("Listener failed"))
         .for_each(move |(conn_driver, conn, incoming)| {

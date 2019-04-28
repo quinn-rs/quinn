@@ -93,9 +93,7 @@ impl Future for Connecting {
     }
 }
 
-pub(crate) fn new_connection(
-    conn: ConnectionRef,
-) -> (ConnectionDriver, Connection, IncomingStreams) {
+fn new_connection(conn: ConnectionRef) -> (ConnectionDriver, Connection, IncomingStreams) {
     (
         ConnectionDriver(conn.clone()),
         Connection(conn.clone()),
