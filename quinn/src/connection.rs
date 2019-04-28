@@ -251,11 +251,7 @@ impl FuturesStream for IncomingStreams {
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut conn = self.0.lock().unwrap();
-        if let Some(ConnectionError::LocallyClosed) = conn.error {
-            Ok(Async::Ready(None))
-        } else if let Some(ref e) = conn.error {
-            Err(e.clone())
-        } else if let Some(x) = conn.inner.accept() {
+        if let Some(x) = conn.inner.accept() {
             mem::drop(conn); // Release the lock so clone can take it
             let stream = if x.directionality() == Directionality::Uni {
                 NewStream::Uni(RecvStream::new(self.0.clone(), x, false))
@@ -266,6 +262,10 @@ impl FuturesStream for IncomingStreams {
                 )
             };
             Ok(Async::Ready(Some(stream)))
+        } else if let Some(ConnectionError::LocallyClosed) = conn.error {
+            Ok(Async::Ready(None))
+        } else if let Some(ref e) = conn.error {
+            Err(e.clone())
         } else {
             conn.incoming_streams_reader = Some(task::current());
             Ok(Async::NotReady)
