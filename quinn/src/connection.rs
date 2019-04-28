@@ -161,7 +161,7 @@ pub struct Connection(ConnectionRef);
 
 impl Connection {
     /// Initite a new outgoing unidirectional stream.
-    pub fn open_uni(&self) -> impl Future<Item = SendStream, Error = ConnectionError> {
+    pub fn open_uni(&self) -> OpenUni {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
@@ -173,14 +173,14 @@ impl Connection {
                 // streams
             }
         }
-        let conn = self.0.clone();
-        recv.map_err(|_| unreachable!())
-            .and_then(|result| result)
-            .map(move |(stream, is_0rtt)| SendStream::new(conn.clone(), stream, is_0rtt))
+        OpenUni {
+            recv: recv,
+            conn: self.0.clone(),
+        }
     }
 
     /// Initiate a new outgoing bidirectional stream.
-    pub fn open_bi(&self) -> impl Future<Item = (SendStream, RecvStream), Error = ConnectionError> {
+    pub fn open_bi(&self) -> OpenBi {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
@@ -192,15 +192,10 @@ impl Connection {
                 // streams
             }
         }
-        let conn = self.0.clone();
-        recv.map_err(|_| unreachable!())
-            .and_then(|result| result)
-            .map(move |(stream, is_0rtt)| {
-                (
-                    SendStream::new(conn.clone(), stream, is_0rtt),
-                    RecvStream::new(conn, stream, is_0rtt),
-                )
-            })
+        OpenBi {
+            recv: recv,
+            conn: self.0.clone(),
+        }
     }
 
     /// Close the connection immediately.
@@ -273,6 +268,59 @@ impl FuturesStream for IncomingStreams {
         } else {
             conn.incoming_streams_reader = Some(task::current());
             Ok(Async::NotReady)
+        }
+    }
+}
+
+/// A future that will resolve into an opened outgoing unidirectional stream
+pub struct OpenUni {
+    recv: oneshot::Receiver<Result<(StreamId, bool), ConnectionError>>,
+    conn: ConnectionRef,
+}
+
+impl Future for OpenUni {
+    type Item = SendStream;
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.recv.poll() {
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Ok(Async::Ready(Err(c))) => Err(c),
+            Err(_) => unreachable!(
+                "oneshot sender won't be dropped while `self.conn` is keeping the \
+                 `ConnectionInner` alive"
+            ),
+            Ok(Async::Ready(Ok((stream, is_0rtt)))) => Ok(Async::Ready(SendStream::new(
+                self.conn.clone(),
+                stream,
+                is_0rtt,
+            ))),
+        }
+    }
+}
+
+/// A future that will resolve into an opened outgoing bidirectional stream
+pub struct OpenBi {
+    recv: oneshot::Receiver<Result<(StreamId, bool), ConnectionError>>,
+    conn: ConnectionRef,
+}
+
+impl Future for OpenBi {
+    type Item = (SendStream, RecvStream);
+    type Error = ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.recv.poll() {
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Ok(Async::Ready(Err(c))) => Err(c),
+            Err(_) => unreachable!(
+                "oneshot sender won't be dropped while `self.conn` is keeping the \
+                 `ConnectionInner` alive"
+            ),
+            Ok(Async::Ready(Ok((stream, is_0rtt)))) => Ok(Async::Ready((
+                SendStream::new(self.conn.clone(), stream, is_0rtt),
+                RecvStream::new(self.conn.clone(), stream, is_0rtt),
+            ))),
         }
     }
 }
