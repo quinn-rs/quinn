@@ -105,6 +105,8 @@ pub struct TransportConfig {
     /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
     /// peers to be effective.
     pub keep_alive_interval: u32,
+    /// Maximum quantity of out-of-order crypto layer data to buffer
+    pub crypto_buffer_size: usize,
 }
 
 impl Default for TransportConfig {
@@ -139,6 +141,7 @@ impl Default for TransportConfig {
             loss_reduction_factor: 0x8000, // 1/2
             persistent_congestion_threshold: 3,
             keep_alive_interval: 0,
+            crypto_buffer_size: 16 * 1024,
         }
     }
 }
@@ -156,6 +159,11 @@ impl TransportConfig {
         .find(|&&(_, x)| x > varint::MAX_VALUE)
         {
             return Err(ConfigError::VarIntBounds(name));
+        }
+        if self.crypto_buffer_size < 4096 {
+            return Err(ConfigError::IllegalValue(
+                "crypto_buffer_size must be at least 4096",
+            ));
         }
         if self.idle_timeout != 0 && u64::from(self.keep_alive_interval) >= self.idle_timeout {
             warn!(
