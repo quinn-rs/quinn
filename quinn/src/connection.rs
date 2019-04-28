@@ -19,7 +19,9 @@ use tokio_timer::Delay;
 use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent};
 
-/// Connecting future
+/// In-progress connection attempt future
+///
+/// Be sure to spawn the `ConnectionDriver` when complete.
 pub struct Connecting(Option<ConnectionDriver>);
 
 impl Connecting {
@@ -27,7 +29,8 @@ impl Connecting {
         Self(Some(ConnectionDriver(conn)))
     }
 
-    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
+    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security. Be sure to
+    /// spawn the `ConnectionDriver`.
     ///
     /// Opens up the connection for use before the handshake finishes, allowing the API user to
     /// send data with 0-RTT encryption if the necessary key material is available. This is useful

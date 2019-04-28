@@ -39,7 +39,7 @@ impl Endpoint {
         EndpointBuilder::default()
     }
 
-    /// Connect to a remote endpoint.
+    /// Connect to a remote endpoint. Be sure to spawn the `ConnectionDriver` after connecting.
     ///
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
