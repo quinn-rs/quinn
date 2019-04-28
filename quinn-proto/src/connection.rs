@@ -921,9 +921,8 @@ impl Connection {
         } else {
             SpaceId::Handshake
         };
-        if space < expected
-            && crypto.offset + crypto.data.len() as u64 > self.space(space).crypto_stream.offset()
-        {
+        let end = crypto.offset + crypto.data.len() as u64;
+        if space < expected && end > self.space(space).crypto_stream.offset() {
             warn!(
                 self.log,
                 "received new {actual:?} CRYPTO data when expecting {expected:?}",
@@ -936,6 +935,10 @@ impl Connection {
         }
 
         let space = &mut self.spaces[space as usize];
+        let max = space.crypto_stream.offset() + self.config.crypto_buffer_size as u64;
+        if end > max {
+            return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
+        }
         space
             .crypto_stream
             .insert(crypto.offset, crypto.data.clone());
