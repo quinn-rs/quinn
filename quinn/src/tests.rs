@@ -141,6 +141,77 @@ fn local_addr() {
 }
 
 #[test]
+fn read_after_close() {
+    let mut endpoint = Endpoint::builder();
+
+    let mut server_config = ServerConfigBuilder::default();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+    let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+    let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
+    let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
+    server_config.certificate(cert_chain, key).unwrap();
+    endpoint.listen(server_config.build());
+    let mut client_config = ClientConfigBuilder::default();
+    client_config.add_certificate_authority(cert).unwrap();
+    endpoint.default_client_config(client_config.build());
+
+    let (driver, endpoint, incoming) = endpoint
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
+
+    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+    runtime.spawn(driver.map_err(|e| panic!("{}", e)));
+    const MSG: &[u8] = b"goodbye!";
+    runtime.spawn(
+        incoming
+            .take(1)
+            .and_then(|incoming| incoming.map_err(|_| ()))
+            .for_each(|(driver, conn, _)| {
+                tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
+                conn.open_uni()
+                    .map_err(|e| panic!("open_uni: {}", e))
+                    .and_then(|s| {
+                        tokio::io::write_all(s, MSG.to_vec())
+                            .map_err(|e| panic!("write: {}", e))
+                            .and_then(|(s, _)| s.finish().map_err(|e| panic!("finish: {}", e)))
+                    })
+            }),
+    );
+    runtime.spawn(
+        endpoint
+            .connect(&endpoint.local_addr().unwrap(), "localhost")
+            .unwrap()
+            .map_err(|e| panic!("connect: {}", e))
+            .and_then(|(driver, _, streams)| {
+                tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
+                tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
+                    .map_err(|_| unreachable!())
+                    .and_then(move |()| {
+                        streams
+                            .into_future()
+                            .map_err(|(e, _)| panic!("incoming streams: {}", e))
+                            .and_then(|(stream, _)| {
+                                let stream = match stream.expect("missing stream") {
+                                    NewStream::Uni(s) => s,
+                                    _ => unreachable!(),
+                                };
+                                stream
+                                    .read_to_end(usize::max_value())
+                                    .unwrap()
+                                    .map_err(|e| panic!("read_to_end: {}", e))
+                                    .map(|msg| {
+                                        assert_eq!(msg, MSG);
+                                    })
+                            })
+                    })
+            }),
+    );
+    drop(endpoint);
+
+    runtime.run().unwrap();
+}
+
+#[test]
 fn echo_v6() {
     run_echo(
         SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
