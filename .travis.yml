@@ -43,5 +43,5 @@ script:
     cargo fmt -- --check;
   fi
 - if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
-    RUST_BACKTRACE=1 cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash);
+    RUST_BACKTRACE=1 cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash)
   fi
