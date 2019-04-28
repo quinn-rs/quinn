@@ -11,16 +11,20 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::{fmt, fs, io};
 
-use bytes::{BytesMut, Buf};
+use bytes::{Buf, BytesMut};
 use failure::{Error, Fail, ResultExt};
-use futures::{Async, Future, Poll, Stream, try_ready};
+use futures::{try_ready, Async, Future, Poll, Stream};
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
+use tokio::io::AsyncRead;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
 
-use quinn::RecvStream;
-use quinn_h3::{frame::{ SettingsFrame, HttpFrame}, Connection, StreamType};
+use quinn::{OpenBi, OpenUni, RecvStream, SendStream};
+use quinn_h3::{
+    frame::{HttpFrame, SettingsFrame},
+    Connection, StreamType,
+};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -90,24 +94,38 @@ fn main() {
         .use_original_order()
         .build()
         .fuse();
+    let server_log = Logger::root(sdrain, o!("server" => ""));
+
+    let certs = build_certs(server_log.clone(), opt.clone()).expect("failed to build certs");
 
     let mut runtime = Runtime::new().expect("runtime failed");
     let server = server(
-        Logger::root(sdrain, o!("server" => "")),
+        server_log,
         opt.clone(),
         &mut runtime,
+        (certs.0.clone(), certs.2.clone()),
     )
     .expect("server failed");
 
-    let client =
-        client(Logger::root(cdrain, o!("client" => "")), opt, &mut runtime).expect("client failed");
+    let client = client(
+        Logger::root(cdrain, o!("client" => "")),
+        opt,
+        &mut runtime,
+        certs.1,
+    )
+    .expect("client failed");
 
     runtime.spawn(client.map_err(|_| println!("client failed:")));
     runtime.block_on(server).expect("block on server failed");
     ::std::process::exit(0);
 }
 
-fn server(log: Logger, options: Opt, runtime: &mut Runtime) -> Result<quinn::EndpointDriver> {
+fn server(
+    log: Logger,
+    options: Opt,
+    runtime: &mut Runtime,
+    certs: (quinn::tls::CertificateChain, quinn::tls::PrivateKey),
+) -> Result<quinn::EndpointDriver> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 513,
@@ -122,45 +140,7 @@ fn server(log: Logger, options: Opt, runtime: &mut Runtime) -> Result<quinn::End
         server_config.use_stateless_retry(true);
     }
 
-    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
-        let key = fs::read(key_path).context("failed to read private key")?;
-        let key = if key_path.extension().map_or(false, |x| x == "der") {
-            quinn::PrivateKey::from_der(&key)?
-        } else {
-            quinn::PrivateKey::from_pem(&key)?
-        };
-        let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
-        let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
-            quinn::CertificateChain::from_certs(quinn::Certificate::from_der(&cert_chain))
-        } else {
-            quinn::CertificateChain::from_pem(&cert_chain)?
-        };
-        server_config.certificate(cert_chain, key)?;
-    } else {
-        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
-        let path = dirs.data_local_dir();
-        let cert_path = path.join("cert.der");
-        let key_path = path.join("key.der");
-        let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
-            Ok(x) => x,
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "generating self-signed certificate");
-                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
-                let key = cert.serialize_private_key_der();
-                let cert = cert.serialize_der();
-                fs::create_dir_all(&path).context("failed to create certificate directory")?;
-                fs::write(&cert_path, &cert).context("failed to write certificate")?;
-                fs::write(&key_path, &key).context("failed to write private key")?;
-                (cert, key)
-            }
-            Err(e) => {
-                bail!("failed to read certificate: {}", e);
-            }
-        };
-        let key = quinn::PrivateKey::from_der(&key)?;
-        let cert = quinn::Certificate::from_der(&cert)?;
-        server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
-    }
+    server_config.certificate(certs.0, certs.1)?;
 
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.logger(log.clone());
@@ -317,7 +297,7 @@ impl Future for H3ConnectionDriver {
                     }
                     _ => {
                         self.streams.remove(idx);
-                    },
+                    }
                 }
             }
         }
@@ -421,6 +401,20 @@ impl Future for ControlStream {
     }
 }
 
+// struct RecvRequest {
+//     conn: H3ConnectionRef,
+//     send: SendStream,
+//     buf: BytesMut,
+// }
+
+// impl Future for RecvRequest {
+//     type Item = Request;
+//     type Error = Error;
+
+//     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+//     }
+// }
+
 struct H3Connection {
     quic: quinn::Connection,
     conn: H3ConnectionRef,
@@ -428,12 +422,128 @@ struct H3Connection {
 
 struct H3IncomingRequests(H3ConnectionRef);
 
-//===================== /THE MESS =====================================
+struct ClientBuilder<'a> {
+    endpoint: quinn::EndpointBuilder<'a>,
+}
+
+struct ClientConnection {
+    quic: quinn::Connection,
+    conn: H3ConnectionRef,
+}
+
+impl ClientConnection {
+    // fn send_request(&mut self, req: Request) -> impl Future<Item = Response, Error = Error> {
+    //     self.quic.open_bi()
+    //         .map_err(|e| format_err!("failed to open bi {}", e))
+    //         .and_then(|(send, recv)| {
+    //             tokio::io::write_all(send, &"BLAH"[..])
+    //                 .map_err(|e| format_err!("writing request failed {}", e))
+    //                 .and_then(|(send, _)| {
+    //                     tokio::io::shutdown(send)
+    //                         .map_err(|e| format_err!("shutdown send failed {}", e))
+    //                 }).and_then(|_| {
+    //                     tokio::io::read_to_end(recv, Vec::with_capacity(1024))
+    //                         .map_err(|e| format_err!("read failed {}", e))
+    //                 }).map(|(_, data)| Response { data } )
+    //     })
+    // }
+    fn send_request(&mut self, req: Request) -> SendRequest {
+        SendRequest {
+            conn: self.conn.clone(),
+            state: Some(SendRequestState::Opening(self.quic.open_bi_h3())),
+        }
+    }
+}
+
+struct FrameStream<R> {
+    recv: R,
+    buf: BytesMut,
+}
+
+impl<R> FrameStream<R> {
+    fn with(recv: R) -> Self {
+        Self {
+            recv,
+            buf: BytesMut::with_capacity(1024),
+        }
+    }
+}
+
+impl<R> Stream for FrameStream<R>
+where
+    R: AsyncRead,
+{
+    type Item = HttpFrame;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        Ok(Async::NotReady)
+    }
+}
+
+struct Request {
+    headers: Vec<(String, String)>,
+}
+
+enum SendRequestState {
+    Opening(OpenBi),
+    Sending(tokio::io::WriteAll<SendStream, Vec<u8>>, RecvStream),
+    Sent(tokio::io::Shutdown<SendStream>, RecvStream),
+    Recving(FrameStream<RecvStream>),
+}
+
+struct SendRequest {
+    state: Option<SendRequestState>,
+    conn: H3ConnectionRef,
+}
+
+impl Future for SendRequest {
+    type Item = RecvResponse;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let state = match std::mem::replace(&mut self.state, None) {
+            Some(s) => s,
+            None => return Err(format_err!("no state, request polled as it is finished")),
+        };
+
+        self.state = Some(match state {
+            SendRequestState::Opening(mut o) => {
+                let (send, recv) = try_ready!(o.poll());
+                let send = tokio::io::write_all(send, "BLAH".into());
+                SendRequestState::Sending(send, recv)
+            }
+            SendRequestState::Sending(mut send, recv) => {
+                let (send, _) = try_ready!(send.poll());
+                let shut = tokio::io::shutdown(send);
+                SendRequestState::Sent(shut, recv)
+            }
+            SendRequestState::Sent(mut shut, recv) => {
+                try_ready!(shut.poll());
+                SendRequestState::Recving(FrameStream::with(recv))
+            }
+            SendRequestState::Recving(mut frames) => {
+                return match try_ready!(frames.poll()) {
+                    None => Err(format_err!("recieved an empty response")),
+                    Some(headers) => Ok(Async::Ready(RecvResponse { headers, frames })),
+                }
+            }
+        });
+
+        Ok(Async::NotReady)
+    }
+}
+
+struct RecvResponse {
+    headers: HttpFrame,
+    frames: FrameStream<RecvStream>,
+}
 
 fn client(
     log: Logger,
     options: Opt,
     runtime: &mut Runtime,
+    cert: quinn::tls::Certificate,
 ) -> Result<impl Future<Item = (), Error = Error>> {
     let url = options.url;
     let remote = url
@@ -448,24 +558,8 @@ fn client(
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(&[quinn::ALPN_QUIC_H3]);
     endpoint.logger(log.clone());
-    if let Some(ca_path) = options.ca {
-        client_config
-            .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
-    } else {
-        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
-        match fs::read(dirs.data_local_dir().join("cert.der")) {
-            Ok(cert) => {
-                client_config.add_certificate_authority(quinn::Certificate::from_der(&cert)?)?;
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "local server certificate not found");
-            }
-            Err(e) => {
-                error!(log, "failed to open local server certificate: {}", e);
-            }
-        }
-    }
 
+    client_config.add_certificate_authority(cert)?;
     endpoint.default_client_config(client_config.build());
 
     let (endpoint_driver, endpoint, _incoming) = endpoint.bind("[::]:0")?;
@@ -475,51 +569,127 @@ fn client(
     let fut = endpoint
         .connect(&remote, "localhost")?
         .map_err(|e| format_err!("failed to connect: {}", e))
-        .and_then(move |(conn_driver, conn, _)| {
+        .and_then(move |(conn_driver, conn, incoming)| {
             eprintln!("connected at {:?}", start.elapsed());
             tokio_current_thread::spawn(
                 conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
             );
-            let stream = conn.open_uni();
-            stream
-                .map_err(|e| format_err!("failed to open stream: {}", e))
-                .and_then(move |send| {
-                    let mut buf = vec![0x0];
-                    SettingsFrame::default().encode(&mut buf);
-                    tokio::io::write_all(send, buf)
-                        .map_err(|e| format_err!("failed to send request: {}", e))
+
+            let h3_conn = H3ConnectionRef(Arc::new(Mutex::new(quinn_h3::Connection::new())));
+
+            let h3_driver = H3ConnectionDriver {
+                conn: h3_conn.clone(),
+                incoming: incoming,
+                streams: Vec::new(),
+                control: None,
+            };
+
+            tokio_current_thread::spawn(
+                h3_driver.map_err(|e| eprintln!("H3 connection error: {}", e)),
+            );
+
+            let mut client_conn = ClientConnection {
+                quic: conn,
+                conn: h3_conn,
+            };
+
+            client_conn
+                .send_request(Request {
+                    headers: Vec::new(),
                 })
-                .and_then(move |(send, _wrote)| {
-                    tokio::io::shutdown(send)
-                        .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+                .map_err(|e| format_err!("client recv response failed: {}", e))
+                .map(|resp| {
+                    println!("resp: {:?}", resp.headers);
                 })
-                .and_then(move |_| {
-                    conn.open_bi()
-                        .map_err(|e| format_err!("failed to send request: {}", e))
-                        .and_then(move |(s, r)| {
-                            let mut buf = vec![];
-                            quinn_h3::frame::SettingsFrame::default().encode(&mut buf);
-                            tokio::io::write_all(s, buf)
-                                .map_err(|e| format_err!("failed to send request: {}", e))
-                                .and_then(move |(send, _wrote)| {
-                                    tokio::io::shutdown(send).map_err(|e| {
-                                        format_err!("failed to shutdown stream: {}", e)
-                                    })
-                                })
-                                .and_then(move |_| {
-                                    tokio::io::read_to_end(r, Vec::new())
-                                        .map_err(|e| {
-                                            format_err!("failed to shutdown stream: {}", e)
-                                        })
-                                        .and_then(|(_, data)| {
-                                            println!("data: {:?}", data);
-                                            Ok(())
-                                        })
-                                })
-                        })
-                })
-                .map(|_| eprintln!("drained"))
+
+            // let stream = conn.open_uni();
+            // stream
+            //     .map_err(|e| format_err!("failed to open stream: {}", e))
+            //     .and_then(move |send| {
+            //         let mut buf = vec![0x0];
+            //         SettingsFrame::default().encode(&mut buf);
+            //         tokio::io::write_all(send, buf)
+            //             .map_err(|e| format_err!("failed to send request: {}", e))
+            //     })
+            //     // .and_then(move |(send, _wrote)| {
+            //     //     tokio::io::shutdown(send)
+            //     //         .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+            //     // })
+            //     .and_then(move |send| {
+            //         conn.open_bi()
+            //             .map_err(|e| format_err!("failed to send request: {}", e))
+            //             .and_then(move |(s, r)| {
+            //                 let mut buf = vec![];
+            //                 quinn_h3::frame::SettingsFrame::default().encode(&mut buf);
+            //                 tokio::io::write_all(s, buf)
+            //                     .map_err(|e| format_err!("failed to send request: {}", e))
+            //                     .and_then(move |(send, _wrote)| {
+            //                         tokio::io::shutdown(send).map_err(|e| {
+            //                             format_err!("failed to shutdown stream: {}", e)
+            //                         })
+            //                     })
+            //                     .and_then(move |_| {
+            //                         tokio::io::read_to_end(r, Vec::new())
+            //                             .map_err(|e| {
+            //                                 format_err!("failed to shutdown stream: {}", e)
+            //                             })
+            //                             .and_then(|(_, data)| {
+            //                                 println!("data: {:?}", data);
+            //                                 Ok(())
+            //                             })
+            //                     })
+            //             })
+            //     })
+            //     .map(|_| eprintln!("drained"))
         });
 
     Ok(Box::new(fut))
+}
+
+//===================== /THE MESS =====================================
+
+fn build_certs(
+    log: Logger,
+    options: Opt,
+) -> Result<(
+    quinn::tls::CertificateChain,
+    quinn::tls::Certificate,
+    quinn::tls::PrivateKey,
+)> {
+    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
+        let key = fs::read(key_path).context("failed to read private key")?;
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
+        let cert = quinn::Certificate::from_der(&cert_chain)?;
+        let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
+        Ok((cert_chain, cert, key))
+    } else {
+        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let path = dirs.data_local_dir();
+        let cert_path = path.join("cert.der");
+        let key_path = path.join("key.der");
+        let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
+            Ok(x) => x,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                info!(log, "generating self-signed certificate");
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+                let key = cert.serialize_private_key_der();
+                let cert = cert.serialize_der();
+                fs::create_dir_all(&path).context("failed to create certificate directory")?;
+                fs::write(&cert_path, &cert).context("failed to write certificate")?;
+                fs::write(&key_path, &key).context("failed to write private key")?;
+                (cert, key)
+            }
+            Err(e) => {
+                bail!("failed to read certificate: {}", e);
+            }
+        };
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert = quinn::Certificate::from_der(&cert)?;
+        Ok((
+            quinn::CertificateChain::from_certs(vec![cert.clone()]),
+            cert,
+            key,
+        ))
+    }
 }
