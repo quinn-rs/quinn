@@ -161,7 +161,11 @@ impl Future for ConnectionDriver {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    /// Initite a new outgoing unidirectional stream.
+    /// Initiate a new outgoing unidirectional stream.
+    ///
+    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
+    /// consequence, the peer won't be notified that a stream has been opened until the stream is
+    /// actually used.
     pub fn open_uni(&self) -> OpenUni {
         let (send, recv) = oneshot::channel();
         {
@@ -181,6 +185,10 @@ impl Connection {
     }
 
     /// Initiate a new outgoing bidirectional stream.
+    ///
+    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
+    /// consequence, the peer won't be notified that a stream has been opened until the stream is
+    /// actually used.
     pub fn open_bi(&self) -> OpenBi {
         let (send, recv) = oneshot::channel();
         {
