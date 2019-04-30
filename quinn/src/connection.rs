@@ -171,7 +171,10 @@ impl Connection {
         {
             let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Uni) {
-                let _ = send.send(Ok((x, conn.inner.is_handshaking())));
+                let _ = send.send(Ok((
+                    x,
+                    conn.inner.side().is_client() && conn.inner.is_handshaking(),
+                )));
             } else {
                 conn.uni_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
@@ -194,7 +197,10 @@ impl Connection {
         {
             let mut conn = self.0.lock().unwrap();
             if let Some(x) = conn.inner.open(Directionality::Bi) {
-                let _ = send.send(Ok((x, conn.inner.is_handshaking())));
+                let _ = send.send(Ok((
+                    x,
+                    conn.inner.side().is_client() && conn.inner.is_handshaking(),
+                )));
             } else {
                 conn.bi_opening.push_back(send);
                 // We don't notify the driver here because there's no way to ask the peer for more
