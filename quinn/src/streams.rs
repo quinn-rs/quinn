@@ -25,7 +25,7 @@ pub enum NewStream {
 /// previously written data until it has been fully acknowledged or the connection is closed.
 pub struct SendStream {
     conn: ConnectionRef,
-    stream: StreamId,
+    pub stream: StreamId,
     is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<WriteError>>>,
     finished: bool,

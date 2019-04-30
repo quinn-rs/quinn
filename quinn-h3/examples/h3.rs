@@ -3,6 +3,8 @@ extern crate failure;
 #[macro_use]
 extern crate slog;
 
+use std::collections::VecDeque;
+use std::mem;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::PathBuf;
@@ -13,6 +15,7 @@ use std::{fmt, fs, io};
 
 use bytes::{Buf, BytesMut};
 use failure::{Error, Fail, ResultExt};
+use futures::task::{self, Task};
 use futures::{try_ready, Async, Future, Poll, Stream};
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
@@ -22,7 +25,7 @@ use url::Url;
 
 use quinn::{OpenBi, OpenUni, RecvStream, SendStream};
 use quinn_h3::{
-    frame::{HttpFrame, SettingsFrame},
+    frame::{Error as FrameError, HeadersFrame, HttpFrame, SettingsFrame},
     Connection, StreamType,
 };
 
@@ -168,9 +171,20 @@ fn server(
 }
 
 fn handle_connection(log: &Logger, conn: (H3ConnectionDriver, H3Connection, H3IncomingRequests)) {
-    let (conn_driver, _conn, _incoming_streams) = conn;
+    let (conn_driver, _conn, incoming_streams) = conn;
     let log = log.clone();
     info!(log, "got connection");
+
+    let incoming = incoming_streams.for_each(|req| {
+        println!("incoming yeild");
+        req.map_err(|_| format_err!("recv request failed"))
+            .and_then(|_| {
+                println!("received an exciting request !");
+                futures::future::ok(())
+            })
+    });
+
+    tokio_current_thread::spawn(incoming.map_err(|e| println!("Server Incoming error: {}", e)));
 
     // We ignore errors from the driver because they'll be reported by the `incoming` handler anyway.
     tokio_current_thread::spawn(conn_driver.map_err(|_| ()));
@@ -215,7 +229,7 @@ impl Stream for H3Incoming {
                 tokio_current_thread::spawn(
                     driver.map_err(|e| eprintln!("connection lost: {}", e)),
                 );
-                let h3_conn = H3ConnectionRef(Arc::new(Mutex::new(quinn_h3::Connection::new())));
+                let h3_conn = H3ConnectionRef::new();
                 Ok(Async::Ready(Some((
                     H3ConnectionDriver {
                         conn: h3_conn.clone(),
@@ -227,15 +241,31 @@ impl Stream for H3Incoming {
                         quic: conn,
                         conn: h3_conn.clone(),
                     },
-                    H3IncomingRequests(h3_conn),
+                    H3IncomingRequests { inner: h3_conn },
                 ))))
             }
         }
     }
 }
 
+struct H3ConnectionInner {
+    inner: Connection,
+    requests: VecDeque<RecvRequest>,
+    request_task: Option<Task>,
+}
+
 #[derive(Clone)]
-struct H3ConnectionRef(Arc<Mutex<Connection>>);
+struct H3ConnectionRef(Arc<Mutex<H3ConnectionInner>>);
+
+impl H3ConnectionRef {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(H3ConnectionInner {
+            inner: quinn_h3::Connection::new(),
+            requests: VecDeque::new(),
+            request_task: None,
+        })))
+    }
+}
 
 struct H3ConnectionDriver {
     conn: H3ConnectionRef,
@@ -268,8 +298,14 @@ impl Future for H3ConnectionDriver {
                             buf: BytesMut::with_capacity(20),
                         });
                     }
-                    quinn::NewStream::Bi(_send, _recv) => {
-                        println!("Bi stream");
+                    quinn::NewStream::Bi(send, recv) => {
+                        println!("New request pushed");
+                        let conn = &mut self.conn.0.lock().unwrap();
+                        conn.requests
+                            .push_back(RecvRequest::new(recv, send, self.conn.clone()));
+                        if let Some(ref mut incoming_task) = conn.request_task {
+                            incoming_task.notify();
+                        }
                     }
                 }
             }
@@ -291,7 +327,7 @@ impl Future for H3ConnectionDriver {
             let conn = &mut self.conn.0.lock().unwrap();
             for (idx, ty) in ready.into_iter() {
                 let new_uni = self.streams.remove(idx);
-                match conn.on_recv_stream(ty) {
+                match conn.inner.on_recv_stream(ty) {
                     Ok(()) => {
                         self.control = Some(ControlStream::new(new_uni, self.conn.clone()));
                     }
@@ -362,7 +398,7 @@ impl ControlStream {
         println!("send frame");
         let conn = &mut self.conn.0.lock().unwrap();
         for frame in self.pending.iter() {
-            conn.on_recv_control(frame);
+            conn.inner.on_recv_control(frame);
         }
         self.pending.clear();
     }
@@ -378,6 +414,43 @@ impl ControlStream {
         };
         this.on_read();
         this
+    }
+}
+
+enum RecvRequestState {
+    Receiving(FrameStream<RecvStream>, SendStream),
+}
+
+struct RecvRequest {
+    state: Option<RecvRequestState>,
+    conn: H3ConnectionRef,
+}
+
+impl RecvRequest {
+    fn new(recv: RecvStream, send: SendStream, conn: H3ConnectionRef) -> Self {
+        Self {
+            conn,
+            state: Some(RecvRequestState::Receiving(FrameStream::with(recv), send)),
+        }
+    }
+}
+
+impl Future for RecvRequest {
+    type Item = RecvRequest;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        println!("RecvRequest polled");
+        // let state = if let Some(state) = self.state {
+        //     std::mem::replace(&mut self.state, None)
+        // };
+        // match state {
+        //     RecvRequestState::Receiving(frames, send) => {
+        //         let frames = try_ready!(frames.poll());
+
+        //     }
+        // }
+        Ok(Async::NotReady)
     }
 }
 
@@ -420,7 +493,24 @@ struct H3Connection {
     conn: H3ConnectionRef,
 }
 
-struct H3IncomingRequests(H3ConnectionRef);
+struct H3IncomingRequests {
+    inner: H3ConnectionRef,
+}
+
+impl Stream for H3IncomingRequests {
+    type Item = RecvRequest;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        println!("H3IncomingRequests poll");
+        let mut conn = self.inner.0.lock().unwrap();
+        if !conn.requests.is_empty() {
+            return Ok(Async::Ready(conn.requests.pop_front()));
+        }
+        conn.request_task = Some(task::current());
+        Ok(Async::NotReady)
+    }
+}
 
 struct ClientBuilder<'a> {
     endpoint: quinn::EndpointBuilder<'a>,
@@ -432,26 +522,8 @@ struct ClientConnection {
 }
 
 impl ClientConnection {
-    // fn send_request(&mut self, req: Request) -> impl Future<Item = Response, Error = Error> {
-    //     self.quic.open_bi()
-    //         .map_err(|e| format_err!("failed to open bi {}", e))
-    //         .and_then(|(send, recv)| {
-    //             tokio::io::write_all(send, &"BLAH"[..])
-    //                 .map_err(|e| format_err!("writing request failed {}", e))
-    //                 .and_then(|(send, _)| {
-    //                     tokio::io::shutdown(send)
-    //                         .map_err(|e| format_err!("shutdown send failed {}", e))
-    //                 }).and_then(|_| {
-    //                     tokio::io::read_to_end(recv, Vec::with_capacity(1024))
-    //                         .map_err(|e| format_err!("read failed {}", e))
-    //                 }).map(|(_, data)| Response { data } )
-    //     })
-    // }
     fn send_request(&mut self, req: Request) -> SendRequest {
-        SendRequest {
-            conn: self.conn.clone(),
-            state: Some(SendRequestState::Opening(self.quic.open_bi_h3())),
-        }
+        SendRequest::new(self.quic.open_bi_h3(), self.conn.clone())
     }
 }
 
@@ -464,7 +536,7 @@ impl<R> FrameStream<R> {
     fn with(recv: R) -> Self {
         Self {
             recv,
-            buf: BytesMut::with_capacity(1024),
+            buf: BytesMut::with_capacity(1024 * 10),
         }
     }
 }
@@ -477,7 +549,24 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        Ok(Async::NotReady)
+        let len = self.buf.len();
+        println!("FrameStream: polling frame");
+        try_ready!(self.recv.poll_read(&mut self.buf[len..]));
+
+        let (pos, decoded) = {
+            let mut cur = io::Cursor::new(&mut self.buf);
+            let decoded = HttpFrame::decode(&mut cur);
+            (cur.position() as usize, decoded)
+        };
+
+        return match decoded {
+            Err(FrameError::UnexpectedEnd) => Ok(Async::NotReady),
+            Err(e) => Err(format_err!("error decoding frame: {:?}", e)), // TODO should impl failure
+            Ok(f) => {
+                self.buf.advance(pos);
+                Ok(Async::Ready(Some(f)))
+            }
+        };
     }
 }
 
@@ -487,14 +576,27 @@ struct Request {
 
 enum SendRequestState {
     Opening(OpenBi),
-    Sending(tokio::io::WriteAll<SendStream, Vec<u8>>, RecvStream),
-    Sent(tokio::io::Shutdown<SendStream>, RecvStream),
+    Sending(tokio::io::WriteAll<SendStream, Vec<u8>>),
+    Sent(tokio::io::Shutdown<SendStream>),
     Recving(FrameStream<RecvStream>),
+    Ready(HeadersFrame),
+    Finished,
 }
 
 struct SendRequest {
-    state: Option<SendRequestState>,
+    state: SendRequestState,
     conn: H3ConnectionRef,
+    recv: Option<FrameStream<RecvStream>>,
+}
+
+impl SendRequest {
+    fn new(open_bi: OpenBi, conn: H3ConnectionRef) -> Self {
+        Self {
+            conn,
+            state: SendRequestState::Opening(open_bi),
+            recv: None,
+        }
+    }
 }
 
 impl Future for SendRequest {
@@ -502,40 +604,60 @@ impl Future for SendRequest {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let state = match std::mem::replace(&mut self.state, None) {
-            Some(s) => s,
-            None => return Err(format_err!("no state, request polled as it is finished")),
-        };
-
-        self.state = Some(match state {
-            SendRequestState::Opening(mut o) => {
+        let new_state = match &mut self.state {
+            SendRequestState::Opening(ref mut o) => {
+                println!("SendRequest opening streams");
                 let (send, recv) = try_ready!(o.poll());
-                let send = tokio::io::write_all(send, "BLAH".into());
-                SendRequestState::Sending(send, recv)
+                self.recv = Some(FrameStream::with(recv));
+
+                let mut encoded_header = vec![];
+                HeadersFrame {
+                    encoded: b"blah"[..].into(),
+                }
+                .encode(&mut encoded_header);
+
+                let send = tokio::io::write_all(send, encoded_header);
+                SendRequestState::Sending(send)
             }
-            SendRequestState::Sending(mut send, recv) => {
+            SendRequestState::Sending(ref mut send) => {
+                println!("SendRequest sending");
                 let (send, _) = try_ready!(send.poll());
                 let shut = tokio::io::shutdown(send);
-                SendRequestState::Sent(shut, recv)
+                SendRequestState::Sent(shut)
             }
-            SendRequestState::Sent(mut shut, recv) => {
+            SendRequestState::Sent(ref mut shut) => {
+                println!("SendRequest sent");
                 try_ready!(shut.poll());
-                SendRequestState::Recving(FrameStream::with(recv))
+                SendRequestState::Recving(mem::replace(&mut self.recv, None).unwrap()) // TODO return Err
             }
-            SendRequestState::Recving(mut frames) => {
-                return match try_ready!(frames.poll()) {
-                    None => Err(format_err!("recieved an empty response")),
-                    Some(headers) => Ok(Async::Ready(RecvResponse { headers, frames })),
+            SendRequestState::Recving(ref mut frames) => {
+                println!("recieving response");
+                match try_ready!(frames.poll()) {
+                    None => return Err(format_err!("recieved an empty response")),
+                    Some(f) => match f {
+                        HttpFrame::Headers(headers) => SendRequestState::Ready(headers),
+                        _ => return Err(format_err!("first stream is not headers")),
+                    },
                 }
             }
-        });
+            _ => SendRequestState::Finished,
+        };
+
+        if let SendRequestState::Ready(headers) = new_state {
+            match mem::replace(&mut self.state, SendRequestState::Finished) {
+                SendRequestState::Recving(frames) => {
+                    return Ok(Async::Ready(RecvResponse { headers, frames }))
+                }
+                _ => unreachable!("ready shall always come after recieve"),
+            }
+        }
 
         Ok(Async::NotReady)
     }
 }
 
 struct RecvResponse {
-    headers: HttpFrame,
+    headers: HeadersFrame,
     frames: FrameStream<RecvStream>,
 }
 
@@ -575,7 +697,7 @@ fn client(
                 conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
             );
 
-            let h3_conn = H3ConnectionRef(Arc::new(Mutex::new(quinn_h3::Connection::new())));
+            let h3_conn = H3ConnectionRef::new();
 
             let h3_driver = H3ConnectionDriver {
                 conn: h3_conn.clone(),
