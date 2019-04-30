@@ -89,12 +89,14 @@ pub enum Side {
 
 impl Side {
     #[inline]
-    fn is_client(self) -> bool {
+    /// Shorthand for `self == Side::Client`
+    pub fn is_client(self) -> bool {
         self == Side::Client
     }
 
     #[inline]
-    fn is_server(self) -> bool {
+    /// Shorthand for `self == Side::Server`
+    pub fn is_server(self) -> bool {
         self == Side::Server
     }
 }
