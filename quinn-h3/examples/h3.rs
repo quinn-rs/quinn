@@ -23,7 +23,7 @@ use tokio::io::AsyncRead;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
 
-use quinn::{OpenBi, OpenUni, RecvStream, SendStream};
+use quinn::{Connecting, ConnectionDriver, OpenBi, OpenUni, RecvStream, SendStream};
 use quinn_h3::{
     frame::{Error as FrameError, HeadersFrame, HttpFrame, SettingsFrame},
     Connection, StreamType,
@@ -162,18 +162,29 @@ fn server(
         (driver, incoming)
     };
 
-    runtime.spawn(incoming.for_each(move |conn| {
-        info!(log, "listenning");
-        handle_connection(&log, conn);
-        Ok(())
-    }));
+    runtime.spawn(incoming.for_each(|connecting| {
+        println!("incoming");
+        connecting
+            .map_err(|e| eprintln!("connecting failed: {}", e))
+            .and_then(|connection| {
+                println!("recieved connection");
+                handle_connection(connection)
+                    .map_err(|e| eprintln!("connecting failed: {}", e))
+            })
+    })
+    );
     Ok(endpoint_driver)
 }
 
-fn handle_connection(log: &Logger, conn: (H3ConnectionDriver, H3Connection, H3IncomingRequests)) {
-    let (conn_driver, _conn, incoming_streams) = conn;
-    let log = log.clone();
-    info!(log, "got connection");
+fn handle_connection(
+    conn: (
+        ConnectionDriver,
+        H3ConnectionDriver,
+        H3Connection,
+        H3IncomingRequests,
+    ),
+) -> impl Future<Item = (), Error = Error> {
+    let (driver, h3_driver, _conn, incoming_streams) = conn;
 
     let incoming = incoming_streams.for_each(|req| {
         println!("incoming yeild");
@@ -184,10 +195,10 @@ fn handle_connection(log: &Logger, conn: (H3ConnectionDriver, H3Connection, H3In
             })
     });
 
-    tokio_current_thread::spawn(incoming.map_err(|e| println!("Server Incoming error: {}", e)));
-
     // We ignore errors from the driver because they'll be reported by the `incoming` handler anyway.
-    tokio_current_thread::spawn(conn_driver.map_err(|_| ()));
+    tokio_current_thread::spawn(driver.map_err(|_| ()));
+    tokio_current_thread::spawn(h3_driver.map_err(|_| ()));
+    incoming
 }
 
 //===================== THE MESS =====================================
@@ -218,33 +229,46 @@ struct H3Incoming {
 }
 
 impl Stream for H3Incoming {
-    type Item = (H3ConnectionDriver, H3Connection, H3IncomingRequests);
+    type Item = H3Connecting;
     type Error = (); // FIXME: Infallible
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match self.incoming.poll() {
             Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(e) => Err(e),
-            Ok(Async::Ready(Some((driver, conn, incoming)))) => {
-                tokio_current_thread::spawn(
-                    driver.map_err(|e| eprintln!("connection lost: {}", e)),
-                );
-                let h3_conn = H3ConnectionRef::new();
-                Ok(Async::Ready(Some((
-                    H3ConnectionDriver {
-                        conn: h3_conn.clone(),
-                        incoming: incoming,
-                        streams: Vec::new(),
-                        control: None,
-                    },
-                    H3Connection {
-                        quic: conn,
-                        conn: h3_conn.clone(),
-                    },
-                    H3IncomingRequests { inner: h3_conn },
-                ))))
-            }
+            Ok(Async::Ready(Some(connecting))) => Ok(Async::Ready(Some(H3Connecting(connecting)))),
         }
+    }
+}
+
+struct H3Connecting(Connecting);
+
+impl Future for H3Connecting {
+    type Item = (
+        ConnectionDriver,
+        H3ConnectionDriver,
+        H3Connection,
+        H3IncomingRequests,
+    );
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let (driver, connection, incoming) = try_ready!(self.0.poll());
+        let h3_conn = H3ConnectionRef::new();
+        Ok(Async::Ready((
+            driver,
+            H3ConnectionDriver {
+                conn: h3_conn.clone(),
+                incoming: incoming,
+                streams: Vec::new(),
+                control: None,
+            },
+            H3Connection {
+                quic: connection,
+                conn: h3_conn.clone(),
+            },
+            H3IncomingRequests { inner: h3_conn },
+        )))
     }
 }
 
@@ -272,6 +296,12 @@ struct H3ConnectionDriver {
     incoming: quinn::IncomingStreams,
     streams: Vec<NewUniStream>,
     control: Option<ControlStream>,
+}
+
+impl Drop for H3ConnectionDriver {
+    fn drop(&mut self) {
+        println!("connection driver dropped");
+    }
 }
 
 impl Future for H3ConnectionDriver {
@@ -523,7 +553,7 @@ struct ClientConnection {
 
 impl ClientConnection {
     fn send_request(&mut self, req: Request) -> SendRequest {
-        SendRequest::new(self.quic.open_bi_h3(), self.conn.clone())
+        SendRequest::new(self.quic.open_bi(), self.conn.clone())
     }
 }
 
@@ -724,45 +754,6 @@ fn client(
                     println!("resp: {:?}", resp.headers);
                 })
 
-            // let stream = conn.open_uni();
-            // stream
-            //     .map_err(|e| format_err!("failed to open stream: {}", e))
-            //     .and_then(move |send| {
-            //         let mut buf = vec![0x0];
-            //         SettingsFrame::default().encode(&mut buf);
-            //         tokio::io::write_all(send, buf)
-            //             .map_err(|e| format_err!("failed to send request: {}", e))
-            //     })
-            //     // .and_then(move |(send, _wrote)| {
-            //     //     tokio::io::shutdown(send)
-            //     //         .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-            //     // })
-            //     .and_then(move |send| {
-            //         conn.open_bi()
-            //             .map_err(|e| format_err!("failed to send request: {}", e))
-            //             .and_then(move |(s, r)| {
-            //                 let mut buf = vec![];
-            //                 quinn_h3::frame::SettingsFrame::default().encode(&mut buf);
-            //                 tokio::io::write_all(s, buf)
-            //                     .map_err(|e| format_err!("failed to send request: {}", e))
-            //                     .and_then(move |(send, _wrote)| {
-            //                         tokio::io::shutdown(send).map_err(|e| {
-            //                             format_err!("failed to shutdown stream: {}", e)
-            //                         })
-            //                     })
-            //                     .and_then(move |_| {
-            //                         tokio::io::read_to_end(r, Vec::new())
-            //                             .map_err(|e| {
-            //                                 format_err!("failed to shutdown stream: {}", e)
-            //                             })
-            //                             .and_then(|(_, data)| {
-            //                                 println!("data: {:?}", data);
-            //                                 Ok(())
-            //                             })
-            //                     })
-            //             })
-            //     })
-            //     .map(|_| eprintln!("drained"))
         });
 
     Ok(Box::new(fut))
