@@ -4,8 +4,6 @@ use bytes::{Buf, BufMut, Bytes};
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
 use quinn_proto::varint;
 
-use crate::qpack;
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     Malformed,

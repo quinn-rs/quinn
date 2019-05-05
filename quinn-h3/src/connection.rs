@@ -1,4 +1,6 @@
-use bytes::{Buf, Bytes, BytesMut};
+#![allow(dead_code)]
+
+use bytes::{Buf, BytesMut};
 
 use super::frame::{HttpFrame, SettingsFrame};
 use super::{ErrorCode, StreamType};
