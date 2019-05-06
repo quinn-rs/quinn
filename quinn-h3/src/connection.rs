@@ -2,9 +2,10 @@
 
 use bytes::{Buf, BytesMut};
 
-use super::frame::{HttpFrame, SettingsFrame};
+use super::frame::{HeadersFrame, HttpFrame, SettingsFrame};
 use super::{ErrorCode, StreamType};
-use crate::qpack::{self, DynamicTable};
+use crate::qpack::{self, DecoderError, DynamicTable, EncoderError, HeaderField};
+use quinn_proto::StreamId;
 
 #[derive(Debug, PartialEq)]
 pub enum ConnectionError {
@@ -14,8 +15,10 @@ pub enum ConnectionError {
     EncoderStreamAlreadyOpen,
     DecoderStreamAlreadyOpen,
     UnimplementedStream(StreamType),
-    DecoderStreamError { reason: qpack::EncoderError },
-    EncoderStreamError { reason: qpack::DecoderError },
+    DecoderStreamError { reason: EncoderError },
+    EncoderStreamError { reason: DecoderError },
+    EncodeError { reason: EncoderError },
+    DecodeError { reason: DecoderError },
 }
 
 pub enum State {
@@ -141,6 +144,55 @@ impl Connection {
                 Err(ConnectionError::UnimplementedStream(ty))
             }
         }
+    }
+
+    pub fn encode_header<'a, T: Iterator<Item = (&'a str, &'a str)>>(
+        &mut self,
+        stream_id: &StreamId,
+        headers: T,
+    ) -> Result<HeadersFrame, ConnectionError> {
+        let headers = headers
+            .map(|f| HeaderField::new(f.0, f.1))
+            .collect::<Vec<_>>(); // TODO pass an iterator
+        let mut block = BytesMut::with_capacity(512);
+        qpack::encode(
+            &mut self.encoder_table.encoder(stream_id.0),
+            &mut block,
+            &mut self.pending_encoder,
+            &headers,
+        )?;
+        Ok(HeadersFrame {
+            encoded: block.into(),
+        })
+    }
+
+    pub fn decode_header(
+        &mut self,
+        stream_id: &StreamId,
+        header: &HeadersFrame,
+    ) -> Result<Option<Vec<(String, String)>>, ConnectionError> {
+        match qpack::decode_header(
+            &mut self.decoder_table,
+            &mut std::io::Cursor::new(&header.encoded),
+        ) {
+            Err(DecoderError::MissingRefs) => Ok(None),
+            Err(e) => Err(ConnectionError::DecodeError{ reason: e }),
+            Ok(decoded) => {
+                qpack::ack_header(stream_id.0, &mut self.pending_decoder);
+                return Ok(Some(
+                    decoded
+                        .into_iter()
+                        .map(|f| f.into_inner())
+                        .collect(),
+                ));
+            }
+        }
+    }
+}
+
+impl From<EncoderError> for ConnectionError {
+    fn from(err: EncoderError) -> ConnectionError {
+        ConnectionError::EncodeError { reason: err }
     }
 }
 

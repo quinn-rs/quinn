@@ -38,6 +38,13 @@ impl HeaderField {
             value: Cow::Owned(value.into()),
         }
     }
+
+    pub fn into_inner(self) -> (String, String) {
+        (
+            String::from_utf8_lossy(&self.name).to_string(),
+            String::from_utf8_lossy(&self.value).to_string(),
+        )
+    }
 }
 
 impl Display for HeaderField {

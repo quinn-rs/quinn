@@ -30,6 +30,7 @@ use quinn_h3::{
     frame::{Error as FrameError, HeadersFrame, HttpFrame},
     Connection, StreamType,
 };
+use quinn_proto::StreamId;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -196,9 +197,12 @@ fn handle_connection(
             |ref mut request| {
                 println!("received an exciting request !: {:?}", request.headers);
                 request
-                    .send_response(HeadersFrame {
-                        encoded: b"wow, much req, very encode"[..].into(),
-                    })
+                    .send_response(
+                        vec![
+                            (":status", "200"), // TODO ResponseBuilder
+                        ]
+                        .into_iter(),
+                    )
                     .map_err(|e| println!("send response failed with: {}", e))
             },
         ));
@@ -460,23 +464,24 @@ impl ControlStream {
 
 enum RecvRequestState {
     Receiving(FrameStream<RecvStream>, SendStream),
+    Decoding(HeadersFrame),
     Ready,
 }
 
 struct RecvRequest {
     state: RecvRequestState,
     conn: H3ConnectionRef,
+    stream_id: StreamId,
     streams: Option<(FrameStream<RecvStream>, SendStream)>,
-    headers: Option<HeadersFrame>,
 }
 
 impl RecvRequest {
     fn new(recv: RecvStream, send: SendStream, conn: H3ConnectionRef) -> Self {
         Self {
             conn,
-            state: RecvRequestState::Receiving(FrameStream::with(recv), send),
+            stream_id: send.stream,
             streams: None,
-            headers: None,
+            state: RecvRequestState::Receiving(FrameStream::with(recv), send),
         }
     }
 }
@@ -486,33 +491,46 @@ impl Future for RecvRequest {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let new_state = match &mut self.state {
-            RecvRequestState::Receiving(frames, _) => {
-                let frame = try_ready!(frames.poll());
-                match frame {
-                    None => return Err(format_err!("recieved an empty request")),
-                    Some(HttpFrame::Headers(f)) => {
-                        self.headers = Some(f);
-                        RecvRequestState::Ready
+        loop {
+            match self.state {
+                RecvRequestState::Receiving(ref mut frames, _) => {
+                    println!("recving");
+                    let frame = try_ready!(frames.poll());
+                    match frame {
+                        None => return Err(format_err!("recieved an empty request")),
+                        Some(HttpFrame::Headers(f)) => {
+                            match mem::replace(&mut self.state, RecvRequestState::Decoding(f)) {
+                                RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),
+                                _ => unreachable!("Invalid state"),
+                            }
+                        }
+                        Some(_) => return Err(format_err!("first frame is not headers")),
                     }
-                    Some(_) => return Err(format_err!("first frame is not headers")),
                 }
-            }
-            RecvRequestState::Ready => return Err(format_err!("polled after ready")),
-        };
-
-        let old_state = mem::replace(&mut self.state, new_state);
-
-        if let RecvRequestState::Receiving(frames, send) = old_state {
-            // the current state is ready
-            return Ok(Async::Ready(RequestReady {
-                headers: mem::replace(&mut self.headers, None).unwrap(), // TODO err on unwrap
-                frame_stream: frames,
-                send: Some(send),
-            }));
+                RecvRequestState::Decoding(ref mut frame) => {
+                    println!("decoding");
+                    let mut conn = self.conn.0.lock().unwrap();
+                    match conn.inner.decode_header(&self.stream_id, frame) {
+                        Err(e) => return Err(format_err!("decoding header failed: {:?}", e)),
+                        Ok(None) => return Ok(Async::NotReady),
+                        Ok(Some(decoded)) => {
+                            self.state = RecvRequestState::Ready;
+                            let (frame_stream, send) = match mem::replace(&mut self.streams, None) {
+                                Some(x) => x,
+                                None => unreachable!("Invalid state"),
+                            };
+                            return Ok(Async::Ready(RequestReady {
+                                headers: decoded,
+                                frame_stream,
+                                send: Some(send),
+                                conn: self.conn.clone(),
+                            }));
+                        }
+                    }
+                }
+                RecvRequestState::Ready => return Err(format_err!("polled after ready")),
+            };
         }
-
-        Ok(Async::NotReady)
     }
 }
 
@@ -522,23 +540,41 @@ struct SendResponse {
 }
 
 struct RequestReady {
-    headers: HeadersFrame,
+    headers: Vec<(String, String)>,
     frame_stream: FrameStream<RecvStream>,
     send: Option<SendStream>,
+    conn: H3ConnectionRef,
 }
 
 impl RequestReady {
-    fn send_response(&mut self, headers: HeadersFrame) -> impl Future<Item = (), Error = Error> {
+    fn send_response<'a, T: Iterator<Item = (&'a str, &'a str)>>(
+        &mut self,
+        headers: T,
+    ) -> impl Future<Item = (), Error = Error> {
         let send = match mem::replace(&mut self.send, None) {
             None => panic!("response already sent"),
             Some(send) => send,
         };
-        let mut buf = Vec::new();
-        headers.encode(&mut buf);
-        tokio::io::write_all(send, buf)
-            .map_err(|e| e.into())
-            .and_then(move |(send, _)| tokio::io::shutdown(send).map_err(|e| e.into()))
-            .map(|_| println!("response sent!"))
+
+        let mut conn = self.conn.0.lock().unwrap();
+        let headers = conn
+            .inner
+            .encode_header(&send.stream, headers)
+            .map_err(|e| format_err!("encode header failed: {:?}", e));
+
+        let fut = match headers {
+            Err(e) => futures::future::err(e),
+            Ok(h) => futures::future::ok(h),
+        };
+
+        fut.and_then(|h| {
+            let mut buf = Vec::new();
+            h.encode(&mut buf);
+            tokio::io::write_all(send, buf)
+                .map_err(|e| e.into())
+                .and_then(move |(send, _)| tokio::io::shutdown(send).map_err(|e| e.into()))
+                .map(|_| println!("response sent!"))
+        })
     }
 }
 
@@ -608,8 +644,8 @@ struct ClientConnection {
 }
 
 impl ClientConnection {
-    fn send_request(&mut self, _req: Request) -> SendRequest {
-        SendRequest::new(self.quic.open_bi(), self.conn.clone())
+    fn send_request(&mut self, req: Request) -> SendRequest {
+        SendRequest::new(req, self.quic.open_bi(), self.conn.clone())
     }
 }
 
@@ -694,14 +730,16 @@ enum SendRequestState {
 }
 
 struct SendRequest {
+    req: Request,
     state: SendRequestState,
     conn: H3ConnectionRef,
     recv: Option<FrameStream<RecvStream>>,
 }
 
 impl SendRequest {
-    fn new(open_bi: OpenBi, conn: H3ConnectionRef) -> Self {
+    fn new(req: Request, open_bi: OpenBi, conn: H3ConnectionRef) -> Self {
         Self {
+            req,
             conn,
             state: SendRequestState::Opening(open_bi),
             recv: None,
@@ -720,11 +758,19 @@ impl Future for SendRequest {
                     let (send, recv) = try_ready!(o.poll());
                     self.recv = Some(FrameStream::with(recv));
 
+                    let mut conn = self.conn.0.lock().unwrap();
+                    let header = conn
+                        .inner
+                        .encode_header(
+                            &send.stream,
+                            self.req
+                                .headers
+                                .iter()
+                                .map(|(n, v)| (n.as_str(), v.as_str())),
+                        )
+                        .map_err(|e| format_err!("encode header failed: {:?}", e))?;
                     let mut encoded_header = vec![];
-                    HeadersFrame {
-                        encoded: b"blah"[..].into(),
-                    }
-                    .encode(&mut encoded_header);
+                    header.encode(&mut encoded_header);
 
                     let send = tokio::io::write_all(send, encoded_header);
                     self.state = SendRequestState::Sending(send);
@@ -832,7 +878,10 @@ fn client(
 
             client_conn
                 .send_request(Request {
-                    headers: Vec::new(),
+                    headers: vec![
+                        (":method".to_owned(), "GET".to_owned()),
+                        (":path".to_owned(), "/".to_owned()),
+                    ],
                 })
                 .map_err(|e| format_err!("client recv response failed: {}", e))
                 .and_then(move |resp| {
