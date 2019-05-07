@@ -36,7 +36,7 @@ pub struct Connection {
     remote_settings: Option<SettingsFrame>,
     decoder_table: DynamicTable,
     encoder_table: DynamicTable,
-    pending_control: BytesMut,
+    pub pending_control: BytesMut,
     pending_decoder: BytesMut,
     pending_encoder: BytesMut,
 }

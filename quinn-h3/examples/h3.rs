@@ -21,11 +21,11 @@ use futures::task::{self, Task};
 use futures::{try_ready, Async, Future, Poll, Stream};
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, Shutdown, WriteAll};
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
 
-use quinn::{Connecting, ConnectionDriver, OpenBi, RecvStream, SendStream};
+use quinn::{Connecting, ConnectionDriver, OpenBi, OpenUni, RecvStream, SendStream};
 use quinn_h3::{
     frame::{Error as FrameError, HeadersFrame, HttpFrame},
     Connection, StreamType,
@@ -269,7 +269,7 @@ impl Future for H3Connecting {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (driver, connection, incoming) = try_ready!(self.0.poll());
-        let h3_conn = H3ConnectionRef::new();
+        let h3_conn = H3ConnectionRef::new(connection.clone());
         Ok(Async::Ready((
             driver,
             H3ConnectionDriver {
@@ -277,6 +277,7 @@ impl Future for H3Connecting {
                 incoming: incoming,
                 streams: Vec::new(),
                 control: None,
+                control_send: ControlDriver::new(h3_conn.clone()),
             },
             H3Connection {
                 quic: connection,
@@ -289,6 +290,7 @@ impl Future for H3Connecting {
 
 struct H3ConnectionInner {
     inner: Connection,
+    quic: quinn::Connection,
     requests: VecDeque<RecvRequest>,
     request_task: Option<Task>,
 }
@@ -297,12 +299,85 @@ struct H3ConnectionInner {
 struct H3ConnectionRef(Arc<Mutex<H3ConnectionInner>>);
 
 impl H3ConnectionRef {
-    fn new() -> Self {
+    fn new(quic: quinn::Connection) -> Self {
         Self(Arc::new(Mutex::new(H3ConnectionInner {
+            quic,
             inner: quinn_h3::Connection::new(),
             requests: VecDeque::new(),
             request_task: None,
         })))
+    }
+}
+
+enum ControlDriverState {
+    Opening(OpenUni),
+    Sending(WriteAll<SendStream, BytesMut>),
+    Idle,
+    Closed,
+}
+
+struct ControlDriver {
+    state: ControlDriverState,
+    conn: H3ConnectionRef,
+    send: Option<SendStream>,
+}
+
+impl ControlDriver {
+    pub fn new(conn: H3ConnectionRef) -> Self {
+        let send = conn.0.lock().unwrap().quic.open_uni();
+        Self {
+            state: ControlDriverState::Opening(send),
+            conn: conn,
+            send: None,
+        }
+    }
+}
+
+impl Future for ControlDriver {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        println!("ControlDriver polled");
+        loop {
+            match self.state {
+                ControlDriverState::Opening(ref mut o) => {
+                    println!("ControlDriver opening");
+                    let send = try_ready!(o.poll());
+                    self.send = Some(send);
+                    self.state = ControlDriverState::Idle;
+                }
+                ControlDriverState::Idle => {
+                    println!("ControlDriver Idle");
+                    let mut conn = self.conn.0.lock().unwrap();
+                    if conn.inner.pending_control.is_empty() {
+                        return Ok(Async::NotReady);
+                    } else {
+                        let data = conn.inner.pending_control.take();
+                        let send = match mem::replace(&mut self.send, None) {
+                            Some(send) => send,
+                            None => {
+                                return Err(format_err!("Idle state shall have Some(SendStream)"));
+                            }
+                        };
+                        mem::replace(
+                            &mut self.state,
+                            ControlDriverState::Sending(tokio::io::write_all(send, data)),
+                        );
+                    }
+                }
+                ControlDriverState::Sending(ref mut s) => {
+                    println!("ControlDriver Sending");
+                    let (send, _) = try_ready!(s.poll());
+                    println!("ControlDriver Sent");
+                    self.send = Some(send);
+                    self.state = ControlDriverState::Idle;
+                }
+                ControlDriverState::Closed => {
+                    return Err(format_err!("ControlDriveralredy closed"));
+                }
+            }
+        }
     }
 }
 
@@ -311,6 +386,7 @@ struct H3ConnectionDriver {
     incoming: quinn::IncomingStreams,
     streams: Vec<NewUniStream>,
     control: Option<ControlStream>,
+    control_send: ControlDriver,
 }
 
 impl Drop for H3ConnectionDriver {
@@ -325,66 +401,85 @@ impl Future for H3ConnectionDriver {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         println!("H3 drive Connection");
 
-        match self.incoming.poll() {
-            Err(e) => {
-                println!("Err: {}", e);
-                return Err(e)?;
+        let mut again = true;
+        while again {
+            again = false;
+
+            if let Err(e) = self.control_send.poll() {
+                return Err(e);
             }
-            Ok(Async::NotReady) => println!("TODO: Incoming stream not ready..."),
-            Ok(Async::Ready(None)) => {
-                println!("Ready None");
-            }
-            Ok(Async::Ready(Some(stream))) => {
-                println!("Recv stream");
-                match stream {
-                    quinn::NewStream::Uni(s) => {
-                        self.streams.push(NewUniStream {
-                            stream: s,
-                            buf: BytesMut::with_capacity(20),
-                        });
+
+            match self.incoming.poll() {
+                Err(e) => {
+                    println!("Err: {}", e);
+                    return Err(e)?;
+                }
+                Ok(Async::NotReady) => println!("TODO: Incoming stream not ready..."),
+                Ok(Async::Ready(None)) => {
+                    println!("Ready None");
+                }
+                Ok(Async::Ready(Some(stream))) => {
+                    println!("Recv stream");
+                    match stream {
+                        quinn::NewStream::Uni(s) => {
+                            println!("New request pushed");
+                            self.streams.push(NewUniStream {
+                                stream: s,
+                                buf: BytesMut::with_capacity(20),
+                            });
+                            again = true;
+                        }
+                        quinn::NewStream::Bi(send, recv) => {
+                            println!("New request pushed");
+                            let conn = &mut self.conn.0.lock().unwrap();
+                            conn.requests.push_back(RecvRequest::new(
+                                recv,
+                                send,
+                                self.conn.clone(),
+                            ));
+                            if let Some(ref mut incoming_task) = conn.request_task {
+                                incoming_task.notify();
+                            }
+                            again = true;
+                        }
                     }
-                    quinn::NewStream::Bi(send, recv) => {
-                        println!("New request pushed");
-                        let conn = &mut self.conn.0.lock().unwrap();
-                        conn.requests
-                            .push_back(RecvRequest::new(recv, send, self.conn.clone()));
-                        if let Some(ref mut incoming_task) = conn.request_task {
-                            incoming_task.notify();
+                }
+            };
+
+            let ready = self
+                .streams
+                .iter_mut()
+                .enumerate()
+                .filter_map(
+                    |(idx, stream)| match stream.poll().expect("stream poll failed") {
+                        Async::NotReady => None,
+                        Async::Ready(ty) => {
+                            again = true;
+                            Some((idx, ty))
+                        }
+                    },
+                )
+                .collect::<Vec<(usize, StreamType)>>();
+
+            if !ready.is_empty() {
+                let conn = &mut self.conn.0.lock().unwrap();
+                for (idx, ty) in ready.into_iter() {
+                    let new_uni = self.streams.remove(idx);
+                    match conn.inner.on_recv_stream(ty) {
+                        Ok(()) => {
+                            again = true;
+                            self.control = Some(ControlStream::new(new_uni, self.conn.clone()));
+                        }
+                        _ => {
+                            self.streams.remove(idx);
                         }
                     }
                 }
             }
-        };
 
-        let ready = self
-            .streams
-            .iter_mut()
-            .enumerate()
-            .filter_map(
-                |(idx, stream)| match stream.poll().expect("stream poll failed") {
-                    Async::NotReady => None,
-                    Async::Ready(ty) => Some((idx, ty)),
-                },
-            )
-            .collect::<Vec<(usize, StreamType)>>();
-
-        if !ready.is_empty() {
-            let conn = &mut self.conn.0.lock().unwrap();
-            for (idx, ty) in ready.into_iter() {
-                let new_uni = self.streams.remove(idx);
-                match conn.inner.on_recv_stream(ty) {
-                    Ok(()) => {
-                        self.control = Some(ControlStream::new(new_uni, self.conn.clone()));
-                    }
-                    _ => {
-                        self.streams.remove(idx);
-                    }
-                }
+            if let Some(ref mut control) = self.control {
+                control.poll().ok();
             }
-        }
-
-        if let Some(ref mut control) = self.control {
-            control.poll().ok();
         }
 
         Ok(Async::NotReady)
@@ -722,8 +817,8 @@ struct Request {
 
 enum SendRequestState {
     Opening(OpenBi),
-    Sending(tokio::io::WriteAll<SendStream, Vec<u8>>),
-    Sent(tokio::io::Shutdown<SendStream>),
+    Sending(WriteAll<SendStream, Vec<u8>>),
+    Sent(Shutdown<SendStream>),
     Recving(FrameStream<RecvStream>),
     Ready(HeadersFrame),
     Finished,
@@ -858,13 +953,14 @@ fn client(
                 conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
             );
 
-            let h3_conn = H3ConnectionRef::new();
+            let h3_conn = H3ConnectionRef::new(conn.clone());
 
             let h3_driver = H3ConnectionDriver {
                 conn: h3_conn.clone(),
                 incoming: incoming,
                 streams: Vec::new(),
                 control: None,
+                control_send: ControlDriver::new(h3_conn.clone()),
             };
 
             tokio_current_thread::spawn(
