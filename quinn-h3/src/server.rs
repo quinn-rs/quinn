@@ -1,10 +1,14 @@
 #[allow(dead_code)]
-
-use quinn::{EndpointBuilder, EndpointDriver, EndpointError};
-use slog::{self, o, Logger};
 use std::net::ToSocketAddrs;
 
-use crate::Settings;
+use futures::{try_ready, Async, Future, Poll, Stream};
+use quinn::{EndpointBuilder, EndpointDriver, EndpointError};
+use slog::{self, o, Logger};
+
+use crate::{
+    connection::{ConnectionDriver, ConnectionRef},
+    Settings,
+};
 
 pub struct ServerBuilder<'a> {
     endpoint: EndpointBuilder<'a>,
@@ -55,3 +59,41 @@ pub struct IncomingConnection {
     incoming: quinn::Incoming,
     settings: Settings,
 }
+
+impl Stream for IncomingConnection {
+    type Item = Connecting;
+    type Error = ();
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        Ok(Async::Ready(match try_ready!(self.incoming.poll()) {
+            None => None,
+            Some(connecting) => Some(Connecting {
+                connecting,
+                log: self.log.clone(),
+                settings: self.settings.clone(),
+            }),
+        }))
+    }
+}
+
+pub struct Connecting {
+    connecting: quinn::Connecting,
+    log: Logger,
+    settings: Settings,
+}
+
+impl Future for Connecting {
+    type Item = (quinn::ConnectionDriver, ConnectionDriver, IncomingRequest);
+    type Error = quinn_proto::ConnectionError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let (driver, conn, incoming) = try_ready!(self.connecting.poll());
+        let conn_ref = ConnectionRef::new(conn.clone(), self.settings.clone());
+        Ok(Async::Ready((
+            driver,
+            ConnectionDriver::new(conn_ref.clone(), incoming, self.log.clone()),
+            IncomingRequest(conn_ref),
+        )))
+    }
+}
+
+pub struct IncomingRequest(ConnectionRef);
