@@ -10,6 +10,7 @@ extern crate proptest;
 extern crate assert_matches;
 
 pub mod client;
+pub mod connection;
 mod frame;
 pub mod proto;
 pub mod qpack;

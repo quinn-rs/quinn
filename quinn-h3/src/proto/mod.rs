@@ -1,6 +1,7 @@
 use bytes::BufMut;
 use quinn_proto::coding::BufMutExt;
 
+pub mod connection;
 pub mod frame;
 
 pub struct StreamType(u64);
