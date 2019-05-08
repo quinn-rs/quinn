@@ -9,5 +9,6 @@ extern crate proptest;
 #[macro_use]
 extern crate assert_matches;
 
+mod frame;
 pub mod proto;
 pub mod qpack;
