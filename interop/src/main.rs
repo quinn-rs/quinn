@@ -239,11 +239,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     .and_then(move |stream| {
                         let mut buf = BytesMut::new();
                         StreamType::CONTROL.encode(&mut buf);
-                        HttpFrame::Settings(SettingsFrame {
-                            max_header_list_size: 4096,
-                            num_placeholders: 0,
-                        })
-                        .encode(&mut buf);
+                        HttpFrame::Settings(SettingsFrame::default()).encode(&mut buf);
                         tokio::io::write_all(stream, buf)
                             .map_err(|e| format_err!("failed to send Settings frame: {}", e))
                             .and_then(move |(_, _)| futures::future::ok(()))
