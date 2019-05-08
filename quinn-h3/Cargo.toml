@@ -31,6 +31,7 @@ bytes = "0.4.7"
 bitlab = "0.8.1"
 lazy_static = "1"
 err-derive = "0.1.5"
+slog = "2.1"
 
 [dev-dependencies]
 proptest = "0.9.1"
