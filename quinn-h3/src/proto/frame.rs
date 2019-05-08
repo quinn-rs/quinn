@@ -426,6 +426,8 @@ mod tests {
             HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 0xfada,
                 max_header_list_size: 0xfada,
+                qpack_max_table_capacity: 0,
+                qpack_blocked_streams: 0,
             })
         );
     }
@@ -453,6 +455,8 @@ mod tests {
             Ok(HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 16,
                 max_header_list_size: 0xFADA,
+                qpack_max_table_capacity: 0,
+                qpack_blocked_streams: 0,
             }))
         );
     }

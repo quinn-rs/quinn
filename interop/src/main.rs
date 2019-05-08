@@ -8,8 +8,10 @@ use tokio::runtime::current_thread::Runtime;
 
 use bytes::{Bytes, BytesMut};
 use failure::{format_err, Error};
-use quinn_h3::frame::{HeadersFrame, HttpFrame, SettingsFrame};
-use quinn_h3::StreamType;
+use quinn_h3::proto::{
+    frame::{HeadersFrame, HttpFrame, SettingsFrame},
+    StreamType,
+};
 use slog::{o, warn, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
