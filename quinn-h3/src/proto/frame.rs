@@ -47,7 +47,7 @@ impl HttpFrame {
         let len = buf.get_var()?;
 
         if buf.remaining() < len as usize {
-            return Err(Error::Malformed);
+            return Err(Error::UnexpectedEnd);
         }
 
         let mut payload = buf.take(len as usize);
@@ -149,7 +149,8 @@ impl HeadersFrame {
             encoded: buf.collect(),
         })
     }
-    fn encode<B: BufMut>(&self, buf: &mut B) {
+
+    pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
         buf.put(&self.encoded);
     }
@@ -410,7 +411,7 @@ mod tests {
     fn buffer_too_short() {
         let mut buf = Cursor::new(&[04, 0x4, 0, 255, 128]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::Malformed));
+        assert_eq!(decoded, Err(Error::UnexpectedEnd));
     }
 
     #[test]
