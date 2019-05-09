@@ -37,3 +37,17 @@ slog = "2.1"
 proptest = "0.9.1"
 assert_matches = "1.1"
 tokio-mockstream = "*"
+
+# Example
+failure = "0.1"
+slog-term = "2"
+structopt = "0.2.7"
+tokio = "0.1.6"
+tokio-current-thread = "0.1"
+url = "1.7"
+rcgen = "0.2"
+directories = "1.0.2"
+rand = "0.6.5"
+
+[[example]]
+name = "h3"
