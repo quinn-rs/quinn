@@ -309,8 +309,7 @@ fn h3_get(
         ("user-agent", "quinn interop tool"),
     ]
     .iter()
-    .map(|(k, v)| qpack::HeaderField::new(*k, *v))
-    .collect::<Vec<_>>();
+    .map(|(k, v)| qpack::HeaderField::new(*k, *v));
 
     let mut table = qpack::DynamicTable::new();
     table
@@ -320,7 +319,7 @@ fn h3_get(
 
     let mut block = BytesMut::new();
     let mut enc = BytesMut::new();
-    qpack::encode(&mut table.encoder(0), &mut block, &mut enc, &header).expect("encoder failed");
+    qpack::encode(&mut table.encoder(0), &mut block, &mut enc, header).expect("encoder failed");
 
     let mut buf = BytesMut::new();
     HttpFrame::Headers(HeadersFrame {
