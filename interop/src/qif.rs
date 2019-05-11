@@ -319,8 +319,7 @@ impl EncodedFile {
                         None
                     }
                 })
-                .map(|(k, v)| qpack::HeaderField::new(k, v))
-                .collect::<Vec<_>>();
+                .map(|(k, v)| qpack::HeaderField::new(k, v));
 
             let mut block_chunk = vec![];
             let mut encoder_chunk = vec![];
@@ -329,7 +328,7 @@ impl EncodedFile {
                 &mut table.encoder(stream_count),
                 &mut block_chunk,
                 &mut encoder_chunk,
-                &fields,
+                fields,
             )?;
 
             if self.ack_mode == 1 && self.table_size > 0 {

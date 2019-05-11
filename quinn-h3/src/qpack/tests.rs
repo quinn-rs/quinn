@@ -51,7 +51,7 @@ fn codec_basic_get() {
         &mut enc_table.encoder(42),
         &mut block_buf,
         &mut enc_buf,
-        &header,
+        header.clone().into_iter(),
     )
     .unwrap();
 
@@ -82,7 +82,7 @@ fn blocked_header() {
         &mut enc_table.encoder(42),
         &mut block_buf,
         &mut enc_buf,
-        &[HeaderField::new("foo", "bar")],
+        vec![HeaderField::new("foo", "bar")].into_iter(),
     )
     .unwrap();
 
@@ -115,7 +115,7 @@ fn codec_table_size_0() {
         &mut enc_table.encoder(42),
         &mut block_buf,
         &mut enc_buf,
-        &header,
+        header.clone().into_iter(),
     )
     .unwrap();
 
@@ -150,7 +150,7 @@ fn codec_table_full() {
         &mut enc_table.encoder(42),
         &mut block_buf,
         &mut enc_buf,
-        &header,
+        header.clone().into_iter(),
     )
     .unwrap();
 

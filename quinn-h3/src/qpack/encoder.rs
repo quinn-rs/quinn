@@ -35,17 +35,17 @@ pub enum Error {
     UnknownPrefix,
 }
 
-pub fn encode<W: BufMut>(
+pub fn encode<W: BufMut, T: Iterator<Item = HeaderField>>(
     table: &mut DynamicTableEncoder,
     block: &mut W,
     encoder: &mut W,
-    fields: &[HeaderField],
+    fields: T,
 ) -> Result<usize, Error> {
     let mut required_ref = 0;
     let mut block_buf = Vec::new();
 
     for field in fields {
-        if let Some(reference) = encode_field(table, &mut block_buf, encoder, field)? {
+        if let Some(reference) = encode_field(table, &mut block_buf, encoder, &field)? {
             required_ref = cmp::max(required_ref, reference);
         }
     }
@@ -403,16 +403,17 @@ mod tests {
         let mut encoder = Vec::new();
         let mut block = Vec::new();
 
-        let fields = [
+        let fields = vec![
             HeaderField::new(":method", "GET"),
             HeaderField::new("foo1", "bar1"),
             HeaderField::new("foo3", "new bar3"),
             HeaderField::new(":method", "staticnameref"),
             HeaderField::new("newfoo", "newbar"),
-        ];
+        ]
+        .into_iter();
 
         assert_eq!(
-            encode(&mut table.encoder(1), &mut block, &mut encoder, &fields),
+            encode(&mut table.encoder(1), &mut block, &mut encoder, fields),
             Ok(7)
         );
 

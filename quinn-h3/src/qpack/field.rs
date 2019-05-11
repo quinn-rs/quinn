@@ -62,6 +62,21 @@ impl From<HeaderField> for String {
     }
 }
 
+impl<N, V> From<(N, V)> for HeaderField
+where
+    N: AsRef<[u8]>,
+    V: AsRef<[u8]>,
+{
+    fn from(header: (N, V)) -> Self {
+        let (name, value) = header;
+        Self {
+            // FIXME: could avoid allocation if HeaderField had a lifetime
+            name: Cow::Owned(Vec::from(name.as_ref())),
+            value: Cow::Owned(Vec::from(value.as_ref())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
