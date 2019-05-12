@@ -1,13 +1,17 @@
-#[allow(dead_code)]
+use std::mem;
 use std::net::ToSocketAddrs;
 
 use futures::{try_ready, Async, Future, Poll, Stream};
-use quinn::{EndpointBuilder, EndpointDriver, EndpointError};
+use http::{HeaderMap};
+use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
+use quinn_proto::StreamId;
 use slog::{self, o, Logger};
 
 use crate::{
     connection::{ConnectionDriver, ConnectionRef},
-    Settings,
+    frame::FrameStream,
+    proto::frame::{HeadersFrame, HttpFrame},
+    Error, Settings,
 };
 
 pub struct ServerBuilder<'a> {
@@ -97,3 +101,83 @@ impl Future for Connecting {
 }
 
 pub struct IncomingRequest(ConnectionRef);
+
+enum RecvRequestState {
+    Receiving(FrameStream<RecvStream>, SendStream),
+    Decoding(HeadersFrame),
+    Ready,
+}
+
+struct RecvRequest {
+    state: RecvRequestState,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+    streams: Option<(FrameStream<RecvStream>, SendStream)>,
+}
+
+impl RecvRequest {
+    fn new(recv: RecvStream, send: SendStream, conn: ConnectionRef) -> Self {
+        Self {
+            conn,
+            stream_id: send.id(),
+            streams: None,
+            state: RecvRequestState::Receiving(FrameStream::new(recv), send),
+        }
+    }
+}
+
+impl Future for RecvRequest {
+    type Item = RequestReady;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.state {
+                RecvRequestState::Receiving(ref mut frames, _) => match try_ready!(frames.poll()) {
+                    None => return Err(Error::peer("recieved an empty request")),
+                    Some(HttpFrame::Headers(f)) => {
+                        match mem::replace(&mut self.state, RecvRequestState::Decoding(f)) {
+                            RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),
+                            _ => unreachable!("Invalid state"),
+                        }
+                    }
+                    Some(_) => return Err(Error::peer("first frame is not headers")),
+                },
+                RecvRequestState::Decoding(ref mut frame) => {
+                    let result = {
+                        let mut conn = self.conn.inner.lock().unwrap();
+                        conn.decode_header(&self.stream_id, frame)
+                    };
+
+                    match result {
+                        Ok(None) => return Ok(Async::NotReady),
+                        Err(e) => {
+                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
+                        }
+                        Ok(Some(decoded)) => {
+                            self.state = RecvRequestState::Ready;
+                            let (frame_stream, send) = match mem::replace(&mut self.streams, None) {
+                                Some(x) => x,
+                                None => return Err(Error::Internal("Recv request invalid state")),
+                            };
+                            return Ok(Async::Ready(RequestReady {
+                                headers: decoded,
+                                frame_stream,
+                                send: Some(send),
+                                conn: self.conn.clone(),
+                            }));
+                        }
+                    }
+                }
+                RecvRequestState::Ready => return Err(Error::peer("polled after ready")),
+            };
+        }
+    }
+}
+
+struct RequestReady {
+    headers: HeaderMap,
+    frame_stream: FrameStream<RecvStream>,
+    send: Option<SendStream>,
+    conn: ConnectionRef,
+}
