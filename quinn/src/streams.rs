@@ -125,6 +125,11 @@ impl SendStream {
         conn.inner.reset(self.stream, error_code);
         conn.notify();
     }
+
+    #[doc(hidden)]
+    pub fn id(&self) -> StreamId {
+        self.stream
+    }
 }
 
 impl io::Write for SendStream {
