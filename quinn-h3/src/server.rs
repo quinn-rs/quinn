@@ -1,8 +1,9 @@
 use std::mem;
 use std::net::ToSocketAddrs;
 
+use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::{HeaderMap};
+use http::HeaderMap;
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
@@ -102,13 +103,36 @@ impl Future for Connecting {
 
 pub struct IncomingRequest(ConnectionRef);
 
+impl Stream for IncomingRequest {
+    type Item = RecvRequest;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let (send, recv) = {
+            let conn = &mut self.0.h3.lock().unwrap();
+            match conn.requests.pop_front() {
+                Some(s) => s,
+                None => {
+                    conn.requests_task = Some(task::current());
+                    return Ok(Async::NotReady);
+                }
+            }
+        };
+        return Ok(Async::Ready(Some(RecvRequest::new(
+            recv,
+            send,
+            self.0.clone(),
+        ))));
+    }
+}
+
 enum RecvRequestState {
     Receiving(FrameStream<RecvStream>, SendStream),
     Decoding(HeadersFrame),
     Ready,
 }
 
-struct RecvRequest {
+pub struct RecvRequest {
     state: RecvRequestState,
     conn: ConnectionRef,
     stream_id: StreamId,
@@ -145,7 +169,7 @@ impl Future for RecvRequest {
                 },
                 RecvRequestState::Decoding(ref mut frame) => {
                     let result = {
-                        let mut conn = self.conn.inner.lock().unwrap();
+                        let conn = &mut self.conn.h3.lock().unwrap().inner;
                         conn.decode_header(&self.stream_id, frame)
                     };
 
@@ -175,7 +199,7 @@ impl Future for RecvRequest {
     }
 }
 
-struct RequestReady {
+pub struct RequestReady {
     headers: HeaderMap,
     frame_stream: FrameStream<RecvStream>,
     send: Option<SendStream>,

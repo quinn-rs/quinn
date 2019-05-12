@@ -146,7 +146,7 @@ impl Future for SendRequest {
                     self.recv = Some(FrameStream::new(recv));
 
                     let header = {
-                        let mut conn = self.conn.inner.lock().unwrap();
+                        let conn = &mut self.conn.h3.lock().unwrap().inner;
                         conn.encode_header(&send.id(), self.req.headers())?
                     };
                     let mut encoded_header = vec![];
