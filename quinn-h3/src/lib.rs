@@ -43,6 +43,18 @@ pub enum Error {
     Proto(proto::connection::Error),
     #[error(display = "QUIC protocol error: {}", _0)]
     Quic(quinn::ConnectionError),
+    #[error(display = "Internal Lib Error: {}", _0)]
+    Internal(&'static str),
+    #[error(display = "Incorrect peer behavior: {}", _0)]
+    Peer(String),
+    #[error(display = "IO error: {}", _0)]
+    Io(std::io::Error),
+}
+
+impl Error {
+    pub fn peer<T: Into<String>>(msg: T) -> Self {
+        Error::Peer(msg.into())
+    }
 }
 
 impl From<proto::connection::Error> for Error {
@@ -54,5 +66,20 @@ impl From<proto::connection::Error> for Error {
 impl From<quinn::ConnectionError> for Error {
     fn from(err: quinn::ConnectionError) -> Error {
         Error::Quic(err)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Error {
+        Error::Io(err)
+    }
+}
+
+impl From<frame::Error> for Error {
+    fn from(err: frame::Error) -> Error {
+        match err {
+            frame::Error::Io(e) => Error::Io(e),
+            e => Error::Peer(format!("received an invalid frame: {:?}", e)),
+        }
     }
 }

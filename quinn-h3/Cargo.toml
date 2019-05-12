@@ -25,6 +25,7 @@ travis-ci = { repository = "djc/quinn" }
 [dependencies]
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
+tokio = "0.1.6"
 tokio-io = "0.1"
 futures = "0.1.21"
 bytes = "0.4.7"
@@ -43,7 +44,6 @@ tokio-mockstream = "*"
 failure = "0.1"
 slog-term = "2"
 structopt = "0.2.7"
-tokio = "0.1.6"
 tokio-current-thread = "0.1"
 url = "1.7"
 rcgen = "0.2"
