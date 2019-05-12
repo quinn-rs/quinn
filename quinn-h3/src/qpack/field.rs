@@ -38,6 +38,10 @@ impl HeaderField {
             value: Cow::Owned(value.into()),
         }
     }
+
+    pub fn into_inner(self) -> (Cow<'static, [u8]>, Cow<'static, [u8]>) {
+        (self.name, self.value)
+    }
 }
 
 impl Display for HeaderField {
