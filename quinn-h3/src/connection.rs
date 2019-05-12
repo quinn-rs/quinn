@@ -24,19 +24,17 @@ impl ConnectionDriver {
     }
 }
 
-pub(crate) struct ConnectionInner {
-    pub inner: Connection,
+#[derive(Clone)]
+pub(crate) struct ConnectionRef {
+    pub inner: Arc<Mutex<Connection>>,
     pub quic: quinn::Connection,
 }
 
-#[derive(Clone)]
-pub(crate) struct ConnectionRef(pub Arc<Mutex<ConnectionInner>>);
-
 impl ConnectionRef {
     pub fn new(quic: quinn::Connection, settings: Settings) -> Result<Self, ProtoError> {
-        Ok(Self(Arc::new(Mutex::new(ConnectionInner {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Connection::with_settings(settings)?)),
             quic,
-            inner: Connection::with_settings(settings)?,
-        }))))
+        })
     }
 }

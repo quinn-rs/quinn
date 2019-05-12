@@ -6,7 +6,7 @@ use tokio_io::AsyncRead;
 
 use super::proto::frame::{self, HttpFrame};
 
-struct FrameStream<R> {
+pub struct FrameStream<R> {
     recv: R,
     buf: BytesMut,
 }
@@ -66,7 +66,7 @@ where
 }
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     Overflow,
     Proto(frame::Error),
     Io(std::io::Error),
