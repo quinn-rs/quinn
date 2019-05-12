@@ -2,7 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::{proto::connection::Connection, Settings};
+use crate::{
+    proto::connection::{Connection, Error as ProtoError},
+    Settings,
+};
 use slog::Logger;
 
 pub struct ConnectionDriver {
@@ -30,10 +33,10 @@ pub(crate) struct ConnectionInner {
 pub(crate) struct ConnectionRef(pub Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
-    pub fn new(quic: quinn::Connection, settings: Settings) -> Self {
-        Self(Arc::new(Mutex::new(ConnectionInner {
+    pub fn new(quic: quinn::Connection, settings: Settings) -> Result<Self, ProtoError> {
+        Ok(Self(Arc::new(Mutex::new(ConnectionInner {
             quic,
-            inner: Connection::new(settings),
-        })))
+            inner: Connection::with_settings(settings)?,
+        }))))
     }
 }
