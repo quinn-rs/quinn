@@ -23,8 +23,8 @@ maintenance = { status = "experimental" }
 travis-ci = { repository = "djc/quinn" }
 
 [dependencies]
-quinn-proto = { path = "../quinn-proto", version = "0.3.0" }
-quinn = { path = "../quinn", version = "0.3.0" }
+quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
+quinn = { path = "../quinn", version = "0.4.0" }
 bytes = "0.4.7"
 bitlab = "0.8.1"
 lazy_static = "1"
