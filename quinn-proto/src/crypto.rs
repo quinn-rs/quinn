@@ -274,7 +274,7 @@ impl Crypto {
         }
     }
 
-    pub fn encrypt(&self, packet: u64, buf: &mut Vec<u8>, header_len: usize) {
+    pub fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (cipher, iv, key) = (
             self.sealing_key.algorithm(),
             &self.local_iv,
@@ -284,8 +284,6 @@ impl Crypto {
         let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
         let nonce = &mut nonce_buf[..cipher.nonce_len()];
         self.write_nonce(&iv, packet, nonce);
-        let tag = vec![0; cipher.tag_len()];
-        buf.extend(tag);
 
         let (header, payload) = buf.split_at_mut(header_len);
         let header = Aad::from(header);
@@ -551,6 +549,7 @@ mod test {
         let server = Crypto::new_initial(&conn, Side::Server);
 
         let mut buf = b"headerpayload".to_vec();
+        buf.resize(buf.len() + client.tag_len(), 0);
         client.encrypt(0, &mut buf, 6);
 
         let mut header = BytesMut::from(buf);
@@ -607,6 +606,7 @@ mod test {
              3d7a1f0b5c"
         );
         let mut packet = plaintext.to_vec();
+        packet.resize(packet.len() + server.tag_len(), 0);
         server.encrypt(0, &mut packet, HEADER_LEN);
         server_header.encrypt(17, &mut packet);
         assert_eq!(&packet[..], &protected[..]);
