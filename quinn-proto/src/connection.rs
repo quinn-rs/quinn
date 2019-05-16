@@ -1494,6 +1494,11 @@ impl Connection {
                     self.state = State::Draining;
                     return Ok(());
                 }
+                Frame::Invalid { ty, reason } => {
+                    let mut err = TransportError::FRAME_ENCODING_ERROR(reason);
+                    err.frame = Some(ty);
+                    return Err(err);
+                }
                 _ => {
                     let mut err =
                         TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
@@ -1561,8 +1566,10 @@ impl Connection {
                 }
             }
             match frame {
-                Frame::Invalid { reason, .. } => {
-                    return Err(TransportError::FRAME_ENCODING_ERROR(reason));
+                Frame::Invalid { ty, reason } => {
+                    let mut err = TransportError::FRAME_ENCODING_ERROR(reason);
+                    err.frame = Some(ty);
+                    return Err(err);
                 }
                 Frame::Crypto(frame) => {
                     self.read_tls(SpaceId::Data, &frame)?;
