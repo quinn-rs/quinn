@@ -2114,6 +2114,7 @@ impl Connection {
         if !header.is_short() {
             set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
         }
+        buf.resize(buf.len() + crypto.packet.tag_len(), 0);
         crypto.packet.encrypt(exact_number, &mut buf, header_len);
         partial_encode.finish(&mut buf, &crypto.header);
 
@@ -2976,6 +2977,7 @@ where
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
     }
     set_payload_length(&mut buf, header_len, number.len(), crypto.tag_len());
+    buf.resize(buf.len() + crypto.tag_len(), 0);
     crypto.encrypt(u64::from(packet_number), &mut buf, header_len);
     partial_encode.finish(&mut buf, header_crypto);
     buf.into()

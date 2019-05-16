@@ -878,6 +878,7 @@ mod tests {
             buf[..],
             hex!("c0ff0000145006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
         );
+        buf.resize(buf.len() + client_crypto.tag_len(), 0);
 
         client_crypto.encrypt(0, &mut buf, header_len);
         encode.finish(&mut buf, &client_header_crypto);
