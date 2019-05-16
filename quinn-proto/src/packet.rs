@@ -5,9 +5,8 @@ use err_derive::Error;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::{HeaderCrypto, RingHeaderCrypto};
+use crate::crypto::{Crypto, HeaderCrypto, RingHeaderCrypto};
 use crate::shared::ConnectionId;
-use crate::varint;
 use crate::VERSION;
 
 // Due to packet number encryption, it is impossible to fully decode a header
@@ -244,7 +243,7 @@ pub enum Header {
 }
 
 impl Header {
-    pub fn encode<W: BufMut>(&self, w: &mut W) -> PartialEncode {
+    pub fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
         use self::Header::*;
         match *self {
             Initial {
@@ -260,12 +259,10 @@ impl Header {
                 w.put_slice(token);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
-                let pn_pos = 8
-                    + dst_cid.len()
-                    + src_cid.len()
-                    + varint::size(token.len() as u64).unwrap()
-                    + token.len();
-                PartialEncode { pn: Some(pn_pos) }
+                PartialEncode {
+                    header_len: w.len(),
+                    pn: Some((number.len(), true)),
+                }
             }
             Long {
                 ty,
@@ -278,8 +275,10 @@ impl Header {
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
-                let pn_pos = 8 + dst_cid.len() + src_cid.len();
-                PartialEncode { pn: Some(pn_pos) }
+                PartialEncode {
+                    header_len: w.len(),
+                    pn: Some((number.len(), true)),
+                }
             }
             Retry {
                 ref dst_cid,
@@ -295,7 +294,10 @@ impl Header {
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.put_slice(orig_dst_cid);
-                PartialEncode { pn: None }
+                PartialEncode {
+                    header_len: w.len(),
+                    pn: None,
+                }
             }
             Short {
                 spin,
@@ -312,7 +314,8 @@ impl Header {
                 w.put_slice(dst_cid);
                 number.encode(w);
                 PartialEncode {
-                    pn: Some(1 + dst_cid.len()),
+                    header_len: w.len(),
+                    pn: Some((number.len(), false)),
                 }
             }
             VersionNegotiate {
@@ -323,7 +326,10 @@ impl Header {
                 w.write(0x80u8 | random);
                 w.write::<u32>(0);
                 Self::encode_cids(w, dst_cid, src_cid);
-                PartialEncode { pn: None }
+                PartialEncode {
+                    header_len: w.len(),
+                    pn: None,
+                }
             }
         }
     }
@@ -419,23 +425,40 @@ impl Header {
 }
 
 pub struct PartialEncode {
-    pn: Option<usize>,
+    pub header_len: usize,
+    // Packet number length, payload length needed
+    pn: Option<(usize, bool)>,
 }
 
 impl PartialEncode {
-    pub fn finish(self, buf: &mut [u8], header_crypto: &RingHeaderCrypto) {
-        let PartialEncode { pn, .. } = self;
-        let pn_pos = match pn {
-            Some(pn) => pn,
+    pub fn finish(
+        self,
+        buf: &mut [u8],
+        header_crypto: &RingHeaderCrypto,
+        crypto: Option<(u64, &Crypto)>,
+    ) {
+        let PartialEncode { header_len, pn, .. } = self;
+        let (pn_len, write_len) = match pn {
+            Some((pn_len, write_len)) => (pn_len, write_len),
             None => return,
         };
+
+        let pn_pos = header_len - pn_len;
+        if write_len {
+            let len = buf.len() - header_len + pn_len;
+            assert!(len < 2usize.pow(14)); // Fits in reserved space
+            BigEndian::write_u16(&mut buf[pn_pos - 2..pn_pos], len as u16 | 0b01 << 14);
+        }
+
+        if let Some((number, crypto)) = crypto {
+            crypto.encrypt(number, buf, header_len);
+        }
 
         debug_assert!(
             pn_pos + 4 + header_crypto.sample_size() <= buf.len(),
             "packet must be padded to at least {} bytes for header protection sampling",
             pn_pos + 4 + header_crypto.sample_size()
         );
-
         header_crypto.encrypt(pn_pos, buf);
     }
 }
@@ -774,15 +797,6 @@ impl From<coding::UnexpectedEnd> for PacketDecodeError {
     }
 }
 
-pub fn set_payload_length(packet: &mut [u8], header_len: usize, pn_len: usize, tag_len: usize) {
-    let len = packet.len() - header_len + pn_len + tag_len;
-    assert!(len < 2usize.pow(14)); // Fits in reserved space
-    BigEndian::write_u16(
-        &mut packet[header_len - pn_len - 2..],
-        len as u16 | 0b01 << 14,
-    );
-}
-
 pub const LONG_HEADER_FORM: u8 = 0x80;
 const FIXED_BIT: u8 = 0x40;
 pub const SPIN_BIT: u8 = 0x20;
@@ -872,16 +886,9 @@ mod tests {
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
-        buf.resize(header_len + 16, 0);
-        set_payload_length(&mut buf, header_len, 1, client_crypto.tag_len());
-        assert_eq!(
-            buf[..],
-            hex!("c0ff0000145006b858ec6f80452b00402100 00000000000000000000000000000000")[..]
-        );
-        buf.resize(buf.len() + client_crypto.tag_len(), 0);
+        buf.resize(header_len + 16 + client_crypto.tag_len(), 0);
+        encode.finish(&mut buf, &client_header_crypto, Some((0, &client_crypto)));
 
-        client_crypto.encrypt(0, &mut buf, header_len);
-        encode.finish(&mut buf, &client_header_crypto);
         for byte in &buf {
             print!("{:02x}", byte);
         }

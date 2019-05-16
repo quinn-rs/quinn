@@ -17,8 +17,8 @@ use crate::crypto::{
 };
 use crate::frame::FrameStruct;
 use crate::packet::{
-    set_payload_length, Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId,
-    LONG_RESERVED_BITS, SHORT_RESERVED_BITS,
+    Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
+    SHORT_RESERVED_BITS,
 };
 use crate::range_set::RangeSet;
 use crate::shared::{
@@ -2042,7 +2042,6 @@ impl Connection {
         };
         let mut buf = Vec::new();
         let partial_encode = header.encode(&mut buf);
-        let header_len = buf.len();
 
         if probe && ack_only && header.is_1rtt() {
             // Nothing ack-eliciting to send, so we need to make something up
@@ -2052,8 +2051,9 @@ impl Connection {
 
         let (remote, sent) = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
-            let max_len =
-                self.mtu as usize - header_len - space.crypto.as_ref().unwrap().packet.tag_len();
+            let max_len = self.mtu as usize
+                - partial_encode.header_len
+                - space.crypto.as_ref().unwrap().packet.tag_len();
             match self.state {
                 State::Closed(state::Closed {
                     reason: state::CloseReason::Application(ref x),
@@ -2102,7 +2102,8 @@ impl Connection {
         // To ensure that sufficient data is available for sampling, packets are padded so that the
         // combined lengths of the encoded packet number and protected payload is at least 4 bytes
         // longer than the sample required for header protection.
-        let protected_payload_len = (buf.len() + crypto.packet.tag_len()) - header_len;
+        let protected_payload_len =
+            (buf.len() + crypto.packet.tag_len()) - partial_encode.header_len;
         if let Some(padding_minus_one) =
             (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
         {
@@ -2111,12 +2112,12 @@ impl Connection {
             trace!(self.log, "PADDING * {count}", count = padding);
             buf.resize(buf.len() + padding, 0);
         }
-        if !header.is_short() {
-            set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
-        }
         buf.resize(buf.len() + crypto.packet.tag_len(), 0);
-        crypto.packet.encrypt(exact_number, &mut buf, header_len);
-        partial_encode.finish(&mut buf, &crypto.header);
+        partial_encode.finish(
+            &mut buf,
+            &crypto.header,
+            Some((exact_number, &crypto.packet)),
+        );
 
         if let Some((sent, acks)) = sent {
             // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
@@ -2970,16 +2971,18 @@ where
 
     let mut buf = Vec::<u8>::new();
     let partial_encode = header.encode(&mut buf);
-    let header_len = buf.len();
-    let max_len = MIN_MTU as usize - header_len - crypto.tag_len();
+    let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.tag_len();
     match reason.into() {
         state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
         state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
     }
-    set_payload_length(&mut buf, header_len, number.len(), crypto.tag_len());
+
     buf.resize(buf.len() + crypto.tag_len(), 0);
-    crypto.encrypt(u64::from(packet_number), &mut buf, header_len);
-    partial_encode.finish(&mut buf, header_crypto);
+    partial_encode.finish(
+        &mut buf,
+        header_crypto,
+        Some((packet_number as u64, crypto)),
+    );
     buf.into()
 }
 
