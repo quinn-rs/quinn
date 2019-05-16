@@ -1930,6 +1930,237 @@ impl Connection {
         self.params.stateless_reset_token = Some(new.reset_token);
     }
 
+    /// Returns packets to transmit
+    ///
+    /// Connections should be polled for transmit after:
+    /// - the application performed some I/O on the connection
+    /// - an incoming packet is handled
+    /// - the LossDetection timer expires
+    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        let (space_id, close) = match self.state {
+            State::Draining | State::Drained => {
+                return None;
+            }
+            State::Closed(_) => {
+                if mem::replace(&mut self.io.close, false) {
+                    (self.highest_space, true)
+                } else {
+                    return None;
+                }
+            }
+            _ => {
+                let id = SpaceId::iter()
+                    .find(|&x| self.space(x).crypto.is_some() && self.space(x).can_send())
+                    .or_else(|| {
+                        if self.space(SpaceId::Data).crypto.is_some() && self.can_send_1rtt() {
+                            Some(SpaceId::Data)
+                        } else if self.io.probes != 0 {
+                            Some(self.highest_space)
+                        } else if self.zero_rtt_crypto.is_some()
+                            && self.side.is_client()
+                            && (self.space(SpaceId::Data).can_send() || self.can_send_1rtt())
+                        {
+                            Some(SpaceId::Data)
+                        } else {
+                            None
+                        }
+                    })?;
+                (id, false)
+            }
+        };
+        let probe = !close && self.io.probes != 0;
+        let mut ack_only = self.space(space_id).pending.is_empty();
+        if space_id == SpaceId::Data {
+            ack_only &= self.path_response.is_none();
+            if !probe && !ack_only && self.congestion_blocked() {
+                return None;
+            }
+        }
+        if self.state.is_handshake()
+            && !self.remote_validated
+            && self.side.is_server()
+            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
+        {
+            trace!(self.log, "blocked by anti-amplification");
+            return None;
+        }
+
+        //
+        // From here on, we've determined that a packet will definitely be sent.
+        //
+
+        self.io.probes = self.io.probes.saturating_sub(1);
+        if self.spaces[SpaceId::Initial as usize].crypto.is_some()
+            && space_id == SpaceId::Handshake
+            && self.side.is_client()
+        {
+            // A client stops both sending and processing Initial packets when it
+            // sends its first Handshake packet.
+            self.discard_space(SpaceId::Initial)
+        }
+        if let Some(ref mut prev) = self.prev_crypto {
+            prev.update_unacked = false;
+        }
+
+        let space = &mut self.spaces[space_id as usize];
+        let exact_number = space.get_tx_number();
+        trace!(
+            self.log,
+            "sending {space:?} packet {number}",
+            space = space_id,
+            number = exact_number
+        );
+        let number = PacketNumber::new(exact_number, space.largest_acked_packet);
+        let header = match space_id {
+            SpaceId::Data if space.crypto.is_some() => Header::Short {
+                dst_cid: self.rem_cid,
+                number,
+                spin: self.spin,
+                key_phase: self.key_phase,
+            },
+            SpaceId::Data => Header::Long {
+                ty: LongType::ZeroRtt,
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                number,
+            },
+            SpaceId::Handshake => Header::Long {
+                ty: LongType::Handshake,
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                number,
+            },
+            SpaceId::Initial => Header::Initial {
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                token: match self.state {
+                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
+                    _ => Bytes::new(),
+                },
+                number,
+            },
+        };
+        let mut buf = Vec::new();
+        let partial_encode = header.encode(&mut buf);
+        let header_len = buf.len();
+
+        if probe && ack_only && header.is_1rtt() {
+            // Nothing ack-eliciting to send, so we need to make something up
+            self.ping_pending = true;
+        }
+        ack_only &= !self.ping_pending;
+
+        let (remote, sent) = if close {
+            trace!(self.log, "sending CONNECTION_CLOSE");
+            let max_len =
+                self.mtu as usize - header_len - space.crypto.as_ref().unwrap().packet.tag_len();
+            match self.state {
+                State::Closed(state::Closed {
+                    reason: state::CloseReason::Application(ref x),
+                }) => x.encode(&mut buf, max_len),
+                State::Closed(state::Closed {
+                    reason: state::CloseReason::Connection(ref x),
+                }) => x.encode(&mut buf, max_len),
+                _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
+            }
+            (self.remote, None)
+        } else if let Some((remote, token)) = self.offpath_responses.pop() {
+            // For simplicity's sake, we don't bother trying to batch together or deduplicate path
+            // validation probes.
+            trace!(self.log, "PATH_RESPONSE {token:08x}", token = token);
+            buf.write(frame::Type::PATH_RESPONSE);
+            buf.write(token);
+            (remote, None)
+        } else {
+            (
+                self.remote,
+                Some(self.populate_packet(now, space_id, &mut buf)),
+            )
+        };
+
+        let space = &mut self.spaces[space_id as usize];
+        let crypto = if let Some(ref crypto) = space.crypto {
+            crypto
+        } else if space_id == SpaceId::Data {
+            self.zero_rtt_crypto.as_ref().unwrap()
+        } else {
+            unreachable!("tried to send {:?} packet without keys", space_id);
+        };
+
+        let mut padded = if self.side.is_client()
+            && space_id == SpaceId::Initial
+            && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
+        {
+            // Initial-only packets MUST be padded
+            buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
+            true
+        } else {
+            false
+        };
+
+        let pn_len = number.len();
+        // To ensure that sufficient data is available for sampling, packets are padded so that the
+        // combined lengths of the encoded packet number and protected payload is at least 4 bytes
+        // longer than the sample required for header protection.
+        let protected_payload_len = (buf.len() + crypto.packet.tag_len()) - header_len;
+        if let Some(padding_minus_one) =
+            (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
+        {
+            let padding = padding_minus_one + 1;
+            padded = true;
+            trace!(self.log, "PADDING * {count}", count = padding);
+            buf.resize(buf.len() + padding, 0);
+        }
+        if !header.is_short() {
+            set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
+        }
+        crypto.packet.encrypt(exact_number, &mut buf, header_len);
+        partial_encode.finish(&mut buf, &crypto.header);
+
+        if let Some((sent, acks)) = sent {
+            // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
+            // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
+            // the need for subtler logic to avoid double-transmitting acks all the time.
+            space.permit_ack_only &= acks.is_empty();
+
+            self.on_packet_sent(
+                now,
+                space_id,
+                exact_number,
+                SentPacket {
+                    acks,
+                    time_sent: now,
+                    size: if padded || !ack_only {
+                        buf.len() as u16
+                    } else {
+                        0
+                    },
+                    is_crypto_packet: space_id != SpaceId::Data && !sent.crypto.is_empty(),
+                    ack_eliciting: !ack_only,
+                    retransmits: sent,
+                },
+            );
+        }
+
+        trace!(
+            self.log,
+            "{len} bytes to {remote}",
+            len = buf.len(),
+            remote = remote
+        );
+        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
+
+        Some(Transmit {
+            destination: remote,
+            packet: buf.into(),
+            ecn: if self.sending_ecn {
+                Some(EcnCodepoint::ECT0)
+            } else {
+                None
+            },
+        })
+    }
+
     fn populate_packet(
         &mut self,
         now: Instant,
@@ -2193,237 +2424,6 @@ impl Connection {
         }
 
         (sent, acks)
-    }
-
-    /// Returns packets to transmit
-    ///
-    /// Connections should be polled for transmit after:
-    /// - the application performed some I/O on the connection
-    /// - an incoming packet is handled
-    /// - the LossDetection timer expires
-    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
-        let (space_id, close) = match self.state {
-            State::Draining | State::Drained => {
-                return None;
-            }
-            State::Closed(_) => {
-                if mem::replace(&mut self.io.close, false) {
-                    (self.highest_space, true)
-                } else {
-                    return None;
-                }
-            }
-            _ => {
-                let id = SpaceId::iter()
-                    .find(|&x| self.space(x).crypto.is_some() && self.space(x).can_send())
-                    .or_else(|| {
-                        if self.space(SpaceId::Data).crypto.is_some() && self.can_send_1rtt() {
-                            Some(SpaceId::Data)
-                        } else if self.io.probes != 0 {
-                            Some(self.highest_space)
-                        } else if self.zero_rtt_crypto.is_some()
-                            && self.side.is_client()
-                            && (self.space(SpaceId::Data).can_send() || self.can_send_1rtt())
-                        {
-                            Some(SpaceId::Data)
-                        } else {
-                            None
-                        }
-                    })?;
-                (id, false)
-            }
-        };
-        let probe = !close && self.io.probes != 0;
-        let mut ack_only = self.space(space_id).pending.is_empty();
-        if space_id == SpaceId::Data {
-            ack_only &= self.path_response.is_none();
-            if !probe && !ack_only && self.congestion_blocked() {
-                return None;
-            }
-        }
-        if self.state.is_handshake()
-            && !self.remote_validated
-            && self.side.is_server()
-            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
-        {
-            trace!(self.log, "blocked by anti-amplification");
-            return None;
-        }
-
-        //
-        // From here on, we've determined that a packet will definitely be sent.
-        //
-
-        self.io.probes = self.io.probes.saturating_sub(1);
-        if self.spaces[SpaceId::Initial as usize].crypto.is_some()
-            && space_id == SpaceId::Handshake
-            && self.side.is_client()
-        {
-            // A client stops both sending and processing Initial packets when it
-            // sends its first Handshake packet.
-            self.discard_space(SpaceId::Initial)
-        }
-        if let Some(ref mut prev) = self.prev_crypto {
-            prev.update_unacked = false;
-        }
-
-        let space = &mut self.spaces[space_id as usize];
-        let exact_number = space.get_tx_number();
-        trace!(
-            self.log,
-            "sending {space:?} packet {number}",
-            space = space_id,
-            number = exact_number
-        );
-        let number = PacketNumber::new(exact_number, space.largest_acked_packet);
-        let header = match space_id {
-            SpaceId::Data if space.crypto.is_some() => Header::Short {
-                dst_cid: self.rem_cid,
-                number,
-                spin: self.spin,
-                key_phase: self.key_phase,
-            },
-            SpaceId::Data => Header::Long {
-                ty: LongType::ZeroRtt,
-                src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
-                number,
-            },
-            SpaceId::Handshake => Header::Long {
-                ty: LongType::Handshake,
-                src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
-                number,
-            },
-            SpaceId::Initial => Header::Initial {
-                src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
-                token: match self.state {
-                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
-                    _ => Bytes::new(),
-                },
-                number,
-            },
-        };
-        let mut buf = Vec::new();
-        let partial_encode = header.encode(&mut buf);
-        let header_len = buf.len();
-
-        if probe && ack_only && header.is_1rtt() {
-            // Nothing ack-eliciting to send, so we need to make something up
-            self.ping_pending = true;
-        }
-        ack_only &= !self.ping_pending;
-
-        let (remote, sent) = if close {
-            trace!(self.log, "sending CONNECTION_CLOSE");
-            let max_len =
-                self.mtu as usize - header_len - space.crypto.as_ref().unwrap().packet.tag_len();
-            match self.state {
-                State::Closed(state::Closed {
-                    reason: state::CloseReason::Application(ref x),
-                }) => x.encode(&mut buf, max_len),
-                State::Closed(state::Closed {
-                    reason: state::CloseReason::Connection(ref x),
-                }) => x.encode(&mut buf, max_len),
-                _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
-            }
-            (self.remote, None)
-        } else if let Some((remote, token)) = self.offpath_responses.pop() {
-            // For simplicity's sake, we don't bother trying to batch together or deduplicate path
-            // validation probes.
-            trace!(self.log, "PATH_RESPONSE {token:08x}", token = token);
-            buf.write(frame::Type::PATH_RESPONSE);
-            buf.write(token);
-            (remote, None)
-        } else {
-            (
-                self.remote,
-                Some(self.populate_packet(now, space_id, &mut buf)),
-            )
-        };
-
-        let space = &mut self.spaces[space_id as usize];
-        let crypto = if let Some(ref crypto) = space.crypto {
-            crypto
-        } else if space_id == SpaceId::Data {
-            self.zero_rtt_crypto.as_ref().unwrap()
-        } else {
-            unreachable!("tried to send {:?} packet without keys", space_id);
-        };
-
-        let mut padded = if self.side.is_client()
-            && space_id == SpaceId::Initial
-            && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
-        {
-            // Initial-only packets MUST be padded
-            buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
-            true
-        } else {
-            false
-        };
-
-        let pn_len = number.len();
-        // To ensure that sufficient data is available for sampling, packets are padded so that the
-        // combined lengths of the encoded packet number and protected payload is at least 4 bytes
-        // longer than the sample required for header protection.
-        let protected_payload_len = (buf.len() + crypto.packet.tag_len()) - header_len;
-        if let Some(padding_minus_one) =
-            (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
-        {
-            let padding = padding_minus_one + 1;
-            padded = true;
-            trace!(self.log, "PADDING * {count}", count = padding);
-            buf.resize(buf.len() + padding, 0);
-        }
-        if !header.is_short() {
-            set_payload_length(&mut buf, header_len, pn_len, crypto.packet.tag_len());
-        }
-        crypto.packet.encrypt(exact_number, &mut buf, header_len);
-        partial_encode.finish(&mut buf, &crypto.header);
-
-        if let Some((sent, acks)) = sent {
-            // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-            // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-            // the need for subtler logic to avoid double-transmitting acks all the time.
-            space.permit_ack_only &= acks.is_empty();
-
-            self.on_packet_sent(
-                now,
-                space_id,
-                exact_number,
-                SentPacket {
-                    acks,
-                    time_sent: now,
-                    size: if padded || !ack_only {
-                        buf.len() as u16
-                    } else {
-                        0
-                    },
-                    is_crypto_packet: space_id != SpaceId::Data && !sent.crypto.is_empty(),
-                    ack_eliciting: !ack_only,
-                    retransmits: sent,
-                },
-            );
-        }
-
-        trace!(
-            self.log,
-            "{len} bytes to {remote}",
-            len = buf.len(),
-            remote = remote
-        );
-        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
-
-        Some(Transmit {
-            destination: remote,
-            packet: buf.into(),
-            ecn: if self.sending_ecn {
-                Some(EcnCodepoint::ECT0)
-            } else {
-                None
-            },
-        })
     }
 
     /// Close a connection immediately
