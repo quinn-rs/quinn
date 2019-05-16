@@ -1972,6 +1972,8 @@ impl Connection {
                 false,
             ),
         };
+
+        let mut remote = self.remote;
         let probe = !close && self.io.probes != 0;
         let mut ack_only = self.space(space_id).pending.is_empty();
         if space_id == SpaceId::Data {
@@ -2045,7 +2047,7 @@ impl Connection {
         }
         ack_only &= !self.ping_pending;
 
-        let (remote, sent) = if close {
+        let sent = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
             let max_len = self.mtu as usize
                 - partial_encode.header_len
@@ -2059,19 +2061,17 @@ impl Connection {
                 }) => x.encode(&mut buf, max_len),
                 _ => unreachable!("tried to make a close packet when the connection wasn't closed"),
             }
-            (self.remote, None)
-        } else if let Some((remote, token)) = self.offpath_responses.pop() {
+            None
+        } else if let Some((path_remote, token)) = self.offpath_responses.pop() {
             // For simplicity's sake, we don't bother trying to batch together or deduplicate path
             // validation probes.
             trace!(self.log, "PATH_RESPONSE {token:08x}", token = token);
             buf.write(frame::Type::PATH_RESPONSE);
             buf.write(token);
-            (remote, None)
+            remote = path_remote;
+            None
         } else {
-            (
-                self.remote,
-                Some(self.populate_packet(now, space_id, &mut buf)),
-            )
+            Some(self.populate_packet(now, space_id, &mut buf))
         };
 
         let space = &mut self.spaces[space_id as usize];
