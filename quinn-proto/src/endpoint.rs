@@ -178,7 +178,7 @@ impl Endpoint {
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: buf.into(),
+                    contents: buf.into(),
                 });
                 return None;
             }
@@ -336,7 +336,7 @@ impl Endpoint {
         self.transmits.push_back(Transmit {
             destination: remote,
             ecn: None,
-            packet: buf.into(),
+            contents: buf.into(),
         });
     }
 
@@ -509,7 +509,7 @@ impl Endpoint {
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                packet: initial_close(
+                contents: initial_close(
                     crypto,
                     header_crypto,
                     &src_cid,
@@ -532,7 +532,7 @@ impl Endpoint {
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                packet: initial_close(
+                contents: initial_close(
                     crypto,
                     header_crypto,
                     &src_cid,
@@ -578,7 +578,7 @@ impl Endpoint {
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: buf.into(),
+                    contents: buf.into(),
                 });
                 return None;
             }
@@ -615,7 +615,7 @@ impl Endpoint {
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    packet: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
+                    contents: initial_close(crypto, header_crypto, &src_cid, &temp_loc_cid, 0, e),
                 });
                 None
             }

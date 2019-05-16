@@ -262,7 +262,7 @@ impl EndpointInner {
             .pop_front()
             .or_else(|| self.inner.poll_transmit())
         {
-            match self.socket.poll_send(&t.destination, t.ecn, &t.packet) {
+            match self.socket.poll_send(&t.destination, t.ecn, &t.contents) {
                 Ok(Async::Ready(_)) => {}
                 Ok(Async::NotReady) => {
                     self.outgoing.push_front(t);

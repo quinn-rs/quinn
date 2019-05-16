@@ -94,18 +94,18 @@ impl Pair {
         trace!(self.log, "client running");
         self.client.drive(&self.log, self.time, self.server.addr);
         for x in self.client.outbound.drain(..) {
-            if x.packet[0] & packet::LONG_HEADER_FORM == 0 {
-                let spin = x.packet[0] & packet::SPIN_BIT != 0;
+            if x.contents[0] & packet::LONG_HEADER_FORM == 0 {
+                let spin = x.contents[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
             if let Some(ref socket) = self.client.socket {
-                socket.send_to(&x.packet, x.destination).unwrap();
+                socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.server.addr == x.destination {
                 self.server
                     .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.packet));
+                    .push_back((self.time + self.latency, x.ecn, x.contents));
             }
         }
     }
@@ -115,12 +115,12 @@ impl Pair {
         self.server.drive(&self.log, self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {
             if let Some(ref socket) = self.server.socket {
-                socket.send_to(&x.packet, x.destination).unwrap();
+                socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.client.addr == x.destination {
                 self.client
                     .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.packet));
+                    .push_back((self.time + self.latency, x.ecn, x.contents));
             }
         }
     }

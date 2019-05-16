@@ -41,10 +41,10 @@ fn version_negotiate_server() {
 
     let io = server.poll_transmit();
     assert!(io.is_some());
-    if let Some(Transmit { packet, .. }) = io {
-        assert_ne!(packet[0] & 0x80, 0);
-        assert_eq!(&packet[1..14], hex!("00000000 11 00000000 00000000"));
-        assert!(packet[14..]
+    if let Some(Transmit { contents, .. }) = io {
+        assert_ne!(contents[0] & 0x80, 0);
+        assert_eq!(&contents[1..14], hex!("00000000 11 00000000 00000000"));
+        assert!(contents[14..]
             .chunks(4)
             .any(|x| BigEndian::read_u32(x) == VERSION));
     }

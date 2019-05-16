@@ -2150,7 +2150,7 @@ impl Connection {
 
         Some(Transmit {
             destination: remote,
-            packet: buf.into(),
+            contents: buf.into(),
             ecn: if self.sending_ecn {
                 Some(EcnCodepoint::ECT0)
             } else {
