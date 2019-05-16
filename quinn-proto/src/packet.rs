@@ -245,6 +245,7 @@ pub enum Header {
 impl Header {
     pub fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
         use self::Header::*;
+        let start = w.len();
         match *self {
             Initial {
                 ref dst_cid,
@@ -260,7 +261,8 @@ impl Header {
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
                 PartialEncode {
-                    header_len: w.len(),
+                    start,
+                    header_len: w.len() - start,
                     pn: Some((number.len(), true)),
                 }
             }
@@ -276,7 +278,8 @@ impl Header {
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
                 PartialEncode {
-                    header_len: w.len(),
+                    start,
+                    header_len: w.len() - start,
                     pn: Some((number.len(), true)),
                 }
             }
@@ -295,7 +298,8 @@ impl Header {
                 Self::encode_cids(w, dst_cid, src_cid);
                 w.put_slice(orig_dst_cid);
                 PartialEncode {
-                    header_len: w.len(),
+                    start,
+                    header_len: w.len() - start,
                     pn: None,
                 }
             }
@@ -314,7 +318,8 @@ impl Header {
                 w.put_slice(dst_cid);
                 number.encode(w);
                 PartialEncode {
-                    header_len: w.len(),
+                    start,
+                    header_len: w.len() - start,
                     pn: Some((number.len(), false)),
                 }
             }
@@ -327,7 +332,8 @@ impl Header {
                 w.write::<u32>(0);
                 Self::encode_cids(w, dst_cid, src_cid);
                 PartialEncode {
-                    header_len: w.len(),
+                    start,
+                    header_len: w.len() - start,
                     pn: None,
                 }
             }
@@ -425,6 +431,7 @@ impl Header {
 }
 
 pub struct PartialEncode {
+    pub start: usize,
     pub header_len: usize,
     // Packet number length, payload length needed
     pn: Option<(usize, bool)>,
