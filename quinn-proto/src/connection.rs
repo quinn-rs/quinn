@@ -1937,6 +1937,15 @@ impl Connection {
     /// - an incoming packet is handled
     /// - the LossDetection timer expires
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        if self.state.is_handshake()
+            && !self.remote_validated
+            && self.side.is_server()
+            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
+        {
+            trace!(self.log, "blocked by anti-amplification");
+            return None;
+        }
+
         let (space_id, close) = match self.state {
             State::Draining | State::Drained => {
                 return None;
@@ -1975,14 +1984,6 @@ impl Connection {
             if !probe && !ack_only && self.congestion_blocked() {
                 return None;
             }
-        }
-        if self.state.is_handshake()
-            && !self.remote_validated
-            && self.side.is_server()
-            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
-        {
-            trace!(self.log, "blocked by anti-amplification");
-            return None;
         }
 
         //
