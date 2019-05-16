@@ -1957,25 +1957,20 @@ impl Connection {
                     return None;
                 }
             }
-            _ => {
-                let id = SpaceId::iter()
-                    .find(|&x| self.space(x).crypto.is_some() && self.space(x).can_send())
-                    .or_else(|| {
-                        if self.space(SpaceId::Data).crypto.is_some() && self.can_send_1rtt() {
-                            Some(SpaceId::Data)
-                        } else if self.io.probes != 0 {
-                            Some(self.highest_space)
-                        } else if self.zero_rtt_crypto.is_some()
-                            && self.side.is_client()
-                            && (self.space(SpaceId::Data).can_send() || self.can_send_1rtt())
-                        {
-                            Some(SpaceId::Data)
-                        } else {
-                            None
-                        }
-                    })?;
-                (id, false)
-            }
+            _ => (
+                SpaceId::iter()
+                    .filter(|&x| {
+                        (self.space(x).crypto.is_some() && self.space(x).can_send())
+                            || (x == self.highest_space && self.io.probes != 0)
+                            || (x == SpaceId::Data
+                                && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
+                                    || (self.zero_rtt_crypto.is_some()
+                                        && self.side.is_client()
+                                        && (self.space(x).can_send() || self.can_send_1rtt()))))
+                    })
+                    .next()?,
+                false,
+            ),
         };
         let probe = !close && self.io.probes != 0;
         let mut ack_only = self.space(space_id).pending.is_empty();
