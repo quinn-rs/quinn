@@ -2038,7 +2038,7 @@ impl Connection {
                 number,
             },
         };
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.mtu as usize);
         let partial_encode = header.encode(&mut buf);
 
         if probe && ack_only && header.is_1rtt() {
@@ -2049,7 +2049,7 @@ impl Connection {
 
         let sent = if close {
             trace!(self.log, "sending CONNECTION_CLOSE");
-            let max_len = self.mtu as usize
+            let max_len = buf.capacity()
                 - partial_encode.header_len
                 - space.crypto.as_ref().unwrap().packet.tag_len();
             match self.state {
@@ -2182,7 +2182,7 @@ impl Connection {
             })
             .packet
             .tag_len();
-        let max_size = self.mtu as usize - tag_len;
+        let max_size = buf.capacity() - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         let is_1rtt = space_id == SpaceId::Data && space.crypto.is_some();
 
