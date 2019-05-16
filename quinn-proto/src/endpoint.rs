@@ -572,7 +572,7 @@ impl Endpoint {
                     orig_dst_cid: dst_cid,
                 };
                 let encode = header.encode(&mut buf);
-                encode.finish(&mut buf, header_crypto);
+                encode.finish(&mut buf, header_crypto, None);
                 buf.put_slice(&token);
 
                 self.transmits.push_back(Transmit {
