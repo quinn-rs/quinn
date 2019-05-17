@@ -2352,7 +2352,10 @@ impl Connection {
             unreachable!("tried to send {:?} packet without keys", space_id);
         };
 
-        let mut padded = if self.side.is_client() && space_id == SpaceId::Initial {
+        let mut padded = if self.side.is_client()
+            && space_id == SpaceId::Initial
+            && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
+        {
             // Initial-only packets MUST be padded
             buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
             true
