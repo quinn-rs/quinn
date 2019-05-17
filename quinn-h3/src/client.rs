@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::Request;
+use http::{request::Parts, Request};
 use quinn::{
     Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, RecvStream, SendStream,
 };
@@ -13,7 +13,10 @@ use tokio::io::{self, Shutdown, WriteAll};
 use crate::{
     connection::{ConnectionDriver, ConnectionRef},
     frame::FrameStream,
-    proto::frame::{HeadersFrame, HttpFrame},
+    proto::{
+        frame::{HeadersFrame, HttpFrame},
+        headers::Header,
+    },
     Error, Settings,
 };
 
@@ -81,7 +84,7 @@ impl Client {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    pub fn send_request(&self, request: Request<()>) -> SendRequest {
+    pub fn send_request<T>(&self, request: Request<T>) -> SendRequest<T> {
         SendRequest::new(request, self.0.quic.open_bi(), self.0.clone())
     }
 }
@@ -116,25 +119,37 @@ enum SendRequestState {
     Finished,
 }
 
-pub struct SendRequest {
-    req: Request<()>,
+pub struct SendRequest<T> {
+    header: Option<Header>,
+    body: T,
     state: SendRequestState,
     conn: ConnectionRef,
     recv: Option<FrameStream<RecvStream>>,
 }
 
-impl SendRequest {
-    fn new(req: Request<()>, open_bi: OpenBi, conn: ConnectionRef) -> Self {
+impl<T> SendRequest<T> {
+    fn new(req: Request<T>, open_bi: OpenBi, conn: ConnectionRef) -> Self {
+        let (
+            Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            body,
+        ) = req.into_parts();
+
         Self {
-            req,
+            body,
             conn,
+            header: Some(Header::request(method, uri, headers)),
             state: SendRequestState::Opening(open_bi),
             recv: None,
         }
     }
 }
 
-impl Future for SendRequest {
+impl<T> Future for SendRequest<T> {
     type Item = RecvResponse;
     type Error = Error;
 
@@ -145,12 +160,13 @@ impl Future for SendRequest {
                     let (send, recv) = try_ready!(o.poll());
                     self.recv = Some(FrameStream::new(recv));
 
-                    let header = {
+                    let header_block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.encode_header(&send.id(), self.req.headers())?
+                        let header = self.header.take().ok_or(Error::Internal("header none"))?;
+                        conn.encode_header(&send.id(), header)?
                     };
                     let mut encoded_header = vec![];
-                    header.encode(&mut encoded_header);
+                    header_block.encode(&mut encoded_header);
 
                     let send = io::write_all(send, encoded_header);
                     self.state = SendRequestState::Sending(send);
@@ -197,6 +213,6 @@ impl Future for SendRequest {
 }
 
 pub struct RecvResponse {
-    headers: HeadersFrame,
+    pub headers: HeadersFrame,
     frames: FrameStream<RecvStream>,
 }
