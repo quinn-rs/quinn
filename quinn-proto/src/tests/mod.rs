@@ -750,23 +750,8 @@ fn server_hs_retransmit() {
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
     pair.step();
-    assert!(pair.client.inbound.len() > 1); // Initial + Handshakes
-    info!(
-        pair.log,
-        "dropping {} server handshake packets",
-        pair.client.inbound.len() - 1
-    );
-    pair.client.inbound.drain(1..);
-    // Client's Initial ACK buys a lot of budget, so keep dropping...
-    for _ in 0..3 {
-        pair.step();
-        info!(
-            pair.log,
-            "dropping {} server handshake packets",
-            pair.client.inbound.len()
-        );
-        pair.client.inbound.drain(..);
-    }
+    assert!(pair.client.inbound.len() > 0); // Initial + Handshakes
+    pair.client.inbound.clear();
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
