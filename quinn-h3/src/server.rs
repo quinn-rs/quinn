@@ -3,7 +3,6 @@ use std::net::ToSocketAddrs;
 
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::HeaderMap;
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
@@ -11,7 +10,10 @@ use slog::{self, o, Logger};
 use crate::{
     connection::{ConnectionDriver, ConnectionRef},
     frame::FrameStream,
-    proto::frame::{HeadersFrame, HttpFrame},
+    proto::{
+        frame::{HeadersFrame, HttpFrame},
+        headers::Header,
+    },
     Error, Settings,
 };
 
@@ -200,8 +202,14 @@ impl Future for RecvRequest {
 }
 
 pub struct RequestReady {
-    headers: HeaderMap,
+    headers: Header,
     frame_stream: FrameStream<RecvStream>,
     send: Option<SendStream>,
     conn: ConnectionRef,
+}
+
+impl RequestReady {
+    pub fn headers<'a>(&'a self) -> &'a Header {
+        &self.headers
+    }
 }

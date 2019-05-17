@@ -13,6 +13,7 @@ use string::String;
 use crate::qpack::HeaderField;
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Header {
     pseudo: Pseudo,
     fields: HeaderMap,
