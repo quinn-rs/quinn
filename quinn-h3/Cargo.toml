@@ -34,6 +34,7 @@ lazy_static = "1"
 err-derive = "0.1.5"
 slog = "2.1"
 http = "0.1"
+string = "0.2"
 
 [dev-dependencies]
 proptest = "0.9.1"

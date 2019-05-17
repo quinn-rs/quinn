@@ -3,6 +3,7 @@ use quinn_proto::coding::BufMutExt;
 
 pub mod connection;
 pub mod frame;
+pub mod headers;
 
 pub struct StreamType(u64);
 
