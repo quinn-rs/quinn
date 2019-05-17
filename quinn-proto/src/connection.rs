@@ -575,11 +575,11 @@ impl Connection {
             trace!(self.log, "retransmitting handshake packets");
             for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
                 let space = self.space_mut(space_id);
-                for packet in space.sent_packets.values() {
+                for packet in space.sent_packets.values_mut() {
                     space
                         .pending
                         .crypto
-                        .extend(packet.retransmits.crypto.iter().cloned());
+                        .extend(packet.retransmits.crypto.drain(..));
                 }
             }
             self.crypto_count = self.crypto_count.saturating_add(1);
