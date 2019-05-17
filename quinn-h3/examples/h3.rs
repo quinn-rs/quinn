@@ -8,16 +8,17 @@ use std::{fmt, fs, io};
 
 use failure::{bail, format_err, Error, Fail, ResultExt};
 use futures::{Future, Stream};
+use http::{method::Method, Request};
 use slog::{info, o, Drain, Logger};
 use structopt::{self, StructOpt};
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::current_thread::{self, Runtime};
 use url::Url;
 
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     client::ClientBuilder,
     connection::ConnectionDriver,
-    server::{IncomingRequest, ServerBuilder},
+    server::{IncomingRequest, RequestReady, ServerBuilder},
 };
 
 type Result<T> = std::result::Result<T, Error>;
@@ -108,7 +109,7 @@ fn main() {
                     println!("client finished");
                     futures::future::ok(())
                 })
-                .map_err(|_| println!("client failed:")),
+                .map_err(|e| println!("client failed: {:?}", e)),
         )
         .expect("block on server failed");
     ::std::process::exit(0);
@@ -167,7 +168,26 @@ fn server(
 fn handle_connection(
     conn: (QuicDriver, ConnectionDriver, IncomingRequest),
 ) -> impl Future<Item = (), Error = Error> {
-    let (_quic_driver, _driver, _incoming) = conn;
+    let (quic_driver, driver, incoming) = conn;
+
+    current_thread::spawn(
+        incoming
+            .map_err(|e| format_err!("incoming error: {}", e))
+            .for_each(|request| {
+                request
+                    .map_err(|e| format_err!("recv request: {}", e))
+                    .and_then(|req| handle_request(req))
+            })
+            .map_err(|e| eprintln!("server error: {}", e)),
+    );
+
+    current_thread::spawn(quic_driver.map_err(|e| eprintln!("quic server error: {}", e)));
+    current_thread::spawn(driver.map_err(|e| eprintln!("h3 server error: {}", e)));
+    futures::future::ok(())
+}
+
+fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error> {
+    println!("received request: {:?}", request.headers());
     futures::future::ok(())
 }
 
@@ -198,9 +218,25 @@ fn client(
     let fut = client
         .connect(&remote, "localhost")?
         .map_err(|e| format_err!("failed to connect: {}", e))
-        .and_then(move |(_quic_driver, _conn_driver, _conn)| {
+        .and_then(move |(quic_driver, driver, conn)| {
             eprintln!("client connected at {:?}", start.elapsed());
-            futures::future::ok(())
+
+            current_thread::spawn(quic_driver.map_err(|e| eprintln!("quic server error: {}", e)));
+            current_thread::spawn(driver.map_err(|e| eprintln!("h3 server error: {}", e)));
+
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/hello")
+                .header("foo", "bar")
+                .body(())
+                .expect("failed to build request");
+
+            conn.send_request(request)
+                .map_err(|e| format_err!("send request: {}", e))
+                .and_then(|response| {
+                    println!("recieved response: {:?}", response.headers);
+                    futures::future::ok(())
+                })
         });
 
     Ok((endpoint_driver, Box::new(fut)))
