@@ -4,7 +4,7 @@ use std::str;
 use bytes::Bytes;
 use err_derive::Error;
 use futures::sync::oneshot;
-use futures::task;
+use futures::{task, try_ready};
 use futures::{Async, Future, Poll};
 use proto::{ConnectionError, StreamId};
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -202,7 +202,8 @@ impl RecvStream {
 
     /// Read data contiguously from the stream.
     ///
-    /// Returns the number of bytes read into `buf` on success.
+    /// Returns the number of bytes read into `buf` on success, or `None` if the stream was
+    /// finished.
     ///
     /// Applications involving bulk data transfer should consider using unordered reads for
     /// improved performance.
@@ -211,7 +212,7 @@ impl RecvStream {
     /// - If called after `poll_read_unordered` was called on the same stream.
     ///   This is forbidden because an unordered read could consume a segment of data from a
     ///   location other than the start of the receive buffer, making it impossible for future
-    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize, ReadError> {
+    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<Option<usize>, ReadError> {
         self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
@@ -219,7 +220,7 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read(self.stream, buf) {
-            Ok(n) => Ok(Async::Ready(n)),
+            Ok(n) => Ok(Async::Ready(Some(n))),
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
@@ -233,7 +234,7 @@ impl RecvStream {
             }
             Err(Finished) => {
                 self.all_data_read = true;
-                Err(ReadError::Finished)
+                Ok(Async::Ready(None))
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
@@ -241,12 +242,12 @@ impl RecvStream {
 
     /// Read a segment of data from any offset in the stream.
     ///
-    /// Returns a segment of data and their offset in the stream. Segments may be received in any
-    /// order and may overlap.
+    /// Returns a segment of data and their offset in the stream, or `None` if the stream was
+    /// finished. Segments may be received in any order and may overlap.
     ///
     /// Unordered reads have reduced overhead and higher throughput, and should therefore be
     /// preferred when applicable.
-    pub fn poll_read_unordered(&mut self) -> Poll<(Bytes, u64), ReadError> {
+    pub fn poll_read_unordered(&mut self) -> Poll<Option<(Bytes, u64)>, ReadError> {
         self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
@@ -254,7 +255,7 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read_unordered(self.stream) {
-            Ok((bytes, offset)) => Ok(Async::Ready((bytes, offset))),
+            Ok((bytes, offset)) => Ok(Async::Ready(Some((bytes, offset)))),
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
@@ -268,7 +269,7 @@ impl RecvStream {
             }
             Err(Finished) => {
                 self.all_data_read = true;
-                Err(ReadError::Finished)
+                Ok(Async::Ready(None))
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
@@ -327,41 +328,52 @@ pub struct ReadToEnd {
 
 impl Future for ReadToEnd {
     type Item = Vec<u8>;
-    type Error = ReadError;
+    type Error = ReadToEndError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
-            match self.stream.poll_read_unordered() {
-                Ok(Async::Ready((data, offset))) => {
+            match try_ready!(self.stream.poll_read_unordered()) {
+                Some((data, offset)) => {
                     let end = data.len() as u64 + offset;
                     if end > self.size_limit as u64 {
-                        return Err(ReadError::Finished);
+                        return Err(ReadToEndError::TooLong);
                     }
                     self.len = self.len.max(end as usize);
                     self.read.push((data, offset as usize));
                 }
-                Ok(Async::NotReady) => {
-                    return Ok(Async::NotReady);
-                }
-                Err(ReadError::Finished) => {
+                None => {
                     let mut buffer = vec![0; self.len];
                     for (data, offset) in self.read.drain(..) {
                         buffer[offset..offset + data.len()].copy_from_slice(&data);
                     }
                     return Ok(Async::Ready(buffer));
                 }
-                Err(e) => {
-                    return Err(e);
-                }
             }
         }
+    }
+}
+
+/// Error from the ReadToEnd future
+#[derive(Debug, Error)]
+pub enum ReadToEndError {
+    /// An error occurred during reading
+    #[error(display = "read error")]
+    Read(ReadError),
+    /// The stream is larger than the user-supplied limit
+    #[error(display = "stream too long")]
+    TooLong,
+}
+
+impl From<ReadError> for ReadToEndError {
+    fn from(e: ReadError) -> ReadToEndError {
+        ReadToEndError::Read(e)
     }
 }
 
 impl io::Read for RecvStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.poll_read(buf) {
-            Ok(Async::Ready(n)) => Ok(n),
-            Err(ReadError::Finished) => Ok(0),
+            Ok(Async::Ready(Some(n))) => Ok(n),
+            Ok(Async::Ready(None)) => Ok(0),
             Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
             Err(e) => Err(e.into()),
         }
@@ -396,9 +408,6 @@ pub enum ReadError {
         /// The error code supplied by the peer.
         error_code: u16,
     },
-    /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[error(display = "the stream has been completely received")]
-    Finished,
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
@@ -420,7 +429,6 @@ impl From<ReadError> for io::Error {
                 return e.into();
             }
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            Finished => io::ErrorKind::UnexpectedEof,
             UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
