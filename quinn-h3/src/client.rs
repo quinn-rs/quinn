@@ -18,7 +18,7 @@ use crate::{
         frame::{HeadersFrame, HttpFrame},
         headers::Header,
     },
-    Error, Settings,
+    Error, Settings, try_take,
 };
 
 pub struct ClientBuilder<'a> {
@@ -231,10 +231,6 @@ impl<T> Future for SendRequest<T> {
             }
         }
     }
-}
-
-fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
-    mem::replace(item, None).ok_or(Error::Internal(msg))
 }
 
 pub struct RecvResponse {

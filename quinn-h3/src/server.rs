@@ -16,7 +16,7 @@ use crate::{
         frame::{HeadersFrame, HttpFrame},
         headers::Header,
     },
-    Error, Settings,
+    try_take, Error, Settings,
 };
 
 pub struct ServerBuilder<'a> {
@@ -184,10 +184,8 @@ impl Future for RecvRequest {
                         }
                         Ok(Some(decoded)) => {
                             self.state = RecvRequestState::Ready;
-                            let (frame_stream, send) = match mem::replace(&mut self.streams, None) {
-                                Some(x) => x,
-                                None => return Err(Error::Internal("Recv request invalid state")),
-                            };
+                            let (frame_stream, send) =
+                                try_take(&mut self.streams, "Recv request invalid state")?;
                             return Ok(Async::Ready(RequestReady::build(
                                 decoded,
                                 frame_stream,
@@ -295,11 +293,7 @@ impl Future for SendResponse {
         loop {
             match self.state {
                 SendResponseState::Encoding(ref id) => {
-                    let header = self
-                        .header
-                        .take()
-                        .ok_or(Error::Internal("polled after finished"))?;
-
+                    let header = try_take(&mut self.header, "polled after finished")?;
                     let block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
                         conn.encode_header(id, header)?
@@ -308,11 +302,7 @@ impl Future for SendResponse {
                     let mut encoded = Vec::new();
                     block.encode(&mut encoded);
 
-                    let send = self
-                        .send
-                        .take()
-                        .ok_or(Error::Internal("polled after finished"))?;
-
+                    let send = try_take(&mut self.send, "polled after finished")?;
                     mem::replace(
                         &mut self.state,
                         SendResponseState::Sending(tokio::io::write_all(send, encoded)),

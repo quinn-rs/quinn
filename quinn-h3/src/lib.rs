@@ -16,6 +16,8 @@ pub mod proto;
 pub mod qpack;
 pub mod server;
 
+use std::mem;
+
 use err_derive::Error;
 
 #[derive(Clone)]
@@ -88,4 +90,8 @@ impl From<proto::headers::Error> for Error {
     fn from(err: proto::headers::Error) -> Error {
         Error::Peer(format!("invalid headers: {:?}", err))
     }
+}
+
+fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
+    mem::replace(item, None).ok_or(Error::Internal(msg))
 }
