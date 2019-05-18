@@ -3,10 +3,11 @@ use std::net::ToSocketAddrs;
 
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::Request;
+use http::{response, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
+use tokio::io::{Shutdown, WriteAll};
 
 use crate::{
     connection::{ConnectionDriver, ConnectionRef},
@@ -191,6 +192,7 @@ impl Future for RecvRequest {
                                 decoded,
                                 frame_stream,
                                 send,
+                                self.stream_id,
                                 self.conn.clone(),
                             )?));
                         }
@@ -205,7 +207,8 @@ impl Future for RecvRequest {
 pub struct RequestReady {
     request: Request<()>,
     frame_stream: FrameStream<RecvStream>,
-    send: Option<SendStream>,
+    send: SendStream,
+    stream_id: StreamId,
     conn: ConnectionRef,
 }
 
@@ -214,6 +217,7 @@ impl RequestReady {
         headers: Header,
         frame_stream: FrameStream<RecvStream>,
         send: SendStream,
+        stream_id: StreamId,
         conn: ConnectionRef,
     ) -> Result<Self, Error> {
         let (method, uri, headers) = headers.into_request_parts()?;
@@ -234,11 +238,98 @@ impl RequestReady {
             request,
             frame_stream,
             conn,
-            send: Some(send),
+            stream_id,
+            send,
         })
     }
 
     pub fn request<'a>(&'a self) -> &'a Request<()> {
         &self.request
+    }
+
+    pub fn send_response(self, response: Response<()>) -> SendResponse {
+        SendResponse::new(response, self.send, self.stream_id, self.conn)
+    }
+}
+
+enum SendResponseState {
+    Encoding(StreamId),
+    Sending(WriteAll<SendStream, Vec<u8>>),
+    Closing(Shutdown<SendStream>),
+}
+
+pub struct SendResponse {
+    state: SendResponseState,
+    header: Option<Header>,
+    send: Option<SendStream>,
+    conn: ConnectionRef,
+}
+
+impl SendResponse {
+    fn new(
+        response: Response<()>,
+        send: SendStream,
+        stream_id: StreamId,
+        conn: ConnectionRef,
+    ) -> Self {
+        let (
+            response::Parts {
+                status, headers, ..
+            },
+            _body,
+        ) = response.into_parts();
+
+        Self {
+            conn,
+            send: Some(send),
+            header: Some(Header::response(status, headers)),
+            state: SendResponseState::Encoding(stream_id),
+        }
+    }
+}
+
+impl Future for SendResponse {
+    type Item = ();
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.state {
+                SendResponseState::Encoding(ref id) => {
+                    let header = self
+                        .header
+                        .take()
+                        .ok_or(Error::Internal("polled after finished"))?;
+
+                    let block = {
+                        let conn = &mut self.conn.h3.lock().unwrap().inner;
+                        conn.encode_header(id, header)?
+                    };
+
+                    let mut encoded = Vec::new();
+                    block.encode(&mut encoded);
+
+                    let send = self
+                        .send
+                        .take()
+                        .ok_or(Error::Internal("polled after finished"))?;
+
+                    mem::replace(
+                        &mut self.state,
+                        SendResponseState::Sending(tokio::io::write_all(send, encoded)),
+                    );
+                }
+                SendResponseState::Sending(ref mut write) => {
+                    let (send, _) = try_ready!(write.poll());
+                    mem::replace(
+                        &mut self.state,
+                        SendResponseState::Closing(tokio::io::shutdown(send)),
+                    );
+                }
+                SendResponseState::Closing(ref mut shut) => {
+                    let _ = try_ready!(shut.poll());
+                    return Ok(Async::Ready(()));
+                }
+            }
+        }
     }
 }
