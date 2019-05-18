@@ -2597,32 +2597,16 @@ impl Connection {
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let (buf, len, more) = self
-            .streams
-            .read_unordered(id)
-            .map_err(|e| self.read_error_cleanup(id, e))?;
+        let (buf, len, more) = self.streams.read_unordered(id)?;
         self.add_read_credits(id, len, more);
         Ok((buf, len))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let (len, more) = self
-            .streams
-            .read(id, buf)
-            .map_err(|e| self.read_error_cleanup(id, e))?;
+        let (len, more) = self.streams.read(id, buf)?;
         self.add_read_credits(id, len as u64, more);
         Ok(len)
-    }
-
-    fn read_error_cleanup(&mut self, id: StreamId, err: ReadError) -> ReadError {
-        match err {
-            ReadError::Finished | ReadError::Reset { .. } => {
-                self.streams.maybe_cleanup(id);
-            }
-            _ => {}
-        }
-        err
     }
 
     fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
