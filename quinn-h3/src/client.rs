@@ -3,10 +3,11 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::{request::Parts, Request};
+use http::{request::Parts, Request, Response};
 use quinn::{
     Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, RecvStream, SendStream,
 };
+use quinn_proto::StreamId;
 use slog::{self, o, Logger};
 use tokio::io::{self, Shutdown, WriteAll};
 
@@ -115,7 +116,8 @@ enum SendRequestState {
     Sending(WriteAll<SendStream, Vec<u8>>),
     Sent(Shutdown<SendStream>),
     Receiving(FrameStream<RecvStream>),
-    Ready(HeadersFrame),
+    Decoding(HeadersFrame),
+    Ready(Header),
     Finished,
 }
 
@@ -124,6 +126,7 @@ pub struct SendRequest<T> {
     body: T,
     state: SendRequestState,
     conn: ConnectionRef,
+    stream_id: Option<StreamId>,
     recv: Option<FrameStream<RecvStream>>,
 }
 
@@ -144,6 +147,7 @@ impl<T> SendRequest<T> {
             conn,
             header: Some(Header::request(method, uri, headers)),
             state: SendRequestState::Opening(open_bi),
+            stream_id: None,
             recv: None,
         }
     }
@@ -159,10 +163,11 @@ impl<T> Future for SendRequest<T> {
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = try_ready!(o.poll());
                     self.recv = Some(FrameStream::new(recv));
+                    self.stream_id = Some(send.id());
 
                     let header_block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        let header = self.header.take().ok_or(Error::Internal("header none"))?;
+                        let header = try_take(&mut self.header, "header none")?;
                         conn.encode_header(&send.id(), header)?
                     };
                     let mut encoded_header = vec![];
@@ -178,16 +183,15 @@ impl<T> Future for SendRequest<T> {
                 }
                 SendRequestState::Sent(ref mut shut) => {
                     try_ready!(shut.poll());
-                    self.state = match mem::replace(&mut self.recv, None) {
-                        Some(r) => SendRequestState::Receiving(r),
-                        None => return Err(Error::Internal("Invalid receive state")),
-                    }
+                    let recv = try_take(&mut self.recv, "Invalid receive state")?;
+                    self.state = SendRequestState::Receiving(recv);
                 }
                 SendRequestState::Receiving(ref mut frames) => match try_ready!(frames.poll()) {
                     None => return Err(Error::peer("recieved an empty response")),
                     Some(f) => match f {
                         HttpFrame::Headers(headers) => {
-                            match mem::replace(&mut self.state, SendRequestState::Ready(headers)) {
+                            match mem::replace(&mut self.state, SendRequestState::Decoding(headers))
+                            {
                                 SendRequestState::Receiving(frames) => self.recv = Some(frames),
                                 _ => unreachable!(),
                             };
@@ -195,13 +199,30 @@ impl<T> Future for SendRequest<T> {
                         _ => return Err(Error::peer("first frame is not headers")),
                     },
                 },
+                SendRequestState::Decoding(ref mut frame) => {
+                    let stream_id = try_take(&mut self.stream_id, "Stream id is none")?;
+                    let result = {
+                        let conn = &mut self.conn.h3.lock().unwrap().inner;
+                        conn.decode_header(&stream_id, frame)
+                    };
+
+                    match result {
+                        Ok(None) => return Ok(Async::NotReady),
+                        Ok(Some(decoded)) => {
+                            self.state = SendRequestState::Ready(decoded);
+                        }
+                        Err(e) => {
+                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
+                        }
+                    }
+                }
                 SendRequestState::Ready(_) => {
                     match mem::replace(&mut self.state, SendRequestState::Finished) {
                         SendRequestState::Ready(h) => {
-                            return Ok(Async::Ready(RecvResponse {
-                                headers: h,
-                                frames: mem::replace(&mut self.recv, None).unwrap(),
-                            }))
+                            return Ok(Async::Ready(RecvResponse::build(
+                                h,
+                                try_take(&mut self.recv, "Recv is none")?,
+                            )?));
                         }
                         _ => unreachable!(),
                     }
@@ -212,7 +233,34 @@ impl<T> Future for SendRequest<T> {
     }
 }
 
+fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
+    mem::replace(item, None).ok_or(Error::Internal(msg))
+}
+
 pub struct RecvResponse {
-    pub headers: HeadersFrame,
-    frames: FrameStream<RecvStream>,
+    response: Response<()>,
+    recv: FrameStream<RecvStream>,
+}
+
+impl RecvResponse {
+    fn build(header: Header, recv: FrameStream<RecvStream>) -> Result<Self, Error> {
+        let (status, headers) = header.into_response_parts()?;
+        let mut response = Response::builder();
+        response.status(status);
+        response.version(http::version::Version::HTTP_2); // TODO change once available
+        *response
+            .headers_mut()
+            .ok_or(Error::peer("invalid response"))? = headers;
+
+        Ok(Self {
+            recv,
+            response: response
+                .body(())
+                .or(Err(Error::Internal("failed to build response")))?,
+        })
+    }
+
+    pub fn response<'a>(&'a self) -> &'a Response<()> {
+        &self.response
+    }
 }
