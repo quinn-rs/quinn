@@ -187,7 +187,7 @@ fn handle_connection(
 }
 
 fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error> {
-    println!("received request: {:?}", request.headers());
+    println!("received request: {:?}", request.request());
     futures::future::ok(())
 }
 

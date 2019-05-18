@@ -29,6 +29,28 @@ impl Header {
         }
     }
 
+    pub fn into_request_parts(self) -> Result<(Method, Uri, HeaderMap), Error> {
+        let mut uri = Uri::builder();
+
+        if let Some(path) = self.pseudo.path {
+            uri.path_and_query(path.as_bytes());
+        }
+
+        if let Some(scheme) = self.pseudo.scheme {
+            uri.scheme(scheme.as_bytes());
+        }
+
+        if let Some(authority) = self.pseudo.authority {
+            uri.authority(authority.as_bytes());
+        }
+
+        Ok((
+            self.pseudo.method.ok_or(Error::MissingMethod)?,
+            uri.build().map_err(|e| Error::InvalidRequest(e))?,
+            self.fields,
+        ))
+    }
+
     pub fn len(&self) -> usize {
         self.pseudo.len() + self.fields.len()
     }
@@ -271,9 +293,12 @@ fn to_string(src: Bytes) -> String<Bytes> {
     unsafe { String::from_utf8_unchecked(src) }
 }
 
+#[derive(Debug)]
 pub enum Error {
     InvalidHeaderName(std::string::String),
     InvalidHeaderValue(std::string::String),
+    InvalidRequest(http::Error),
+    MissingMethod,
 }
 
 impl Error {

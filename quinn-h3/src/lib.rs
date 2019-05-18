@@ -83,3 +83,9 @@ impl From<frame::Error> for Error {
         }
     }
 }
+
+impl From<proto::headers::Error> for Error {
+    fn from(err: proto::headers::Error) -> Error {
+        Error::Peer(format!("invalid headers: {:?}", err))
+    }
+}

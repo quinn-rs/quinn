@@ -3,6 +3,7 @@ use std::net::ToSocketAddrs;
 
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
+use http::Request;
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
@@ -186,12 +187,12 @@ impl Future for RecvRequest {
                                 Some(x) => x,
                                 None => return Err(Error::Internal("Recv request invalid state")),
                             };
-                            return Ok(Async::Ready(RequestReady {
-                                headers: decoded,
+                            return Ok(Async::Ready(RequestReady::build(
+                                decoded,
                                 frame_stream,
-                                send: Some(send),
-                                conn: self.conn.clone(),
-                            }));
+                                send,
+                                self.conn.clone(),
+                            )?));
                         }
                     }
                 }
@@ -202,14 +203,42 @@ impl Future for RecvRequest {
 }
 
 pub struct RequestReady {
-    headers: Header,
+    request: Request<()>,
     frame_stream: FrameStream<RecvStream>,
     send: Option<SendStream>,
     conn: ConnectionRef,
 }
 
 impl RequestReady {
-    pub fn headers<'a>(&'a self) -> &'a Header {
-        &self.headers
+    fn build(
+        headers: Header,
+        frame_stream: FrameStream<RecvStream>,
+        send: SendStream,
+        conn: ConnectionRef,
+    ) -> Result<Self, Error> {
+        let (method, uri, headers) = headers.into_request_parts()?;
+        let mut request = Request::builder();
+        request.method(method);
+        request.uri(uri);
+        request.version(http::version::Version::HTTP_2); // TODO change once available
+        match request.headers_mut() {
+            Some(h) => *h = headers,
+            None => return Err(Error::peer("invalid header")),
+        }
+
+        let request = request
+            .body(())
+            .map_err(|e| Error::Peer(format!("invalid request: {:?}", e)))?;
+
+        Ok(Self {
+            request,
+            frame_stream,
+            conn,
+            send: Some(send),
+        })
+    }
+
+    pub fn request<'a>(&'a self) -> &'a Request<()> {
+        &self.request
     }
 }
