@@ -76,7 +76,9 @@ mod endpoint;
 pub use endpoint::{Endpoint, EndpointDriver, Incoming};
 
 mod streams;
-pub use streams::{NewStream, ReadError, ReadToEnd, RecvStream, SendStream, WriteError};
+pub use streams::{
+    NewStream, ReadError, ReadToEnd, ReadToEndError, RecvStream, SendStream, WriteError,
+};
 
 #[cfg(test)]
 mod tests;

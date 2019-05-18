@@ -118,11 +118,11 @@ fn read_from_peer(
         .read_to_end(1024 * 1024 * 5)
         .unwrap()
         .map_err(|e| {
-            use quinn::ReadError::*;
+            use quinn::{ReadError::*, ReadToEndError::*};
             match e {
-                Finished | UnknownStream | ZeroRttRejected => unreachable!(),
-                Reset { error_code } => panic!("unexpected stream reset: {}", error_code),
-                ConnectionClosed(e) => e,
+                TooLong | Read(UnknownStream) | Read(ZeroRttRejected) => unreachable!(),
+                Read(Reset { error_code }) => panic!("unexpected stream reset: {}", error_code),
+                Read(ConnectionClosed(e)) => e,
             }
         })
         .and_then(move |data| {
