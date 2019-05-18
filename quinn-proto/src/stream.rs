@@ -135,13 +135,26 @@ impl Streams {
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
-        Ok((rs.read(buf)?, rs.receiving_unknown_size()))
+        match rs.read(buf) {
+            Ok(len) => Ok((len, rs.receiving_unknown_size())),
+            Err(e @ ReadError::Finished) | Err(e @ ReadError::Reset { .. }) => {
+                self.maybe_cleanup(id);
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64, bool), ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
-        let (buf, len) = rs.read_unordered()?;
-        Ok((buf, len, rs.receiving_unknown_size()))
+        match rs.read_unordered() {
+            Ok((buf, len)) => Ok((buf, len, rs.receiving_unknown_size())),
+            Err(e @ ReadError::Finished) | Err(e @ ReadError::Reset { .. }) => {
+                self.maybe_cleanup(id);
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn get_recv_stream(
