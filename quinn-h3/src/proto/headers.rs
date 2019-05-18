@@ -23,7 +23,16 @@ impl Header {
     pub fn request(method: Method, uri: Uri, headers: HeaderMap) -> Self {
         let pseudo = Pseudo::request(method, uri);
 
-        Header {
+        Self {
+            pseudo: pseudo,
+            fields: headers,
+        }
+    }
+
+    pub fn response(status: StatusCode, headers: HeaderMap) -> Self {
+        let pseudo = Pseudo::response(status);
+
+        Self {
             pseudo: pseudo,
             fields: headers,
         }

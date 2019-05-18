@@ -8,7 +8,7 @@ use std::{fmt, fs, io};
 
 use failure::{bail, format_err, Error, Fail, ResultExt};
 use futures::{Future, Stream};
-use http::{method::Method, Request};
+use http::{method::Method, Request, Response, StatusCode};
 use slog::{info, o, Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::{self, Runtime};
@@ -188,7 +188,13 @@ fn handle_connection(
 
 fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error> {
     println!("received request: {:?}", request.request());
-    futures::future::ok(())
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .body(())
+        .expect("failed to build response");
+    request
+        .send_response(response)
+        .map_err(|e| format_err!("failed to send response: {:?}", e))
 }
 
 fn client(
