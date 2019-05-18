@@ -60,6 +60,10 @@ impl Header {
         ))
     }
 
+    pub fn into_response_parts(self) -> Result<(StatusCode, HeaderMap), Error> {
+        Ok((self.pseudo.status.ok_or(Error::MissingStatus)?, self.fields))
+    }
+
     pub fn len(&self) -> usize {
         self.pseudo.len() + self.fields.len()
     }
@@ -308,6 +312,7 @@ pub enum Error {
     InvalidHeaderValue(std::string::String),
     InvalidRequest(http::Error),
     MissingMethod,
+    MissingStatus,
 }
 
 impl Error {
