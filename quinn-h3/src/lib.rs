@@ -9,12 +9,16 @@ extern crate proptest;
 #[macro_use]
 extern crate assert_matches;
 
+pub use body::Body;
+
 pub mod client;
 pub mod connection;
-mod frame;
 pub mod proto;
 pub mod qpack;
 pub mod server;
+
+mod body;
+mod frame;
 
 use std::mem;
 

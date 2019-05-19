@@ -18,7 +18,7 @@ use crate::{
         frame::{HeadersFrame, HttpFrame},
         headers::Header,
     },
-    Error, Settings, try_take,
+    try_take, Error, Settings,
 };
 
 pub struct ClientBuilder<'a> {
