@@ -10,6 +10,7 @@ use slog::{self, o, Logger};
 use tokio::io::{Shutdown, WriteAll};
 
 use crate::{
+    body::{Body, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::FrameStream,
     proto::{
@@ -245,27 +246,29 @@ impl RequestReady {
         &self.request
     }
 
-    pub fn send_response(self, response: Response<()>) -> SendResponse {
+    pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
         SendResponse::new(response, self.send, self.stream_id, self.conn)
     }
 }
 
 enum SendResponseState {
     Encoding(StreamId),
-    Sending(WriteAll<SendStream, Vec<u8>>),
+    SendingHeader(WriteAll<SendStream, Vec<u8>>),
+    SendingBody(SendBody),
     Closing(Shutdown<SendStream>),
 }
 
 pub struct SendResponse {
     state: SendResponseState,
     header: Option<Header>,
+    body: Option<Body>,
     send: Option<SendStream>,
     conn: ConnectionRef,
 }
 
 impl SendResponse {
-    fn new(
-        response: Response<()>,
+    fn new<T: Into<Body>>(
+        response: Response<T>,
         send: SendStream,
         stream_id: StreamId,
         conn: ConnectionRef,
@@ -274,11 +277,12 @@ impl SendResponse {
             response::Parts {
                 status, headers, ..
             },
-            _body,
+            body,
         ) = response.into_parts();
 
         Self {
             conn,
+            body: Some(body.into()),
             send: Some(send),
             header: Some(Header::response(status, headers)),
             state: SendResponseState::Encoding(stream_id),
@@ -305,11 +309,21 @@ impl Future for SendResponse {
                     let send = try_take(&mut self.send, "polled after finished")?;
                     mem::replace(
                         &mut self.state,
-                        SendResponseState::Sending(tokio::io::write_all(send, encoded)),
+                        SendResponseState::SendingHeader(tokio::io::write_all(send, encoded)),
                     );
                 }
-                SendResponseState::Sending(ref mut write) => {
+                SendResponseState::SendingHeader(ref mut write) => {
                     let (send, _) = try_ready!(write.poll());
+                    mem::replace(
+                        &mut self.state,
+                        SendResponseState::SendingBody(SendBody::new(
+                            send,
+                            try_take(&mut self.body, "send body data")?,
+                        )),
+                    );
+                }
+                SendResponseState::SendingBody(ref mut body) => {
+                    let send = try_ready!(body.poll());
                     mem::replace(
                         &mut self.state,
                         SendResponseState::Closing(tokio::io::shutdown(send)),

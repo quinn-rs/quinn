@@ -190,7 +190,7 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
     println!("received request: {:?}", request.request());
     let response = Response::builder()
         .status(StatusCode::OK)
-        .body(())
+        .body("body")
         .expect("failed to build response");
     request
         .send_response(response)

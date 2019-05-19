@@ -118,7 +118,7 @@ pub struct DataFrame {
 }
 
 impl DataFrame {
-    fn encode<B: BufMut>(&self, buf: &mut B) {
+    pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
         buf.put(&self.payload);
     }
