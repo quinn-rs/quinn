@@ -176,7 +176,7 @@ impl Streams {
         self.send.get_mut(&id)
     }
 
-    /// Whether a presumed-local stream is or was previously open
+    /// Whether a locally initiated stream has never been open
     pub fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.directionality() as usize]
     }
