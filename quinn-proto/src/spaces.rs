@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 use std::{cmp, mem};
 
+use bytes::Bytes;
 use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
@@ -120,6 +121,21 @@ impl PacketSpace {
         // congestion check obvious.
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
+    }
+
+    pub fn finish_stream(&mut self, id: StreamId, offset: u64) {
+        for frame in &mut self.pending.stream {
+            if frame.id == id && frame.offset + frame.data.len() as u64 == offset {
+                frame.fin = true;
+                return;
+            }
+        }
+        self.pending.stream.push_back(frame::Stream {
+            id,
+            data: Bytes::new(),
+            offset,
+            fin: true,
+        });
     }
 }
 
