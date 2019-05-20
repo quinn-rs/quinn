@@ -12,7 +12,8 @@ use crate::{Directionality, Side, StreamId, TransportError};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
-    streams: FnvHashMap<StreamId, Stream>,
+    send: FnvHashMap<StreamId, Send>,
+    recv: FnvHashMap<StreamId, Recv>,
     next: [u64; 2],
     // Locally initiated
     pub max: [u64; 2],
@@ -27,7 +28,8 @@ pub struct Streams {
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
         let mut this = Self {
-            streams: FnvHashMap::default(),
+            send: FnvHashMap::default(),
+            recv: FnvHashMap::default(),
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi, max_remote_uni],
@@ -51,7 +53,7 @@ impl Streams {
 
         self.next[direction as usize] += 1;
         let id = StreamId::new(side, direction, self.next[direction as usize] - 1);
-        assert!(self.insert(false, id).is_none());
+        self.insert(false, id);
         Some(id)
     }
 
@@ -83,9 +85,10 @@ impl Streams {
         // Revert to initial state for outgoing streams
         for dir in Directionality::iter() {
             for i in 0..self.next[dir as usize] {
-                self.streams
-                    .remove(&StreamId::new(side, dir, i))
-                    .unwrap();
+                self.send.remove(&StreamId::new(side, dir, i)).unwrap();
+                if let Directionality::Bi = dir {
+                    self.recv.remove(&StreamId::new(side, dir, i)).unwrap();
+                }
             }
             self.next[dir as usize] = 0;
         }
@@ -140,15 +143,23 @@ impl Streams {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
         }
-        Ok(self.streams.get_mut(&id).and_then(|s| s.recv_mut()))
+        Ok(self.recv.get_mut(&id))
     }
 
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
     pub fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.streams.entry(id) {
-            hash_map::Entry::Vacant(_) => unreachable!(),
+        match self.send.entry(id) {
+            hash_map::Entry::Vacant(_) => {}
+            hash_map::Entry::Occupied(e) => {
+                if e.get().is_closed() {
+                    e.remove_entry();
+                }
+            }
+        }
+        match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
                     e.remove_entry();
@@ -158,11 +169,11 @@ impl Streams {
     }
 
     pub fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
-        self.streams.get_mut(&id)?.recv_mut()
+        self.recv.get_mut(&id)
     }
 
     pub fn get_send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
-        self.streams.get_mut(&id)?.send_mut()
+        self.send.get_mut(&id)
     }
 
     /// Whether a presumed-local stream is or was previously open
@@ -170,59 +181,14 @@ impl Streams {
         id.index() >= self.next[id.directionality() as usize]
     }
 
-    fn insert(&mut self, remote: bool, id: StreamId) -> Option<Stream> {
-        let stream = match (remote, id.directionality()) {
-            (false, Directionality::Uni) => Stream::Send(Send::new()),
-            (true, Directionality::Uni) => Stream::Recv(Recv::new()),
-            (_, Directionality::Bi) => Stream::Both(Send::new(), Recv::new()),
-        };
-        self.streams.insert(id, stream)
-    }
-}
-
-#[derive(Debug)]
-pub enum Stream {
-    Send(Send),
-    Recv(Recv),
-    Both(Send, Recv),
-}
-
-impl Stream {
-    fn send(&self) -> Option<&Send> {
-        match *self {
-            Stream::Send(ref x) => Some(x),
-            Stream::Both(ref x, _) => Some(x),
-            _ => None,
+    fn insert(&mut self, remote: bool, id: StreamId) {
+        let bi = id.directionality() == Directionality::Bi;
+        if bi || !remote {
+            assert!(self.send.insert(id, Send::new()).is_none());
         }
-    }
-
-    fn recv(&self) -> Option<&Recv> {
-        match *self {
-            Stream::Recv(ref x) => Some(x),
-            Stream::Both(_, ref x) => Some(x),
-            _ => None,
+        if bi || remote {
+            assert!(self.recv.insert(id, Recv::new()).is_none());
         }
-    }
-
-    fn send_mut(&mut self) -> Option<&mut Send> {
-        match *self {
-            Stream::Send(ref mut x) => Some(x),
-            Stream::Both(ref mut x, _) => Some(x),
-            _ => None,
-        }
-    }
-
-    fn recv_mut(&mut self) -> Option<&mut Recv> {
-        match *self {
-            Stream::Recv(ref mut x) => Some(x),
-            Stream::Both(_, ref mut x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Safe to free
-    fn is_closed(&self) -> bool {
-        self.send().map_or(true, Send::is_closed) && self.recv().map_or(true, Recv::is_closed)
     }
 }
 
