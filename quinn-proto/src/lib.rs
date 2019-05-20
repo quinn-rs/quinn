@@ -194,8 +194,8 @@ impl slog::Value for StreamId {
 }
 
 impl StreamId {
-    pub(crate) fn new(initiator: Side, directionality: Directionality, index: u64) -> Self {
-        StreamId(index << 2 | (directionality as u64) << 1 | initiator as u64)
+    pub(crate) fn new(initiator: Side, dir: Directionality, index: u64) -> Self {
+        StreamId(index << 2 | (dir as u64) << 1 | initiator as u64)
     }
     /// Which side of a connection initiated the stream
     pub fn initiator(self) -> Side {

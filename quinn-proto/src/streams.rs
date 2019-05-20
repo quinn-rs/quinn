@@ -46,20 +46,20 @@ impl Streams {
         this
     }
 
-    pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
-        if self.next[direction as usize] >= self.max[direction as usize] {
+    pub fn open(&mut self, side: Side, dir: Directionality) -> Option<StreamId> {
+        if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
 
-        self.next[direction as usize] += 1;
-        let id = StreamId::new(side, direction, self.next[direction as usize] - 1);
+        self.next[dir as usize] += 1;
+        let id = StreamId::new(side, dir, self.next[dir as usize] - 1);
         self.insert(false, id);
         Some(id)
     }
 
-    pub fn alloc_remote_stream(&mut self, side: Side, ty: Directionality) {
-        self.max_remote[ty as usize] += 1;
-        let id = StreamId::new(!side, ty, self.max_remote[ty as usize] - 1);
+    pub fn alloc_remote_stream(&mut self, side: Side, dir: Directionality) {
+        self.max_remote[dir as usize] += 1;
+        let id = StreamId::new(!side, dir, self.max_remote[dir as usize] - 1);
         self.insert(true, id);
     }
 

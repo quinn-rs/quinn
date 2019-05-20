@@ -2520,10 +2520,10 @@ impl Connection {
     /// Open a single stream if possible
     ///
     /// Returns `None` if the streams in the given direction are currently exhausted.
-    pub fn open(&mut self, direction: Directionality) -> Option<StreamId> {
-        let id = self.streams.open(self.side, direction)?;
+    pub fn open(&mut self, dir: Directionality) -> Option<StreamId> {
+        let id = self.streams.open(self.side, dir)?;
         // TODO: Queue STREAM_ID_BLOCKED if None
-        self.streams.get_send_mut(id).unwrap().max_data = match direction {
+        self.streams.get_send_mut(id).unwrap().max_data = match dir {
             Directionality::Uni => self.params.initial_max_stream_data_uni,
             Directionality::Bi => self.params.initial_max_stream_data_bidi_remote,
         } as u64;
@@ -2538,9 +2538,9 @@ impl Connection {
     }
 
     /// Permit an additional remote `ty` stream.
-    fn alloc_remote_stream(&mut self, ty: Directionality) {
+    fn alloc_remote_stream(&mut self, dir: Directionality) {
         let space = &mut self.spaces[SpaceId::Data as usize];
-        match ty {
+        match dir {
             Directionality::Bi => {
                 space.pending.max_bi_stream_id = true;
             }
@@ -2548,7 +2548,7 @@ impl Connection {
                 space.pending.max_uni_stream_id = true;
             }
         }
-        self.streams.alloc_remote_stream(self.side, ty);
+        self.streams.alloc_remote_stream(self.side, dir);
     }
 
     /// Accept a remotely initiated stream if possible
