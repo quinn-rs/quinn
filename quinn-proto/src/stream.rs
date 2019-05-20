@@ -30,13 +30,13 @@ impl Streams {
         for i in 0..max_remote_uni {
             streams.insert(
                 StreamId::new(!side, Directionality::Uni, i),
-                Recv::new().into(),
+                Stream::new(true, Directionality::Uni),
             );
         }
         for i in 0..max_remote_bi {
             streams.insert(
                 StreamId::new(!side, Directionality::Bi, i as u64),
-                Stream::new_bi(),
+                Stream::new(true, Directionality::Bi),
             );
         }
         Self {
@@ -55,14 +55,14 @@ impl Streams {
                 self.next[direction as usize] += 1;
                 (
                     StreamId::new(side, direction, self.next[direction as usize] - 1),
-                    Send::new().into(),
+                    Stream::new(false, direction),
                 )
             }
             Directionality::Bi if self.next[direction as usize] < self.max[direction as usize] => {
                 self.next[direction as usize] += 1;
                 (
                     StreamId::new(side, direction, self.next[direction as usize] - 1),
-                    Stream::new_bi(),
+                    Stream::new(false, direction),
                 )
             }
             _ => {
@@ -79,14 +79,14 @@ impl Streams {
                 self.max_remote[ty as usize] += 1;
                 (
                     StreamId::new(!side, Directionality::Bi, self.max_remote[ty as usize] - 1),
-                    Stream::new_bi(),
+                    Stream::new(true, ty),
                 )
             }
             Directionality::Uni => {
                 self.max_remote[ty as usize] += 1;
                 (
                     StreamId::new(!side, Directionality::Uni, self.max_remote[ty as usize] - 1),
-                    Recv::new().into(),
+                    Stream::new(true, ty),
                 )
             }
         };
@@ -215,8 +215,12 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn new_bi() -> Self {
-        Stream::Both(Send::new(), Recv::new())
+    fn new(remote: bool, dir: Directionality) -> Self {
+        match (remote, dir) {
+            (false, Directionality::Uni) => Stream::Send(Send::new()),
+            (true, Directionality::Uni) => Stream::Recv(Recv::new()),
+            (_, Directionality::Bi) => Stream::Both(Send::new(), Recv::new()),
+        }
     }
 
     pub fn send(&self) -> Option<&Send> {
@@ -254,17 +258,6 @@ impl Stream {
     /// Safe to free
     pub fn is_closed(&self) -> bool {
         self.send().map_or(true, Send::is_closed) && self.recv().map_or(true, Recv::is_closed)
-    }
-}
-
-impl From<Send> for Stream {
-    fn from(x: Send) -> Stream {
-        Stream::Send(x)
-    }
-}
-impl From<Recv> for Stream {
-    fn from(x: Recv) -> Stream {
-        Stream::Recv(x)
     }
 }
 
