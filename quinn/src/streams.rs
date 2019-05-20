@@ -220,7 +220,11 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read(self.stream, buf) {
-            Ok(n) => Ok(Async::Ready(Some(n))),
+            Ok(Some(n)) => Ok(Async::Ready(Some(n))),
+            Ok(None) => {
+                self.all_data_read = true;
+                Ok(Async::Ready(None))
+            }
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
@@ -231,10 +235,6 @@ impl RecvStream {
             Err(Reset { error_code }) => {
                 self.all_data_read = true;
                 Err(ReadError::Reset { error_code })
-            }
-            Err(Finished) => {
-                self.all_data_read = true;
-                Ok(Async::Ready(None))
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
         }
@@ -255,7 +255,11 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read_unordered(self.stream) {
-            Ok((bytes, offset)) => Ok(Async::Ready(Some((bytes, offset)))),
+            Ok(Some((bytes, offset))) => Ok(Async::Ready(Some((bytes, offset)))),
+            Ok(None) => {
+                self.all_data_read = true;
+                Ok(Async::Ready(None))
+            }
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
                     return Err(ReadError::ConnectionClosed(x.clone()));
@@ -266,10 +270,6 @@ impl RecvStream {
             Err(Reset { error_code }) => {
                 self.all_data_read = true;
                 Err(ReadError::Reset { error_code })
-            }
-            Err(Finished) => {
-                self.all_data_read = true;
-                Ok(Async::Ready(None))
             }
             Err(UnknownStream) => Err(ReadError::UnknownStream),
         }

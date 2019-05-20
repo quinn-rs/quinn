@@ -230,11 +230,11 @@ fn finish_stream() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok((ref data, 0)) if data == MSG);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Finished)
+        Ok(Some((ref data, 0))) if data == MSG
     );
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
 }
 
 #[test]
@@ -398,7 +398,10 @@ fn zero_rtt() {
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok((ref data, 0)) if data == MSG);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(s),
+        Ok(Some((ref data, 0))) if data == MSG
+    );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
 
@@ -500,10 +503,7 @@ fn stream_id_backpressure() {
         Some(Event::StreamOpened)
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Finished)
-    );
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -531,10 +531,7 @@ fn stream_id_backpressure() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Finished)
-    );
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
 }
 
 #[test]
@@ -561,7 +558,7 @@ fn key_update() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 0)) if data == MSG1
+        Ok(Some((ref data, 0))) if data == MSG1
     );
 
     pair.client_conn_mut(client_ch).force_key_update();
@@ -574,7 +571,7 @@ fn key_update() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 6)) if data == MSG2
+        Ok(Some((ref data, 6))) if data == MSG2
     );
 }
 
@@ -613,7 +610,7 @@ fn key_update_reordered() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     let mut buf = [0; 32];
     assert_matches!(pair.server_conn_mut(server_ch).read(s, &mut buf),
-                    Ok(n) if n == MSG1.len() + MSG2.len());
+                    Ok(Some(n)) if n == MSG1.len() + MSG2.len());
     assert_eq!(&buf[0..MSG1.len()], MSG1);
     assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
 
@@ -828,8 +825,11 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .server_conn_mut(server_conn)
             .read(s, &mut buf[cursor..])
         {
-            Ok(n) => {
+            Ok(Some(n)) => {
                 cursor += n;
+            }
+            Ok(None) => {
+                panic!("end of stream");
             }
             Err(ReadError::Blocked) => {
                 break;
@@ -857,8 +857,11 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .server_conn_mut(server_conn)
             .read(s, &mut buf[cursor..])
         {
-            Ok(n) => {
+            Ok(Some(n)) => {
                 cursor += n;
+            }
+            Ok(None) => {
+                panic!("end of stream");
             }
             Err(ReadError::Blocked) => {
                 break;
@@ -1019,7 +1022,7 @@ fn finish_stream_flow_control_reordered() {
     // Issue flow control credit
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 0)) if data == MSG
+        Ok(Some((ref data, 0))) if data == MSG
     );
     pair.server.drive(&pair.log, pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
@@ -1040,10 +1043,7 @@ fn finish_stream_flow_control_reordered() {
         Some(Event::StreamOpened)
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Finished)
-    );
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
 }
 
 #[test]
@@ -1076,7 +1076,7 @@ fn handshake_1rtt_handling() {
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok((ref data, 0)) if data == MSG
+        Ok(Some((ref data, 0))) if data == MSG
     );
 }
 
