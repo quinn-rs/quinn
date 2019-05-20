@@ -55,6 +55,8 @@ pub enum Error {
     Peer(String),
     #[error(display = "IO error: {}", _0)]
     Io(std::io::Error),
+    #[error(display = "Overflow max data size")]
+    Overflow,
 }
 
 impl Error {

@@ -1,11 +1,15 @@
 use std::mem;
 
-use quinn::SendStream;
 use bytes::{Bytes, BytesMut};
-use futures::{try_ready, Async, Future, Poll};
+use futures::{try_ready, Async, Future, Poll, Stream};
+use quinn::{RecvStream, SendStream};
 use tokio::io::WriteAll;
 
-use crate::{proto::frame::DataFrame, try_take, Error};
+use crate::{
+    frame::FrameStream,
+    proto::frame::{DataFrame, HttpFrame},
+    try_take, Error,
+};
 
 pub enum Body {
     None,
@@ -84,16 +88,49 @@ impl Future for SendBody {
         }
     }
 }
+
+pub struct RecvBody {
+    max_size: usize,
+    buf: BytesMut,
+    recv: FrameStream<RecvStream>,
+}
+
+impl RecvBody {
+    pub fn with_capacity(recv: FrameStream<RecvStream>, capacity: usize, max_size: usize) -> Self {
+        if capacity < 1 {
+            panic!("capacity cannot be 0");
+        }
+
+        Self {
+            max_size,
+            buf: BytesMut::with_capacity(capacity),
+            recv: recv,
+        }
+    }
+}
+
+impl Future for RecvBody {
+    type Item = Bytes;
+    type Error = crate::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if self.buf.capacity() < 1 {
+            return Err(Error::Internal("RecvBody polled after finished"));
+        }
+
+        match try_ready!(self.recv.poll()) {
+            Some(HttpFrame::Data(d)) => {
+                if d.payload.len() + self.buf.len() >= self.max_size {
+                    return Err(Error::Overflow);
                 }
-            },
-            SendBodyState::SendingBuf(ref mut b) => {
-                let (send, _) = try_ready!(b.poll());
-                mem::replace(&mut self.state, SendBodyState::Finished);
-                return Ok(Async::Ready(send));
+                self.buf.extend(d.payload);
             }
-            SendBodyState::Finished => {
-                return Err(Error::Internal("SendBody polled while finished"));
+            None => {
+                return Ok(Async::Ready(
+                    mem::replace(&mut self.buf, BytesMut::with_capacity(0)).into(),
+                ));
             }
+            _ => return Err(Error::peer("invalid frame type in data")),
         }
         Ok(Async::NotReady)
     }
