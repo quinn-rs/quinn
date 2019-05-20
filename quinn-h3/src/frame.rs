@@ -9,6 +9,7 @@ use super::proto::frame::{self, HttpFrame};
 pub struct FrameStream<R> {
     recv: R,
     buf: BytesMut,
+    need_read: bool,
 }
 
 impl<R> FrameStream<R>
@@ -21,6 +22,7 @@ where
         Self {
             recv,
             buf: BytesMut::new(),
+            need_read: true,
         }
     }
 }
@@ -33,14 +35,17 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.buf.resize(self.buf.len() + Self::READ_SIZE, 0);
-        let start = self.buf.len() - Self::READ_SIZE;
+        if self.need_read {
+            self.buf.resize(self.buf.len() + Self::READ_SIZE, 0);
+            let start = self.buf.len() - Self::READ_SIZE;
 
-        let size = match self.recv.poll_read(&mut self.buf[start..])? {
-            Async::NotReady => 0,
-            Async::Ready(size) => size,
-        };
-        self.buf.truncate(self.buf.len() - Self::READ_SIZE + size);
+            let size = match self.recv.poll_read(&mut self.buf[start..])? {
+                Async::NotReady => 0,
+                Async::Ready(0) => return Ok(Async::Ready(None)),
+                Async::Ready(size) => size,
+            };
+            self.buf.truncate(self.buf.len() - Self::READ_SIZE + size);
+        }
 
         let (pos, decoded) = {
             let mut cur = io::Cursor::new(&mut self.buf);
@@ -53,11 +58,13 @@ where
                 if self.buf.len() == Self::READ_SIZE {
                     Err(Error::Overflow)
                 } else {
+                    self.need_read = true;
                     Ok(Async::NotReady)
                 }
             }
             Err(e) => Err(e)?,
             Ok(f) => {
+                self.need_read = false;
                 self.buf.advance(pos);
                 Ok(Async::Ready(Some(f)))
             }
