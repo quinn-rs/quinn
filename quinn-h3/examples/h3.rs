@@ -240,7 +240,11 @@ fn client(
             conn.send_request(request)
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
-                    println!("recieved response: {:?}", response.response());
+                    println!("recieved headers: {:?}", response.response());
+                    response.body().map_err(|e| format_err!("recv body: {}", e))
+                })
+                .and_then(|data| {
+                    println!("recieved body: {:?}", data);
                     futures::future::ok(())
                 })
         });
