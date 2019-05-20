@@ -2578,17 +2578,19 @@ impl Connection {
     /// the sibling `read()` method can be used.
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
-    pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64), ReadError> {
-        let (buf, len, more) = self.streams.read_unordered(id)?;
-        self.add_read_credits(id, len, more);
-        Ok((buf, len))
+    pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
+        Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
+            self.add_read_credits(id, buf.len() as u64, more);
+            (buf, offset)
+        }))
     }
 
     /// Read from the given recv stream
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let (len, more) = self.streams.read(id, buf)?;
-        self.add_read_credits(id, len as u64, more);
-        Ok(len)
+    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+        Ok(self.streams.read(id, buf)?.map(|(len, more)| {
+            self.add_read_credits(id, len as u64, more);
+            len
+        }))
     }
 
     fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {

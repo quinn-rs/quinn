@@ -94,11 +94,19 @@ impl Streams {
         }
     }
 
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
+    pub fn read(
+        &mut self,
+        id: StreamId,
+        buf: &mut [u8],
+    ) -> Result<Option<(usize, bool)>, ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read(buf) {
-            Ok(len) => Ok((len, rs.receiving_unknown_size())),
-            Err(e @ ReadError::Finished) | Err(e @ ReadError::Reset { .. }) => {
+            Ok(Some(len)) => Ok(Some((len, rs.receiving_unknown_size()))),
+            Ok(None) => {
+                self.maybe_cleanup(id);
+                Ok(None)
+            }
+            Err(e @ ReadError::Reset { .. }) => {
                 self.maybe_cleanup(id);
                 Err(e)
             }
@@ -106,11 +114,18 @@ impl Streams {
         }
     }
 
-    pub fn read_unordered(&mut self, id: StreamId) -> Result<(Bytes, u64, bool), ReadError> {
+    pub fn read_unordered(
+        &mut self,
+        id: StreamId,
+    ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read_unordered() {
-            Ok((buf, len)) => Ok((buf, len, rs.receiving_unknown_size())),
-            Err(e @ ReadError::Finished) | Err(e @ ReadError::Reset { .. }) => {
+            Ok(Some((buf, len))) => Ok(Some((buf, len, rs.receiving_unknown_size()))),
+            Ok(None) => {
+                self.maybe_cleanup(id);
+                Ok(None)
+            }
+            Err(e @ ReadError::Reset { .. }) => {
                 self.maybe_cleanup(id);
                 Err(e)
             }
@@ -343,7 +358,7 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         assert!(
             !self.unordered,
             "cannot perform ordered reads following unordered reads on a stream"
@@ -352,35 +367,35 @@ impl Recv {
         let read = self.assembler.read(buf);
         if read > 0 {
             self.bytes_read += read as u64;
-            Ok(read)
+            Ok(Some(read))
         } else {
-            Err(self.read_blocked())
+            self.read_blocked().map(|()| None)
         }
     }
 
-    pub fn read_unordered(&mut self) -> Result<(Bytes, u64), ReadError> {
+    pub fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
         self.unordered = true;
 
         // Return data we already have buffered, regardless of state
         if let Some((offset, bytes)) = self.assembler.pop() {
             self.bytes_read += bytes.len() as u64;
-            Ok((bytes, offset))
+            Ok(Some((bytes, offset)))
         } else {
-            Err(self.read_blocked())
+            self.read_blocked().map(|()| None)
         }
     }
 
-    fn read_blocked(&mut self) -> ReadError {
+    fn read_blocked(&mut self) -> Result<(), ReadError> {
         match self.state {
             RecvState::ResetRecvd { error_code, .. } => {
                 self.state = RecvState::Closed;
-                ReadError::Reset { error_code }
+                Err(ReadError::Reset { error_code })
             }
             RecvState::Closed => panic!("tried to read from a closed stream"),
-            RecvState::Recv { .. } => ReadError::Blocked,
+            RecvState::Recv { .. } => Err(ReadError::Blocked),
             RecvState::DataRecvd { .. } => {
                 self.state = RecvState::Closed;
-                ReadError::Finished
+                Ok(())
             }
         }
     }
@@ -447,9 +462,6 @@ pub enum ReadError {
         /// Application-defined reason for resetting the stream
         error_code: u16,
     },
-    /// The data on this stream has been fully delivered and no more will be transmitted.
-    #[error(display = "finished")]
-    Finished,
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
