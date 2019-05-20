@@ -25,7 +25,7 @@ use crate::shared::{
     ClientOpts, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
-use crate::stream::{self, FinishError, ReadError, Streams, WriteError};
+use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, EndpointConfig, Frame, ServerConfig, Side, StreamId, Transmit,
@@ -476,11 +476,11 @@ impl Connection {
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
-            if let stream::SendState::ResetSent { stop_reason } =
+            if let streams::SendState::ResetSent { stop_reason } =
                 self.streams.get_send_mut(id).unwrap().state
             {
                 self.streams.get_send_mut(id).unwrap().state =
-                    stream::SendState::ResetRecvd { stop_reason };
+                    streams::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.streams.maybe_cleanup(id);
                 }
@@ -493,8 +493,8 @@ impl Connection {
             };
             ss.bytes_in_flight -= frame.data.len() as u64;
             self.unacked_data -= frame.data.len() as u64;
-            if ss.state == stream::SendState::DataSent && ss.bytes_in_flight == 0 {
-                ss.state = stream::SendState::DataRecvd;
+            if ss.state == streams::SendState::DataSent && ss.bytes_in_flight == 0 {
+                ss.state = streams::SendState::DataRecvd;
                 self.streams.maybe_cleanup(frame.id);
                 self.events.push_back(Event::StreamFinished {
                     stream: frame.id,
@@ -798,7 +798,7 @@ impl Connection {
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
         let ss = self.streams.get_send_mut(stream).unwrap();
-        assert_eq!(ss.state, stream::SendState::Ready);
+        assert_eq!(ss.state, streams::SendState::Ready);
         let offset = ss.offset;
         ss.offset += data.len() as u64;
         ss.bytes_in_flight += data.len() as u64;
@@ -837,7 +837,7 @@ impl Connection {
         };
         let stop_reason = if stopped { Some(error_code) } else { None };
 
-        use stream::SendState::*;
+        use streams::SendState::*;
         match stream.state {
             DataRecvd | ResetSent { .. } | ResetRecvd { .. } => {
                 // Nothing to do

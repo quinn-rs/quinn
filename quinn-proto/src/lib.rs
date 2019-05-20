@@ -63,8 +63,8 @@ pub use crate::shared::{
     ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 
-mod stream;
-pub use crate::stream::{FinishError, ReadError, WriteError};
+mod streams;
+pub use crate::streams::{FinishError, ReadError, WriteError};
 
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
