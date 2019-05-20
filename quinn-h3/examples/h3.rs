@@ -8,7 +8,7 @@ use std::{fmt, fs, io};
 
 use failure::{bail, format_err, Error, Fail, ResultExt};
 use futures::{Future, Stream};
-use http::{method::Method, Request, Response, StatusCode};
+use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
 use slog::{info, o, Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::{self, Runtime};
@@ -192,8 +192,15 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
         .status(StatusCode::OK)
         .body("body")
         .expect("failed to build response");
+
+    let mut header = HeaderMap::with_capacity(2);
+    header.append(
+        "some",
+        HeaderValue::from_str("trailer").expect("trailer value"),
+    );
+
     request
-        .send_response(response)
+        .send_response_trailers(response, header)
         .map_err(|e| format_err!("failed to send response: {:?}", e))
 }
 
@@ -243,8 +250,11 @@ fn client(
                     println!("recieved headers: {:?}", response.response());
                     response.body().map_err(|e| format_err!("recv body: {}", e))
                 })
-                .and_then(|data| {
+                .and_then(|(data, trailers)| {
                     println!("recieved body: {:?}", data);
+                    if let Some(trailers) = trailers {
+                        println!("recieved trailers: {:?}", trailers);
+                    }
                     futures::future::ok(())
                 })
         });

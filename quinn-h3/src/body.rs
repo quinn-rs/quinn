@@ -2,12 +2,15 @@ use std::mem;
 
 use bytes::{Bytes, BytesMut};
 use futures::{try_ready, Async, Future, Poll, Stream};
+use http::HeaderMap;
 use quinn::{RecvStream, SendStream};
+use quinn_proto::StreamId;
 use tokio::io::WriteAll;
 
 use crate::{
+    connection::ConnectionRef,
     frame::FrameStream,
-    proto::frame::{DataFrame, HttpFrame},
+    proto::frame::{DataFrame, HeadersFrame, HttpFrame},
     try_take, Error,
 };
 
@@ -90,48 +93,91 @@ impl Future for SendBody {
 }
 
 pub struct RecvBody {
+    state: RecvBodyState,
     max_size: usize,
-    buf: BytesMut,
+    body: Option<Bytes>,
     recv: FrameStream<RecvStream>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
 }
 
 impl RecvBody {
-    pub fn with_capacity(recv: FrameStream<RecvStream>, capacity: usize, max_size: usize) -> Self {
+    pub(crate) fn with_capacity(
+        recv: FrameStream<RecvStream>,
+        capacity: usize,
+        max_size: usize,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+    ) -> Self {
         if capacity < 1 {
             panic!("capacity cannot be 0");
         }
 
         Self {
             max_size,
-            buf: BytesMut::with_capacity(capacity),
+            conn,
+            stream_id,
+            state: RecvBodyState::Receiving(BytesMut::with_capacity(capacity)),
+            body: None,
             recv: recv,
         }
     }
 }
 
+enum RecvBodyState {
+    Receiving(BytesMut),
+    Decoding(HeadersFrame),
+    Finished,
+}
+
 impl Future for RecvBody {
-    type Item = Bytes;
+    type Item = (Bytes, Option<HeaderMap>);
     type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if self.buf.capacity() < 1 {
-            return Err(Error::Internal("RecvBody polled after finished"));
+        match self.state {
+            RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
+                Some(HttpFrame::Data(d)) => {
+                    if d.payload.len() + body.len() >= self.max_size {
+                        return Err(Error::Overflow);
+                    }
+                    body.extend(d.payload);
+                }
+                Some(HttpFrame::Headers(d)) => {
+                    match mem::replace(&mut self.state, RecvBodyState::Decoding(d)) {
+                        RecvBodyState::Receiving(b) => self.body = Some(b.into()),
+                        _ => unreachable!(),
+                    };
+                }
+                None => {
+                    match mem::replace(&mut self.state, RecvBodyState::Finished) {
+                        RecvBodyState::Receiving(b) => self.body = Some(b.into()),
+                        _ => unreachable!(),
+                    };
+                }
+                _ => return Err(Error::peer("invalid frame type in data")),
+            },
+            RecvBodyState::Decoding(ref frame) => {
+                let result = {
+                    let conn = &mut self.conn.h3.lock().unwrap().inner;
+                    conn.decode_header(&self.stream_id, frame)
+                };
+
+                match result {
+                    Ok(None) => return Ok(Async::NotReady),
+                    Err(e) => return Err(Error::peer(format!("decoding header failed: {:?}", e))),
+                    Ok(Some(decoded)) => {
+                        self.state = RecvBodyState::Finished;
+                        return Ok(Async::Ready((
+                            try_take(&mut self.body, "body absent")?,
+                            Some(decoded.into_fields()),
+                        )));
+                    }
+                }
+            }
+            _ => return Err(Error::Poll),
         }
 
-        match try_ready!(self.recv.poll()) {
-            Some(HttpFrame::Data(d)) => {
-                if d.payload.len() + self.buf.len() >= self.max_size {
-                    return Err(Error::Overflow);
-                }
-                self.buf.extend(d.payload);
-            }
-            None => {
-                return Ok(Async::Ready(
-                    mem::replace(&mut self.buf, BytesMut::with_capacity(0)).into(),
-                ));
-            }
-            _ => return Err(Error::peer("invalid frame type in data")),
-        }
         Ok(Async::NotReady)
     }
 }
