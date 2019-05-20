@@ -27,69 +27,38 @@ pub struct Streams {
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
         let mut streams = FnvHashMap::default();
-        for i in 0..max_remote_uni {
-            streams.insert(
-                StreamId::new(!side, Directionality::Uni, i),
-                Stream::new(true, Directionality::Uni),
-            );
-        }
-        for i in 0..max_remote_bi {
-            streams.insert(
-                StreamId::new(!side, Directionality::Bi, i as u64),
-                Stream::new(true, Directionality::Bi),
-            );
+        let max_remote = [max_remote_bi, max_remote_uni];
+        for dir in Directionality::iter() {
+            for i in 0..max_remote[dir as usize] {
+                streams.insert(StreamId::new(!side, dir, i), Stream::new(true, dir));
+            }
         }
         Self {
             streams,
             next: [0, 0],
             max: [0, 0],
-            max_remote: [max_remote_bi, max_remote_uni],
+            max_remote,
             next_remote: [0, 0],
             next_reported_remote: [0, 0],
         }
     }
 
     pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
-        let (id, stream) = match direction {
-            Directionality::Uni if self.next[direction as usize] < self.max[direction as usize] => {
-                self.next[direction as usize] += 1;
-                (
-                    StreamId::new(side, direction, self.next[direction as usize] - 1),
-                    Stream::new(false, direction),
-                )
-            }
-            Directionality::Bi if self.next[direction as usize] < self.max[direction as usize] => {
-                self.next[direction as usize] += 1;
-                (
-                    StreamId::new(side, direction, self.next[direction as usize] - 1),
-                    Stream::new(false, direction),
-                )
-            }
-            _ => {
-                return None;
-            }
-        };
+        if self.next[direction as usize] >= self.max[direction as usize] {
+            return None;
+        }
+
+        self.next[direction as usize] += 1;
+        let id = StreamId::new(side, direction, self.next[direction as usize] - 1);
+        let stream = Stream::new(false, direction);
         assert!(self.streams.insert(id, stream).is_none());
         Some(id)
     }
 
     pub fn alloc_remote_stream(&mut self, side: Side, ty: Directionality) {
-        let (id, stream) = match ty {
-            Directionality::Bi => {
-                self.max_remote[ty as usize] += 1;
-                (
-                    StreamId::new(!side, Directionality::Bi, self.max_remote[ty as usize] - 1),
-                    Stream::new(true, ty),
-                )
-            }
-            Directionality::Uni => {
-                self.max_remote[ty as usize] += 1;
-                (
-                    StreamId::new(!side, Directionality::Uni, self.max_remote[ty as usize] - 1),
-                    Stream::new(true, ty),
-                )
-            }
-        };
+        self.max_remote[ty as usize] += 1;
+        let id = StreamId::new(!side, ty, self.max_remote[ty as usize] - 1);
+        let stream = Stream::new(true, ty);
         self.streams.insert(id, stream);
     }
 
@@ -113,18 +82,14 @@ impl Streams {
 
     pub fn zero_rtt_rejected(&mut self, side: Side) {
         // Revert to initial state for outgoing streams
-        for i in 0..self.next[Directionality::Bi as usize] {
-            self.streams
-                .remove(&StreamId::new(side, Directionality::Bi, i))
-                .unwrap();
+        for dir in Directionality::iter() {
+            for i in 0..self.next[dir as usize] {
+                self.streams
+                    .remove(&StreamId::new(side, dir, i))
+                    .unwrap();
+            }
+            self.next[dir as usize] = 0;
         }
-        self.next[Directionality::Bi as usize] = 0;
-        for i in 0..self.next[Directionality::Uni as usize] {
-            self.streams
-                .remove(&StreamId::new(side, Directionality::Uni, i))
-                .unwrap();
-        }
-        self.next[Directionality::Uni as usize] = 0;
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {

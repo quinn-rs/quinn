@@ -131,6 +131,12 @@ pub enum Directionality {
     Uni = 1,
 }
 
+impl Directionality {
+    fn iter() -> impl Iterator<Item = Self> {
+        [Directionality::Bi, Directionality::Uni].iter().cloned()
+    }
+}
+
 impl fmt::Display for Directionality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::Directionality::*;
