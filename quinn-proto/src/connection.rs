@@ -2567,19 +2567,7 @@ impl Connection {
             .get_send_mut(id)
             .ok_or(FinishError::UnknownStream)?;
         ss.finish()?;
-        let space = &mut self.spaces[SpaceId::Data as usize];
-        for frame in &mut space.pending.stream {
-            if frame.id == id && frame.offset + frame.data.len() as u64 == ss.offset {
-                frame.fin = true;
-                return Ok(());
-            }
-        }
-        space.pending.stream.push_back(frame::Stream {
-            id,
-            data: Bytes::new(),
-            offset: ss.offset,
-            fin: true,
-        });
+        self.spaces[SpaceId::Data as usize].finish_stream(id, ss.offset);
         Ok(())
     }
 
