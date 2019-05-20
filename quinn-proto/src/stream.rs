@@ -13,20 +13,15 @@ use crate::{Directionality, Side, StreamId, TransportError};
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
     streams: FnvHashMap<StreamId, Stream>,
-    next_uni: u64,
-    next_bi: u64,
+    next: [u64; 2],
     // Locally initiated
-    pub max_uni: u64,
-    pub max_bi: u64,
+    pub max: [u64; 2],
     // Maximum that can be remotely initiated
-    pub max_remote_uni: u64,
-    pub max_remote_bi: u64,
+    pub max_remote: [u64; 2],
     // Lowest that hasn't actually been opened
-    pub next_remote_uni: u64,
-    pub next_remote_bi: u64,
+    pub next_remote: [u64; 2],
     // Next to report to the application, once opened
-    next_reported_remote_uni: u64,
-    next_reported_remote_bi: u64,
+    next_reported_remote: [u64; 2],
 }
 
 impl Streams {
@@ -46,32 +41,27 @@ impl Streams {
         }
         Self {
             streams,
-            next_uni: 0,
-            next_bi: 0,
-            max_uni: 0,
-            max_bi: 0,
-            max_remote_uni,
-            max_remote_bi,
-            next_remote_uni: 0,
-            next_remote_bi: 0,
-            next_reported_remote_uni: 0,
-            next_reported_remote_bi: 0,
+            next: [0, 0],
+            max: [0, 0],
+            max_remote: [max_remote_bi, max_remote_uni],
+            next_remote: [0, 0],
+            next_reported_remote: [0, 0],
         }
     }
 
     pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
         let (id, stream) = match direction {
-            Directionality::Uni if self.next_uni < self.max_uni => {
-                self.next_uni += 1;
+            Directionality::Uni if self.next[direction as usize] < self.max[direction as usize] => {
+                self.next[direction as usize] += 1;
                 (
-                    StreamId::new(side, direction, self.next_uni - 1),
+                    StreamId::new(side, direction, self.next[direction as usize] - 1),
                     Send::new().into(),
                 )
             }
-            Directionality::Bi if self.next_bi < self.max_bi => {
-                self.next_bi += 1;
+            Directionality::Bi if self.next[direction as usize] < self.max[direction as usize] => {
+                self.next[direction as usize] += 1;
                 (
-                    StreamId::new(side, direction, self.next_bi - 1),
+                    StreamId::new(side, direction, self.next[direction as usize] - 1),
                     Stream::new_bi(),
                 )
             }
@@ -86,16 +76,16 @@ impl Streams {
     pub fn alloc_remote_stream(&mut self, side: Side, ty: Directionality) {
         let (id, stream) = match ty {
             Directionality::Bi => {
-                self.max_remote_bi += 1;
+                self.max_remote[ty as usize] += 1;
                 (
-                    StreamId::new(!side, Directionality::Bi, self.max_remote_bi - 1),
+                    StreamId::new(!side, Directionality::Bi, self.max_remote[ty as usize] - 1),
                     Stream::new_bi(),
                 )
             }
             Directionality::Uni => {
-                self.max_remote_uni += 1;
+                self.max_remote[ty as usize] += 1;
                 (
-                    StreamId::new(!side, Directionality::Uni, self.max_remote_uni - 1),
+                    StreamId::new(!side, Directionality::Uni, self.max_remote[ty as usize] - 1),
                     Recv::new().into(),
                 )
             }
@@ -104,13 +94,17 @@ impl Streams {
     }
 
     pub fn accept(&mut self, side: Side) -> Option<StreamId> {
-        if self.next_remote_uni > self.next_reported_remote_uni {
-            let x = self.next_reported_remote_uni;
-            self.next_reported_remote_uni = x + 1;
+        if self.next_remote[Directionality::Uni as usize]
+            > self.next_reported_remote[Directionality::Uni as usize]
+        {
+            let x = self.next_reported_remote[Directionality::Uni as usize];
+            self.next_reported_remote[Directionality::Uni as usize] = x + 1;
             Some(StreamId::new(!side, Directionality::Uni, x))
-        } else if self.next_remote_bi > self.next_reported_remote_bi {
-            let x = self.next_reported_remote_bi;
-            self.next_reported_remote_bi = x + 1;
+        } else if self.next_remote[Directionality::Bi as usize]
+            > self.next_reported_remote[Directionality::Bi as usize]
+        {
+            let x = self.next_reported_remote[Directionality::Bi as usize];
+            self.next_reported_remote[Directionality::Bi as usize] = x + 1;
             Some(StreamId::new(!side, Directionality::Bi, x))
         } else {
             None
@@ -119,18 +113,18 @@ impl Streams {
 
     pub fn zero_rtt_rejected(&mut self, side: Side) {
         // Revert to initial state for outgoing streams
-        for i in 0..self.next_bi {
+        for i in 0..self.next[Directionality::Bi as usize] {
             self.streams
                 .remove(&StreamId::new(side, Directionality::Bi, i))
                 .unwrap();
         }
-        self.next_bi = 0;
-        for i in 0..self.next_uni {
+        self.next[Directionality::Bi as usize] = 0;
+        for i in 0..self.next[Directionality::Uni as usize] {
             self.streams
                 .remove(&StreamId::new(side, Directionality::Uni, i))
                 .unwrap();
         }
-        self.next_uni = 0;
+        self.next[Directionality::Uni as usize] = 0;
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<(usize, bool), ReadError> {
@@ -169,7 +163,7 @@ impl Streams {
                         "illegal operation on send-only stream",
                     ));
                 }
-                Directionality::Bi if id.index() >= self.next_bi => {
+                Directionality::Bi if id.index() >= self.next[Directionality::Bi as usize] => {
                     return Err(TransportError::STREAM_STATE_ERROR(
                         "operation on unopened stream",
                     ));
@@ -177,10 +171,7 @@ impl Streams {
                 Directionality::Bi => {}
             };
         } else {
-            let limit = match id.directionality() {
-                Directionality::Bi => self.max_remote_bi,
-                Directionality::Uni => self.max_remote_uni,
-            };
+            let limit = self.max_remote[id.directionality() as usize];
             if id.index() >= limit {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
@@ -212,11 +203,7 @@ impl Streams {
 
     /// Whether a presumed-local stream is or was previously open
     pub fn is_local_unopened(&self, id: StreamId) -> bool {
-        id.index()
-            >= match id.directionality() {
-                Directionality::Bi => self.next_bi,
-                Directionality::Uni => self.next_uni,
-            }
+        id.index() >= self.next[id.directionality() as usize]
     }
 }
 

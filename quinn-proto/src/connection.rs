@@ -1693,10 +1693,7 @@ impl Connection {
                             "unrepresentable stream limit",
                         ));
                     }
-                    let current = match directionality {
-                        Directionality::Uni => &mut self.streams.max_uni,
-                        Directionality::Bi => &mut self.streams.max_bi,
-                    };
+                    let current = &mut self.streams.max[directionality as usize];
                     if count > *current {
                         *current = count;
                         self.events
@@ -1872,10 +1869,7 @@ impl Connection {
             }
             return;
         }
-        let next = match stream.directionality() {
-            Directionality::Bi => &mut self.streams.next_remote_bi,
-            Directionality::Uni => &mut self.streams.next_remote_uni,
-        };
+        let next = &mut self.streams.next_remote[stream.directionality() as usize];
         if stream.index() >= *next {
             *next = stream.index() + 1;
             self.stream_opened = true;
@@ -2372,18 +2366,18 @@ impl Connection {
         if space.pending.max_uni_stream_id && buf.len() + 9 < max_size {
             space.pending.max_uni_stream_id = false;
             sent.max_uni_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote_uni);
+            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote[Directionality::Uni as usize]);
             buf.write(frame::Type::MAX_STREAMS_UNI);
-            buf.write_var(self.streams.max_remote_uni);
+            buf.write_var(self.streams.max_remote[Directionality::Uni as usize]);
         }
 
         // MAX_STREAMS_BIDI
         if space.pending.max_bi_stream_id && buf.len() + 9 < max_size {
             space.pending.max_bi_stream_id = false;
             sent.max_bi_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote_bi - 1);
+            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote[Directionality::Bi as usize] - 1);
             buf.write(frame::Type::MAX_STREAMS_BIDI);
-            buf.write_var(self.streams.max_remote_bi);
+            buf.write_var(self.streams.max_remote[Directionality::Bi as usize]);
         }
 
         // NEW_CONNECTION_ID
@@ -2507,10 +2501,10 @@ impl Connection {
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.streams.max_bi = params.initial_max_streams_bidi;
-        self.streams.max_uni = params.initial_max_streams_uni;
+        self.streams.max[Directionality::Bi as usize] = params.initial_max_streams_bidi;
+        self.streams.max[Directionality::Uni as usize] = params.initial_max_streams_uni;
         self.max_data = params.initial_max_data as u64;
-        for i in 0..self.streams.max_remote_bi {
+        for i in 0..self.streams.max_remote[Directionality::Bi as usize] {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
             self.streams.get_send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
