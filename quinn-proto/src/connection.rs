@@ -1586,7 +1586,7 @@ impl Connection {
                             trace!(self.log, "dropping frame for closed stream");
                             continue;
                         }
-                        Ok(Some(rs)) => rs.recv_mut().unwrap(),
+                        Ok(Some(rs)) => rs,
                     };
                     if rs.is_finished() {
                         trace!(self.log, "dropping frame for finished stream");
@@ -1714,7 +1714,7 @@ impl Connection {
                             trace!(self.log, "received RST_STREAM on closed stream");
                             continue;
                         }
-                        Ok(Some(stream)) => stream.recv_mut().unwrap(),
+                        Ok(Some(stream)) => stream,
                     };
                     let limit = rs.limit();
 

@@ -120,7 +120,7 @@ impl Streams {
         &mut self,
         side: Side,
         id: StreamId,
-    ) -> Result<Option<&mut Stream>, TransportError> {
+    ) -> Result<Option<&mut Recv>, TransportError> {
         if side == id.initiator() {
             match id.directionality() {
                 Directionality::Uni => {
@@ -141,7 +141,7 @@ impl Streams {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
         }
-        Ok(self.streams.get_mut(&id))
+        Ok(self.streams.get_mut(&id).and_then(|s| s.recv_mut()))
     }
 
     /// Discard state for a stream if it's fully closed.
@@ -188,7 +188,7 @@ impl Stream {
         }
     }
 
-    pub fn send(&self) -> Option<&Send> {
+    fn send(&self) -> Option<&Send> {
         match *self {
             Stream::Send(ref x) => Some(x),
             Stream::Both(ref x, _) => Some(x),
@@ -196,7 +196,7 @@ impl Stream {
         }
     }
 
-    pub fn recv(&self) -> Option<&Recv> {
+    fn recv(&self) -> Option<&Recv> {
         match *self {
             Stream::Recv(ref x) => Some(x),
             Stream::Both(_, ref x) => Some(x),
@@ -204,7 +204,7 @@ impl Stream {
         }
     }
 
-    pub fn send_mut(&mut self) -> Option<&mut Send> {
+    fn send_mut(&mut self) -> Option<&mut Send> {
         match *self {
             Stream::Send(ref mut x) => Some(x),
             Stream::Both(ref mut x, _) => Some(x),
@@ -212,7 +212,7 @@ impl Stream {
         }
     }
 
-    pub fn recv_mut(&mut self) -> Option<&mut Recv> {
+    fn recv_mut(&mut self) -> Option<&mut Recv> {
         match *self {
             Stream::Recv(ref mut x) => Some(x),
             Stream::Both(_, ref mut x) => Some(x),
@@ -221,7 +221,7 @@ impl Stream {
     }
 
     /// Safe to free
-    pub fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         self.send().map_or(true, Send::is_closed) && self.recv().map_or(true, Recv::is_closed)
     }
 }
