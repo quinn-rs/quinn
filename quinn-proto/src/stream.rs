@@ -26,21 +26,22 @@ pub struct Streams {
 
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
-        let mut streams = FnvHashMap::default();
-        let max_remote = [max_remote_bi, max_remote_uni];
-        for dir in Directionality::iter() {
-            for i in 0..max_remote[dir as usize] {
-                streams.insert(StreamId::new(!side, dir, i), Stream::new(true, dir));
-            }
-        }
-        Self {
-            streams,
+        let mut this = Self {
+            streams: FnvHashMap::default(),
             next: [0, 0],
             max: [0, 0],
-            max_remote,
+            max_remote: [max_remote_bi, max_remote_uni],
             next_remote: [0, 0],
             next_reported_remote: [0, 0],
+        };
+
+        for dir in Directionality::iter() {
+            for i in 0..this.max_remote[dir as usize] {
+                this.insert(true, StreamId::new(!side, dir, i));
+            }
         }
+
+        this
     }
 
     pub fn open(&mut self, side: Side, direction: Directionality) -> Option<StreamId> {
@@ -50,16 +51,14 @@ impl Streams {
 
         self.next[direction as usize] += 1;
         let id = StreamId::new(side, direction, self.next[direction as usize] - 1);
-        let stream = Stream::new(false, direction);
-        assert!(self.streams.insert(id, stream).is_none());
+        assert!(self.insert(false, id).is_none());
         Some(id)
     }
 
     pub fn alloc_remote_stream(&mut self, side: Side, ty: Directionality) {
         self.max_remote[ty as usize] += 1;
         let id = StreamId::new(!side, ty, self.max_remote[ty as usize] - 1);
-        let stream = Stream::new(true, ty);
-        self.streams.insert(id, stream);
+        self.insert(true, id);
     }
 
     pub fn accept(&mut self, side: Side) -> Option<StreamId> {
@@ -170,6 +169,15 @@ impl Streams {
     pub fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.directionality() as usize]
     }
+
+    fn insert(&mut self, remote: bool, id: StreamId) -> Option<Stream> {
+        let stream = match (remote, id.directionality()) {
+            (false, Directionality::Uni) => Stream::Send(Send::new()),
+            (true, Directionality::Uni) => Stream::Recv(Recv::new()),
+            (_, Directionality::Bi) => Stream::Both(Send::new(), Recv::new()),
+        };
+        self.streams.insert(id, stream)
+    }
 }
 
 #[derive(Debug)]
@@ -180,14 +188,6 @@ pub enum Stream {
 }
 
 impl Stream {
-    fn new(remote: bool, dir: Directionality) -> Self {
-        match (remote, dir) {
-            (false, Directionality::Uni) => Stream::Send(Send::new()),
-            (true, Directionality::Uni) => Stream::Recv(Recv::new()),
-            (_, Directionality::Bi) => Stream::Both(Send::new(), Recv::new()),
-        }
-    }
-
     fn send(&self) -> Option<&Send> {
         match *self {
             Stream::Send(ref x) => Some(x),
