@@ -3,7 +3,7 @@ use std::net::ToSocketAddrs;
 
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::{response, Request, Response};
+use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
@@ -249,12 +249,27 @@ impl RequestReady {
     pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
         SendResponse::new(response, self.send, self.stream_id, self.conn)
     }
+
+    pub fn send_response_trailers<T: Into<Body>>(
+        self,
+        response: Response<T>,
+        trailer: HeaderMap,
+    ) -> SendResponse {
+        SendResponse::with_trailers(
+            response,
+            Some(trailer),
+            self.send,
+            self.stream_id,
+            self.conn,
+        )
+    }
 }
 
 enum SendResponseState {
-    Encoding(StreamId),
+    Encoding,
     SendingHeader(WriteAll<SendStream, Vec<u8>>),
     SendingBody(SendBody),
+    SendingTrailers(WriteAll<SendStream, Vec<u8>>),
     Closing(Shutdown<SendStream>),
 }
 
@@ -262,13 +277,25 @@ pub struct SendResponse {
     state: SendResponseState,
     header: Option<Header>,
     body: Option<Body>,
+    trailer: Option<Header>,
     send: Option<SendStream>,
     conn: ConnectionRef,
+    stream_id: StreamId,
 }
 
 impl SendResponse {
     fn new<T: Into<Body>>(
         response: Response<T>,
+        send: SendStream,
+        stream_id: StreamId,
+        conn: ConnectionRef,
+    ) -> Self {
+        Self::with_trailers(response, None, send, stream_id, conn)
+    }
+
+    fn with_trailers<T: Into<Body>>(
+        response: Response<T>,
+        trailers: Option<HeaderMap>,
         send: SendStream,
         stream_id: StreamId,
         conn: ConnectionRef,
@@ -282,10 +309,12 @@ impl SendResponse {
 
         Self {
             conn,
+            stream_id,
             body: Some(body.into()),
             send: Some(send),
+            trailer: trailers.map(|t| Header::trailer(t)),
             header: Some(Header::response(status, headers)),
-            state: SendResponseState::Encoding(stream_id),
+            state: SendResponseState::Encoding,
         }
     }
 }
@@ -296,11 +325,11 @@ impl Future for SendResponse {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.state {
-                SendResponseState::Encoding(ref id) => {
+                SendResponseState::Encoding => {
                     let header = try_take(&mut self.header, "polled after finished")?;
                     let block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.encode_header(id, header)?
+                        conn.encode_header(&self.stream_id, header)?
                     };
 
                     let mut encoded = Vec::new();
@@ -324,6 +353,24 @@ impl Future for SendResponse {
                 }
                 SendResponseState::SendingBody(ref mut body) => {
                     let send = try_ready!(body.poll());
+                    let state = match self.trailer.take() {
+                        None => SendResponseState::Closing(tokio::io::shutdown(send)),
+                        Some(trailer) => {
+                            let block = {
+                                let conn = &mut self.conn.h3.lock().unwrap().inner;
+                                conn.encode_header(&self.stream_id, trailer)?
+                            };
+
+                            let mut encoded = Vec::new();
+                            block.encode(&mut encoded);
+
+                            SendResponseState::SendingTrailers(tokio::io::write_all(send, encoded))
+                        }
+                    };
+                    mem::replace(&mut self.state, state);
+                }
+                SendResponseState::SendingTrailers(ref mut write) => {
+                    let (send, _) = try_ready!(write.poll());
                     mem::replace(
                         &mut self.state,
                         SendResponseState::Closing(tokio::io::shutdown(send)),

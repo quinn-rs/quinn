@@ -38,6 +38,13 @@ impl Header {
         }
     }
 
+    pub fn trailer(fields: HeaderMap) -> Self {
+        Self {
+            fields,
+            pseudo: Pseudo::default(),
+        }
+    }
+
     pub fn into_request_parts(self) -> Result<(Method, Uri, HeaderMap), Error> {
         let mut uri = Uri::builder();
 
@@ -62,6 +69,10 @@ impl Header {
 
     pub fn into_response_parts(self) -> Result<(StatusCode, HeaderMap), Error> {
         Ok((self.pseudo.status.ok_or(Error::MissingStatus)?, self.fields))
+    }
+
+    pub fn into_fields(self) -> HeaderMap {
+        self.fields
     }
 
     pub fn len(&self) -> usize {

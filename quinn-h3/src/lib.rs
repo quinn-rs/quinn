@@ -49,7 +49,7 @@ pub enum Error {
     Proto(proto::connection::Error),
     #[error(display = "QUIC protocol error: {}", _0)]
     Quic(quinn::ConnectionError),
-    #[error(display = "Internal Lib Error: {}", _0)]
+    #[error(display = "Internal error: {}", _0)]
     Internal(&'static str),
     #[error(display = "Incorrect peer behavior: {}", _0)]
     Peer(String),
@@ -57,6 +57,8 @@ pub enum Error {
     Io(std::io::Error),
     #[error(display = "Overflow max data size")]
     Overflow,
+    #[error(display = "Polled after finished")]
+    Poll,
 }
 
 impl Error {
