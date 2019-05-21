@@ -120,7 +120,7 @@ impl Streams {
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
         let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read_unordered() {
-            Ok(Some((buf, len))) => Ok(Some((buf, len, rs.receiving_unknown_size()))),
+            Ok(Some((buf, offset))) => Ok(Some((buf, offset, rs.receiving_unknown_size()))),
             Ok(None) => {
                 self.maybe_cleanup(id);
                 Ok(None)
