@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::rc::Rc;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Benchmark, Criterion, Throughput};
-use futures::{Async, Future, Poll, Stream};
+use futures::{try_ready, Async, Future, Poll, Stream};
 use tokio;
 
 use quinn::{ClientConfigBuilder, Endpoint, NewStream, ReadError, RecvStream, ServerConfigBuilder};
@@ -165,16 +165,10 @@ impl Future for ReadAllUnordered {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
-            match self.stream.poll_read_unordered() {
-                Ok(Async::Ready(_)) => {}
-                Ok(Async::NotReady) => {
-                    return Ok(Async::NotReady);
-                }
-                Err(ReadError::Finished) => {
+            match try_ready!(self.stream.poll_read_unordered()) {
+                Some(_) => {}
+                None => {
                     return Ok(Async::Ready(()));
-                }
-                Err(e) => {
-                    return Err(e);
                 }
             }
         }
