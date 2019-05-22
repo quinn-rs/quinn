@@ -200,7 +200,7 @@ mod tests {
         let mut server = Connection::default();
         assert_matches!(
             server.decode_header(&StreamId(1), &encoded),
-            Ok(Some(header))
+            Ok(Some(_header))
         );
         assert!(!server.pending_decoder.is_empty());
     }
