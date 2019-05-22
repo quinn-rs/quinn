@@ -196,19 +196,23 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
                 println!("server recieved body: {:?}", body);
             }
 
+            if let Some(trailers) = ready.take_trailers() {
+                println!("server recieved trailers: {:?}", trailers);
+            }
+
             let response = Response::builder()
                 .status(StatusCode::OK)
                 .body("response body")
                 .expect("failed to build response");
 
-            let mut header = HeaderMap::with_capacity(2);
-            header.append(
-                "some",
+            let mut trailer = HeaderMap::with_capacity(2);
+            trailer.append(
+                "response",
                 HeaderValue::from_str("trailer").expect("trailer value"),
             );
 
             ready
-                .send_response_trailers(response, header)
+                .send_response_trailers(response, trailer)
                 .map_err(|e| format_err!("failed to send response: {:?}", e))
         })
 }
@@ -253,7 +257,13 @@ fn client(
                 .body("request body")
                 .expect("failed to build request");
 
-            conn.send_request(request)
+            let mut trailer = HeaderMap::with_capacity(2);
+            trailer.append(
+                "request",
+                HeaderValue::from_str("trailer").expect("trailer value"),
+            );
+
+            conn.send_request_trailers(request, trailer)
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
                     println!("recieved headers: {:?}", response.response());

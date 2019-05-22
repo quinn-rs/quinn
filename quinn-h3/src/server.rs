@@ -326,6 +326,10 @@ impl ReadyBody {
         self.body.take()
     }
 
+    pub fn take_trailers(&mut self) -> Option<HeaderMap> {
+        self.trailers.take()
+    }
+
     pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
         SendResponse::new(response, self.send, self.stream_id, self.conn)
     }
