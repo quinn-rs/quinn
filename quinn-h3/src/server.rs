@@ -1,6 +1,7 @@
 use std::mem;
 use std::net::ToSocketAddrs;
 
+use bytes::Bytes;
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
 use http::{response, HeaderMap, Request, Response};
@@ -10,7 +11,7 @@ use slog::{self, o, Logger};
 use tokio::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, SendBody},
+    body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::FrameStream,
     proto::{
@@ -244,6 +245,85 @@ impl RequestReady {
 
     pub fn request<'a>(&'a self) -> &'a Request<()> {
         &self.request
+    }
+
+    pub fn body(self) -> RecvBodyServer {
+        RecvBodyServer::new(
+            self.send,
+            self.frame_stream,
+            self.conn.clone(),
+            self.stream_id,
+        )
+    }
+
+    pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
+        SendResponse::new(response, self.send, self.stream_id, self.conn)
+    }
+
+    pub fn send_response_trailers<T: Into<Body>>(
+        self,
+        response: Response<T>,
+        trailer: HeaderMap,
+    ) -> SendResponse {
+        SendResponse::with_trailers(
+            response,
+            Some(trailer),
+            self.send,
+            self.stream_id,
+            self.conn,
+        )
+    }
+}
+
+pub struct RecvBodyServer {
+    body: RecvBody,
+    send: Option<SendStream>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+}
+
+impl RecvBodyServer {
+    pub(crate) fn new(
+        send: SendStream,
+        recv: FrameStream<RecvStream>,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+    ) -> Self {
+        Self {
+            stream_id,
+            conn: conn.clone(),
+            send: Some(send),
+            body: RecvBody::with_capacity(recv, 10240, 1024000, conn, stream_id),
+        }
+    }
+}
+
+impl Future for RecvBodyServer {
+    type Item = ReadyBody;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let (body, trailers) = try_ready!(self.body.poll());
+        Ok(Async::Ready(ReadyBody {
+            trailers,
+            body: Some(body),
+            send: try_take(&mut self.send, "send none")?,
+            conn: self.conn.clone(),
+            stream_id: self.stream_id,
+        }))
+    }
+}
+
+pub struct ReadyBody {
+    send: SendStream,
+    body: Option<Bytes>,
+    trailers: Option<HeaderMap>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+}
+
+impl ReadyBody {
+    pub fn take_body(&mut self) -> Option<Bytes> {
+        self.body.take()
     }
 
     pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {

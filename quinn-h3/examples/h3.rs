@@ -188,20 +188,29 @@ fn handle_connection(
 
 fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error> {
     println!("received request: {:?}", request.request());
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .body("body")
-        .expect("failed to build response");
-
-    let mut header = HeaderMap::with_capacity(2);
-    header.append(
-        "some",
-        HeaderValue::from_str("trailer").expect("trailer value"),
-    );
-
     request
-        .send_response_trailers(response, header)
-        .map_err(|e| format_err!("failed to send response: {:?}", e))
+        .body()
+        .map_err(|e| format_err!("failed to receive response body: {:?}", e))
+        .and_then(|mut ready| {
+            if let Some(body) = ready.take_body() {
+                println!("server recieved body: {:?}", body);
+            }
+
+            let response = Response::builder()
+                .status(StatusCode::OK)
+                .body("response body")
+                .expect("failed to build response");
+
+            let mut header = HeaderMap::with_capacity(2);
+            header.append(
+                "some",
+                HeaderValue::from_str("trailer").expect("trailer value"),
+            );
+
+            ready
+                .send_response_trailers(response, header)
+                .map_err(|e| format_err!("failed to send response: {:?}", e))
+        })
 }
 
 fn client(
@@ -238,10 +247,10 @@ fn client(
             current_thread::spawn(driver.map_err(|e| eprintln!("h3 server error: {}", e)));
 
             let request = Request::builder()
-                .method(Method::GET)
+                .method(Method::POST)
                 .uri("/hello")
                 .header("foo", "bar")
-                .body(())
+                .body("request body")
                 .expect("failed to build request");
 
             conn.send_request(request)
