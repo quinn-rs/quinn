@@ -12,7 +12,7 @@ use slog::{self, o, Logger};
 use tokio::io::{self, Shutdown, WriteAll};
 
 use crate::{
-    body::RecvBody,
+    body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::FrameStream,
     proto::{
@@ -86,7 +86,7 @@ impl Client {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    pub fn send_request<T>(&self, request: Request<T>) -> SendRequest<T> {
+    pub fn send_request<T: Into<Body>>(&self, request: Request<T>) -> SendRequest {
         SendRequest::new(request, self.0.quic.open_bi(), self.0.clone())
     }
 }
@@ -115,6 +115,7 @@ impl Future for Connecting {
 enum SendRequestState {
     Opening(OpenBi),
     Sending(WriteAll<SendStream, Vec<u8>>),
+    SendingBody(SendBody),
     Sent(Shutdown<SendStream>),
     Receiving(FrameStream<RecvStream>),
     Decoding(HeadersFrame),
@@ -122,17 +123,17 @@ enum SendRequestState {
     Finished,
 }
 
-pub struct SendRequest<T> {
+pub struct SendRequest {
     header: Option<Header>,
-    body: T,
+    body: Option<Body>,
     state: SendRequestState,
     conn: ConnectionRef,
     stream_id: Option<StreamId>,
     recv: Option<FrameStream<RecvStream>>,
 }
 
-impl<T> SendRequest<T> {
-    fn new(req: Request<T>, open_bi: OpenBi, conn: ConnectionRef) -> Self {
+impl SendRequest {
+    fn new<T: Into<Body>>(req: Request<T>, open_bi: OpenBi, conn: ConnectionRef) -> Self {
         let (
             Parts {
                 method,
@@ -144,8 +145,8 @@ impl<T> SendRequest<T> {
         ) = req.into_parts();
 
         Self {
-            body,
             conn,
+            body: Some(body.into()),
             header: Some(Header::request(method, uri, headers)),
             state: SendRequestState::Opening(open_bi),
             stream_id: None,
@@ -154,7 +155,7 @@ impl<T> SendRequest<T> {
     }
 }
 
-impl<T> Future for SendRequest<T> {
+impl Future for SendRequest {
     type Item = RecvResponse;
     type Error = Error;
 
@@ -179,8 +180,14 @@ impl<T> Future for SendRequest<T> {
                 }
                 SendRequestState::Sending(ref mut send) => {
                     let (send, _) = try_ready!(send.poll());
-                    let shut = io::shutdown(send);
-                    self.state = SendRequestState::Sent(shut);
+                    self.state = match self.body.take() {
+                        None => SendRequestState::Sent(io::shutdown(send)),
+                        Some(b) => SendRequestState::SendingBody(SendBody::new(send, b)),
+                    };
+                }
+                SendRequestState::SendingBody(ref mut send_body) => {
+                    let send = try_ready!(send_body.poll());
+                    self.state = SendRequestState::Sent(io::shutdown(send));
                 }
                 SendRequestState::Sent(ref mut shut) => {
                     try_ready!(shut.poll());
