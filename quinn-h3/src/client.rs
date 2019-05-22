@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 
 use futures::{try_ready, Async, Future, Poll, Stream};
-use http::{request::Parts, Request, Response};
+use http::{request::Parts, HeaderMap, Request, Response};
 use quinn::{
     Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, RecvStream, SendStream,
 };
@@ -87,7 +87,20 @@ pub struct Connection(ConnectionRef);
 
 impl Connection {
     pub fn send_request<T: Into<Body>>(&self, request: Request<T>) -> SendRequest {
-        SendRequest::new(request, self.0.quic.open_bi(), self.0.clone())
+        SendRequest::new(request, None, self.0.quic.open_bi(), self.0.clone())
+    }
+
+    pub fn send_request_trailers<T: Into<Body>>(
+        &self,
+        request: Request<T>,
+        trailers: HeaderMap,
+    ) -> SendRequest {
+        SendRequest::new(
+            request,
+            Some(trailers),
+            self.0.quic.open_bi(),
+            self.0.clone(),
+        )
     }
 }
 
@@ -116,6 +129,7 @@ enum SendRequestState {
     Opening(OpenBi),
     Sending(WriteAll<SendStream, Vec<u8>>),
     SendingBody(SendBody),
+    SendingTrailers(WriteAll<SendStream, Vec<u8>>),
     Sent(Shutdown<SendStream>),
     Receiving(FrameStream<RecvStream>),
     Decoding(HeadersFrame),
@@ -126,6 +140,7 @@ enum SendRequestState {
 pub struct SendRequest {
     header: Option<Header>,
     body: Option<Body>,
+    trailers: Option<Header>,
     state: SendRequestState,
     conn: ConnectionRef,
     stream_id: Option<StreamId>,
@@ -133,7 +148,12 @@ pub struct SendRequest {
 }
 
 impl SendRequest {
-    fn new<T: Into<Body>>(req: Request<T>, open_bi: OpenBi, conn: ConnectionRef) -> Self {
+    fn new<T: Into<Body>>(
+        req: Request<T>,
+        trailers: Option<HeaderMap>,
+        open_bi: OpenBi,
+        conn: ConnectionRef,
+    ) -> Self {
         let (
             Parts {
                 method,
@@ -146,8 +166,9 @@ impl SendRequest {
 
         Self {
             conn,
-            body: Some(body.into()),
             header: Some(Header::request(method, uri, headers)),
+            body: Some(body.into()),
+            trailers: trailers.map(|t| Header::trailer(t)),
             state: SendRequestState::Opening(open_bi),
             stream_id: None,
             recv: None,
@@ -187,7 +208,23 @@ impl Future for SendRequest {
                 }
                 SendRequestState::SendingBody(ref mut send_body) => {
                     let send = try_ready!(send_body.poll());
-                    self.state = SendRequestState::Sent(io::shutdown(send));
+                    self.state = match self.trailers.take() {
+                        None => SendRequestState::Sent(io::shutdown(send)),
+                        Some(t) => {
+                            let block = {
+                                let conn = &mut self.conn.h3.lock().unwrap().inner;
+                                conn.encode_header(&send.id(), t)?
+                            };
+                            let mut encoded_header = vec![];
+                            block.encode(&mut encoded_header);
+                            let write = io::write_all(send, encoded_header);
+                            SendRequestState::SendingTrailers(write)
+                        }
+                    }
+                }
+                SendRequestState::SendingTrailers(ref mut send_trailers) => {
+                    let (send, _) = try_ready!(send_trailers.poll());
+                    self.state = SendRequestState::Sent(tokio::io::shutdown(send));
                 }
                 SendRequestState::Sent(ref mut shut) => {
                     try_ready!(shut.poll());
