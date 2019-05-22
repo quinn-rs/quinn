@@ -9,7 +9,7 @@ use super::proto::frame::{self, HttpFrame};
 pub struct FrameStream<R> {
     recv: R,
     buf: BytesMut,
-    need_read: bool,
+    finished: bool,
 }
 
 impl<R> FrameStream<R>
@@ -22,7 +22,7 @@ where
         Self {
             recv,
             buf: BytesMut::new(),
-            need_read: true,
+            finished: false,
         }
     }
 }
@@ -35,14 +35,19 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if self.need_read {
+        if !self.finished {
+            // TODO this resizing is fairly ineficient
             self.buf.resize(self.buf.len() + Self::READ_SIZE, 0);
             let start = self.buf.len() - Self::READ_SIZE;
 
             let size = match self.recv.poll_read(&mut self.buf[start..])? {
                 Async::NotReady => 0,
-                Async::Ready(0) => return Ok(Async::Ready(None)),
-                Async::Ready(size) => size,
+                Async::Ready(size) => {
+                    if size == 0 {
+                        self.finished = true;
+                    }
+                    size
+                }
             };
             self.buf.truncate(self.buf.len() - Self::READ_SIZE + size);
         }
@@ -54,17 +59,18 @@ where
         };
 
         return match decoded {
-            Err(frame::Error::UnexpectedEnd) => {
-                if self.buf.len() == Self::READ_SIZE {
-                    Err(Error::Overflow)
-                } else {
-                    self.need_read = true;
-                    Ok(Async::NotReady)
+            Err(frame::Error::UnexpectedEnd) => match self.buf.len() {
+                Self::READ_SIZE => Err(Error::Overflow),
+                _ => {
+                    if self.finished {
+                        Ok(Async::Ready(None))
+                    } else {
+                        Ok(Async::NotReady)
+                    }
                 }
-            }
+            },
             Err(e) => Err(e)?,
             Ok(f) => {
-                self.need_read = false;
                 self.buf.advance(pos);
                 Ok(Async::Ready(Some(f)))
             }
@@ -142,7 +148,7 @@ mod tests {
         let mut reader = FrameStream::new(MockStream::new(&buf));
         assert_matches!(reader.poll(), Ok(Async::Ready(Some(HttpFrame::Headers(_)))));
         assert_matches!(reader.poll(), Ok(Async::Ready(Some(HttpFrame::Data(_)))));
-        assert_matches!(reader.poll(), Ok(Async::NotReady));
+        assert_matches!(reader.poll(), Ok(Async::Ready(None)));
     }
 
     #[test]

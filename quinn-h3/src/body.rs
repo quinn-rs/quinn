@@ -135,49 +135,52 @@ impl Future for RecvBody {
     type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.state {
-            RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
-                Some(HttpFrame::Data(d)) => {
-                    if d.payload.len() + body.len() >= self.max_size {
-                        return Err(Error::Overflow);
+        loop {
+            match self.state {
+                RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
+                    Some(HttpFrame::Data(d)) => {
+                        if d.payload.len() + body.len() >= self.max_size {
+                            return Err(Error::Overflow);
+                        }
+                        body.extend(d.payload);
                     }
-                    body.extend(d.payload);
-                }
-                Some(HttpFrame::Headers(d)) => {
-                    match mem::replace(&mut self.state, RecvBodyState::Decoding(d)) {
-                        RecvBodyState::Receiving(b) => self.body = Some(b.into()),
-                        _ => unreachable!(),
+                    Some(HttpFrame::Headers(d)) => {
+                        match mem::replace(&mut self.state, RecvBodyState::Decoding(d)) {
+                            RecvBodyState::Receiving(b) => self.body = Some(b.into()),
+                            _ => unreachable!(),
+                        };
+                    }
+                    None => {
+                        let body = match mem::replace(&mut self.state, RecvBodyState::Finished) {
+                            RecvBodyState::Receiving(b) => b.into(),
+                            _ => unreachable!(),
+                        };
+                        return Ok(Async::Ready((body, None)));
+                    }
+                    _ => return Err(Error::peer("invalid frame type in data")),
+                },
+                RecvBodyState::Decoding(ref frame) => {
+                    let result = {
+                        let conn = &mut self.conn.h3.lock().unwrap().inner;
+                        conn.decode_header(&self.stream_id, frame)
                     };
-                }
-                None => {
-                    match mem::replace(&mut self.state, RecvBodyState::Finished) {
-                        RecvBodyState::Receiving(b) => self.body = Some(b.into()),
-                        _ => unreachable!(),
-                    };
-                }
-                _ => return Err(Error::peer("invalid frame type in data")),
-            },
-            RecvBodyState::Decoding(ref frame) => {
-                let result = {
-                    let conn = &mut self.conn.h3.lock().unwrap().inner;
-                    conn.decode_header(&self.stream_id, frame)
-                };
 
-                match result {
-                    Ok(None) => return Ok(Async::NotReady),
-                    Err(e) => return Err(Error::peer(format!("decoding header failed: {:?}", e))),
-                    Ok(Some(decoded)) => {
-                        self.state = RecvBodyState::Finished;
-                        return Ok(Async::Ready((
-                            try_take(&mut self.body, "body absent")?,
-                            Some(decoded.into_fields()),
-                        )));
+                    match result {
+                        Ok(None) => return Ok(Async::NotReady),
+                        Err(e) => {
+                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
+                        }
+                        Ok(Some(decoded)) => {
+                            self.state = RecvBodyState::Finished;
+                            return Ok(Async::Ready((
+                                try_take(&mut self.body, "body absent")?,
+                                Some(decoded.into_fields()),
+                            )));
+                        }
                     }
                 }
+                _ => return Err(Error::Poll),
             }
-            _ => return Err(Error::Poll),
         }
-
-        Ok(Async::NotReady)
     }
 }
