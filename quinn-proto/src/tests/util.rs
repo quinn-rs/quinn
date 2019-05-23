@@ -390,13 +390,13 @@ pub fn server_config() -> ServerConfig {
     let key = CERTIFICATE.serialize_private_key_der();
     let cert = CERTIFICATE.serialize_der();
 
-    let mut tls_config = crypto::build_server_config();
-    tls_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    tls_config
+    let mut crypto = crypto::ServerConfig::default();
+    Arc::make_mut(&mut crypto.0).set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    Arc::make_mut(&mut crypto.0)
         .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
         .unwrap();
     ServerConfig {
-        crypto: Arc::new(tls_config),
+        crypto,
         ..Default::default()
     }
 }
@@ -406,16 +406,17 @@ pub fn client_config() -> ClientConfig {
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = crypto::build_client_config();
-    tls_client_config.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    tls_client_config
+    let mut tls_client_config = crypto::ClientConfig::default();
+    Arc::make_mut(&mut tls_client_config)
+        .set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    Arc::make_mut(&mut tls_client_config)
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
-    tls_client_config.key_log = Arc::new(KeyLogFile::new());
-    tls_client_config.enable_early_data = true;
+    Arc::make_mut(&mut tls_client_config).key_log = Arc::new(KeyLogFile::new());
+    Arc::make_mut(&mut tls_client_config).enable_early_data = true;
     ClientConfig {
         transport: Default::default(),
-        crypto: Arc::new(tls_client_config),
+        crypto: tls_client_config,
         ..Default::default()
     }
 }

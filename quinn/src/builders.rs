@@ -224,7 +224,7 @@ impl ClientConfigBuilder {
             let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
                 untrusted::Input::from(&cert.inner.0),
             )?;
-            Arc::make_mut(&mut self.config.crypto)
+            Arc::make_mut(&mut self.config.crypto.0)
                 .root_store
                 .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
         }
@@ -235,7 +235,7 @@ impl ClientConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto).key_log = Arc::new(KeyLogFile::new());
+        Arc::make_mut(&mut self.config.crypto.0).key_log = Arc::new(KeyLogFile::new());
         self
     }
 
@@ -247,7 +247,7 @@ impl ClientConfigBuilder {
     ///
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto).alpn_protocols =
+        Arc::make_mut(&mut self.config.crypto.0).alpn_protocols =
             protocols.iter().map(|x| x.to_vec()).collect();
         self
     }

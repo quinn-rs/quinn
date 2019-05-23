@@ -78,7 +78,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let client_config = quinn::ClientConfig {
-        crypto: Arc::new(tls_config),
+        crypto: quinn::CryptoClientConfig(Arc::new(tls_config)),
         transport: Arc::new(quinn::TransportConfig {
             idle_timeout: 1_000,
             ..Default::default()
@@ -218,7 +218,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
     h3_tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_H3.into()];
     let h3_client_config = quinn::ClientConfig {
-        crypto: Arc::new(h3_tls_config),
+        crypto: quinn::CryptoClientConfig(Arc::new(h3_tls_config)),
         transport: client_config.transport.clone(),
         ..Default::default()
     };

@@ -226,7 +226,7 @@ pub struct ServerConfig {
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: Arc<crypto::ServerConfig>,
+    pub crypto: crypto::ServerConfig,
 
     /// Private key used to authenticate data included in handshake tokens.
     pub token_key: crypto::TokenKey,
@@ -258,7 +258,7 @@ impl Default for ServerConfig {
 
         Self {
             transport: Arc::new(TransportConfig::default()),
-            crypto: Arc::new(crypto::build_server_config()),
+            crypto: crypto::ServerConfig::default(),
 
             token_key: crypto::TokenKey::new(&token_value),
             use_stateless_retry: false,
@@ -426,7 +426,7 @@ impl EcnCodepoint {
 #[derive(Clone)]
 pub struct ClientOpts {
     pub server_name: String,
-    pub crypto: Arc<crypto::ClientConfig>,
+    pub crypto: crypto::ClientConfig,
 }
 
 /// Stateless reset token

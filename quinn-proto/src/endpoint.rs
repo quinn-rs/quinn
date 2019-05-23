@@ -666,7 +666,7 @@ pub(crate) struct ConnectionMeta {
 }
 
 /// Configuration for outgoing connections
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ClientConfig {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
@@ -674,22 +674,12 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use.
     ///
     /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
-    pub crypto: Arc<crypto::ClientConfig>,
+    pub crypto: crypto::ClientConfig,
 
     /// Diagnostic logger
     ///
     /// If unset, the endpoint's logger is used.
     pub log: Option<Logger>,
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            transport: Default::default(),
-            crypto: Arc::new(crypto::build_client_config()),
-            log: None,
-        }
-    }
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
