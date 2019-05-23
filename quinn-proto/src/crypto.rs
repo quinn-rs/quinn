@@ -101,6 +101,25 @@ impl CryptoSession for TlsSession {
     }
 }
 
+impl Deref for TlsSession {
+    type Target = dyn Session;
+    fn deref(&self) -> &Self::Target {
+        match *self {
+            TlsSession::Client(ref session) => session,
+            TlsSession::Server(ref session) => session,
+        }
+    }
+}
+
+impl DerefMut for TlsSession {
+    fn deref_mut(&mut self) -> &mut (dyn Session + 'static) {
+        match *self {
+            TlsSession::Client(ref mut session) => session,
+            TlsSession::Server(ref mut session) => session,
+        }
+    }
+}
+
 pub trait CryptoSession {
     fn alpn_protocol(&self) -> Option<&[u8]>;
     fn early_crypto(&self) -> Option<Crypto>;
@@ -148,25 +167,6 @@ impl CryptoServerConfig for Arc<ServerConfig> {
 pub trait CryptoServerConfig {
     type Session: CryptoSession;
     fn start_session(&self, params: &TransportParameters) -> Self::Session;
-}
-
-impl Deref for TlsSession {
-    type Target = dyn Session;
-    fn deref(&self) -> &Self::Target {
-        match *self {
-            TlsSession::Client(ref session) => session,
-            TlsSession::Server(ref session) => session,
-        }
-    }
-}
-
-impl DerefMut for TlsSession {
-    fn deref_mut(&mut self) -> &mut (dyn Session + 'static) {
-        match *self {
-            TlsSession::Client(ref mut session) => session,
-            TlsSession::Server(ref mut session) => session,
-        }
-    }
 }
 
 pub fn build_server_config() -> ServerConfig {
