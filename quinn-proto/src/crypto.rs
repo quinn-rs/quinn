@@ -12,8 +12,10 @@ use ring::hkdf;
 use ring::hmac::{self, SigningKey};
 use rustls::quic::{ClientQuicExt, Secrets, ServerQuicExt};
 use rustls::ProtocolVersion;
-pub use rustls::{Certificate, NoClientAuth, PrivateKey, TLSError};
-pub use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
+pub use rustls::{
+    self, Certificate, ClientConfig, ClientSession, NoClientAuth, PrivateKey, ServerConfig,
+    ServerSession, Session, TLSError,
+};
 use webpki::DNSNameRef;
 
 use crate::coding::{BufExt, BufMutExt};
@@ -23,8 +25,8 @@ use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub enum TlsSession {
-    Client(ClientSession),
-    Server(ServerSession),
+    Client(rustls::ClientSession),
+    Server(rustls::ServerSession),
 }
 
 impl TlsSession {
@@ -102,7 +104,7 @@ impl CryptoSession for TlsSession {
 }
 
 impl Deref for TlsSession {
-    type Target = dyn Session;
+    type Target = dyn rustls::Session;
     fn deref(&self) -> &Self::Target {
         match *self {
             TlsSession::Client(ref session) => session,
@@ -112,7 +114,7 @@ impl Deref for TlsSession {
 }
 
 impl DerefMut for TlsSession {
-    fn deref_mut(&mut self) -> &mut (dyn Session + 'static) {
+    fn deref_mut(&mut self) -> &mut (dyn rustls::Session + 'static) {
         match *self {
             TlsSession::Client(ref mut session) => session,
             TlsSession::Server(ref mut session) => session,
@@ -131,7 +133,7 @@ pub trait CryptoSession {
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto>;
 }
 
-impl CryptoClientConfig for Arc<ClientConfig> {
+impl CryptoClientConfig for Arc<rustls::ClientConfig> {
     type Session = TlsSession;
     fn start_session(
         &self,
@@ -140,7 +142,7 @@ impl CryptoClientConfig for Arc<ClientConfig> {
     ) -> Result<Self::Session, ConnectError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
-        Ok(TlsSession::Client(ClientSession::new_quic(
+        Ok(TlsSession::Client(rustls::ClientSession::new_quic(
             self,
             pki_server_name,
             to_vec(params),
@@ -157,10 +159,10 @@ pub trait CryptoClientConfig {
     ) -> Result<Self::Session, ConnectError>;
 }
 
-impl CryptoServerConfig for Arc<ServerConfig> {
+impl CryptoServerConfig for Arc<rustls::ServerConfig> {
     type Session = TlsSession;
     fn start_session(&self, params: &TransportParameters) -> Self::Session {
-        TlsSession::Server(ServerSession::new_quic(self, to_vec(params)))
+        TlsSession::Server(rustls::ServerSession::new_quic(self, to_vec(params)))
     }
 }
 
@@ -169,15 +171,15 @@ pub trait CryptoServerConfig {
     fn start_session(&self, params: &TransportParameters) -> Self::Session;
 }
 
-pub fn build_server_config() -> ServerConfig {
-    let mut cfg = ServerConfig::new(NoClientAuth::new());
+pub fn build_server_config() -> rustls::ServerConfig {
+    let mut cfg = rustls::ServerConfig::new(NoClientAuth::new());
     cfg.versions = vec![ProtocolVersion::TLSv1_3];
     cfg.max_early_data_size = u32::max_value();
     cfg
 }
 
-pub fn build_client_config() -> ClientConfig {
-    let mut cfg = ClientConfig::new();
+pub fn build_client_config() -> rustls::ClientConfig {
+    let mut cfg = rustls::ClientConfig::new();
     cfg.versions = vec![ProtocolVersion::TLSv1_3];
     cfg.enable_early_data = true;
     cfg
