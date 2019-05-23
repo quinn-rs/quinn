@@ -22,15 +22,15 @@ use crate::packet::{
 };
 use crate::range_set::RangeSet;
 use crate::shared::{
-    ClientOpts, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
+    ClientOpts, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig, EndpointEvent,
+    ServerConfig, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, EndpointConfig, Frame, ServerConfig, Side, StreamId, Transmit,
-    TransportError, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY,
+    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, MAX_STREAM_COUNT,
+    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection

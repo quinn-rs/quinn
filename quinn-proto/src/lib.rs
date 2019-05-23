@@ -53,14 +53,12 @@ use crate::frame::Frame;
 pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use crate::endpoint::{
-    ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, EndpointConfig,
-    ServerConfig,
-};
+pub use crate::endpoint::{ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, Endpoint};
 
 mod shared;
 pub use crate::shared::{
-    ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
+    ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig, EndpointEvent,
+    ServerConfig, TransportConfig,
 };
 
 mod streams;

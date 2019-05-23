@@ -9,8 +9,6 @@ use bytes::{BufMut, BytesMut};
 use err_derive::Error;
 use fnv::FnvHashMap;
 use rand::{rngs::OsRng, Rng, RngCore};
-use ring::digest;
-use ring::hmac::SigningKey;
 use slab::Slab;
 use slog::{self, Logger};
 
@@ -18,16 +16,15 @@ use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
 use crate::crypto::{
     self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
-    TokenKey,
 };
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
-    ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent,
-    ResetToken, TransportConfig,
+    ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig,
+    EndpointEvent, ResetToken, ServerConfig, TransportConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
-    Side, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE, MIN_CID_SIZE, MIN_INITIAL_SIZE,
+    Side, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
 
@@ -665,99 +662,6 @@ pub(crate) struct ConnectionMeta {
     initial_remote: SocketAddr,
     /// Reset token provided by the peer for the CID we're currently sending to
     reset_token: Option<ResetToken>,
-}
-
-/// Global configuration for the endpoint, affecting all connections
-pub struct EndpointConfig {
-    /// Length of connection IDs for the endpoint.
-    ///
-    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
-    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
-    /// responsible for making sure that the pool is large enough to cover the intended usage.
-    pub local_cid_len: usize,
-
-    /// Private key used to send authenticated connection resets to peers who were communicating
-    /// with a previous instance of this endpoint.
-    ///
-    /// Must be persisted across restarts to be useful.
-    pub reset_key: SigningKey,
-}
-
-impl Default for EndpointConfig {
-    fn default() -> Self {
-        let mut reset_value = [0; 64];
-        rand::thread_rng().fill_bytes(&mut reset_value);
-        Self {
-            local_cid_len: 8,
-            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
-        }
-    }
-}
-
-impl EndpointConfig {
-    fn validate(&self) -> Result<(), ConfigError> {
-        if (self.local_cid_len != 0 && self.local_cid_len < MIN_CID_SIZE)
-            || self.local_cid_len > MAX_CID_SIZE
-        {
-            return Err(ConfigError::IllegalValue(
-                "local_cid_len must be 0 or in [4, 18]",
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Parameters governing incoming connections.
-pub struct ServerConfig {
-    /// Transport configuration to use for incoming connections
-    pub transport: Arc<TransportConfig>,
-
-    /// TLS configuration used for incoming connections.
-    ///
-    /// Must be set to use TLS 1.3 only.
-    pub crypto: Arc<crypto::ServerConfig>,
-
-    /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: TokenKey,
-    /// Whether to require clients to prove ownership of an address before committing resources.
-    ///
-    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub use_stateless_retry: bool,
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub retry_token_lifetime: u64,
-
-    /// Maximum number of incoming connections to buffer.
-    ///
-    /// Accepting a connection removes it from the buffer, so this does not need to be large.
-    pub accept_buffer: u32,
-
-    /// Whether to allow clients to migrate to new addresses
-    ///
-    /// Improves behavior for clients that move between different internet connections or suffer NAT
-    /// rebinding. Enabled by default.
-    pub migration: bool,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        let rng = &mut rand::thread_rng();
-
-        let mut token_value = [0; 64];
-        rng.fill_bytes(&mut token_value);
-
-        Self {
-            transport: Arc::new(TransportConfig::default()),
-            crypto: Arc::new(crypto::build_server_config()),
-
-            token_key: TokenKey::new(&token_value),
-            use_stateless_retry: false,
-            retry_token_lifetime: 15_000_000,
-
-            accept_buffer: 1024,
-
-            migration: true,
-        }
-    }
 }
 
 /// Configuration for outgoing connections

@@ -4,8 +4,7 @@ use bytes::{Buf, BufMut};
 use err_derive::Error;
 
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::endpoint::ServerConfig;
-use crate::shared::{ConnectionId, ResetToken};
+use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
     varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
 };
