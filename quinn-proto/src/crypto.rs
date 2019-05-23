@@ -208,18 +208,6 @@ pub struct Crypto {
 }
 
 impl Crypto {
-    pub fn new_initial(id: &ConnectionId, side: Side) -> Self {
-        let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
-        const CLIENT_LABEL: &[u8] = b"client in";
-        const SERVER_LABEL: &[u8] = b"server in";
-        let hs_secret = initial_secret(id);
-        let secrets = Secrets {
-            client: expanded_initial_secret(&hs_secret, CLIENT_LABEL),
-            server: expanded_initial_secret(&hs_secret, SERVER_LABEL),
-        };
-        Self::new(side, digest, cipher, secrets)
-    }
-
     fn new_0rtt(secret: &[u8]) -> Self {
         Self::new(
             Side::Client, // Meaningless when the secrets are equal
@@ -271,7 +259,37 @@ impl Crypto {
         }
     }
 
-    pub fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
+    fn get_keys(
+        digest: &'static digest::Algorithm,
+        cipher: &'static aead::Algorithm,
+        secret: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let secret_key = SigningKey::new(digest, &secret);
+
+        let mut key = vec![0; cipher.key_len()];
+        hkdf_expand(&secret_key, b"quic key", &mut key);
+
+        let mut iv = vec![0; cipher.nonce_len()];
+        hkdf_expand(&secret_key, b"quic iv", &mut iv);
+
+        (key, iv)
+    }
+}
+
+impl CryptoKeys for Crypto {
+    fn new_initial(id: &ConnectionId, side: Side) -> Self {
+        let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
+        const CLIENT_LABEL: &[u8] = b"client in";
+        const SERVER_LABEL: &[u8] = b"server in";
+        let hs_secret = initial_secret(id);
+        let secrets = Secrets {
+            client: expanded_initial_secret(&hs_secret, CLIENT_LABEL),
+            server: expanded_initial_secret(&hs_secret, SERVER_LABEL),
+        };
+        Self::new(side, digest, cipher, secrets)
+    }
+
+    fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (cipher, iv, key) = (
             self.sealing_key.algorithm(),
             &self.local_iv,
@@ -288,7 +306,7 @@ impl Crypto {
         aead::seal_in_place(&key, nonce, header, payload, cipher.tag_len()).unwrap();
     }
 
-    pub fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
+    fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
         if payload.len() < self.tag_len() {
             return Err(());
         }
@@ -311,23 +329,7 @@ impl Crypto {
         Ok(())
     }
 
-    fn get_keys(
-        digest: &'static digest::Algorithm,
-        cipher: &'static aead::Algorithm,
-        secret: &[u8],
-    ) -> (Vec<u8>, Vec<u8>) {
-        let secret_key = SigningKey::new(digest, &secret);
-
-        let mut key = vec![0; cipher.key_len()];
-        hkdf_expand(&secret_key, b"quic key", &mut key);
-
-        let mut iv = vec![0; cipher.nonce_len()];
-        hkdf_expand(&secret_key, b"quic iv", &mut iv);
-
-        (key, iv)
-    }
-
-    pub fn header_crypto(&self) -> RingHeaderCrypto {
+    fn header_crypto(&self) -> RingHeaderCrypto {
         let local = SigningKey::new(self.digest, &self.local_secret);
         let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();
@@ -337,7 +339,7 @@ impl Crypto {
         }
     }
 
-    pub fn update(&self, side: Side, tls: &TlsSession) -> Self {
+    fn update(&self, side: Side, tls: &TlsSession) -> Self {
         let (client_secret, server_secret) = match side {
             Side::Client => (&self.local_secret, &self.remote_secret),
             Side::Server => (&self.remote_secret, &self.local_secret),
@@ -347,9 +349,18 @@ impl Crypto {
         Self::new(side, suite.get_hash(), suite.get_aead_alg(), secrets)
     }
 
-    pub fn tag_len(&self) -> usize {
+    fn tag_len(&self) -> usize {
         self.sealing_key.algorithm().tag_len()
     }
+}
+
+pub trait CryptoKeys {
+    fn new_initial(id: &ConnectionId, side: Side) -> Self;
+    fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
+    fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
+    fn header_crypto(&self) -> RingHeaderCrypto;
+    fn update(&self, side: Side, tls: &TlsSession) -> Self;
+    fn tag_len(&self) -> usize;
 }
 
 pub struct RingHeaderCrypto {

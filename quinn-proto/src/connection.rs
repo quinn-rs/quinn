@@ -12,8 +12,8 @@ use slog::Logger;
 
 use crate::coding::BufMutExt;
 use crate::crypto::{
-    reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, RingHeaderCrypto,
-    TlsSession,
+    reset_token_for, Crypto, CryptoClientConfig, CryptoKeys, CryptoSession, HeaderCrypto,
+    RingHeaderCrypto, TlsSession,
 };
 use crate::frame::FrameStruct;
 use crate::packet::{

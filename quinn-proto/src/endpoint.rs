@@ -15,7 +15,8 @@ use slog::{self, Logger};
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
 use crate::crypto::{
-    self, reset_token_for, Crypto, CryptoClientConfig, CryptoServerConfig, RingHeaderCrypto,
+    self, reset_token_for, Crypto, CryptoClientConfig, CryptoKeys, CryptoServerConfig,
+    RingHeaderCrypto,
 };
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
