@@ -5,7 +5,7 @@ use err_derive::Error;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::{Crypto, HeaderCrypto, RingHeaderCrypto};
+use crate::crypto::{Crypto, CryptoKeys, HeaderCrypto, RingHeaderCrypto};
 use crate::shared::ConnectionId;
 use crate::VERSION;
 
