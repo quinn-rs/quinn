@@ -61,8 +61,8 @@ mod udp;
 
 pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
 pub use proto::{
-    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
-    Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
+    ClientConfig, ConnectError, ConnectionError, ConnectionId, CryptoClientConfig, DatagramEvent,
+    ServerConfig, Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,
 };
 
 pub use crate::builders::{

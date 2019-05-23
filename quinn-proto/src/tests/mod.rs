@@ -308,10 +308,10 @@ fn stop_stream() {
 
 #[test]
 fn reject_self_signed_cert() {
-    let mut crypto = crypto::build_client_config();
-    crypto.set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    let mut crypto = crypto::ClientConfig::default();
+    Arc::make_mut(&mut crypto.0).set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     let client_config = ClientConfig {
-        crypto: Arc::new(crypto),
+        crypto,
         ..Default::default()
     };
 
