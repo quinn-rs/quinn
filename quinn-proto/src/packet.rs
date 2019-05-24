@@ -5,7 +5,8 @@ use err_derive::Error;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::{Crypto, CryptoKeys, HeaderCrypto, RingHeaderCrypto};
+use crate::crypto::ring::{Crypto, RingHeaderCrypto};
+use crate::crypto::{CryptoKeys, HeaderCrypto};
 use crate::shared::ConnectionId;
 use crate::VERSION;
 
@@ -843,7 +844,7 @@ impl slog::Value for SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::Crypto, Side};
+    use crate::{crypto::ring::Crypto, Side};
     use std::io;
 
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {

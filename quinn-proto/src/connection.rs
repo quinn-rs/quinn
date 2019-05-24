@@ -11,10 +11,9 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::BufMutExt;
-use crate::crypto::{
-    reset_token_for, Crypto, CryptoClientConfig, CryptoKeys, CryptoSession, HeaderCrypto,
-    RingHeaderCrypto, TlsSession,
-};
+use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
+use crate::crypto::rustls::TlsSession;
+use crate::crypto::{CryptoClientConfig, CryptoKeys, CryptoSession, HeaderCrypto};
 use crate::frame::FrameStruct;
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
