@@ -95,6 +95,16 @@ impl CryptoSession for TlsSession {
             secrets,
         ))
     }
+
+    fn update_keys(&self, crypto: &Crypto) -> Crypto {
+        let (client_secret, server_secret) = match self.side() {
+            Side::Client => (&crypto.local_secret, &crypto.remote_secret),
+            Side::Server => (&crypto.remote_secret, &crypto.local_secret),
+        };
+        let secrets = self.update_secrets(client_secret, server_secret);
+        let suite = self.get_negotiated_ciphersuite().unwrap();
+        Crypto::new(self.side(), suite.get_hash(), suite.get_aead_alg(), secrets)
+    }
 }
 
 impl Deref for TlsSession {

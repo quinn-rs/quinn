@@ -6,8 +6,6 @@ use crate::shared::ConnectionId;
 use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError};
 
-use self::rustls::TlsSession;
-
 /// Cryptography interface based on *ring*
 pub mod ring;
 /// TLS interface based on rustls
@@ -27,6 +25,7 @@ pub(crate) trait CryptoSession {
     fn sni_hostname(&self) -> Option<&str>;
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Crypto>;
+    fn update_keys(&self, crypto: &Self::Crypto) -> Self::Crypto;
 }
 
 pub(crate) trait CryptoClientConfig {
@@ -50,7 +49,6 @@ pub(crate) trait CryptoKeys {
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
     fn header_crypto(&self) -> Self::HeaderCrypto;
-    fn update(&self, side: Side, tls: &TlsSession) -> Self;
     fn tag_len(&self) -> usize;
 }
 

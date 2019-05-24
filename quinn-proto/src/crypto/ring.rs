@@ -10,7 +10,6 @@ use ring::hkdf;
 use ring::hmac::{self, SigningKey};
 use rustls::quic::Secrets;
 
-use super::rustls::TlsSession;
 use super::{CryptoKeys, HeaderCrypto};
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
@@ -26,10 +25,10 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
 }
 
 pub struct Crypto {
-    local_secret: Vec<u8>,
+    pub(crate) local_secret: Vec<u8>,
     local_iv: Vec<u8>,
     sealing_key: aead::SealingKey,
-    remote_secret: Vec<u8>,
+    pub(crate) remote_secret: Vec<u8>,
     remote_iv: Vec<u8>,
     opening_key: aead::OpeningKey,
     digest: &'static digest::Algorithm,
@@ -167,16 +166,6 @@ impl CryptoKeys for Crypto {
             local: header_key_from_secret(cipher, &local),
             remote: header_key_from_secret(cipher, &remote),
         }
-    }
-
-    fn update(&self, side: Side, tls: &TlsSession) -> Self {
-        let (client_secret, server_secret) = match side {
-            Side::Client => (&self.local_secret, &self.remote_secret),
-            Side::Server => (&self.remote_secret, &self.local_secret),
-        };
-        let secrets = tls.update_secrets(client_secret, server_secret);
-        let suite = tls.get_negotiated_ciphersuite().unwrap();
-        Self::new(side, suite.get_hash(), suite.get_aead_alg(), secrets)
     }
 
     fn tag_len(&self) -> usize {
