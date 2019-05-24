@@ -2659,12 +2659,8 @@ impl Connection {
             &prev.crypto
         } else {
             crypto_update = Some(
-                self.spaces[space as usize]
-                    .crypto
-                    .as_ref()
-                    .unwrap()
-                    .packet
-                    .update(self.side, &self.tls),
+                self.tls
+                    .update_keys(&self.spaces[space as usize].crypto.as_ref().unwrap().packet),
             );
             crypto_update.as_ref().unwrap()
         };
@@ -2722,12 +2718,7 @@ impl Connection {
     #[doc(hidden)]
     pub fn force_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
-        let update = space
-            .crypto
-            .as_ref()
-            .unwrap()
-            .packet
-            .update(self.side, &self.tls);
+        let update = self.tls.update_keys(&space.crypto.as_ref().unwrap().packet);
         let number = space.next_packet_number;
         self.update_keys(update, number, false);
     }
