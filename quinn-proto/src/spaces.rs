@@ -7,7 +7,7 @@ use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
 use crate::crypto::ring::{Crypto, RingHeaderCrypto};
-use crate::crypto::CryptoKeys;
+use crate::crypto::Keys;
 use crate::frame;
 use crate::range_set::RangeSet;
 use crate::StreamId;
@@ -315,7 +315,7 @@ pub struct CryptoSpace {
 impl CryptoSpace {
     pub fn new(packet: Crypto) -> Self {
         Self {
-            header: packet.header_crypto(),
+            header: packet.header_keys(),
             packet,
         }
     }

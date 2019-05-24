@@ -11,25 +11,25 @@ pub mod ring;
 /// TLS interface based on rustls
 pub mod rustls;
 
-pub(crate) trait CryptoSession {
-    type ClientConfig: CryptoClientConfig;
-    type Crypto: CryptoKeys;
-    type HeaderCrypto: HeaderCrypto;
-    type ServerConfig: CryptoServerConfig;
+pub(crate) trait Session {
+    type ClientConfig: ClientConfig;
+    type Keys: Keys;
+    type HeaderKeys: HeaderKeys;
+    type ServerConfig: ServerConfig;
 
     fn alpn_protocol(&self) -> Option<&[u8]>;
-    fn early_crypto(&self) -> Option<Self::Crypto>;
+    fn early_crypto(&self) -> Option<Self::Keys>;
     fn early_data_accepted(&self) -> Option<bool>;
     fn is_handshaking(&self) -> bool;
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError>;
     fn sni_hostname(&self) -> Option<&str>;
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Crypto>;
-    fn update_keys(&self, crypto: &Self::Crypto) -> Self::Crypto;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Keys>;
+    fn update_keys(&self, keys: &Self::Keys) -> Self::Keys;
 }
 
-pub(crate) trait CryptoClientConfig {
-    type Session: CryptoSession;
+pub(crate) trait ClientConfig {
+    type Session: Session;
     fn start_session(
         &self,
         server_name: &str,
@@ -37,22 +37,22 @@ pub(crate) trait CryptoClientConfig {
     ) -> Result<Self::Session, ConnectError>;
 }
 
-pub(crate) trait CryptoServerConfig {
-    type Session: CryptoSession;
+pub(crate) trait ServerConfig {
+    type Session: Session;
     fn start_session(&self, params: &TransportParameters) -> Self::Session;
 }
 
-pub(crate) trait CryptoKeys {
-    type HeaderCrypto: HeaderCrypto;
+pub(crate) trait Keys {
+    type HeaderKeys: HeaderKeys;
 
     fn new_initial(id: &ConnectionId, side: Side) -> Self;
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
-    fn header_crypto(&self) -> Self::HeaderCrypto;
+    fn header_keys(&self) -> Self::HeaderKeys;
     fn tag_len(&self) -> usize;
 }
 
-pub(crate) trait HeaderCrypto {
+pub(crate) trait HeaderKeys {
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]);
     fn encrypt(&self, pn_offset: usize, packet: &mut [u8]);
     fn sample_size(&self) -> usize;

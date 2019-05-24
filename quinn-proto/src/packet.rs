@@ -6,7 +6,7 @@ use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::crypto::ring::{Crypto, RingHeaderCrypto};
-use crate::crypto::{CryptoKeys, HeaderCrypto};
+use crate::crypto::{HeaderKeys, Keys};
 use crate::shared::ConnectionId;
 use crate::VERSION;
 
@@ -884,7 +884,7 @@ mod tests {
     fn header_encoding() {
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client_crypto = Crypto::new_initial(&dcid, Side::Client);
-        let client_header_crypto = client_crypto.header_crypto();
+        let client_header_crypto = client_crypto.header_keys();
         let mut buf = Vec::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
@@ -910,7 +910,7 @@ mod tests {
         );
 
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
-        let server_header_crypto = server_crypto.header_crypto();
+        let server_header_crypto = server_crypto.header_keys();
         let decode = PartialDecode::new(buf.clone().into(), 0).unwrap().0;
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(

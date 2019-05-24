@@ -9,9 +9,8 @@ use rustls::{self, NoClientAuth, Session};
 use webpki::DNSNameRef;
 
 use super::ring::{Crypto, RingHeaderCrypto};
-use super::{CryptoClientConfig, CryptoServerConfig, CryptoSession};
 use crate::transport_parameters::TransportParameters;
-use crate::{ConnectError, Side, TransportError};
+use crate::{crypto, ConnectError, Side, TransportError};
 
 pub enum TlsSession {
     Client(rustls::ClientSession),
@@ -27,17 +26,17 @@ impl TlsSession {
     }
 }
 
-impl CryptoSession for TlsSession {
+impl crypto::Session for TlsSession {
     type ClientConfig = ClientConfig;
-    type Crypto = Crypto;
-    type HeaderCrypto = RingHeaderCrypto;
+    type Keys = Crypto;
+    type HeaderKeys = RingHeaderCrypto;
     type ServerConfig = ServerConfig;
 
     fn alpn_protocol(&self) -> Option<&[u8]> {
         self.get_alpn_protocol()
     }
 
-    fn early_crypto(&self) -> Option<Crypto> {
+    fn early_crypto(&self) -> Option<Self::Keys> {
         self.get_early_secret()
             .map(|secret| Crypto::new_0rtt(secret))
     }
@@ -83,7 +82,7 @@ impl CryptoSession for TlsSession {
         }
     }
 
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto> {
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Keys> {
         let secrets = self.write_hs(buf)?;
         let suite = self
             .get_negotiated_ciphersuite()
@@ -97,10 +96,10 @@ impl CryptoSession for TlsSession {
         ))
     }
 
-    fn update_keys(&self, crypto: &Crypto) -> Crypto {
+    fn update_keys(&self, keys: &Self::Keys) -> Self::Keys {
         let (client_secret, server_secret) = match self.side() {
-            Side::Client => (&crypto.local_secret, &crypto.remote_secret),
-            Side::Server => (&crypto.remote_secret, &crypto.local_secret),
+            Side::Client => (&keys.local_secret, &keys.remote_secret),
+            Side::Server => (&keys.remote_secret, &keys.local_secret),
         };
 
         let secrets = self.update_secrets(client_secret, server_secret);
@@ -160,7 +159,7 @@ impl DerefMut for ClientConfig {
     }
 }
 
-impl CryptoClientConfig for ClientConfig {
+impl crypto::ClientConfig for ClientConfig {
     type Session = TlsSession;
     fn start_session(
         &self,
@@ -189,7 +188,7 @@ impl Default for ServerConfig {
     }
 }
 
-impl CryptoServerConfig for ServerConfig {
+impl crypto::ServerConfig for ServerConfig {
     type Session = TlsSession;
     fn start_session(&self, params: &TransportParameters) -> Self::Session {
         TlsSession::Server(rustls::ServerSession::new_quic(&self.0, to_vec(params)))
