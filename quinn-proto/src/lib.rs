@@ -46,7 +46,8 @@ mod connection;
 pub use crate::connection::{Connection, ConnectionError, Event, Timer, TimerSetting, TimerUpdate};
 
 mod crypto;
-pub use crate::crypto::{ClientConfig as CryptoClientConfig, TokenKey};
+pub use crate::crypto::ring::TokenKey;
+pub use crate::crypto::rustls::ClientConfig as CryptoClientConfig;
 
 mod frame;
 use crate::frame::Frame;

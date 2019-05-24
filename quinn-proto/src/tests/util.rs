@@ -390,7 +390,7 @@ pub fn server_config() -> ServerConfig {
     let key = CERTIFICATE.serialize_private_key_der();
     let cert = CERTIFICATE.serialize_der();
 
-    let mut crypto = crypto::ServerConfig::default();
+    let mut crypto = crypto::rustls::ServerConfig::default();
     Arc::make_mut(&mut crypto.0).set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     Arc::make_mut(&mut crypto.0)
         .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
@@ -406,7 +406,7 @@ pub fn client_config() -> ClientConfig {
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = crypto::ClientConfig::default();
+    let mut tls_client_config = crypto::rustls::ClientConfig::default();
     Arc::make_mut(&mut tls_client_config)
         .set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     Arc::make_mut(&mut tls_client_config)

@@ -14,10 +14,8 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
-use crate::crypto::{
-    self, reset_token_for, Crypto, CryptoClientConfig, CryptoKeys, CryptoServerConfig,
-    RingHeaderCrypto,
-};
+use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
+use crate::crypto::{self, CryptoClientConfig, CryptoKeys, CryptoServerConfig};
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig,
@@ -674,7 +672,7 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use.
     ///
     /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
-    pub crypto: crypto::ClientConfig,
+    pub crypto: crypto::rustls::ClientConfig,
 
     /// Diagnostic logger
     ///
@@ -738,14 +736,14 @@ pub enum ConnectError {
     InvalidDnsName(String),
     /// The TLS configuration was invalid
     #[error(display = "TLS error: {}", _0)]
-    Tls(crypto::TLSError),
+    Tls(crypto::rustls::TLSError),
     /// The transport configuration was invalid
     #[error(display = "transport configuration error: {}", _0)]
     Config(ConfigError),
 }
 
-impl From<crypto::TLSError> for ConnectError {
-    fn from(x: crypto::TLSError) -> Self {
+impl From<crypto::rustls::TLSError> for ConnectError {
+    fn from(x: crypto::rustls::TLSError) -> Self {
         ConnectError::Tls(x)
     }
 }

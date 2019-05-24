@@ -6,7 +6,8 @@ use bytes::Bytes;
 use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
-use crate::crypto::{Crypto, CryptoKeys, RingHeaderCrypto};
+use crate::crypto::ring::{Crypto, RingHeaderCrypto};
+use crate::crypto::CryptoKeys;
 use crate::frame;
 use crate::range_set::RangeSet;
 use crate::StreamId;
