@@ -13,7 +13,7 @@ use slog::Logger;
 use crate::coding::BufMutExt;
 use crate::crypto::{
     reset_token_for, Crypto, CryptoClientConfig, CryptoSession, HeaderCrypto, RingHeaderCrypto,
-    TlsSession, ACK_DELAY_EXPONENT,
+    TlsSession,
 };
 use crate::frame::FrameStruct;
 use crate::packet::{
@@ -3379,6 +3379,8 @@ fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
     }
 }
 
+/// Value used in ACKs we transmit
+const ACK_DELAY_EXPONENT: u8 = 3;
 // Prevents overflow and improves behavior in extreme circumstances
 const MAX_BACKOFF_EXPONENT: u32 = 16;
 // Minimal remaining size to allow packet coalescing

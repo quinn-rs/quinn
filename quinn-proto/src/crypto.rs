@@ -189,9 +189,6 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
     bytes
 }
 
-/// Value used in ACKs we transmit
-pub const ACK_DELAY_EXPONENT: u8 = 3;
-
 pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     let signature = hmac::sign(key, id);
     // TODO: Server ID??
