@@ -167,7 +167,8 @@ fn parse_instruction<R: Buf>(
     };
 
     if instruction.is_some() {
-        read.advance(buf.position() as usize);
+        let pos = buf.position();
+        read.advance(pos as usize);
     }
 
     Ok(instruction)

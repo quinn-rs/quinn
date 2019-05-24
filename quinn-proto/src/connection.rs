@@ -2729,7 +2729,8 @@ impl Connection {
             .unwrap()
             .packet
             .update(self.side, &self.tls);
-        self.update_keys(update, space.next_packet_number, false);
+        let number = space.next_packet_number;
+        self.update_keys(update, number, false);
     }
 
     /// Send data on the given stream
