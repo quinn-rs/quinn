@@ -6,7 +6,6 @@ use crate::shared::ConnectionId;
 use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError};
 
-use self::ring::{Crypto, RingHeaderCrypto};
 use self::rustls::TlsSession;
 
 /// Cryptography interface based on *ring*
@@ -15,14 +14,19 @@ pub mod ring;
 pub mod rustls;
 
 pub(crate) trait CryptoSession {
+    type ClientConfig: CryptoClientConfig;
+    type Crypto: CryptoKeys;
+    type HeaderCrypto: HeaderCrypto;
+    type ServerConfig: CryptoServerConfig;
+
     fn alpn_protocol(&self) -> Option<&[u8]>;
-    fn early_crypto(&self) -> Option<Crypto>;
+    fn early_crypto(&self) -> Option<Self::Crypto>;
     fn early_data_accepted(&self) -> Option<bool>;
     fn is_handshaking(&self) -> bool;
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError>;
     fn sni_hostname(&self) -> Option<&str>;
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError>;
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Crypto>;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Crypto>;
 }
 
 pub(crate) trait CryptoClientConfig {
@@ -40,10 +44,12 @@ pub(crate) trait CryptoServerConfig {
 }
 
 pub(crate) trait CryptoKeys {
+    type HeaderCrypto: HeaderCrypto;
+
     fn new_initial(id: &ConnectionId, side: Side) -> Self;
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
-    fn header_crypto(&self) -> RingHeaderCrypto;
+    fn header_crypto(&self) -> Self::HeaderCrypto;
     fn update(&self, side: Side, tls: &TlsSession) -> Self;
     fn tag_len(&self) -> usize;
 }

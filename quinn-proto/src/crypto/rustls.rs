@@ -8,7 +8,7 @@ pub use rustls::TLSError;
 use rustls::{self, NoClientAuth, Session};
 use webpki::DNSNameRef;
 
-use super::ring::Crypto;
+use super::ring::{Crypto, RingHeaderCrypto};
 use super::{CryptoClientConfig, CryptoServerConfig, CryptoSession};
 use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError};
@@ -28,6 +28,11 @@ impl TlsSession {
 }
 
 impl CryptoSession for TlsSession {
+    type ClientConfig = ClientConfig;
+    type Crypto = Crypto;
+    type HeaderCrypto = RingHeaderCrypto;
+    type ServerConfig = ServerConfig;
+
     fn alpn_protocol(&self) -> Option<&[u8]> {
         self.get_alpn_protocol()
     }

@@ -105,6 +105,8 @@ impl Crypto {
 }
 
 impl CryptoKeys for Crypto {
+    type HeaderCrypto = RingHeaderCrypto;
+
     fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
         const CLIENT_LABEL: &[u8] = b"client in";
