@@ -9,11 +9,10 @@ use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
 
-use super::{CryptoKeys, HeaderCrypto};
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConnectionId, ResetToken};
-use crate::{Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     let signature = hmac::sign(key, id);
@@ -100,8 +99,8 @@ impl Crypto {
     }
 }
 
-impl CryptoKeys for Crypto {
-    type HeaderCrypto = RingHeaderCrypto;
+impl crypto::Keys for Crypto {
+    type HeaderKeys = RingHeaderCrypto;
 
     fn new_initial(id: &ConnectionId, side: Side) -> Self {
         let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
@@ -154,7 +153,7 @@ impl CryptoKeys for Crypto {
         Ok(())
     }
 
-    fn header_crypto(&self) -> RingHeaderCrypto {
+    fn header_keys(&self) -> Self::HeaderKeys {
         let local = SigningKey::new(self.digest, &self.local_secret);
         let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();
@@ -174,7 +173,7 @@ pub struct RingHeaderCrypto {
     remote: HeaderProtectionKey,
 }
 
-impl HeaderCrypto for RingHeaderCrypto {
+impl crypto::HeaderKeys for RingHeaderCrypto {
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
         let mask = self
@@ -348,6 +347,7 @@ impl TokenKey {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::crypto::{HeaderKeys, Keys};
     use rand::{self, RngCore};
 
     #[test]
@@ -395,9 +395,9 @@ mod test {
     fn packet_protection() {
         let id = ConnectionId::new(&hex!("8394c8f03e515708"));
         let server = Crypto::new_initial(&id, Side::Server);
-        let server_header = server.header_crypto();
+        let server_header = server.header_keys();
         let client = Crypto::new_initial(&id, Side::Client);
-        let client_header = client.header_crypto();
+        let client_header = client.header_keys();
         let plaintext = hex!(
             "c1ff00001205f067a5502a4262b50040740000
              0d0000000018410a020000560303eefc e7f7b37ba1d1632e96677825ddf73988

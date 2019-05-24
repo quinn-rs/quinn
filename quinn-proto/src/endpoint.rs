@@ -15,7 +15,9 @@ use slog::{self, Logger};
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
 use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
-use crate::crypto::{self, CryptoClientConfig, CryptoKeys, CryptoServerConfig};
+use crate::crypto::{
+    self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
+};
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig,
@@ -253,7 +255,7 @@ impl Endpoint {
                 }
 
                 let crypto = Crypto::new_initial(&dst_cid, Side::Server);
-                let header_crypto = crypto.header_crypto();
+                let header_crypto = crypto.header_keys();
                 match first_decode.finish(Some(&header_crypto)) {
                     Ok(packet) => self
                         .handle_initial(

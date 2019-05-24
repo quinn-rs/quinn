@@ -13,7 +13,7 @@ use slog::Logger;
 use crate::coding::BufMutExt;
 use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
 use crate::crypto::rustls::TlsSession;
-use crate::crypto::{CryptoClientConfig, CryptoKeys, CryptoSession, HeaderCrypto};
+use crate::crypto::{ClientConfig, HeaderKeys, Keys, Session};
 use crate::frame::FrameStruct;
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
@@ -932,7 +932,7 @@ impl Connection {
         }
         trace!(self.log, "0-RTT enabled");
         self.zero_rtt_crypto = Some(CryptoSpace {
-            header: packet.header_crypto(),
+            header: packet.header_keys(),
             packet,
         });
     }
