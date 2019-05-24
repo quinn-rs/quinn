@@ -8,7 +8,6 @@ use ring::aead::{self, Aad, Nonce};
 use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
-use rustls::quic::Secrets;
 
 use super::{CryptoKeys, HeaderCrypto};
 use crate::coding::{BufExt, BufMutExt};
@@ -40,10 +39,8 @@ impl Crypto {
             Side::Client, // Meaningless when the secrets are equal
             &digest::SHA256,
             &aead::AES_128_GCM,
-            Secrets {
-                server: secret.into(),
-                client: secret.into(),
-            },
+            secret.into(),
+            secret.into(),
         )
     }
 
@@ -51,16 +48,16 @@ impl Crypto {
         side: Side,
         digest: &'static digest::Algorithm,
         cipher: &'static aead::Algorithm,
-        secrets: Secrets,
+        client_secret: Vec<u8>,
+        server_secret: Vec<u8>,
     ) -> Self {
-        let (local_secret, remote_secret) = if side.is_client() {
-            (secrets.client, secrets.server)
-        } else {
-            (secrets.server, secrets.client)
+        let (local_secret, remote_secret) = match side {
+            Side::Client => (client_secret, server_secret),
+            Side::Server => (server_secret, client_secret),
         };
+
         let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
         let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
-
         Crypto {
             local_secret,
             sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
@@ -111,11 +108,10 @@ impl CryptoKeys for Crypto {
         const CLIENT_LABEL: &[u8] = b"client in";
         const SERVER_LABEL: &[u8] = b"server in";
         let hs_secret = initial_secret(id);
-        let secrets = Secrets {
-            client: expanded_initial_secret(&hs_secret, CLIENT_LABEL),
-            server: expanded_initial_secret(&hs_secret, SERVER_LABEL),
-        };
-        Self::new(side, digest, cipher, secrets)
+
+        let client_secret = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
+        let server_secret = expanded_initial_secret(&hs_secret, SERVER_LABEL);
+        Self::new(side, digest, cipher, client_secret, server_secret)
     }
 
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
@@ -455,18 +451,16 @@ mod test {
             Side::Client,
             digest,
             cipher,
-            Secrets {
-                client: vec![
-                    0xb8, 0x76, 0x77, 0x08, 0xf8, 0x77, 0x23, 0x58, 0xa6, 0xea, 0x9f, 0xc4, 0x3e,
-                    0x4a, 0xdd, 0x2c, 0x96, 0x1b, 0x3f, 0x52, 0x87, 0xa6, 0xd1, 0x46, 0x7e, 0xe0,
-                    0xae, 0xab, 0x33, 0x72, 0x4d, 0xbf,
-                ],
-                server: vec![
-                    0x42, 0xdc, 0x97, 0x21, 0x40, 0xe0, 0xf2, 0xe3, 0x98, 0x45, 0xb7, 0x67, 0x61,
-                    0x34, 0x39, 0xdc, 0x67, 0x58, 0xca, 0x43, 0x25, 0x9b, 0x87, 0x85, 0x06, 0x82,
-                    0x4e, 0xb1, 0xe4, 0x38, 0xd8, 0x55,
-                ],
-            },
+            vec![
+                0xb8, 0x76, 0x77, 0x08, 0xf8, 0x77, 0x23, 0x58, 0xa6, 0xea, 0x9f, 0xc4, 0x3e, 0x4a,
+                0xdd, 0x2c, 0x96, 0x1b, 0x3f, 0x52, 0x87, 0xa6, 0xd1, 0x46, 0x7e, 0xe0, 0xae, 0xab,
+                0x33, 0x72, 0x4d, 0xbf,
+            ],
+            vec![
+                0x42, 0xdc, 0x97, 0x21, 0x40, 0xe0, 0xf2, 0xe3, 0x98, 0x45, 0xb7, 0x67, 0x61, 0x34,
+                0x39, 0xdc, 0x67, 0x58, 0xca, 0x43, 0x25, 0x9b, 0x87, 0x85, 0x06, 0x82, 0x4e, 0xb1,
+                0xe4, 0x38, 0xd8, 0x55,
+            ],
         );
 
         assert_eq!(

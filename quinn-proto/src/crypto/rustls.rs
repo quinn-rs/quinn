@@ -92,7 +92,8 @@ impl CryptoSession for TlsSession {
             self.side(),
             suite.get_hash(),
             suite.get_aead_alg(),
-            secrets,
+            secrets.client,
+            secrets.server,
         ))
     }
 
@@ -101,9 +102,16 @@ impl CryptoSession for TlsSession {
             Side::Client => (&crypto.local_secret, &crypto.remote_secret),
             Side::Server => (&crypto.remote_secret, &crypto.local_secret),
         };
+
         let secrets = self.update_secrets(client_secret, server_secret);
         let suite = self.get_negotiated_ciphersuite().unwrap();
-        Crypto::new(self.side(), suite.get_hash(), suite.get_aead_alg(), secrets)
+        Crypto::new(
+            self.side(),
+            suite.get_hash(),
+            suite.get_aead_alg(),
+            secrets.client,
+            secrets.server,
+        )
     }
 }
 
