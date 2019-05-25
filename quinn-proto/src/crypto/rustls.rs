@@ -8,7 +8,7 @@ pub use rustls::TLSError;
 use rustls::{self, NoClientAuth, Session};
 use webpki::DNSNameRef;
 
-use super::ring::{Crypto, RingHeaderCrypto};
+use super::ring::Crypto;
 use crate::transport_parameters::TransportParameters;
 use crate::{crypto, ConnectError, Side, TransportError};
 
@@ -32,7 +32,6 @@ impl TlsSession {
 impl crypto::Session for TlsSession {
     type ClientConfig = ClientConfig;
     type Keys = Crypto;
-    type HeaderKeys = RingHeaderCrypto;
     type ServerConfig = ServerConfig;
 
     fn alpn_protocol(&self) -> Option<&[u8]> {
@@ -162,13 +161,12 @@ impl DerefMut for ClientConfig {
     }
 }
 
-impl crypto::ClientConfig for ClientConfig {
-    type Session = TlsSession;
+impl crypto::ClientConfig<TlsSession> for ClientConfig {
     fn start_session(
         &self,
         server_name: &str,
         params: &TransportParameters,
-    ) -> Result<Self::Session, ConnectError> {
+    ) -> Result<TlsSession, ConnectError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
         Ok(TlsSession::Client(rustls::ClientSession::new_quic(
@@ -192,9 +190,8 @@ impl Default for ServerConfig {
     }
 }
 
-impl crypto::ServerConfig for ServerConfig {
-    type Session = TlsSession;
-    fn start_session(&self, params: &TransportParameters) -> Self::Session {
+impl crypto::ServerConfig<TlsSession> for ServerConfig {
+    fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession::Server(rustls::ServerSession::new_quic(&self.0, to_vec(params)))
     }
 }

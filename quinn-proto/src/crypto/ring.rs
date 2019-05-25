@@ -154,7 +154,7 @@ impl crypto::Keys for Crypto {
         Ok(())
     }
 
-    fn header_keys(&self) -> Self::HeaderKeys {
+    fn header_keys(&self) -> RingHeaderCrypto {
         let local = SigningKey::new(self.digest, &self.local_secret);
         let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();

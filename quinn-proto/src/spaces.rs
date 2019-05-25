@@ -6,14 +6,14 @@ use bytes::Bytes;
 use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
-use crate::crypto::ring::{Crypto, RingHeaderCrypto};
-use crate::crypto::Keys;
-use crate::frame;
 use crate::range_set::RangeSet;
-use crate::StreamId;
+use crate::{crypto, frame, StreamId};
 
-pub struct PacketSpace {
-    pub crypto: Option<CryptoSpace>,
+pub struct PacketSpace<K>
+where
+    K: crypto::Keys,
+{
+    pub crypto: Option<CryptoSpace<K>>,
     pub dedup: Dedup,
     /// Highest received packet number
     pub rx_packet: u64,
@@ -54,7 +54,10 @@ pub struct PacketSpace {
     pub loss_time: Option<Instant>,
 }
 
-impl PacketSpace {
+impl<K> PacketSpace<K>
+where
+    K: crypto::Keys,
+{
     pub fn new(now: Instant) -> Self {
         Self {
             crypto: None,
@@ -307,13 +310,19 @@ impl Dedup {
     }
 }
 
-pub struct CryptoSpace {
-    pub packet: Crypto,
-    pub header: RingHeaderCrypto,
+pub struct CryptoSpace<K>
+where
+    K: crypto::Keys,
+{
+    pub packet: K,
+    pub header: K::HeaderKeys,
 }
 
-impl CryptoSpace {
-    pub fn new(packet: Crypto) -> Self {
+impl<K> CryptoSpace<K>
+where
+    K: crypto::Keys,
+{
+    pub fn new(packet: K) -> Self {
         Self {
             header: packet.header_keys(),
             packet,

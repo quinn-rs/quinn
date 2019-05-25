@@ -14,7 +14,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
-use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
+use crate::crypto::ring::reset_token_for;
 use crate::crypto::{
     self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
 };
@@ -34,7 +34,10 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
 /// `poll_transmit`, and consumes incoming packets and connection-generated events via `handle` and
 /// `handle_event`.
-pub struct Endpoint {
+pub struct Endpoint<S>
+where
+    S: crypto::Session,
+{
     log: Logger,
     rng: OsRng,
     transmits: VecDeque<Transmit>,
@@ -49,7 +52,7 @@ pub struct Endpoint {
     connection_reset_tokens: HashMap<ResetToken, ConnectionHandle>,
     connections: Slab<ConnectionMeta>,
     config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
+    server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
     incoming_handshakes: usize,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
@@ -57,14 +60,17 @@ pub struct Endpoint {
     reject_new_connections: bool,
 }
 
-impl Endpoint {
+impl<S> Endpoint<S>
+where
+    S: crypto::Session,
+{
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
     pub fn new(
         log: Logger,
         config: Arc<EndpointConfig>,
-        server_config: Option<Arc<ServerConfig>>,
+        server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
     ) -> Result<Self, ConfigError> {
         config.validate()?;
         let rng = OsRng::new().unwrap();
@@ -150,7 +156,7 @@ impl Endpoint {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) -> Option<(ConnectionHandle, DatagramEvent)> {
+    ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(data, self.config.local_cid_len) {
             Ok(x) => x,
@@ -254,7 +260,7 @@ impl Endpoint {
                     return None;
                 }
 
-                let crypto = Crypto::new_initial(&dst_cid, Side::Server);
+                let crypto = S::Keys::new_initial(&dst_cid, Side::Server);
                 let header_crypto = crypto.header_keys();
                 match first_decode.finish(Some(&header_crypto)) {
                     Ok(packet) => self
@@ -341,10 +347,10 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(
         &mut self,
-        config: ClientConfig,
+        config: ClientConfig<S::ClientConfig>,
         remote: SocketAddr,
         server_name: &str,
-    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         config.transport.validate(&self.log)?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(self.log, "initial dcid"; "value" => %remote_id);
@@ -390,16 +396,16 @@ impl Endpoint {
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        opts: ConnectionOpts,
+        opts: ConnectionOpts<S::ClientConfig>,
         now: Instant,
-    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         let loc_cid = self.new_cid();
         let (tls, client_opts, transport_config, log) = match opts {
             ConnectionOpts::Client {
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new(&config.transport, None);
+                let params = TransportParameters::new::<S::ServerConfig>(&config.transport, None);
                 (
                     config.crypto.start_session(&server_name, &params)?,
                     Some(ClientOpts {
@@ -470,9 +476,9 @@ impl Endpoint {
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
-        crypto: &Crypto,
-        header_crypto: &RingHeaderCrypto,
-    ) -> Option<(ConnectionHandle, Connection)> {
+        crypto: &S::Keys,
+        header_crypto: &<S::Keys as Keys>::HeaderKeys,
+    ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
                 src_cid,
@@ -570,7 +576,11 @@ impl Endpoint {
                     orig_dst_cid: dst_cid,
                 };
                 let encode = header.encode(&mut buf);
-                encode.finish(&mut buf, header_crypto, None);
+                encode.finish::<S::Keys, <S::Keys as Keys>::HeaderKeys>(
+                    &mut buf,
+                    header_crypto,
+                    None,
+                );
                 buf.put_slice(&token);
 
                 self.transmits.push_back(Transmit {
@@ -667,14 +677,12 @@ pub(crate) struct ConnectionMeta {
 
 /// Configuration for outgoing connections
 #[derive(Clone, Default)]
-pub struct ClientConfig {
+pub struct ClientConfig<C> {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use.
-    ///
-    /// `versions` *must* be `vec![ProtocolVersion::TLSv1_3]`.
-    pub crypto: crypto::rustls::ClientConfig,
+    pub crypto: C,
 
     /// Diagnostic logger
     ///
@@ -706,16 +714,19 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 }
 
 /// Event resulting from processing a single datagram
-pub enum DatagramEvent {
+pub enum DatagramEvent<S>
+where
+    S: crypto::Session,
+{
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
-    NewConnection(Connection),
+    NewConnection(Connection<S>),
 }
 
-enum ConnectionOpts {
+enum ConnectionOpts<C> {
     Client {
-        config: ClientConfig,
+        config: ClientConfig<C>,
         server_name: String,
     },
     Server {
