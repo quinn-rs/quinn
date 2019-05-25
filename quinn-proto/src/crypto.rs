@@ -22,15 +22,13 @@ pub mod ring;
 pub mod rustls;
 
 /// A cryptographic session (commonly TLS)
-pub trait Session {
+pub trait Session: Sized {
     /// Type used to hold configuration for client sessions
-    type ClientConfig: ClientConfig;
+    type ClientConfig: ClientConfig<Self>;
     /// Type used to represent packet protection keys
-    type Keys: Keys;
-    /// Type used to represent header protection keys
-    type HeaderKeys: HeaderKeys;
+    type Keys: Keys + Sized;
     /// Type used to hold configuration for server sessions
-    type ServerConfig: ServerConfig;
+    type ServerConfig: ServerConfig<Self>;
 
     /// Get the negotiated ALPN protocol
     ///
@@ -79,31 +77,31 @@ pub trait Session {
 }
 
 /// Client-side configuration for the crypto protocol
-pub trait ClientConfig {
-    /// Type of sessions that can be started from this configuration
-    type Session: Session;
-
+pub trait ClientConfig<S>
+where
+    S: Session,
+{
     /// Start a client session with this configuration
     fn start_session(
         &self,
         server_name: &str,
         params: &TransportParameters,
-    ) -> Result<Self::Session, ConnectError>;
+    ) -> Result<S, ConnectError>;
 }
 
 /// Server-side configuration for the crypto protocol
-pub trait ServerConfig {
-    /// Type of sessions that can be started from this configuration
-    type Session: Session;
-
+pub trait ServerConfig<S>
+where
+    S: Session,
+{
     /// Start a server session with this configuration
-    fn start_session(&self, params: &TransportParameters) -> Self::Session;
+    fn start_session(&self, params: &TransportParameters) -> S;
 }
 
 /// Keys used to protect packet payloads
 pub trait Keys {
     /// Type used for header protection keys
-    type HeaderKeys: HeaderKeys;
+    type HeaderKeys: HeaderKeys + Sized;
 
     /// Create the initial set of keys given the initial ConnectionId
     fn new_initial(id: &ConnectionId, side: Side) -> Self;

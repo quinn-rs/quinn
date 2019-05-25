@@ -5,10 +5,8 @@ use err_derive::Error;
 use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
-use crate::crypto::ring::{Crypto, RingHeaderCrypto};
-use crate::crypto::{HeaderKeys, Keys};
 use crate::shared::ConnectionId;
-use crate::VERSION;
+use crate::{crypto, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -99,10 +97,10 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
-    pub fn finish(
-        self,
-        header_crypto: Option<&RingHeaderCrypto>,
-    ) -> Result<Packet, PacketDecodeError> {
+    pub fn finish<H>(self, header_crypto: Option<&H>) -> Result<Packet, PacketDecodeError>
+    where
+        H: crypto::HeaderKeys,
+    {
         use self::PlainHeader::*;
         let Self {
             plain_header,
@@ -186,10 +184,13 @@ impl PartialDecode {
         })
     }
 
-    fn decrypt_header(
+    fn decrypt_header<H>(
         buf: &mut io::Cursor<BytesMut>,
-        header_crypto: &RingHeaderCrypto,
-    ) -> Result<PacketNumber, PacketDecodeError> {
+        header_crypto: &H,
+    ) -> Result<PacketNumber, PacketDecodeError>
+    where
+        H: crypto::HeaderKeys,
+    {
         let packet_length = buf.get_ref().len();
         let pn_offset = buf.position() as usize;
         if packet_length < pn_offset + 4 + header_crypto.sample_size() {
@@ -439,12 +440,11 @@ pub struct PartialEncode {
 }
 
 impl PartialEncode {
-    pub fn finish(
-        self,
-        buf: &mut [u8],
-        header_crypto: &RingHeaderCrypto,
-        crypto: Option<(u64, &Crypto)>,
-    ) {
+    pub fn finish<K, H>(self, buf: &mut [u8], header_crypto: &H, crypto: Option<(u64, &K)>)
+    where
+        K: crypto::Keys,
+        H: crypto::HeaderKeys,
+    {
         let PartialEncode { header_len, pn, .. } = self;
         let (pn_len, write_len) = match pn {
             Some((pn_len, write_len)) => (pn_len, write_len),
@@ -844,7 +844,8 @@ impl slog::Value for SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::ring::Crypto, Side};
+    use crate::crypto::{ring::Crypto, Keys};
+    use crate::Side;
     use std::io;
 
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {

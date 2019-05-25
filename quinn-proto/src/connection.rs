@@ -11,9 +11,8 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::BufMutExt;
-use crate::crypto::ring::{reset_token_for, Crypto, RingHeaderCrypto};
-use crate::crypto::rustls::TlsSession;
-use crate::crypto::{ClientConfig, HeaderKeys, Keys, Session};
+use crate::crypto::ring::reset_token_for;
+use crate::crypto::{self, ClientConfig, HeaderKeys, Keys};
 use crate::frame::FrameStruct;
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
@@ -38,13 +37,16 @@ use crate::{
 /// `Event`s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
-pub struct Connection {
+pub struct Connection<S>
+where
+    S: crypto::Session,
+{
     log: Logger,
     endpoint_config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
+    server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
     config: Arc<TransportConfig>,
     rng: OsRng,
-    tls: TlsSession,
+    tls: S,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
     rem_cid: ConnectionId,
@@ -56,7 +58,7 @@ pub struct Connection {
     state: State,
     side: Side,
     mtu: u16,
-    zero_rtt_crypto: Option<CryptoSpace>,
+    zero_rtt_crypto: Option<CryptoSpace<S::Keys>>,
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
@@ -72,7 +74,7 @@ pub struct Connection {
     local_max_data: u64,
     /// Stream data we're sending that hasn't been acknowledged or reset yet
     unacked_data: u64,
-    client_opts: Option<ClientOpts>,
+    client_opts: Option<ClientOpts<S::ClientConfig>>,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -85,11 +87,11 @@ pub struct Connection {
     /// Outgoing spin bit state
     spin: bool,
     /// Packet number spaces: initial, handshake, 1-RTT
-    spaces: [PacketSpace; 3],
+    spaces: [PacketSpace<S::Keys>; 3],
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
-    prev_crypto: Option<PrevCrypto>,
+    prev_crypto: Option<PrevCrypto<S::Keys>>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet
@@ -153,18 +155,21 @@ pub struct Connection {
     rem_cids: Vec<frame::NewConnectionId>,
 }
 
-impl Connection {
+impl<S> Connection<S>
+where
+    S: crypto::Session,
+{
     pub(crate) fn new(
         log: Logger,
         endpoint_config: Arc<EndpointConfig>,
-        server_config: Option<Arc<ServerConfig>>,
+        server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        client_opts: Option<ClientOpts>,
-        tls: TlsSession,
+        client_opts: Option<ClientOpts<S::ClientConfig>>,
+        tls: S,
         now: Instant,
         remote_validated: bool,
     ) -> Self {
@@ -176,7 +181,7 @@ impl Connection {
         let rng = OsRng::new().expect("failed to construct RNG");
 
         let initial_space = PacketSpace {
-            crypto: Some(CryptoSpace::new(Crypto::new_initial(&init_cid, side))),
+            crypto: Some(CryptoSpace::new(S::Keys::new_initial(&init_cid, side))),
             ..PacketSpace::new(now)
         };
         let state = State::Handshake(state::Handshake {
@@ -1014,7 +1019,7 @@ impl Connection {
     }
 
     /// Switch to stronger cryptography during handshake
-    fn upgrade_crypto(&mut self, space: SpaceId, crypto: Crypto) {
+    fn upgrade_crypto(&mut self, space: SpaceId, crypto: S::Keys) {
         debug_assert!(
             self.spaces[space as usize].crypto.is_none(),
             "already reached packet space {:?}",
@@ -1288,12 +1293,12 @@ impl Connection {
                             .crypto
                             .start_session(
                                 &client_opts.server_name,
-                                &TransportParameters::new(&self.config, None),
+                                &TransportParameters::new::<S::ServerConfig>(&self.config, None),
                             )
                             .unwrap();
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
-                            crypto: Some(CryptoSpace::new(Crypto::new_initial(
+                            crypto: Some(CryptoSpace::new(S::Keys::new_initial(
                                 &rem_cid, self.side,
                             ))),
                             ..PacketSpace::new(now)
@@ -2789,7 +2794,7 @@ impl Connection {
         Ok(n)
     }
 
-    fn update_keys(&mut self, crypto: Crypto, number: u64, remote: bool) {
+    fn update_keys(&mut self, crypto: S::Keys, number: u64, remote: bool) {
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize]
                 .crypto
@@ -2894,11 +2899,11 @@ impl Connection {
         Duration::from_micros(self.params.max_ack_delay * 1000)
     }
 
-    fn space(&self, id: SpaceId) -> &PacketSpace {
+    fn space(&self, id: SpaceId) -> &PacketSpace<S::Keys> {
         &self.spaces[id as usize]
     }
 
-    fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace {
+    fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace<S::Keys> {
         &mut self.spaces[id as usize]
     }
 
@@ -2933,15 +2938,16 @@ impl Connection {
     }
 }
 
-pub fn initial_close<R>(
-    crypto: &Crypto,
-    header_crypto: &RingHeaderCrypto,
+pub fn initial_close<K, R>(
+    crypto: &K,
+    header_crypto: &K::HeaderKeys,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
 ) -> Box<[u8]>
 where
+    K: crypto::Keys,
     R: Into<state::CloseReason>,
 {
     let number = PacketNumber::U8(packet_number);
@@ -3168,8 +3174,11 @@ pub struct TimerUpdate {
     pub update: TimerSetting,
 }
 
-struct PrevCrypto {
-    crypto: Crypto,
+struct PrevCrypto<K>
+where
+    K: crypto::Keys,
+{
+    crypto: K,
     end_packet: u64,
     /// Time at which a packet using the following key phase was received
     update_ack_time: Option<Instant>,

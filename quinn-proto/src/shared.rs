@@ -219,14 +219,14 @@ impl EndpointConfig {
 }
 
 /// Parameters governing incoming connections.
-pub struct ServerConfig {
+pub struct ServerConfig<S> {
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,
 
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: crypto::rustls::ServerConfig,
+    pub crypto: S,
 
     /// Private key used to authenticate data included in handshake tokens.
     pub token_key: crypto::ring::TokenKey,
@@ -249,7 +249,10 @@ pub struct ServerConfig {
     pub migration: bool,
 }
 
-impl Default for ServerConfig {
+impl<S> Default for ServerConfig<S>
+where
+    S: Default,
+{
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
 
@@ -258,7 +261,7 @@ impl Default for ServerConfig {
 
         Self {
             transport: Arc::new(TransportConfig::default()),
-            crypto: crypto::rustls::ServerConfig::default(),
+            crypto: S::default(),
 
             token_key: crypto::ring::TokenKey::new(&token_value),
             use_stateless_retry: false,
@@ -424,9 +427,9 @@ impl EcnCodepoint {
 
 /// Internal structure for client-specific data
 #[derive(Clone)]
-pub struct ClientOpts {
+pub struct ClientOpts<C> {
     pub server_name: String,
-    pub crypto: crypto::rustls::ClientConfig,
+    pub crypto: C,
 }
 
 /// Stateless reset token

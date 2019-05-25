@@ -43,23 +43,21 @@ mod transport_parameters;
 pub mod varint;
 
 mod connection;
-pub use crate::connection::{Connection, ConnectionError, Event, Timer, TimerSetting, TimerUpdate};
+pub use crate::connection::{ConnectionError, Event, Timer, TimerSetting, TimerUpdate};
 
 pub mod crypto;
-pub use crate::crypto::ring::TokenKey;
-pub use crate::crypto::rustls::ClientConfig as CryptoClientConfig;
 
 mod frame;
 use crate::frame::Frame;
 pub use crate::frame::{ApplicationClose, ConnectionClose};
 
 mod endpoint;
-pub use crate::endpoint::{ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, Endpoint};
+pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};
 
 mod shared;
 pub use crate::shared::{
     ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig, EndpointEvent,
-    ServerConfig, TransportConfig,
+    TransportConfig,
 };
 
 mod streams;
@@ -67,6 +65,22 @@ pub use crate::streams::{FinishError, ReadError, WriteError};
 
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
+
+/// Types that are generic over the crypto protocol implementation
+pub mod generic {
+    pub use crate::connection::Connection;
+    pub use crate::endpoint::{ClientConfig, Endpoint};
+    pub use crate::shared::ServerConfig;
+}
+
+/// A `Connection` using rustls for the cryptography protocol
+pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
+/// A `ClientConfig` containing client-side rustls configuration
+pub type ClientConfig = generic::ClientConfig<crypto::rustls::ClientConfig>;
+/// An `Endpoint` using rustls for the cryptography protocol
+pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
+/// A `ServerConfig` containing server-side rustls configuration
+pub type ServerConfig = generic::ServerConfig<crypto::rustls::ServerConfig>;
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_0014;

@@ -69,7 +69,7 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub fn new(config: &TransportConfig, server_config: Option<&ServerConfig>) -> Self {
+    pub fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self {
         TransportParameters {
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,
