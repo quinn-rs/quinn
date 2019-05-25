@@ -14,7 +14,7 @@ use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConnectionId, ResetToken};
 use crate::{crypto, Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
-pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
+pub(crate) fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     let signature = hmac::sign(key, id);
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
@@ -22,6 +22,7 @@ pub fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     result.into()
 }
 
+/// Keys for encrypting and decrypting packet payloads
 pub struct Crypto {
     pub(crate) local_secret: Vec<u8>,
     local_iv: Vec<u8>,
@@ -168,6 +169,7 @@ impl crypto::Keys for Crypto {
     }
 }
 
+/// Keys for encrypting and decrypting packet headers
 pub struct RingHeaderCrypto {
     local: HeaderProtectionKey,
     remote: HeaderProtectionKey,
@@ -239,13 +241,13 @@ fn header_key_from_secret(aead: &aead::Algorithm, secret_key: &SigningKey) -> He
     }
 }
 
-pub fn expanded_initial_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
+fn expanded_initial_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; digest::SHA256.output_len];
     hkdf_expand(prk, label, &mut out);
     out
 }
 
-pub fn hkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
+fn hkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
     let mut info = Vec::with_capacity(2 + 1 + 5 + out.len());
     info.put_u16_be(out.len() as u16);
     const BASE_LABEL: &[u8] = b"tls13 ";

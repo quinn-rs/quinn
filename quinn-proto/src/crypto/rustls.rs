@@ -12,8 +12,11 @@ use super::ring::{Crypto, RingHeaderCrypto};
 use crate::transport_parameters::TransportParameters;
 use crate::{crypto, ConnectError, Side, TransportError};
 
+/// A rustls TLS session
 pub enum TlsSession {
+    #[doc(hidden)]
     Client(rustls::ClientSession),
+    #[doc(hidden)]
     Server(rustls::ServerSession),
 }
 
@@ -176,6 +179,7 @@ impl crypto::ClientConfig for ClientConfig {
     }
 }
 
+/// rustls configuration for server sessions
 #[derive(Clone)]
 pub struct ServerConfig(#[doc(hidden)] pub Arc<rustls::ServerConfig>);
 
