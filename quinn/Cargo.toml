@@ -41,7 +41,7 @@ webpki-roots = "0.16"
 [dev-dependencies]
 crc = "1.8.1"
 criterion = "0.2.10"
-directories = "1.0.2"
+directories = "2.0.0"
 failure = "0.1"
 rand = "0.6.5"
 rcgen = "0.3"
