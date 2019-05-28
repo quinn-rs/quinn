@@ -35,17 +35,22 @@ pub enum Error {
     UnknownPrefix,
 }
 
-pub fn encode<W: BufMut, T: Iterator<Item = HeaderField>>(
+pub fn encode<W, T, H>(
     table: &mut DynamicTableEncoder,
     block: &mut W,
     encoder: &mut W,
     fields: T,
-) -> Result<usize, Error> {
+) -> Result<usize, Error>
+where
+    W: BufMut,
+    T: IntoIterator<Item = H>,
+    H: AsRef<HeaderField>,
+{
     let mut required_ref = 0;
     let mut block_buf = Vec::new();
 
     for field in fields {
-        if let Some(reference) = encode_field(table, &mut block_buf, encoder, &field)? {
+        if let Some(reference) = encode_field(table, &mut block_buf, encoder, field.as_ref())? {
             required_ref = cmp::max(required_ref, reference);
         }
     }

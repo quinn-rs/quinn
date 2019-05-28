@@ -44,6 +44,12 @@ impl HeaderField {
     }
 }
 
+impl AsRef<HeaderField> for HeaderField {
+    fn as_ref<'a>(&'a self) -> &'a Self {
+        &self
+    }
+}
+
 impl Display for HeaderField {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         write!(

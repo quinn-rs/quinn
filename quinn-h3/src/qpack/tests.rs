@@ -82,7 +82,7 @@ fn blocked_header() {
         &mut enc_table.encoder(42),
         &mut block_buf,
         &mut enc_buf,
-        vec![HeaderField::new("foo", "bar")].into_iter(),
+        &[HeaderField::new("foo", "bar")],
     )
     .unwrap();
 
