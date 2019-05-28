@@ -331,7 +331,7 @@ pub struct DynamicTable {
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
     track_map: Option<BTreeMap<usize, usize>>,
     track_blocks: Option<HashMap<u64, HashMap<usize, usize>>>,
-    largest_known_recieved: usize,
+    largest_known_received: usize,
     blocked_max: usize,
     blocked_count: usize,
     blocked_streams: Option<BTreeMap<usize, usize>>, // <required_ref, blocked_count>
@@ -550,7 +550,7 @@ impl DynamicTable {
     }
 
     fn register_blocked(&mut self, largest: usize) {
-        if largest <= self.largest_known_recieved {
+        if largest <= self.largest_known_received {
             return;
         }
 
@@ -568,15 +568,15 @@ impl DynamicTable {
         }
     }
 
-    pub fn update_largest_recieved(&mut self, index: usize) {
-        self.largest_known_recieved = std::cmp::max(index, self.largest_known_recieved);
+    pub fn update_largest_received(&mut self, index: usize) {
+        self.largest_known_received = std::cmp::max(index, self.largest_known_received);
 
         if self.blocked_streams.is_none() || self.blocked_count == 0 {
             return;
         }
 
         let acked = self.blocked_streams.as_mut().unwrap();
-        let blocked = acked.split_off(&(self.largest_known_recieved + 1));
+        let blocked = acked.split_off(&(self.largest_known_received + 1));
 
         if !acked.is_empty() {
             let total_acked = acked.iter().fold(0usize, |t, (_, v)| t + v);
@@ -1416,7 +1416,7 @@ mod tests {
         assert_eq!(table.blocked_count, 2);
         assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), Some(&1));
 
-        table.update_largest_recieved(2);
+        table.update_largest_received(2);
 
         assert_eq!(table.blocked_count, 1);
         assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), None);
@@ -1435,7 +1435,7 @@ mod tests {
         assert_eq!(table.blocked_streams.as_ref().unwrap().get(&2), Some(&1));
         assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&1));
 
-        table.update_largest_recieved(5);
+        table.update_largest_received(5);
 
         assert_eq!(table.blocked_count, 0);
         assert_eq!(table.blocked_streams.as_ref().unwrap().len(), 0);
@@ -1451,7 +1451,7 @@ mod tests {
         assert_eq!(table.blocked_count, 2);
         assert_eq!(table.blocked_streams.as_ref().unwrap().get(&3), Some(&2));
 
-        table.update_largest_recieved(5);
+        table.update_largest_received(5);
 
         assert_eq!(table.blocked_count, 0);
         assert_eq!(table.blocked_streams.as_ref().unwrap().len(), 0);
@@ -1516,7 +1516,7 @@ mod tests {
             encoder.commit(0);
         }
 
-        table.update_largest_recieved(3);
+        table.update_largest_received(3);
         assert_eq!(table.blocked_count, 0);
 
         let mut encoder = table.encoder(46);

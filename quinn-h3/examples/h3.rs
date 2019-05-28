@@ -154,11 +154,11 @@ fn server(
     };
 
     runtime.spawn(incoming.for_each(|connecting| {
-        println!("server recieved connection");
+        println!("server received connection");
         connecting
             .map_err(|e| eprintln!("connecting failed: {}", e))
             .and_then(|connection| {
-                println!("recieved connection");
+                println!("received connection");
                 handle_connection(connection).map_err(|e| eprintln!("connecting failed: {}", e))
             })
     }));
@@ -193,11 +193,11 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
         .map_err(|e| format_err!("failed to receive response body: {:?}", e))
         .and_then(|mut ready| {
             if let Some(body) = ready.take_body() {
-                println!("server recieved body: {:?}", body);
+                println!("server received body: {:?}", body);
             }
 
             if let Some(trailers) = ready.take_trailers() {
-                println!("server recieved trailers: {:?}", trailers);
+                println!("server received trailers: {:?}", trailers);
             }
 
             let response = Response::builder()
@@ -266,13 +266,13 @@ fn client(
             conn.send_request_trailers(request, trailer)
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
-                    println!("recieved headers: {:?}", response.response());
+                    println!("received headers: {:?}", response.response());
                     response.body().map_err(|e| format_err!("recv body: {}", e))
                 })
                 .and_then(|(data, trailers)| {
-                    println!("recieved body: {:?}", data);
+                    println!("received body: {:?}", data);
                     if let Some(trailers) = trailers {
-                        println!("recieved trailers: {:?}", trailers);
+                        println!("received trailers: {:?}", trailers);
                     }
                     futures::future::ok(())
                 })

@@ -139,7 +139,7 @@ pub fn on_decoder_recv<R: Buf>(table: &mut DynamicTable, read: &mut R) -> Result
     while let Some(instruction) = parse_instruction(read)? {
         match instruction {
             Instruction::Untrack(stream_id) => table.untrack_block(stream_id)?,
-            Instruction::RecievedRef(idx) => table.update_largest_recieved(idx),
+            Instruction::ReceivedRef(idx) => table.update_largest_received(idx),
         }
     }
     Ok(())
@@ -155,7 +155,7 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
     let instruction = match DecoderInstruction::decode(first) {
         DecoderInstruction::Unknown => return Err(Error::UnknownPrefix),
         DecoderInstruction::InsertCountIncrement => {
-            InsertCountIncrement::decode(&mut buf)?.map(|x| Instruction::RecievedRef(x.0))
+            InsertCountIncrement::decode(&mut buf)?.map(|x| Instruction::ReceivedRef(x.0))
         }
         DecoderInstruction::HeaderAck => {
             HeaderAck::decode(&mut buf)?.map(|x| Instruction::Untrack(x.0))
@@ -175,7 +175,7 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
 
 #[derive(Debug, PartialEq)]
 enum Instruction {
-    RecievedRef(usize),
+    ReceivedRef(usize),
     Untrack(u64),
 }
 
@@ -559,7 +559,7 @@ mod tests {
         let mut cur = Cursor::new(&buf);
         assert_eq!(
             parse_instruction(&mut cur),
-            Ok(Some(Instruction::RecievedRef(4)))
+            Ok(Some(Instruction::ReceivedRef(4)))
         );
 
         let mut cur = Cursor::new(&buf);
