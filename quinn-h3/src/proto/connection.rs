@@ -42,14 +42,12 @@ impl Connection {
             }
         }
 
-        let headers = headers.into_iter().map(HeaderField::from);
-
         let mut block = BytesMut::with_capacity(512);
         qpack::encode(
             &mut self.encoder_table.encoder(stream_id.0),
             &mut block,
             &mut self.pending_encoder,
-            headers,
+            headers.into_iter().map(HeaderField::from),
         )?;
 
         Ok(HeadersFrame {
