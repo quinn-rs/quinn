@@ -59,7 +59,7 @@ pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<He
 
     if required_ref > table.total_inserted() {
         // TODO here the header block cannot be decoded because it contains references to
-        //      dynamic table entries that have not been recieved yet. It should be saved
+        //      dynamic table entries that have not been received yet. It should be saved
         //      and then be decoded when the missing dynamic entries arrive on encoder
         //      stream.
         return Err(Error::MissingRefs);

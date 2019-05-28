@@ -164,7 +164,7 @@ impl Future for RecvRequest {
         loop {
             match self.state {
                 RecvRequestState::Receiving(ref mut frames, _) => match try_ready!(frames.poll()) {
-                    None => return Err(Error::peer("recieved an empty request")),
+                    None => return Err(Error::peer("received an empty request")),
                     Some(HttpFrame::Headers(f)) => {
                         match mem::replace(&mut self.state, RecvRequestState::Decoding(f)) {
                             RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),

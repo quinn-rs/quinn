@@ -232,7 +232,7 @@ impl Future for SendRequest {
                     self.state = SendRequestState::Receiving(recv);
                 }
                 SendRequestState::Receiving(ref mut frames) => match try_ready!(frames.poll()) {
-                    None => return Err(Error::peer("recieved an empty response")),
+                    None => return Err(Error::peer("received an empty response")),
                     Some(f) => match f {
                         HttpFrame::Headers(headers) => {
                             match mem::replace(&mut self.state, SendRequestState::Decoding(headers))
