@@ -215,31 +215,11 @@ where
         .or(Err(Error::invalid_value(name, value)))
 }
 
-macro_rules! pseudo_type {
-    (
-        $(
-            ($name:ident, $val:expr),
-        )+
-    ) => {
-        #[derive(Clone)]
-        enum PseudoType { $($name,)* }
-
-        lazy_static! {
-            static ref PSEUDO_MAP: HashMap<Cow<'static, [u8]>, PseudoType> = [
-                $((Cow::Borrowed(&$val[..]), PseudoType::$name),)+
-            ].into_iter().map(|(n, v)| (n.clone(), v.clone())).collect();
-        }
-    }
-}
-
-pseudo_type![
-    (METHOD, b":method"),
-    (SCHEME, b":scheme"),
-    (AUTHORITY, b":authority"),
-    (PATH, b":path"),
-    (STATUS, b":status"),
-];
-
+/// Pseudo-header fields have the same purpose as data from the first line of HTTP/1.X,
+/// but are conveyed along with other headers. For example ':method' and ':path' in a
+/// request, and ':status' in a response. They must be placed before all other fields,
+/// start with ':', and be lowercase.
+/// See RFC7540 section 8.1.2.1. for more details.
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct Pseudo {
     // Request
@@ -316,6 +296,31 @@ impl Pseudo {
 fn to_string(src: Bytes) -> String<Bytes> {
     unsafe { String::from_utf8_unchecked(src) }
 }
+
+macro_rules! pseudo_type {
+    (
+        $(
+            ($name:ident, $val:expr),
+        )+
+    ) => {
+        #[derive(Clone)]
+        enum PseudoType { $($name,)* }
+
+        lazy_static! {
+            static ref PSEUDO_MAP: HashMap<Cow<'static, [u8]>, PseudoType> = [
+                $((Cow::Borrowed(&$val[..]), PseudoType::$name),)+
+            ].into_iter().map(|(n, v)| (n.clone(), v.clone())).collect();
+        }
+    }
+}
+
+pseudo_type![
+    (METHOD, b":method"),
+    (SCHEME, b":scheme"),
+    (AUTHORITY, b":authority"),
+    (PATH, b":path"),
+    (STATUS, b":status"),
+];
 
 #[derive(Debug)]
 pub enum Error {
