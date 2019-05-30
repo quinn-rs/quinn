@@ -1,5 +1,4 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::str;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -309,7 +308,7 @@ fn stop_stream() {
 #[test]
 fn reject_self_signed_cert() {
     let mut crypto = crypto::rustls::ClientConfig::default();
-    Arc::make_mut(&mut crypto.0).set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
+    crypto.set_protocols(&[ALPN_QUIC_HTTP]);
     let client_config = ClientConfig {
         crypto,
         ..Default::default()

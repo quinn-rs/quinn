@@ -12,6 +12,7 @@ use slog::{Drain, Logger, KV};
 use untrusted::Input;
 
 use super::*;
+use crate::crypto::rustls::{CertificateChain, PrivateKey};
 
 pub struct Pair {
     pub log: Logger,
@@ -388,12 +389,15 @@ where
 
 pub fn server_config() -> ServerConfig {
     let key = CERTIFICATE.serialize_private_key_der();
-    let cert = CERTIFICATE.serialize_der();
+    let cert = CERTIFICATE.serialize_pem();
 
     let mut crypto = crypto::rustls::ServerConfig::default();
-    Arc::make_mut(&mut crypto.0).set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
-    Arc::make_mut(&mut crypto.0)
-        .set_single_cert(vec![rustls::Certificate(cert)], rustls::PrivateKey(key))
+    crypto.set_protocols(&[ALPN_QUIC_HTTP]);
+    crypto
+        .set_certificate(
+            CertificateChain::from_pem(cert.as_bytes()).unwrap(),
+            PrivateKey::from_der(&key).unwrap(),
+        )
         .unwrap();
     ServerConfig {
         crypto,
