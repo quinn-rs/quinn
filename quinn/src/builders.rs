@@ -5,12 +5,12 @@ use std::str;
 use std::sync::Arc;
 
 use err_derive::Error;
+use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 use proto::{ClientConfig, EndpointConfig, ServerConfig};
-use rustls::{KeyLogFile, TLSError};
+use rustls::TLSError;
 use slog::Logger;
 
 use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
-use crate::tls::{Certificate, CertificateChain, PrivateKey};
 use crate::udp::UdpSocket;
 
 /// A helper for constructing an `Endpoint`.
@@ -158,7 +158,7 @@ impl ServerConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto).key_log = Arc::new(KeyLogFile::new());
+        self.config.crypto.enable_keylog();
         self
     }
 
@@ -168,7 +168,7 @@ impl ServerConfigBuilder {
         cert_chain: CertificateChain,
         key: PrivateKey,
     ) -> Result<&mut Self, TLSError> {
-        Arc::make_mut(&mut self.config.crypto).set_single_cert(cert_chain.certs, key.inner)?;
+        self.config.crypto.set_certificate(cert_chain, key)?;
         Ok(self)
     }
 
@@ -180,8 +180,7 @@ impl ServerConfigBuilder {
     ///
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto).alpn_protocols =
-            protocols.iter().map(|x| x.to_vec()).collect();
+        self.config.crypto.set_protocols(protocols);
         self
     }
 
@@ -220,14 +219,7 @@ impl ClientConfigBuilder {
         &mut self,
         cert: Certificate,
     ) -> Result<&mut Self, EndpointError> {
-        {
-            let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(
-                untrusted::Input::from(&cert.inner.0),
-            )?;
-            Arc::make_mut(&mut self.config.crypto.0)
-                .root_store
-                .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
-        }
+        self.config.crypto.add_certificate_authority(cert)?;
         Ok(self)
     }
 
@@ -235,7 +227,7 @@ impl ClientConfigBuilder {
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
     pub fn enable_keylog(&mut self) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto.0).key_log = Arc::new(KeyLogFile::new());
+        self.config.crypto.enable_keylog();
         self
     }
 
@@ -247,8 +239,7 @@ impl ClientConfigBuilder {
     ///
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
-        Arc::make_mut(&mut self.config.crypto.0).alpn_protocols =
-            protocols.iter().map(|x| x.to_vec()).collect();
+        self.config.crypto.set_protocols(protocols);
         self
     }
 
