@@ -136,7 +136,7 @@ impl DerefMut for TlsSession {
 
 /// rustls configuration for client sessions
 #[derive(Clone)]
-pub struct ClientConfig(#[doc(hidden)] pub Arc<rustls::ClientConfig>);
+pub struct ClientConfig(Arc<rustls::ClientConfig>);
 
 impl ClientConfig {
     /// Initialize new configuration with an existing rustls `ClientConfig`
@@ -218,7 +218,7 @@ impl crypto::ClientConfig<TlsSession> for ClientConfig {
 
 /// rustls configuration for server sessions
 #[derive(Clone)]
-pub struct ServerConfig(#[doc(hidden)] pub Arc<rustls::ServerConfig>);
+pub struct ServerConfig(Arc<rustls::ServerConfig>);
 
 impl ServerConfig {
     /// Set the certificate chain that will be presented to clients
