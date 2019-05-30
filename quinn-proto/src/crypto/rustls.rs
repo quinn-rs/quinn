@@ -139,6 +139,11 @@ impl DerefMut for TlsSession {
 pub struct ClientConfig(#[doc(hidden)] pub Arc<rustls::ClientConfig>);
 
 impl ClientConfig {
+    /// Initialize new configuration with an existing rustls `ClientConfig`
+    pub fn new(config: rustls::ClientConfig) -> Self {
+        Self(Arc::new(config))
+    }
+
     /// Add a trusted certificate authority.
     ///
     /// For more advanced/less secure certificate verification, construct a [`ClientConfig`]
