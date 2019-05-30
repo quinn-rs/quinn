@@ -27,6 +27,7 @@ ring = "0.14.1"
 rustls = { version = "0.15.2", features = ["quic"] }
 slab = "0.4"
 slog = "2.2"
+untrusted = "0.6.2"
 webpki = "0.19"
 
 [dev-dependencies]

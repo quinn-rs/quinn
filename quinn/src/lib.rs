@@ -56,10 +56,9 @@ extern crate slog;
 
 mod builders;
 mod platform;
-pub mod tls;
 mod udp;
 
-pub use crate::tls::{Certificate, CertificateChain, PrivateKey};
+pub use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 pub use proto::{
     crypto, ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
     Transmit, TransportConfig, ALPN_QUIC_H3, ALPN_QUIC_HTTP,

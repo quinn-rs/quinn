@@ -1,11 +1,10 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::{io, str};
+use std::{fmt, io, str};
 
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
-use rustls::ProtocolVersion;
 pub use rustls::TLSError;
-use rustls::{self, NoClientAuth, Session};
+use rustls::{self, internal::pemfile, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
 use webpki::DNSNameRef;
 
 use super::ring::Crypto;
@@ -139,6 +138,41 @@ impl DerefMut for TlsSession {
 #[derive(Clone)]
 pub struct ClientConfig(#[doc(hidden)] pub Arc<rustls::ClientConfig>);
 
+impl ClientConfig {
+    /// Add a trusted certificate authority.
+    ///
+    /// For more advanced/less secure certificate verification, construct a [`ClientConfig`]
+    /// manually and use rustls's `dangerous_configuration` feature to override the certificate
+    /// verifier.
+    pub fn add_certificate_authority(&mut self, cert: Certificate) -> Result<(), webpki::Error> {
+        let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(
+            &cert.inner.0,
+        ))?;
+        Arc::make_mut(&mut self.0)
+            .root_store
+            .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
+        Ok(())
+    }
+
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
+    pub fn enable_keylog(&mut self) {
+        Arc::make_mut(&mut self.0).key_log = Arc::new(KeyLogFile::new());
+    }
+
+    /// Set the application-layer protocols to accept, in order of descending preference
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    ///
+    /// The IANA maintains a [registry] of standard protocol IDs, but custom IDs may be used as well.
+    ///
+    /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) {
+        Arc::make_mut(&mut self.0).alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
+    }
+}
+
 impl Default for ClientConfig {
     fn default() -> ClientConfig {
         let mut cfg = rustls::ClientConfig::new();
@@ -181,6 +215,36 @@ impl crypto::ClientConfig<TlsSession> for ClientConfig {
 #[derive(Clone)]
 pub struct ServerConfig(#[doc(hidden)] pub Arc<rustls::ServerConfig>);
 
+impl ServerConfig {
+    /// Set the certificate chain that will be presented to clients
+    pub fn set_certificate(
+        &mut self,
+        cert_chain: CertificateChain,
+        key: PrivateKey,
+    ) -> Result<(), TLSError> {
+        Arc::make_mut(&mut self.0).set_single_cert(cert_chain.certs, key.inner)?;
+        Ok(())
+    }
+
+    /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable
+    ///
+    /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
+    pub fn enable_keylog(&mut self) {
+        Arc::make_mut(&mut self.0).key_log = Arc::new(KeyLogFile::new());
+    }
+
+    /// Set the application-layer protocols to accept, in order of descending preference
+    ///
+    /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
+    ///
+    /// The IANA maintains a [registry] of standard protocol IDs, but custom IDs may be used as well.
+    ///
+    /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
+    pub fn set_protocols(&mut self, protocols: &[&[u8]]) {
+        Arc::make_mut(&mut self.0).alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
+    }
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         let mut cfg = rustls::ServerConfig::new(NoClientAuth::new());
@@ -206,6 +270,105 @@ impl Deref for ServerConfig {
 impl DerefMut for ServerConfig {
     fn deref_mut(&mut self) -> &mut Arc<rustls::ServerConfig> {
         &mut self.0
+    }
+}
+
+/// A single TLS certificate
+#[derive(Debug, Clone)]
+pub struct Certificate {
+    inner: rustls::Certificate,
+}
+
+impl Certificate {
+    /// Parse a DER-formatted certificate
+    pub fn from_der(der: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            inner: rustls::Certificate(der.to_vec()),
+        })
+    }
+}
+
+/// A chain of signed TLS certificates ending the one to be used by a server
+#[derive(Debug, Clone)]
+pub struct CertificateChain {
+    certs: Vec<rustls::Certificate>,
+}
+
+impl CertificateChain {
+    /// Parse a PEM-formatted certificate chain
+    ///
+    /// ```no_run
+    /// let pem = std::fs::read("fullchain.pem").expect("error reading certificates");
+    /// let cert_chain = quinn_proto::crypto::rustls::PrivateKey::from_pem(&pem).expect("error parsing certificates");
+    /// ```
+    pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            certs: pemfile::certs(&mut &pem[..])
+                .map_err(|()| ParseError("malformed certificate chain"))?,
+        })
+    }
+
+    /// Construct a certificate chain from a list of certificates
+    pub fn from_certs(certs: impl IntoIterator<Item = Certificate>) -> Self {
+        certs.into_iter().collect()
+    }
+}
+
+impl std::iter::FromIterator<Certificate> for CertificateChain {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = Certificate>,
+    {
+        CertificateChain {
+            certs: iter.into_iter().map(|x| x.inner).collect(),
+        }
+    }
+}
+
+/// The private key of a TLS certificate to be used by a server
+#[derive(Debug, Clone)]
+pub struct PrivateKey {
+    inner: rustls::PrivateKey,
+}
+
+impl PrivateKey {
+    /// Parse a PEM-formatted private key
+    ///
+    /// ```no_run
+    /// let pem = std::fs::read("key.pem").expect("error reading key");
+    /// let key = quinn_proto::crypto::rustls::PrivateKey::from_pem(&pem).expect("error parsing key");
+    /// ```
+    pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
+        let pkcs8 = pemfile::pkcs8_private_keys(&mut &pem[..])
+            .map_err(|()| ParseError("malformed PKCS #8 private key"))?;
+        if let Some(x) = pkcs8.into_iter().next() {
+            return Ok(Self { inner: x });
+        }
+        let rsa = pemfile::rsa_private_keys(&mut &pem[..])
+            .map_err(|()| ParseError("malformed PKCS #1 private key"))?;
+        if let Some(x) = rsa.into_iter().next() {
+            return Ok(Self { inner: x });
+        }
+        Err(ParseError("no private key found"))
+    }
+
+    /// Parse a DER-encoded (binary) private key
+    pub fn from_der(der: &[u8]) -> Result<Self, ParseError> {
+        Ok(Self {
+            inner: rustls::PrivateKey(der.to_vec()),
+        })
+    }
+}
+
+/// Errors encountered while parsing a TLS certificate or private key
+#[derive(Debug, Clone)]
+pub struct ParseError(&'static str);
+
+impl std::error::Error for ParseError {}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad(self.0)
     }
 }
 
