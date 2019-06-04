@@ -221,6 +221,11 @@ impl crypto::ClientConfig<TlsSession> for ClientConfig {
 pub struct ServerConfig(Arc<rustls::ServerConfig>);
 
 impl ServerConfig {
+    /// Initialize new configuration with an existing rustls `ServerConfig`
+    pub fn new(config: rustls::ServerConfig) -> Self {
+        Self(Arc::new(config))
+    }
+
     /// Set the certificate chain that will be presented to clients
     pub fn set_certificate(
         &mut self,
