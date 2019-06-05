@@ -99,7 +99,7 @@ impl Streams {
         id: StreamId,
         buf: &mut [u8],
     ) -> Result<Option<(usize, bool)>, ReadError> {
-        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read(buf) {
             Ok(Some(len)) => Ok(Some((len, rs.receiving_unknown_size()))),
             Ok(None) => {
@@ -118,7 +118,7 @@ impl Streams {
         &mut self,
         id: StreamId,
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
-        let rs = self.get_recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => Ok(Some((buf, offset, rs.receiving_unknown_size()))),
             Ok(None) => {
@@ -135,9 +135,9 @@ impl Streams {
 
     /// Access a receive stream due to a message from the peer
     ///
-    /// Similar to `get_recv_mut`, but with additional sanity-checks are performed to detect peer
+    /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
     /// misbehavior.
-    pub fn get_recv_stream(
+    pub fn recv_stream(
         &mut self,
         side: Side,
         id: StreamId,
@@ -187,11 +187,11 @@ impl Streams {
         }
     }
 
-    pub fn get_recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
+    pub fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
         self.recv.get_mut(&id)
     }
 
-    pub fn get_send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
+    pub fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
         self.send.get_mut(&id)
     }
 
