@@ -498,9 +498,9 @@ where
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
             if let streams::SendState::ResetSent { stop_reason } =
-                self.streams.get_send_mut(id).unwrap().state
+                self.streams.send_mut(id).unwrap().state
             {
-                self.streams.get_send_mut(id).unwrap().state =
+                self.streams.send_mut(id).unwrap().state =
                     streams::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.streams.maybe_cleanup(id);
@@ -509,7 +509,7 @@ where
         }
 
         for frame in info.retransmits.stream {
-            let ss = match self.streams.get_send_mut(frame.id) {
+            let ss = match self.streams.send_mut(frame.id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -815,7 +815,7 @@ where
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
-        let ss = self.streams.get_send_mut(stream).unwrap();
+        let ss = self.streams.send_mut(stream).unwrap();
         assert_eq!(ss.state, streams::SendState::Ready);
         let offset = ss.offset;
         ss.offset += data.len() as u64;
@@ -849,7 +849,7 @@ where
         );
 
         // reset is a noop on a closed stream
-        let stream = match self.streams.get_send_mut(stream_id) {
+        let stream = match self.streams.send_mut(stream_id) {
             Some(x) => x,
             None => return,
         };
@@ -1617,7 +1617,7 @@ where
                 Frame::Stream(frame) => {
                     trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
                     let stream = frame.id;
-                    let rs = match self.streams.get_recv_stream(self.side, stream) {
+                    let rs = match self.streams.recv_stream(self.side, stream) {
                         Err(e) => {
                             debug!(self.log, "received illegal stream frame"; "stream" => stream.0);
                             return Err(e);
@@ -1692,7 +1692,7 @@ where
                             "MAX_STREAM_DATA on recv-only stream",
                         ));
                     }
-                    if let Some(ss) = self.streams.get_send_mut(id) {
+                    if let Some(ss) = self.streams.send_mut(id) {
                         if offset > ss.max_data {
                             trace!(self.log, "stream limit increased"; "stream" => id.0,
                                    "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
@@ -1734,7 +1734,7 @@ where
                     error_code,
                     final_offset,
                 }) => {
-                    let rs = match self.streams.get_recv_stream(self.side, id) {
+                    let rs = match self.streams.recv_stream(self.side, id) {
                         Err(e) => {
                             debug!(self.log, "received illegal RST_STREAM");
                             return Err(e);
@@ -1813,7 +1813,7 @@ where
                     }
                     self.reset_inner(id, error_code, true);
                     // We might have already closed this stream
-                    if let Some(ss) = self.streams.get_send_mut(id) {
+                    if let Some(ss) = self.streams.send_mut(id) {
                         // Don't reopen an already-closed stream we haven't forgotten yet
                         if !ss.is_closed() {
                             self.on_stream_frame(false, id);
@@ -2339,7 +2339,7 @@ where
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.streams.get_send_mut(id) {
+            let stream = match self.streams.send_mut(id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -2359,7 +2359,7 @@ where
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.streams.get_recv_mut(frame.id) {
+            let stream = match self.streams.recv_mut(frame.id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -2387,7 +2387,7 @@ where
                 None => break,
             };
             space.pending.max_stream_data.remove(&id);
-            let rs = match self.streams.get_recv_mut(id) {
+            let rs = match self.streams.recv_mut(id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -2467,7 +2467,7 @@ where
             };
             if self
                 .streams
-                .get_send_mut(stream.id)
+                .send_mut(stream.id)
                 .map_or(true, |s| s.state.was_reset())
             {
                 self.unacked_data -= stream.data.len() as u64;
@@ -2554,7 +2554,7 @@ where
         self.max_data = params.initial_max_data as u64;
         for i in 0..self.streams.max_remote[Directionality::Bi as usize] {
             let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
-            self.streams.get_send_mut(id).unwrap().max_data =
+            self.streams.send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
         self.idle_timeout = if self.config.idle_timeout == 0 || params.idle_timeout == 0 {
@@ -2571,7 +2571,7 @@ where
     pub fn open(&mut self, dir: Directionality) -> Option<StreamId> {
         let id = self.streams.open(self.side, dir)?;
         // TODO: Queue STREAM_ID_BLOCKED if None
-        self.streams.get_send_mut(id).unwrap().max_data = match dir {
+        self.streams.send_mut(id).unwrap().max_data = match dir {
             Directionality::Uni => self.params.initial_max_stream_data_uni,
             Directionality::Bi => self.params.initial_max_stream_data_bidi_remote,
         } as u64;
@@ -2612,7 +2612,7 @@ where
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let ss = self
             .streams
-            .get_send_mut(id)
+            .send_mut(id)
             .ok_or(FinishError::UnknownStream)?;
         ss.finish()?;
         self.spaces[SpaceId::Data as usize].finish_stream(id, ss.offset);
@@ -2657,7 +2657,7 @@ where
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
-        let stream = self.streams.get_recv_mut(id).unwrap();
+        let stream = self.streams.recv_mut(id).unwrap();
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
             let space = &mut self.spaces[SpaceId::Data as usize];
@@ -2816,7 +2816,7 @@ where
 
         let budget_res = self
             .streams
-            .get_send_mut(stream)
+            .send_mut(stream)
             .ok_or(WriteError::UnknownStream)?
             .write_budget();
 
