@@ -402,8 +402,12 @@ where
         if newly_acked.is_empty() {
             return Ok(());
         }
+
         for &packet in &newly_acked {
-            self.on_packet_acked(space, packet);
+            if let Some(info) = self.space_mut(space).sent_packets.remove(&packet) {
+                self.space_mut(space).pending_acks.subtract(&info.acks);
+                self.on_packet_acked(info);
+            }
         }
 
         if self.space(SpaceId::Handshake).crypto.is_some()
@@ -474,11 +478,7 @@ where
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, space: SpaceId, packet: u64) {
-        let info = match self.space_mut(space).sent_packets.remove(&packet) {
-            Some(x) => x,
-            None => return,
-        };
+    fn on_packet_acked(&mut self, info: SentPacket) {
         self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
@@ -507,6 +507,7 @@ where
                 }
             }
         }
+
         for frame in info.retransmits.stream {
             let ss = match self.streams.get_send_mut(frame.id) {
                 Some(x) => x,
@@ -523,7 +524,6 @@ where
                 });
             }
         }
-        self.space_mut(space).pending_acks.subtract(&info.acks);
     }
 
     /// Process timer expirations
@@ -1342,7 +1342,12 @@ where
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
                         self.rem_handshake_cid = rem_cid;
-                        self.on_packet_acked(SpaceId::Initial, 0);
+
+                        let space = self.space_mut(SpaceId::Initial);
+                        if let Some(info) = space.sent_packets.remove(&0) {
+                            space.pending_acks.subtract(&info.acks);
+                            self.on_packet_acked(info);
+                        };
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
