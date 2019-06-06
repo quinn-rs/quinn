@@ -11,8 +11,8 @@
 Quinn is an implementation of the [QUIC][quic] transport protocol undergoing
 standardization by the IETF. It is suitable for experimental use. The
 implementation is split up into the state machine crate `quinn-proto` which
-performs no I/O internally and can be tested deterministically, and a high-level
-tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
+performs no I/O internally and is suitable for use with custom event loops, and
+a high-level tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
 
 Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can
 also get the [slides][slides] (and the [animation][animation] about head-of-line
@@ -29,7 +29,8 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 * Simultaneous client/server operation
 * Ordered and unordered reads for improved performance
 * Works on stable Rust
-* Uses [rustls][rustls] for all TLS operations and [*ring*][ring] for cryptography
+* Pluggable cryptography, with a standard implementation backed by
+  [rustls][rustls] and [*ring*][ring]
 
 ## Status
 
