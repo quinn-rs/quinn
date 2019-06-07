@@ -224,7 +224,7 @@ impl RequestReady {
         let mut request = Request::builder();
         request.method(method);
         request.uri(uri);
-        request.version(http::version::Version::HTTP_2); // TODO change once available
+        request.version(http::version::Version::HTTP_3);
         match request.headers_mut() {
             Some(h) => *h = headers,
             None => return Err(Error::peer("invalid header")),

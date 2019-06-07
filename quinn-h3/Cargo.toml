@@ -33,7 +33,7 @@ bitlab = "0.8.1"
 lazy_static = "1"
 err-derive = "0.1.5"
 slog = "2.1"
-http = "0.1"
+http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
 string = "0.2"
 
 [dev-dependencies]
