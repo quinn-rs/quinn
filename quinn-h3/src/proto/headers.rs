@@ -21,28 +21,24 @@ pub struct Header {
 
 #[allow(clippy::len_without_is_empty)]
 impl Header {
-    pub fn request(method: Method, uri: Uri, headers: HeaderMap) -> Self {
-        let pseudo = Pseudo::request(method, uri);
-
+    pub fn request(method: Method, uri: Uri, fields: HeaderMap) -> Self {
         Self {
-            pseudo,
-            fields: headers,
+            pseudo: Pseudo::request(method, uri),
+            fields,
         }
     }
 
-    pub fn response(status: StatusCode, headers: HeaderMap) -> Self {
-        let pseudo = Pseudo::response(status);
-
+    pub fn response(status: StatusCode, fields: HeaderMap) -> Self {
         Self {
-            pseudo,
-            fields: headers,
+            pseudo: Pseudo::response(status),
+            fields,
         }
     }
 
     pub fn trailer(fields: HeaderMap) -> Self {
         Self {
-            fields,
             pseudo: Pseudo::default(),
+            fields,
         }
     }
 
