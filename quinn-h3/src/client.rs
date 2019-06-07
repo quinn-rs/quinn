@@ -31,7 +31,7 @@ pub struct Builder {
 impl Builder {
     pub fn new(endpoint: EndpointBuilder) -> Self {
         Self {
-            endpoint: endpoint,
+            endpoint,
             log: None,
             settings: Settings::default(),
         }
@@ -57,7 +57,9 @@ impl Builder {
             Client {
                 endpoint,
                 settings: self.settings,
-                log: self.log.unwrap_or(Logger::root(slog::Discard, o!())),
+                log: self
+                    .log
+                    .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
             },
         ))
     }
@@ -168,7 +170,7 @@ impl SendRequest {
             conn,
             header: Some(Header::request(method, uri, headers)),
             body: Some(body.into()),
-            trailers: trailers.map(|t| Header::trailer(t)),
+            trailers: trailers.map(Header::trailer),
             state: SendRequestState::Opening(open_bi),
             stream_id: None,
             recv: None,
@@ -191,7 +193,7 @@ impl Future for SendRequest {
                     let header_block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
                         let header = try_take(&mut self.header, "header none")?;
-                        conn.encode_header(&send.id(), header)?
+                        conn.encode_header(send.id(), header)?
                     };
                     let mut encoded_header = vec![];
                     header_block.encode(&mut encoded_header);
@@ -213,7 +215,7 @@ impl Future for SendRequest {
                         Some(t) => {
                             let block = {
                                 let conn = &mut self.conn.h3.lock().unwrap().inner;
-                                conn.encode_header(&send.id(), t)?
+                                conn.encode_header(send.id(), t)?
                             };
                             let mut encoded_header = vec![];
                             block.encode(&mut encoded_header);
@@ -248,7 +250,7 @@ impl Future for SendRequest {
                     let stream_id = self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
                     let result = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(&stream_id, frame)
+                        conn.decode_header(stream_id, frame)
                     };
 
                     match result {
@@ -300,12 +302,12 @@ impl RecvResponse {
         response.version(http::version::Version::HTTP_3);
         *response
             .headers_mut()
-            .ok_or(Error::peer("invalid response"))? = headers;
+            .ok_or_else(|| Error::peer("invalid response"))? = headers;
 
         Ok(Self {
             recv,
             conn,
-            stream_id: stream_id,
+            stream_id,
             response: response
                 .body(())
                 .or(Err(Error::Internal("failed to build response")))?,
@@ -317,6 +319,12 @@ impl RecvResponse {
     }
 
     pub fn body(self) -> RecvBody {
-        RecvBody::with_capacity(self.recv, 10240, 1024000, self.conn.clone(), self.stream_id)
+        RecvBody::with_capacity(
+            self.recv,
+            10_240,
+            1_024_000,
+            self.conn.clone(),
+            self.stream_id,
+        )
     }
 }

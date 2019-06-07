@@ -182,7 +182,7 @@ impl Connection {
             }
         }
         OpenUni {
-            recv: recv,
+            recv,
             conn: self.0.clone(),
         }
     }
@@ -208,7 +208,7 @@ impl Connection {
             }
         }
         OpenBi {
-            recv: recv,
+            recv,
             conn: self.0.clone(),
         }
     }

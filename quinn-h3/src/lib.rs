@@ -20,8 +20,6 @@ pub mod server;
 mod body;
 mod frame;
 
-use std::mem;
-
 use err_derive::Error;
 
 #[derive(Clone)]
@@ -101,5 +99,5 @@ impl From<proto::headers::Error> for Error {
 }
 
 fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
-    mem::replace(item, None).ok_or(Error::Internal(msg))
+    item.take().ok_or_else(|| Error::Internal(msg))
 }

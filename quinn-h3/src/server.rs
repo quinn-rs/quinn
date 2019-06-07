@@ -30,7 +30,7 @@ pub struct Builder {
 impl Builder {
     pub fn new(endpoint: EndpointBuilder) -> Self {
         Self {
-            endpoint: endpoint,
+            endpoint,
             log: None,
             settings: Settings::default(),
         }
@@ -57,7 +57,9 @@ impl Builder {
             IncomingConnection {
                 incoming,
                 settings: self.settings.clone(),
-                log: self.log.unwrap_or(Logger::root(slog::Discard, o!())),
+                log: self
+                    .log
+                    .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
             },
         ))
     }
@@ -124,11 +126,11 @@ impl Stream for IncomingRequest {
                 }
             }
         };
-        return Ok(Async::Ready(Some(RecvRequest::new(
+        Ok(Async::Ready(Some(RecvRequest::new(
             recv,
             send,
             self.0.clone(),
-        ))));
+        ))))
     }
 }
 
@@ -176,7 +178,7 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut frame) => {
                     let result = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(&self.stream_id, frame)
+                        conn.decode_header(self.stream_id, frame)
                     };
 
                     match result {
@@ -293,7 +295,7 @@ impl RecvBodyServer {
             stream_id,
             conn: conn.clone(),
             send: Some(send),
-            body: RecvBody::with_capacity(recv, 10240, 1024000, conn, stream_id),
+            body: RecvBody::with_capacity(recv, 10_240, 1_024_000, conn, stream_id),
         }
     }
 }
@@ -396,7 +398,7 @@ impl SendResponse {
             stream_id,
             body: Some(body.into()),
             send: Some(send),
-            trailer: trailers.map(|t| Header::trailer(t)),
+            trailer: trailers.map(Header::trailer),
             header: Some(Header::response(status, headers)),
             state: SendResponseState::Encoding,
         }
@@ -413,7 +415,7 @@ impl Future for SendResponse {
                     let header = try_take(&mut self.header, "polled after finished")?;
                     let block = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.encode_header(&self.stream_id, header)?
+                        conn.encode_header(self.stream_id, header)?
                     };
 
                     let mut encoded = Vec::new();
@@ -442,7 +444,7 @@ impl Future for SendResponse {
                         Some(trailer) => {
                             let block = {
                                 let conn = &mut self.conn.h3.lock().unwrap().inner;
-                                conn.encode_header(&self.stream_id, trailer)?
+                                conn.encode_header(self.stream_id, trailer)?
                             };
 
                             let mut encoded = Vec::new();

@@ -58,7 +58,7 @@ where
             (cur.position() as usize, decoded)
         };
 
-        return match decoded {
+        match decoded {
             Err(frame::Error::UnexpectedEnd) => match self.buf.len() {
                 Self::READ_SIZE => Err(Error::Overflow),
                 _ => {
@@ -74,7 +74,7 @@ where
                 self.buf.advance(pos);
                 Ok(Async::Ready(Some(f)))
             }
-        };
+        }
     }
 }
 
