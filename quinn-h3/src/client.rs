@@ -297,7 +297,7 @@ impl RecvResponse {
         let (status, headers) = header.into_response_parts()?;
         let mut response = Response::builder();
         response.status(status);
-        response.version(http::version::Version::HTTP_2); // TODO change once available
+        response.version(http::version::Version::HTTP_3);
         *response
             .headers_mut()
             .ok_or(Error::peer("invalid response"))? = headers;
