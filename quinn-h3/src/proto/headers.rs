@@ -19,12 +19,13 @@ pub struct Header {
     fields: HeaderMap,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl Header {
     pub fn request(method: Method, uri: Uri, headers: HeaderMap) -> Self {
         let pseudo = Pseudo::request(method, uri);
 
         Self {
-            pseudo: pseudo,
+            pseudo,
             fields: headers,
         }
     }
@@ -33,7 +34,7 @@ impl Header {
         let pseudo = Pseudo::response(status);
 
         Self {
-            pseudo: pseudo,
+            pseudo,
             fields: headers,
         }
     }
@@ -62,7 +63,7 @@ impl Header {
 
         Ok((
             self.pseudo.method.ok_or(Error::MissingMethod)?,
-            uri.build().map_err(|e| Error::InvalidRequest(e))?,
+            uri.build().map_err(Error::InvalidRequest)?,
             self.fields,
         ))
     }
@@ -174,7 +175,7 @@ impl Field {
         V: AsRef<[u8]>,
     {
         let name = name.as_ref();
-        if name.len() < 1 {
+        if name.is_empty() {
             return Err(Error::InvalidHeaderName(format!("{:?}", name)));
         }
 
@@ -189,19 +190,19 @@ impl Field {
                 PseudoType::PATH => Field::Path(try_value(name, value)?),
                 PseudoType::METHOD => Field::Method(
                     Method::from_bytes(value.as_ref())
-                        .or(Err(Error::invalid_value(name, value)))?,
+                        .or_else(|_| Err(Error::invalid_value(name, value)))?,
                 ),
                 PseudoType::STATUS => Field::Status(
-                    StatusCode::from_bytes(value.as_ref().into())
-                        .or(Err(Error::invalid_value(name, value)))?,
+                    StatusCode::from_bytes(value.as_ref())
+                        .or_else(|_| Err(Error::invalid_value(name, value)))?,
                 ),
             });
         }
 
         Ok(Field::Header((
-            HeaderName::from_bytes(name.as_ref().into()).or(Err(Error::invalid_name(name)))?,
-            HeaderValue::from_bytes(value.as_ref().into())
-                .or(Err(Error::invalid_value(name, value)))?,
+            HeaderName::from_bytes(name).or_else(|_| Err(Error::invalid_name(name)))?,
+            HeaderValue::from_bytes(value.as_ref())
+                .or_else(|_| Err(Error::invalid_value(name, value)))?,
         )))
     }
 }
@@ -212,7 +213,7 @@ where
     V: AsRef<[u8]>,
 {
     string::TryFrom::<Bytes>::try_from(Bytes::from(value.as_ref()))
-        .or(Err(Error::invalid_value(name, value)))
+        .or_else(|_| Err(Error::invalid_value(name, value)))
 }
 
 /// Pseudo-header fields have the same purpose as data from the first line of HTTP/1.X,
@@ -234,6 +235,7 @@ pub struct Pseudo {
     len: usize,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl Pseudo {
     pub fn request(method: Method, uri: Uri) -> Self {
         let parts = uri::Parts::from(uri);
@@ -241,7 +243,7 @@ impl Pseudo {
         let mut path = parts
             .path_and_query
             .map(|v| v.into())
-            .unwrap_or_else(|| Bytes::new());
+            .unwrap_or_else(Bytes::new);
 
         if path.is_empty() && method != Method::OPTIONS {
             path = Bytes::from_static(b"/");

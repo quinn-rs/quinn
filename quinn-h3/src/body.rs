@@ -119,7 +119,7 @@ impl RecvBody {
             stream_id,
             state: RecvBodyState::Receiving(BytesMut::with_capacity(capacity)),
             body: None,
-            recv: recv,
+            recv,
         }
     }
 }
@@ -162,7 +162,7 @@ impl Future for RecvBody {
                 RecvBodyState::Decoding(ref frame) => {
                     let result = {
                         let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(&self.stream_id, frame)
+                        conn.decode_header(self.stream_id, frame)
                     };
 
                     match result {

@@ -35,7 +35,7 @@ impl Connection {
         })
     }
 
-    pub fn encode_header(&mut self, stream_id: &StreamId, headers: Header) -> Result<HeadersFrame> {
+    pub fn encode_header(&mut self, stream_id: StreamId, headers: Header) -> Result<HeadersFrame> {
         if let Some(ref s) = self.remote_settings {
             if headers.len() as u64 > s.max_header_list_size {
                 return Err(Error::HeaderListTooLarge);
@@ -57,11 +57,11 @@ impl Connection {
 
     pub fn decode_header(
         &mut self,
-        stream_id: &StreamId,
+        stream_id: StreamId,
         header: &HeadersFrame,
     ) -> Result<Option<Header>> {
         match qpack::decode_header(
-            &mut self.decoder_table,
+            &self.decoder_table,
             &mut std::io::Cursor::new(&header.encoded),
         ) {
             Err(DecoderError::MissingRefs) => Ok(None),
@@ -143,7 +143,7 @@ mod tests {
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
         let mut conn = Connection::default();
-        assert_matches!(conn.encode_header(&StreamId(1), header), Ok(_));
+        assert_matches!(conn.encode_header(StreamId(1), header), Ok(_));
         assert!(conn.pending_encoder.is_empty());
     }
 
@@ -161,7 +161,7 @@ mod tests {
         conn.encoder_table
             .set_max_blocked(12usize)
             .expect("set max blocked");
-        assert_matches!(conn.encode_header(&StreamId(1), header), Ok(_));
+        assert_matches!(conn.encode_header(StreamId(1), header), Ok(_));
         assert!(!conn.pending_encoder.is_empty());
     }
 
@@ -179,7 +179,7 @@ mod tests {
             ..Settings::default()
         });
         assert_eq!(
-            conn.encode_header(&StreamId(1), header),
+            conn.encode_header(StreamId(1), header),
             Err(Error::HeaderListTooLarge)
         );
     }
@@ -192,12 +192,12 @@ mod tests {
 
         let mut client = Connection::default();
         let encoded = client
-            .encode_header(&StreamId(1), header)
+            .encode_header(StreamId(1), header)
             .expect("encoding failed");
 
         let mut server = Connection::default();
         assert_matches!(
-            server.decode_header(&StreamId(1), &encoded),
+            server.decode_header(StreamId(1), &encoded),
             Ok(Some(_header))
         );
         assert!(!server.pending_decoder.is_empty());
@@ -221,7 +221,7 @@ mod tests {
             .expect("set max");
 
         let encoded = client
-            .encode_header(&StreamId(1), header)
+            .encode_header(StreamId(1), header)
             .expect("encoding failed");
         assert!(!client.pending_encoder.is_empty());
 
@@ -232,7 +232,7 @@ mod tests {
         })
         .expect("create server");
 
-        assert_eq!(server.decode_header(&StreamId(1), &encoded), Ok(None));
+        assert_eq!(server.decode_header(StreamId(1), &encoded), Ok(None));
         assert!(server.pending_decoder.is_empty());
     }
 }

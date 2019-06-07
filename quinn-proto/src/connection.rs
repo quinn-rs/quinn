@@ -2970,7 +2970,7 @@ where
     partial_encode.finish(
         &mut buf,
         header_crypto,
-        Some((packet_number as u64, crypto)),
+        Some((u64::from(packet_number), crypto)),
     );
     buf.into()
 }
