@@ -20,6 +20,7 @@ use quinn_h3::{
     connection::ConnectionDriver,
     server::{IncomingRequest, RequestReady, ServerBuilder},
 };
+use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -119,7 +120,7 @@ fn server(
     log: Logger,
     options: Opt,
     runtime: &mut Runtime,
-    certs: (quinn::tls::CertificateChain, quinn::tls::PrivateKey),
+    certs: (CertificateChain, PrivateKey),
 ) -> Result<quinn::EndpointDriver> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
@@ -220,7 +221,7 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
 fn client(
     log: Logger,
     options: Opt,
-    cert: quinn::tls::Certificate,
+    cert: Certificate,
 ) -> Result<(quinn::EndpointDriver, impl Future<Item = (), Error = Error>)> {
     let url = options.url;
     let remote = url
@@ -281,14 +282,7 @@ fn client(
     Ok((endpoint_driver, Box::new(fut)))
 }
 
-fn build_certs(
-    log: Logger,
-    options: Opt,
-) -> Result<(
-    quinn::tls::CertificateChain,
-    quinn::tls::Certificate,
-    quinn::tls::PrivateKey,
-)> {
+fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certificate, PrivateKey)> {
     if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
         let key = quinn::PrivateKey::from_der(&key)?;
