@@ -15,7 +15,7 @@ use crate::udp::UdpSocket;
 /// A helper for constructing an `Endpoint`.
 #[derive(Clone, Debug)]
 pub struct EndpointBuilder {
-    reactor: Option<tokio_reactor::Handle>,
+    reactor: Option<tokio_net::driver::Handle>,
     logger: Logger,
     server_config: Option<ServerConfig>,
     config: EndpointConfig,
@@ -48,7 +48,7 @@ impl EndpointBuilder {
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
         let reactor = self
             .reactor
-            .unwrap_or_else(|| tokio_reactor::Handle::default());
+            .unwrap_or_else(|| tokio_net::driver::Handle::default());
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
@@ -77,7 +77,7 @@ impl EndpointBuilder {
         self
     }
 
-    pub fn reactor(&mut self, handle: tokio_reactor::Handle) -> &mut Self {
+    pub fn reactor(&mut self, handle: tokio_net::driver::Handle) -> &mut Self {
         self.reactor = Some(handle);
         self
     }

@@ -24,7 +24,7 @@
 //! Notice how server sees multiple incoming connections with different IDs coming from the same
 //! endpoint.
 
-use futures::{Future, Stream};
+use futures::{StreamExt, TryFutureExt};
 use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use tokio::runtime::current_thread::{self, Runtime};
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (client, driver) =
         make_client_endpoint("0.0.0.0:0", &[&server1_cert, &server2_cert, &server3_cert])?;
     // drive UDP socket
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
 
     // connect to multiple endpoints using the same socket/endpoint
     run_client(&mut runtime, &client, 5000)?;
@@ -57,25 +57,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// Runs a QUIC server bound to given address and returns server certificate.
 fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8>, Box<dyn Error>> {
-    let (driver, incoming, server_cert) = make_server_endpoint(addr)?;
+    let (driver, mut incoming, server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-    let handle_incoming_conns = incoming.take(1).for_each(move |incoming_conn| {
-        current_thread::spawn(
-            incoming_conn
-                .and_then(|new_conn| {
-                    println!(
-                        "[server] incoming connection: id={} addr={}",
-                        new_conn.connection.remote_id(),
-                        new_conn.connection.remote_address()
-                    );
-                    new_conn.driver
-                })
-                .map_err(|_| ()),
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    // accept a single connection
+    runtime.spawn(async move {
+        let quinn::NewConnection {
+            driver, connection, ..
+        } = incoming.next().await.unwrap().await.unwrap();
+        println!(
+            "[server] incoming connection: id={} addr={}",
+            connection.remote_id(),
+            connection.remote_address()
         );
-        Ok(())
+        let _ = driver.await;
     });
-    runtime.spawn(handle_incoming_conns);
 
     Ok(server_cert)
 }
@@ -87,19 +83,20 @@ fn run_client(
     server_port: u16,
 ) -> Result<(), Box<dyn Error>> {
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
-    let connect = endpoint
-        .connect(&server_addr, "localhost")?
-        .map_err(|e| panic!("Failed to connect: {}", e))
-        .and_then(|new_conn| {
-            current_thread::spawn(new_conn.driver.map_err(|_| ()));
-            println!(
-                "[client] connected: id={}, addr={}",
-                new_conn.connection.remote_id(),
-                new_conn.connection.remote_address()
-            );
-            Ok(())
-        });
-    runtime.spawn(connect);
+    runtime.spawn(
+        endpoint
+            .connect(&server_addr, "localhost")?
+            .map_ok(|new_conn| {
+                current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                let conn = new_conn.connection;
+                println!(
+                    "[client] connected: id={}, addr={}",
+                    conn.remote_id(),
+                    conn.remote_address()
+                );
+            })
+            .unwrap_or_else(|e| panic!("Failed to connect: {}", e)),
+    );
 
     Ok(())
 }

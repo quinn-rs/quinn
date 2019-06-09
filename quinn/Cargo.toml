@@ -24,15 +24,15 @@ bytes = "0.4.7"
 ct-logs = "0.6"
 err-derive = "0.1.5"
 fnv = "1.0.6"
-futures = "0.1.21"
+futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
 rustls = { version = "0.16", features = ["quic"] }
 slog = "2.1"
-tokio-reactor = "0.1.1"
-tokio-io = "0.1"
-tokio-timer = "0.2.1"
+tokio-net = { version = "0.2.0-alpha.5", default-features = false }
+tokio-timer = "0.3.0-alpha.5"
+tokio-io = "0.2.0-alpha.5"
 webpki = "0.21"
 webpki-roots = "0.17"
 
@@ -45,8 +45,7 @@ rand = "0.7"
 rcgen = "0.7"
 slog-term = "2"
 structopt = "0.3.0"
-tokio = "0.1.6"
-tokio-current-thread = "0.1"
+tokio = "0.2.0-alpha.4"
 unwrap = "1.2.1"
 url = "2"
 

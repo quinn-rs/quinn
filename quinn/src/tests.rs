@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fmt, io, str};
 
-use futures::{Future, Stream};
+use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use slog::{o, Drain, Logger, KV};
 use tokio;
 
@@ -20,11 +20,11 @@ fn handshake_timeout() {
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
-    let mut runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.spawn(client_driver.map_err(|e| panic!("client endpoint driver failed: {}", e)));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client endpoint driver failed: {}", e)));
 
     let mut client_config = crate::ClientConfig::default();
-    const IDLE_TIMEOUT: u64 = 1_000;
+    const IDLE_TIMEOUT: u64 = 500;
     client_config.transport = Arc::new(crate::TransportConfig {
         idle_timeout: IDLE_TIMEOUT,
         initial_rtt: 10_000, // Ensure initial PTO doesn't influence the timeout significantly
@@ -32,25 +32,21 @@ fn handshake_timeout() {
     });
 
     let start = Instant::now();
-    runtime
-        .block_on(
-            client
-                .connect_with(
-                    client_config,
-                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
-                    "localhost",
-                )
-                .unwrap()
-                .then(|x| -> Result<(), ()> {
-                    match x {
-                        Err(crate::ConnectionError::TimedOut) => {}
-                        Err(e) => panic!("unexpected error: {:?}", e),
-                        Ok(_) => panic!("unexpected success"),
-                    }
-                    Ok(())
-                }),
-        )
-        .unwrap();
+    runtime.block_on(async move {
+        match client
+            .connect_with(
+                client_config,
+                &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
+                "localhost",
+            )
+            .unwrap()
+            .await
+        {
+            Err(crate::ConnectionError::TimedOut) => {}
+            Err(e) => panic!("unexpected error: {:?}", e),
+            Ok(_) => panic!("unexpected success"),
+        }
+    });
     let dt = start.elapsed();
     assert!(
         dt > Duration::from_millis(IDLE_TIMEOUT) && dt < 2 * Duration::from_millis(IDLE_TIMEOUT)
@@ -72,11 +68,11 @@ fn drop_endpoint() {
                 "localhost",
             )
             .unwrap()
-            .then(|x| match x {
+            .map(|x| match x {
                 Err(crate::ConnectionError::TransportError(proto::TransportError {
                     code: proto::TransportErrorCode::INTERNAL_ERROR,
                     ..
-                })) => Ok(()),
+                })) => {}
                 Err(e) => panic!("unexpected error: {}", e),
                 Ok(_) => {
                     panic!("unexpected success");
@@ -84,7 +80,7 @@ fn drop_endpoint() {
             }),
     );
 
-    let _ = (endpoint, driver);
+    drop((driver, endpoint));
     runtime.run().unwrap();
 }
 
@@ -111,7 +107,7 @@ fn close_endpoint() {
         .unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(incoming.for_each(|_| Ok(())).map_err(|_| ()));
+    runtime.spawn(incoming.for_each(|_| future::ready(())));
     runtime.spawn(
         endpoint
             .connect(
@@ -119,8 +115,8 @@ fn close_endpoint() {
                 "localhost",
             )
             .unwrap()
-            .then(|x| match x {
-                Err(crate::ConnectionError::LocallyClosed) => Ok(()),
+            .map(|x| match x {
+                Err(crate::ConnectionError::LocallyClosed) => (),
                 Err(e) => panic!("unexpected error: {}", e),
                 Ok(_) => {
                     panic!("unexpected success");
@@ -147,56 +143,43 @@ fn local_addr() {
 
 #[test]
 fn read_after_close() {
-    let (_, driver, endpoint, incoming) = endpoint();
+    let (_, driver, endpoint, mut incoming) = endpoint();
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(driver.map_err(|e| panic!("{}", e)));
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
-    runtime.spawn(
-        incoming
-            .take(1)
-            .and_then(|incoming| incoming.map_err(|_| ()))
-            .for_each(|new_conn| {
-                tokio::runtime::current_thread::spawn(new_conn.driver.map_err(|_| ()));
-                new_conn
-                    .connection
-                    .open_uni()
-                    .map_err(|e| panic!("open_uni: {}", e))
-                    .and_then(|s| {
-                        tokio::io::write_all(s, MSG.to_vec())
-                            .map_err(|e| panic!("write: {}", e))
-                            .and_then(|(s, _)| s.finish().map_err(|e| panic!("finish: {}", e)))
-                    })
-            }),
-    );
-    runtime.spawn(
-        endpoint
+    runtime.spawn(async move {
+        let new_conn = incoming
+            .next()
+            .await
+            .expect("endpoint")
+            .await
+            .expect("connection");
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        let mut s = new_conn.connection.open_uni().await.unwrap();
+        s.write_all(MSG).await.unwrap();
+        s.finish().await.unwrap();
+    });
+    runtime.spawn(async move {
+        let mut new_conn = endpoint
             .connect(&endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
-            .map_err(|e| panic!("connect: {}", e))
-            .and_then(|new_conn| {
-                tokio::runtime::current_thread::spawn(new_conn.driver.map_err(|_| ()));
-                let streams = new_conn.streams;
-                tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
-                    .map_err(|_| unreachable!())
-                    .and_then(move |()| {
-                        streams
-                            .into_future()
-                            .map_err(|(e, _)| panic!("incoming streams: {}", e))
-                            .and_then(|(stream, _)| {
-                                stream
-                                    .expect("missing stream")
-                                    .unwrap_uni()
-                                    .read_to_end(usize::max_value())
-                                    .map_err(|e| panic!("read_to_end: {}", e))
-                                    .map(|msg| {
-                                        assert_eq!(msg, MSG);
-                                    })
-                            })
-                    })
-            }),
-    );
-    // The endpoint driver won't finish if we could still create new connections
-    drop(endpoint);
+            .await
+            .expect("connect");
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        tokio::timer::delay(Instant::now() + Duration::from_millis(100)).await;
+        let stream = new_conn
+            .streams
+            .next()
+            .await
+            .expect("incoming streams")
+            .expect("missing stream");
+        let msg = stream
+            .unwrap_uni()
+            .read_to_end(usize::max_value())
+            .await
+            .expect("read_to_end");
+        assert_eq!(msg, MSG);
+    });
 
     runtime.run().unwrap();
 }
@@ -231,75 +214,72 @@ fn zero_rtt() {
     let (log, driver, endpoint, incoming) = endpoint();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(driver.map_err(|e| panic!("{}", e)));
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(incoming.take(2).for_each(|incoming| {
-        let NewConnection {
-            driver,
-            connection,
-            streams,
-            ..
-        } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
-        tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
-        tokio::runtime::current_thread::spawn(streams.map_err(|_| ()).for_each(|x| {
-            x.unwrap_uni()
-                .read_to_end(usize::max_value())
+        let new_conn = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        tokio::runtime::current_thread::spawn(
+            new_conn
+                .streams
                 .map_err(|_| ())
-                .map(|msg| {
-                    assert_eq!(msg, MSG);
+                .try_for_each(|x| {
+                    x.unwrap_uni()
+                        .read_to_end(usize::max_value())
+                        .map_err(|_| ())
+                        .map_ok(|msg| {
+                            assert_eq!(msg, MSG);
+                        })
                 })
-        }));
-        connection
+                .unwrap_or_else(|_| ()),
+        );
+        new_conn
+            .connection
             .open_uni()
-            .map_err(|e| panic!("open_uni: {}", e))
-            .and_then(|s| {
-                tokio::io::write_all(s, MSG.to_vec())
-                    .map_err(|e| panic!("write: {}", e))
-                    .and_then(|(s, _)| s.finish().map_err(|e| panic!("finish: {}", e)))
+            .unwrap_or_else(|e| panic!("open_uni: {}", e))
+            .then(|mut s| {
+                async move {
+                    s.write_all(MSG).await.expect("write");
+                    s.finish().await.expect("finish");
+                }
             })
     }));
-    runtime
-        .block_on(
-            endpoint
-                .connect(&endpoint.local_addr().unwrap(), "localhost")
-                .unwrap()
-                .into_0rtt()
-                .err()
-                .expect("0-RTT succeeded without keys")
-                .map_err(|e| panic!("connect: {}", e))
-                .and_then(|new_conn| {
-                    let NewConnection {
-                        driver, streams, ..
-                    } = new_conn;
-                    tokio::runtime::current_thread::spawn(
-                        // Buy time for the driver to process the server's NewSessionTicket
-                        tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
-                            .map_err(|_| unreachable!())
-                            .and_then(|()| {
-                                streams
-                                    .into_future()
-                                    .map_err(|(e, _)| panic!("incoming streams: {}", e))
-                                    .and_then(|(stream, _)| {
-                                        stream
-                                            .expect("missing stream")
-                                            .unwrap_uni()
-                                            .read_to_end(usize::max_value())
-                                            .map_err(|e| panic!("read_to_end: {}", e))
-                                            .map(|msg| {
-                                                assert_eq!(msg, MSG);
-                                            })
-                                    })
-                            }),
-                    );
-                    driver.then(|_| Ok(()))
-                }),
-        )
-        .unwrap();
+    runtime.block_on(async {
+        let NewConnection {
+            driver,
+            mut streams,
+            ..
+        } = endpoint
+            .connect(&endpoint.local_addr().unwrap(), "localhost")
+            .unwrap()
+            .into_0rtt()
+            .err()
+            .expect("0-RTT succeeded without keys")
+            .await
+            .expect("connect");
+
+        tokio::runtime::current_thread::spawn(async move {
+            // Buy time for the driver to process the server's NewSessionTicket
+            tokio::timer::delay(Instant::now() + Duration::from_millis(100)).await;
+            let stream = streams
+                .next()
+                .await
+                .expect("incoming streams")
+                .expect("missing stream")
+                .unwrap_uni();
+            let msg = stream
+                .read_to_end(usize::max_value())
+                .await
+                .expect("read_to_end");
+            assert_eq!(msg, MSG);
+        });
+        driver.unwrap_or_else(|_| ()).await
+    });
     info!(log, "initial connection complete");
     let NewConnection {
-        driver,
         connection,
-        streams,
+        driver,
+        mut streams,
         ..
     } = endpoint
         .connect(&endpoint.local_addr().unwrap(), "localhost")
@@ -310,33 +290,30 @@ fn zero_rtt() {
     runtime.spawn(
         connection
             .open_uni()
-            .map_err(|e| panic!("0-RTT open_uni: {}", e))
-            .and_then(|s| {
-                tokio::io::write_all(s, MSG.to_vec())
-                    .map_err(|e| panic!("0-RTT write: {}", e))
-                    .and_then(|(s, _)| s.finish().map_err(|e| panic!("0-RTT finish: {}", e)))
+            .unwrap_or_else(|e| panic!("0-RTT open_uni: {}", e))
+            .then(|mut s| {
+                async move {
+                    s.write_all(MSG).await.expect("0-RTT write");
+                    s.finish().await.expect("0-RTT finish");
+                }
             }),
     );
     // The connection won't implicitly close if we could still open new streams
     drop(connection);
-    runtime.spawn(driver.map_err(|_| ()));
-    runtime
-        .block_on(
-            streams
-                .into_future()
-                .map_err(|(e, _)| panic!("incoming streams: {}", e))
-                .and_then(|(stream, _)| {
-                    stream
-                        .expect("missing stream")
-                        .unwrap_uni()
-                        .read_to_end(usize::max_value())
-                        .map_err(|e| panic!("read_to_end: {}", e))
-                        .map(|msg| {
-                            assert_eq!(msg, MSG);
-                        })
-                }),
-        )
-        .unwrap();
+    runtime.spawn(driver.unwrap_or_else(|_| ()));
+    runtime.block_on(async move {
+        let stream = streams
+            .next()
+            .await
+            .expect("incoming streams")
+            .expect("missing stream")
+            .unwrap_uni();
+        let msg = stream
+            .read_to_end(usize::max_value())
+            .await
+            .expect("read_to_end");
+        assert_eq!(msg, MSG);
+    });
 
     // The endpoint driver won't finish if we could still create new connections
     drop(endpoint);
@@ -370,7 +347,7 @@ fn echo_dualstack() {
 }
 
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
-    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
@@ -387,7 +364,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (server_driver, _, server_incoming) = server.with_socket(server_sock).unwrap();
+        let (server_driver, _, mut server_incoming) = server.with_socket(server_sock).unwrap();
 
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
@@ -397,65 +374,51 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         client.default_client_config(client_config.build());
         let (client_driver, client, _) = client.bind(client_addr).unwrap();
 
-        runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
-        runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
-        runtime.spawn(
-            server_incoming
-                .and_then(|connect| connect.map_err(|_| ()))
-                .into_future()
-                .map_err(|_| ())
-                .map(move |(conn, _)| {
-                    let NewConnection {
-                        driver, streams, ..
-                    } = conn.unwrap();
-                    tokio::spawn(driver.map_err(|_| ()));
-                    tokio::spawn(streams.map_err(|_| ()).for_each(echo));
-                }),
-        );
+        runtime.spawn(server_driver.unwrap_or_else(|e| panic!("server driver failed: {}", e)));
+        runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client driver failed: {}", e)));
+        runtime.spawn(async move {
+            let incoming = server_incoming.next().await.unwrap();
+            let new_conn = incoming.await.unwrap();
+            tokio::spawn(
+                new_conn
+                    .streams
+                    .take_while(|x| future::ready(x.is_ok()))
+                    .for_each(|s| echo(s.unwrap())),
+            );
+            new_conn.driver.unwrap_or_else(|_| ()).await
+        });
 
         info!(log, "connecting from {} to {}", client_addr, server_addr);
-        runtime
-            .block_on(
-                client
-                    .connect(&server_addr, "localhost")
-                    .unwrap()
-                    .map_err(|e| panic!("connection failed: {}", e))
-                    .and_then(move |new_conn| {
-                        let NewConnection {
-                            driver, connection, ..
-                        } = new_conn;
-                        tokio::spawn(
-                            driver.map_err(|e| eprintln!("outgoing connection lost: {}", e)),
-                        );
-                        let stream = connection.open_bi();
-                        stream
-                            .map_err(|_| ())
-                            .and_then(move |(send, recv)| {
-                                tokio::io::write_all(send, b"foo".to_vec())
-                                    .map_err(|e| panic!("write: {}", e))
-                                    .and_then(move |_| {
-                                        // Rely on send being implicitly finished when we drop it
-                                        recv.read_to_end(usize::max_value())
-                                            .map_err(|e| panic!("read: {}", e))
-                                    })
-                            })
-                            .map(move |data| {
-                                assert_eq!(&data[..], b"foo");
-                                connection.close(0u32.into(), b"done");
-                            })
-                    }),
-            )
-            .unwrap();
+        runtime.block_on(async move {
+            let new_conn = client
+                .connect(&server_addr, "localhost")
+                .unwrap()
+                .await
+                .expect("connect");
+            tokio::spawn(
+                new_conn
+                    .driver
+                    .unwrap_or_else(|e| eprintln!("outgoing connection lost: {}", e)),
+            );
+            let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
+            send.write_all(b"foo").await.expect("write");
+            send.finish().await.expect("finish");
+            let data = recv.read_to_end(usize::max_value()).await.expect("read");
+            assert_eq!(&data[..], b"foo");
+            new_conn.connection.close(0u32.into(), b"done");
+        });
     }
-    runtime.shutdown_on_idle().wait().unwrap();
+    runtime.run().unwrap();
 }
 
-fn echo(stream: NewStream) -> impl Future<Item = (), Error = ()> {
-    let (send, recv) = stream.unwrap_bi();
-    tokio::io::copy(recv, send)
-        .and_then(|(_, _, send)| tokio::io::shutdown(send))
-        .map_err(|_| ())
-        .map(|_| ())
+async fn echo(stream: NewStream) {
+    let (mut send, recv) = stream.unwrap_bi();
+    let data = recv
+        .read_to_end(usize::max_value())
+        .await
+        .expect("read_to_end");
+    send.write_all(&data).await.expect("send");
+    let _ = send.finish().await;
 }
 
 fn logger() -> Logger {

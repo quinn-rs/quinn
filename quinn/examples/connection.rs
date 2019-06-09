@@ -13,9 +13,9 @@
 //! [client] connected: id=61a2df1548935aeb, addr=127.0.0.1:5000
 //! ```
 
-use futures::{Future, Stream};
+use futures::{StreamExt, TryFutureExt};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use tokio::runtime::current_thread::{self, Runtime};
+use tokio::runtime::current_thread::Runtime;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
@@ -25,47 +25,47 @@ const SERVER_PORT: u16 = 5000;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = Runtime::new()?;
 
-    let (driver, incoming, server_cert) = make_server_endpoint(("0.0.0.0", SERVER_PORT))?;
-    // drive UDP socket
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-    let handle_incoming_conns = incoming.take(1).for_each(move |incoming_conn| {
-        current_thread::spawn(
-            incoming_conn
-                .and_then(|new_conn| {
-                    println!(
-                        "[server] incoming connection: id={} addr={}",
-                        new_conn.connection.remote_id(),
-                        new_conn.connection.remote_address()
-                    );
-                    new_conn.driver
-                })
-                .map_err(|_| ()),
+    let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), SERVER_PORT));
+    let (driver, mut incoming, server_cert) = make_server_endpoint(server_addr)?;
+    // drive server's UDP socket
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    // accept a single connection
+    runtime.spawn(async move {
+        let incoming_conn = incoming.next().await.unwrap();
+        let new_conn = incoming_conn.await.unwrap();
+        println!(
+            "[server] connection accepted: id={} addr={}",
+            new_conn.connection.remote_id(),
+            new_conn.connection.remote_address()
         );
-        Ok(())
+        // Drive the connection to completion
+        if let Err(e) = new_conn.driver.await {
+            println!("[server] connection lost: {}", e);
+        }
     });
-    runtime.spawn(handle_incoming_conns);
 
     let (endpoint, driver) = make_client_endpoint("0.0.0.0:0", &[&server_cert])?;
-    // drive UDP socket
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-
-    let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), SERVER_PORT));
-    let connect = endpoint
-        .connect(&server_addr, "localhost")?
-        .map_err(|e| panic!("Failed to connect: {}", e))
-        .and_then(|new_conn| {
-            current_thread::spawn(new_conn.driver.map_err(|_| ()));
-            println!(
-                "[client] connected: id={}, addr={}",
-                new_conn.connection.remote_id(),
-                new_conn.connection.remote_address()
-            );
-            Ok(())
-        });
-    runtime.spawn(connect);
-
-    // We don't need it anymore and dropping the endpoint will make it's driver finish eventually.
-    drop(endpoint);
+    // drive client's UDP socket
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    // connect to server
+    runtime.spawn(async move {
+        let quinn::NewConnection {
+            driver, connection, ..
+        } = endpoint
+            .connect(&server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        println!(
+            "[client] connected: id={}, addr={}",
+            connection.remote_id(),
+            connection.remote_address()
+        );
+        // Dropping handles allows the corresponding objects to automatically shut down
+        drop((endpoint, connection));
+        // Drive the connection to completion
+        driver.await.unwrap();
+    });
 
     runtime.run()?;
     Ok(())

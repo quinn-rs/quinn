@@ -1,10 +1,12 @@
 use std::io;
 use std::net::SocketAddr;
 
-use futures::{try_ready, Async, Poll};
+use futures::task::Context;
+use futures::{ready, Poll};
 use mio;
 
-use tokio_reactor::{Handle, PollEvented};
+use tokio_net::driver::Handle;
+use tokio_net::util::PollEvented;
 
 use proto::EcnCodepoint;
 
@@ -28,33 +30,35 @@ impl UdpSocket {
 
     pub fn poll_send(
         &self,
+        cx: &mut Context,
         remote: &SocketAddr,
         ecn: Option<EcnCodepoint>,
         msg: &[u8],
-    ) -> Poll<usize, io::Error> {
-        try_ready!(self.io.poll_write_ready());
+    ) -> Poll<Result<usize, io::Error>> {
+        ready!(self.io.poll_write_ready(cx))?;
         match self.io.get_ref().send_ext(remote, ecn, msg) {
-            Ok(n) => Ok(Async::Ready(n)),
+            Ok(n) => Poll::Ready(Ok(n)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_write_ready()?;
-                Ok(Async::NotReady)
+                self.io.clear_write_ready(cx)?;
+                Poll::Pending
             }
-            Err(e) => Err(e),
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 
     pub fn poll_recv(
         &self,
+        cx: &mut Context,
         buf: &mut [u8],
-    ) -> Poll<(usize, SocketAddr, Option<EcnCodepoint>), io::Error> {
-        try_ready!(self.io.poll_read_ready(mio::Ready::readable()));
+    ) -> Poll<Result<(usize, SocketAddr, Option<EcnCodepoint>), io::Error>> {
+        ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
         match self.io.get_ref().recv_ext(buf) {
-            Ok(n) => Ok(n.into()),
+            Ok(n) => Poll::Ready(Ok(n.into())),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_read_ready(mio::Ready::readable())?;
-                Ok(Async::NotReady)
+                self.io.clear_read_ready(cx, mio::Ready::readable())?;
+                Poll::Pending
             }
-            Err(e) => Err(e),
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 
