@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io;
 use std::net::ToSocketAddrs;
 use std::str;
@@ -14,8 +13,8 @@ use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::udp::UdpSocket;
 
 /// A helper for constructing an `Endpoint`.
-pub struct EndpointBuilder<'a> {
-    reactor: Option<&'a tokio_reactor::Handle>,
+pub struct EndpointBuilder {
+    reactor: Option<tokio_reactor::Handle>,
     logger: Logger,
     server_config: Option<ServerConfig>,
     config: EndpointConfig,
@@ -23,7 +22,7 @@ pub struct EndpointBuilder<'a> {
 }
 
 #[allow(missing_docs)]
-impl<'a> EndpointBuilder<'a> {
+impl EndpointBuilder {
     /// Start a builder with a specific initial low-level configuration.
     pub fn new(config: EndpointConfig) -> Self {
         Self {
@@ -46,10 +45,9 @@ impl<'a> EndpointBuilder<'a> {
         self,
         socket: std::net::UdpSocket,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
-        let reactor = match self.reactor {
-            Some(x) => Cow::Borrowed(x),
-            None => Cow::Owned(tokio_reactor::Handle::default()),
-        };
+        let reactor = self
+            .reactor
+            .unwrap_or_else(|| tokio_reactor::Handle::default());
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
@@ -78,7 +76,7 @@ impl<'a> EndpointBuilder<'a> {
         self
     }
 
-    pub fn reactor(&mut self, handle: &'a tokio_reactor::Handle) -> &mut Self {
+    pub fn reactor(&mut self, handle: tokio_reactor::Handle) -> &mut Self {
         self.reactor = Some(handle);
         self
     }
@@ -96,7 +94,7 @@ impl<'a> EndpointBuilder<'a> {
     }
 }
 
-impl<'a> Default for EndpointBuilder<'a> {
+impl Default for EndpointBuilder {
     fn default() -> Self {
         Self {
             reactor: None,
