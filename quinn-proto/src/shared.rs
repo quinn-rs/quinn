@@ -10,6 +10,7 @@ use ring::{digest, hmac::SigningKey};
 use slog::Logger;
 
 use crate::connection::Timer;
+use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
 use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
@@ -302,7 +303,7 @@ pub enum ConnectionEvent {
         remaining: Option<BytesMut>,
     },
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<(u64, ConnectionId)>),
+    NewIdentifiers(Vec<NewConnectionId>),
     /// A timeout has fired for a Connection
     Timer(Instant, Timer),
 }
