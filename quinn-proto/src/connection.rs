@@ -11,7 +11,6 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::BufMutExt;
-use crate::crypto::ring::reset_token_for;
 use crate::crypto::{self, ClientConfig, HeaderKeys, Keys};
 use crate::frame::FrameStruct;
 use crate::packet::{
@@ -1072,8 +1071,9 @@ where
                 }
             }
             NewIdentifiers(ids) => {
-                ids.into_iter().for_each(|(seq, cid)| {
-                    self.issue_cid(seq, cid);
+                ids.into_iter().for_each(|frame| {
+                    self.cids_issued += 1;
+                    self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
                 });
             }
             Timer(now, timer) => self.timeout(now, timer),
@@ -1513,19 +1513,6 @@ where
         }
         self.write_tls();
         Ok(())
-    }
-
-    fn issue_cid(&mut self, sequence: u64, cid: ConnectionId) {
-        let token = reset_token_for(&self.endpoint_config.reset_key, &cid);
-        self.cids_issued += 1;
-        self.space_mut(SpaceId::Data)
-            .pending
-            .new_cids
-            .push(frame::NewConnectionId {
-                id: cid,
-                sequence,
-                reset_token: token,
-            });
     }
 
     fn process_payload(

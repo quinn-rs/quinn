@@ -18,6 +18,7 @@ use crate::crypto::ring::reset_token_for;
 use crate::crypto::{
     self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
 };
+use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointConfig,
@@ -376,7 +377,11 @@ where
             meta.cids_issued += 1;
             let seq = meta.cids_issued;
             meta.loc_cids.insert(seq, cid);
-            ids.push((seq, cid));
+            ids.push(NewConnectionId {
+                sequence: seq,
+                id: cid,
+                reset_token: reset_token_for(&self.config.reset_key, &cid),
+            });
         }
         ConnectionEvent::NewIdentifiers(ids)
     }
