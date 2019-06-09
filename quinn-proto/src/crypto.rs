@@ -25,6 +25,8 @@ pub mod rustls;
 pub trait Session: Sized {
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
+    /// Type used to sign various values
+    type HmacKey: HmacKey;
     /// Type used to represent packet protection keys
     type Keys: Keys + Sized;
     /// Type used to hold configuration for server sessions
@@ -123,4 +125,17 @@ pub trait HeaderKeys {
     fn encrypt(&self, pn_offset: usize, packet: &mut [u8]);
     /// The sample size used for this key's algorithm
     fn sample_size(&self) -> usize;
+}
+
+/// A key for signing with HMAC-based algorithms
+pub trait HmacKey {
+    /// Type of the signatures created by `sign()`
+    type Signature: AsRef<[u8]>;
+
+    /// Method for creating a key
+    fn new(key: &[u8]) -> Self;
+    /// Method for signing a message
+    fn sign(&self, data: &[u8]) -> Self::Signature;
+    /// Method for verifying a message
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()>;
 }

@@ -346,6 +346,22 @@ impl TokenKey {
     }
 }
 
+impl crypto::HmacKey for hmac::SigningKey {
+    type Signature = hmac::Signature;
+
+    fn new(key: &[u8]) -> Self {
+        hmac::SigningKey::new(&digest::SHA512_256, key)
+    }
+
+    fn sign(&self, data: &[u8]) -> Self::Signature {
+        hmac::sign(self, data)
+    }
+
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()> {
+        hmac::verify_with_own_key(self, data, signature).map_err(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
