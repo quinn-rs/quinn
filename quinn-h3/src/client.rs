@@ -22,14 +22,14 @@ use crate::{
     try_take, Error, Settings,
 };
 
-pub struct ClientBuilder<'a> {
-    endpoint: EndpointBuilder<'a>,
+pub struct ClientBuilder {
+    endpoint: EndpointBuilder,
     log: Option<Logger>,
     settings: Settings,
 }
 
-impl<'a> ClientBuilder<'a> {
-    pub fn new(endpoint: EndpointBuilder<'a>) -> Self {
+impl ClientBuilder {
+    pub fn new(endpoint: EndpointBuilder) -> Self {
         Self {
             endpoint: endpoint,
             log: None,

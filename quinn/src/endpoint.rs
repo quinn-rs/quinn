@@ -33,7 +33,7 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Begin constructing an `Endpoint`
-    pub fn builder<'a>() -> EndpointBuilder<'a> {
+    pub fn builder() -> EndpointBuilder {
         EndpointBuilder::default()
     }
 
