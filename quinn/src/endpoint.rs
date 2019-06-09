@@ -1,16 +1,17 @@
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
+use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use bytes::Bytes;
 use fnv::FnvHashMap;
-use futures::sync::mpsc;
-use futures::task::{self, Task};
+use futures::channel::mpsc;
 use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 use slog::Logger;
 
@@ -111,8 +112,8 @@ impl Endpoint {
                 reason: reason.clone(),
             });
         }
-        if let Some(task) = endpoint.incoming_reader.take() {
-            task.notify();
+        if let Some(waker) = endpoint.incoming_reader.take() {
+            waker.wake();
         }
     }
 }
@@ -131,12 +132,11 @@ impl Endpoint {
 pub struct EndpointDriver(pub(crate) EndpointRef);
 
 impl Future for EndpointDriver {
-    type Item = ();
-    type Error = io::Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    type Output = Result<(), io::Error>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver.is_none() {
-            endpoint.driver = Some(task::current());
+            endpoint.driver = Some(cx.waker().clone());
         }
         loop {
             let now = Instant::now();
@@ -149,13 +149,11 @@ impl Future for EndpointDriver {
                 break;
             }
         }
-        Ok(
-            if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
-                Async::Ready(())
-            } else {
-                Async::NotReady
-            },
-        )
+        if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -163,8 +161,8 @@ impl Drop for EndpointDriver {
     fn drop(&mut self) {
         let mut endpoint = self.0.lock().unwrap();
         endpoint.driver_lost = true;
-        if let Some(task) = endpoint.incoming_reader.take() {
-            task.notify();
+        if let Some(waker) = endpoint.incoming_reader.take() {
+            waker.wake();
         }
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
@@ -178,10 +176,10 @@ pub(crate) struct EndpointInner {
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<ConnectionDriver>,
-    incoming_reader: Option<Task>,
+    incoming_reader: Option<Waker>,
     /// Whether the `Incoming` stream has not yet been dropped
     incoming_live: bool,
-    driver: Option<Task>,
+    driver: Option<Waker>,
     ipv6: bool,
     connections: FnvHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
     // Stored to give out clones to new ConnectionInners
@@ -200,7 +198,7 @@ impl EndpointInner {
         let mut recvd = 0;
         loop {
             match self.socket.poll_recv(&mut buf) {
-                Ok(Async::Ready((n, addr, ecn))) => {
+                Poll::Ready(Ok((n, addr, ecn))) => {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
                             let conn = ConnectionDriver(self.create_connection(None, handle, conn));
@@ -208,8 +206,8 @@ impl EndpointInner {
                                 conn.0.lock().unwrap().implicit_close();
                             }
                             self.incoming.push_back(conn);
-                            if let Some(task) = self.incoming_reader.take() {
-                                task.notify();
+                            if let Some(waker) = self.incoming_reader.take() {
+                                waker.wake();
                             }
                         }
                         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
@@ -223,15 +221,15 @@ impl EndpointInner {
                         None => {}
                     }
                 }
-                Ok(Async::NotReady) => {
+                Poll::Pending => {
                     break;
                 }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
-                Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
                     continue;
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
@@ -246,7 +244,7 @@ impl EndpointInner {
     fn drive_incoming(&mut self) {
         for i in (0..self.incoming.len()).rev() {
             match self.incoming[i].poll() {
-                Ok(Async::Ready(())) | Err(_) if !self.incoming_live => {
+                Poll::Ready(_) if !self.incoming_live => {
                     let _ = self.incoming.swap_remove_back(i);
                 }
                 // It's safe to poll an already dead connection
@@ -263,16 +261,16 @@ impl EndpointInner {
             .or_else(|| self.inner.poll_transmit())
         {
             match self.socket.poll_send(&t.destination, t.ecn, &t.contents) {
-                Ok(Async::Ready(_)) => {}
-                Ok(Async::NotReady) => {
+                Poll::Ready(Ok(_)) => {}
+                Poll::Pending => {
                     self.outgoing.push_front(t);
                     break;
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::PermissionDenied => {
                     self.outgoing.push_front(t);
                     break;
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
@@ -288,7 +286,7 @@ impl EndpointInner {
         use EndpointEvent::*;
         loop {
             match self.events.poll() {
-                Ok(Async::Ready(Some((ch, event)))) => match event {
+                Poll::Ready(Ok(Some((ch, event)))) => match event {
                     Proto(e) => {
                         if let proto::EndpointEvent::Drained = e {
                             self.connections.remove(&ch);
@@ -304,11 +302,11 @@ impl EndpointInner {
                     }
                     Transmit(t) => self.outgoing.push_back(t),
                 },
-                Ok(Async::Ready(None)) => unreachable!("EndpointInner owns one sender"),
-                Ok(Async::NotReady) => {
+                Poll::Ready(Ok(None)) => unreachable!("EndpointInner owns one sender"),
+                Poll::Pending => {
                     return Ok(());
                 }
-                Err(_) => unreachable!(),
+                Poll::Ready(Err(_)) => unreachable!(),
             }
         }
     }
@@ -356,19 +354,18 @@ impl Incoming {
 
 impl FuturesStream for Incoming {
     type Item = Connecting;
-    type Error = (); // FIXME: Infallible
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
-            Ok(Async::Ready(None))
+            Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            Ok(Async::Ready(Some(Connecting::new(conn.0))))
+            Poll::Ready(Some(Connecting::new(conn.0)))
         } else if endpoint.close.is_some() {
-            Ok(Async::Ready(None))
+            Poll::Ready(None)
         } else {
-            endpoint.incoming_reader = Some(task::current());
-            Ok(Async::NotReady)
+            endpoint.incoming_reader = Some(cx.waker().clone());
+            Poll::Pending
         }
     }
 }
@@ -425,8 +422,8 @@ impl Drop for EndpointRef {
             if x == 0 {
                 // If the driver is about to be on its own, ensure it can shut down if the last
                 // connection is gone.
-                if let Some(task) = endpoint.driver.take() {
-                    task.notify();
+                if let Some(waker) = endpoint.driver.take() {
+                    waker.wake();
                 }
             }
         }

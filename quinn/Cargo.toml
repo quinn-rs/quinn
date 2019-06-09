@@ -24,16 +24,16 @@ bytes = "0.4.7"
 ct-logs = "0.5"
 err-derive = "0.1.5"
 fnv = "1.0.6"
-futures = "0.1.21"
+futures = { package = "futures-preview", version = "0.3.0-alpha.16" }
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
 rand = "0.6"
 rustls = { version = "0.15.2", features = ["quic"] }
 slog = "2.1"
-tokio-reactor = "0.1.1"
-tokio-io = "0.1"
-tokio-timer = "0.2.1"
+tokio-reactor = { git = "https://github.com/tokio-rs/tokio", rev = "1f08354c08a3c423048267f47d1a365ca6c1a1dc" }
+tokio-io = { git = "https://github.com/tokio-rs/tokio", rev = "1f08354c08a3c423048267f47d1a365ca6c1a1dc" }
+tokio-timer = { git = "https://github.com/tokio-rs/tokio", rev = "1f08354c08a3c423048267f47d1a365ca6c1a1dc" }
 webpki = "0.19"
 webpki-roots = "0.16"
 

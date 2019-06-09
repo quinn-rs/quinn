@@ -1,13 +1,13 @@
-use std::io;
+use std::future::Future;
+use std::pin::Pin;
 use std::str;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use err_derive::Error;
-use futures::sync::oneshot;
-use futures::{task, try_ready};
-use futures::{Async, Future, Poll};
+use futures::channel::oneshot;
+use futures::io::{self, AsyncRead, AsyncWrite};
 use proto::{ConnectionError, StreamId};
-use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::connection::ConnectionRef;
 
@@ -46,7 +46,7 @@ impl SendStream {
     ///
     /// Returns the number of bytes written on success. Congestion and flow control may cause this
     /// to be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    pub fn poll_write(&mut self, buf: &[u8]) -> Poll<usize, WriteError> {
+    pub fn write(&mut self, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize, WriteError>> {
         use proto::WriteError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
@@ -57,27 +57,27 @@ impl SendStream {
             Ok(n) => n,
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
-                    return Err(WriteError::ConnectionClosed(x.clone()));
+                    return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
                 }
-                conn.blocked_writers.insert(self.stream, task::current());
-                return Ok(Async::NotReady);
+                conn.blocked_writers.insert(self.stream, cx.waker().clone());
+                return Poll::Pending;
             }
             Err(Stopped { error_code }) => {
-                return Err(WriteError::Stopped { error_code });
+                return Poll::Ready(Err(WriteError::Stopped { error_code }));
             }
             Err(UnknownStream) => {
-                return Err(WriteError::UnknownStream);
+                return Poll::Ready(Err(WriteError::UnknownStream));
             }
         };
-        conn.notify();
-        Ok(Async::Ready(n))
+        conn.wake();
+        Poll::Ready(Ok(n))
     }
 
     /// Shut down the send stream gracefully.
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn poll_finish(&mut self) -> Poll<(), WriteError> {
+    pub fn poll_finish(&mut self) -> Poll<Result<(), WriteError>> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt()
@@ -91,16 +91,15 @@ impl SendStream {
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
             conn.finishing.insert(self.stream, send);
-            conn.notify();
+            conn.wake();
         }
         let r = self.finishing.as_mut().unwrap().poll().unwrap();
-        match r {
-            Async::Ready(None) => {
+        match r? {
+            Poll::Ready(None) => {
                 self.finished = true;
-                Ok(Async::Ready(()))
+                Poll::Ready(Ok(()))
             }
-            Async::Ready(Some(e)) => Err(e),
-            Async::NotReady => Ok(Async::NotReady),
+            Poll::Ready(Some(e)) => Poll::Ready(Err(e)),
         }
     }
 
@@ -123,7 +122,7 @@ impl SendStream {
             return;
         }
         conn.inner.reset(self.stream, error_code);
-        conn.notify();
+        conn.wake();
     }
 
     #[doc(hidden)]
@@ -132,22 +131,24 @@ impl SendStream {
     }
 }
 
-impl io::Write for SendStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.poll_write(buf) {
-            Ok(Async::Ready(n)) => Ok(n),
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 impl AsyncWrite for SendStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Poll::Ready(match self.write(cx, buf) {
+            Poll::Ready(Ok(n)) => Ok(n),
+            Poll::Pending => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
+            Poll::Ready(Err(e)) => Err(e.into()),
+        })
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         self.poll_finish().map_err(Into::into)
     }
 }
@@ -161,7 +162,7 @@ impl Drop for SendStream {
         if !self.finished && self.finishing.is_none() {
             // Errors indicate that the stream was already reset, which is fine.
             if conn.inner.finish(self.stream).is_ok() {
-                conn.notify();
+                conn.wake();
             }
         }
     }
@@ -173,10 +174,9 @@ pub struct Finish {
 }
 
 impl Future for Finish {
-    type Item = ();
-    type Error = WriteError;
+    type Output = Result<(), WriteError>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.stream.poll_finish()
     }
 }
@@ -217,7 +217,11 @@ impl RecvStream {
     /// - If called after `poll_read_unordered` was called on the same stream.
     ///   This is forbidden because an unordered read could consume a segment of data from a
     ///   location other than the start of the receive buffer, making it impossible for future
-    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<Option<usize>, ReadError> {
+    pub fn read(
+        &mut self,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<Option<usize>, ReadError>> {
         self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
@@ -225,23 +229,23 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read(self.stream, buf) {
-            Ok(Some(n)) => Ok(Async::Ready(Some(n))),
+            Ok(Some(n)) => Poll::Ready(Ok(Some(n))),
             Ok(None) => {
                 self.all_data_read = true;
-                Ok(Async::Ready(None))
+                Poll::Ready(Ok(None))
             }
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
-                    return Err(ReadError::ConnectionClosed(x.clone()));
+                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
                 }
-                conn.blocked_readers.insert(self.stream, task::current());
-                Ok(Async::NotReady)
+                conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                Poll::Pending
             }
             Err(Reset { error_code }) => {
                 self.all_data_read = true;
-                Err(ReadError::Reset { error_code })
+                Poll::Ready(Err(ReadError::Reset { error_code }))
             }
-            Err(UnknownStream) => Err(ReadError::UnknownStream),
+            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
         }
     }
 
@@ -252,7 +256,10 @@ impl RecvStream {
     ///
     /// Unordered reads have reduced overhead and higher throughput, and should therefore be
     /// preferred when applicable.
-    pub fn poll_read_unordered(&mut self) -> Poll<Option<(Bytes, u64)>, ReadError> {
+    pub fn read_unordered(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
         self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
@@ -260,23 +267,23 @@ impl RecvStream {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read_unordered(self.stream) {
-            Ok(Some((bytes, offset))) => Ok(Async::Ready(Some((bytes, offset)))),
+            Ok(Some((bytes, offset))) => Poll::Ready(Ok(Some((bytes, offset)))),
             Ok(None) => {
                 self.all_data_read = true;
-                Ok(Async::Ready(None))
+                Poll::Ready(Ok(None))
             }
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
-                    return Err(ReadError::ConnectionClosed(x.clone()));
+                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
                 }
-                conn.blocked_readers.insert(self.stream, task::current());
-                Ok(Async::NotReady)
+                conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                Poll::Pending
             }
             Err(Reset { error_code }) => {
                 self.all_data_read = true;
-                Err(ReadError::Reset { error_code })
+                Poll::Ready(Err(ReadError::Reset { error_code }))
             }
-            Err(UnknownStream) => Err(ReadError::UnknownStream),
+            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
         }
     }
 
@@ -313,7 +320,7 @@ impl RecvStream {
             return;
         }
         conn.inner.stop_sending(self.stream, error_code);
-        conn.notify();
+        conn.wake();
         self.all_data_read = true;
     }
 }
@@ -332,25 +339,25 @@ pub struct ReadToEnd {
 }
 
 impl Future for ReadToEnd {
-    type Item = Vec<u8>;
-    type Error = ReadToEndError;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    type Output = Result<Vec<u8>, ReadToEndError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            match try_ready!(self.stream.poll_read_unordered()) {
-                Some((data, offset)) => {
+            match self.stream.read_unordered(cx) {
+                Poll::Ready(Ok(Some((data, offset)))) => {
                     let end = data.len() as u64 + offset;
                     if end > self.size_limit as u64 {
-                        return Err(ReadToEndError::TooLong);
+                        return Poll::Ready(Err(ReadToEndError::TooLong));
                     }
                     self.len = self.len.max(end as usize);
                     self.read.push((data, offset as usize));
                 }
-                None => {
+                Poll::Ready(Ok(None)) => {
                     let mut buffer = vec![0; self.len];
                     for (data, offset) in self.read.drain(..) {
                         buffer[offset..offset + data.len()].copy_from_slice(&data);
                     }
-                    return Ok(Async::Ready(buffer));
+                    return Poll::Ready(Ok(buffer));
                 }
             }
         }
@@ -374,20 +381,17 @@ impl From<ReadError> for ReadToEndError {
     }
 }
 
-impl io::Read for RecvStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self.poll_read(buf) {
-            Ok(Async::Ready(Some(n))) => Ok(n),
-            Ok(Async::Ready(None)) => Ok(0),
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(e) => Err(e.into()),
-        }
-    }
-}
-
 impl AsyncRead for RecvStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-        false
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        match self.read(cx, buf) {
+            Poll::Ready(Ok(Some(n))) => Poll::Ready(Ok(n)),
+            Poll::Ready(Ok(None)) => Poll::Ready(Ok(0)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+        }
     }
 }
 
@@ -399,7 +403,7 @@ impl Drop for RecvStream {
         }
         if !self.all_data_read {
             conn.inner.stop_sending(self.stream, 0);
-            conn.notify();
+            conn.wake();
         }
     }
 }
