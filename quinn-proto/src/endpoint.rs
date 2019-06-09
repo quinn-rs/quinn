@@ -14,7 +14,6 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
-use crate::crypto::ring::{reset_token_for, token};
 use crate::crypto::{
     self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
 };
@@ -698,6 +697,99 @@ pub struct ClientConfig<C> {
     pub log: Option<Logger>,
 }
 
+fn reset_token_for<H>(key: &H, id: &ConnectionId) -> ResetToken
+where
+    H: crypto::HmacKey,
+{
+    let signature = key.sign(id);
+    // TODO: Server ID??
+    let mut result = [0; RESET_TOKEN_SIZE];
+    result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
+    result.into()
+}
+
+mod token {
+    use std::io;
+    use std::net::{IpAddr, SocketAddr};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use bytes::{Buf, BufMut};
+
+    use crate::coding::{BufExt, BufMutExt};
+    use crate::crypto::HmacKey;
+    use crate::shared::ConnectionId;
+    use crate::{MAX_CID_SIZE, MIN_CID_SIZE};
+
+    // TODO: Use AEAD to hide token details from clients for better stability guarantees:
+    // - ticket consists of (random, aead-encrypted-data)
+    // - AEAD encryption key is HKDF(master-key, random)
+    // - AEAD nonce is always set to 0
+    // in other words, for each ticket, use different key derived from random using HKDF
+
+    pub fn generate<K>(
+        key: &K,
+        address: &SocketAddr,
+        dst_cid: &ConnectionId,
+        issued: SystemTime,
+    ) -> Vec<u8>
+    where
+        K: HmacKey,
+    {
+        let mut buf = Vec::new();
+        buf.write(dst_cid.len() as u8);
+        buf.put_slice(dst_cid);
+        buf.write::<u64>(
+            issued
+                .duration_since(UNIX_EPOCH)
+                .map(|x| x.as_secs())
+                .unwrap_or(0),
+        );
+        let signature_pos = buf.len();
+        match address.ip() {
+            IpAddr::V4(x) => buf.put_slice(&x.octets()),
+            IpAddr::V6(x) => buf.put_slice(&x.octets()),
+        }
+        buf.write(address.port());
+        let signature = key.sign(&buf);
+        // No reason to actually encode the IP in the token, since we always have the remote addr for an incoming packet.
+        buf.truncate(signature_pos);
+        buf.extend_from_slice(signature.as_ref());
+        buf
+    }
+
+    pub fn check<K>(
+        key: &K,
+        address: &SocketAddr,
+        data: &[u8],
+    ) -> Option<(ConnectionId, SystemTime)>
+    where
+        K: HmacKey,
+    {
+        let mut reader = io::Cursor::new(data);
+        let dst_cid_len = reader.get::<u8>().ok()? as usize;
+        if dst_cid_len > reader.remaining()
+            || dst_cid_len != 0 && (dst_cid_len < MIN_CID_SIZE || dst_cid_len > MAX_CID_SIZE)
+        {
+            return None;
+        }
+        let dst_cid = ConnectionId::new(&data[1..=dst_cid_len]);
+        reader.advance(dst_cid_len);
+        let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().ok()?, 0);
+        let signature_start = reader.position() as usize;
+
+        let mut buf = Vec::new();
+        buf.put_slice(&data[0..signature_start]);
+        match address.ip() {
+            IpAddr::V4(x) => buf.put_slice(&x.octets()),
+            IpAddr::V6(x) => buf.put_slice(&x.octets()),
+        }
+        buf.write(address.port());
+
+        key.verify(&buf, &data[signature_start..]).ok()?;
+        Some((dst_cid, issued))
+    }
+}
+
 /// Internal identifier for a `Connection` currently associated with an endpoint
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ConnectionHandle(pub usize);
@@ -772,5 +864,29 @@ impl From<crypto::rustls::TLSError> for ConnectError {
 impl From<ConfigError> for ConnectError {
     fn from(x: ConfigError) -> Self {
         ConnectError::Config(x)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn token_sanity() {
+        use crate::crypto::HmacKey;
+        use ring::hmac::SigningKey;
+        use std::net::Ipv6Addr;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let mut key = [0; 64];
+        rand::thread_rng().fill_bytes(&mut key);
+        let key = <SigningKey as HmacKey>::new(&key);
+        let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+        let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
+        let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
+        let token = token::generate(&key, &addr, &dst_cid, issued);
+        let (dst_cid2, issued2) = token::check(&key, &addr, &token).expect("token didn't validate");
+        assert_eq!(dst_cid, dst_cid2);
+        assert_eq!(issued, issued2);
     }
 }
