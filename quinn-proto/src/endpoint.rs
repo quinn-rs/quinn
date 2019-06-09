@@ -371,16 +371,16 @@ where
     fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: usize) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let cid = self.new_cid();
-            self.connection_ids.insert(cid, ch);
+            let id = self.new_cid();
+            self.connection_ids.insert(id, ch);
             let meta = &mut self.connections[ch];
             meta.cids_issued += 1;
-            let seq = meta.cids_issued;
-            meta.loc_cids.insert(seq, cid);
+            let sequence = meta.cids_issued;
+            meta.loc_cids.insert(sequence, id);
             ids.push(NewConnectionId {
-                sequence: seq,
-                id: cid,
-                reset_token: reset_token_for(&self.config.reset_key, &cid),
+                sequence,
+                id,
+                reset_token: reset_token_for(&self.config.reset_key, &id),
             });
         }
         ConnectionEvent::NewIdentifiers(ids)
