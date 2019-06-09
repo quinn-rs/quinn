@@ -14,7 +14,7 @@ use slog::{self, Logger};
 
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
-use crate::crypto::ring::reset_token_for;
+use crate::crypto::ring::{reset_token_for, token};
 use crate::crypto::{
     self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
 };
@@ -556,7 +556,7 @@ where
         let mut retry_cid = None;
         if server_config.use_stateless_retry {
             if let Some((token_dst_cid, token_issued)) =
-                server_config.token_key.check(&remote, &token)
+                token::check(&server_config.token_key, &remote, &token)
             {
                 let expires = token_issued
                     + Duration::from_micros(
@@ -571,9 +571,12 @@ where
                 trace!(self.log, "sending stateless retry due to invalid token");
             }
             if retry_cid.is_none() {
-                let token = server_config
-                    .token_key
-                    .generate(&remote, &dst_cid, SystemTime::now());
+                let token = token::generate(
+                    &server_config.token_key,
+                    &remote,
+                    &dst_cid,
+                    SystemTime::now(),
+                );
                 let mut buf = Vec::new();
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,

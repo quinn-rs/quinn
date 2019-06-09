@@ -1,6 +1,4 @@
 use std::io;
-use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::{Buf, BufMut, BytesMut};
 use ring::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
@@ -9,10 +7,9 @@ use ring::digest;
 use ring::hkdf;
 use ring::hmac::{self, SigningKey};
 
-use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConfigError, ConnectionId, ResetToken};
-use crate::{crypto, Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, Side, RESET_TOKEN_SIZE};
 
 pub(crate) fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
     let signature = hmac::sign(key, id);
@@ -268,32 +265,33 @@ const INITIAL_SALT: [u8; 20] = [
     0x48, 0x5e, 0x09, 0xa0,
 ];
 
-/// Key used to sign and verify stateless resets
-pub struct TokenKey {
+pub(crate) mod token {
+    use std::io;
+    use std::net::{IpAddr, SocketAddr};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use bytes::{Buf, BufMut};
+
+    use crate::coding::{BufExt, BufMutExt};
+    use crate::crypto::HmacKey;
+    use crate::shared::ConnectionId;
+    use crate::{MAX_CID_SIZE, MIN_CID_SIZE};
+
     // TODO: Use AEAD to hide token details from clients for better stability guarantees:
     // - ticket consists of (random, aead-encrypted-data)
     // - AEAD encryption key is HKDF(master-key, random)
     // - AEAD nonce is always set to 0
     // in other words, for each ticket, use different key derived from random using HKDF
-    inner: SigningKey,
-}
 
-impl TokenKey {
-    /// Size of the key
-    pub const SIZE: usize = 64;
-
-    /// Create a new token key with the specified key
-    pub fn new(key: &[u8; Self::SIZE]) -> Self {
-        let inner = SigningKey::new(&digest::SHA512_256, key);
-        Self { inner }
-    }
-
-    pub(crate) fn generate(
-        &self,
+    pub fn generate<K>(
+        key: &K,
         address: &SocketAddr,
         dst_cid: &ConnectionId,
         issued: SystemTime,
-    ) -> Vec<u8> {
+    ) -> Vec<u8>
+    where
+        K: HmacKey,
+    {
         let mut buf = Vec::new();
         buf.write(dst_cid.len() as u8);
         buf.put_slice(dst_cid);
@@ -309,18 +307,21 @@ impl TokenKey {
             IpAddr::V6(x) => buf.put_slice(&x.octets()),
         }
         buf.write(address.port());
-        let signature = hmac::sign(&self.inner, &buf);
+        let signature = key.sign(&buf);
         // No reason to actually encode the IP in the token, since we always have the remote addr for an incoming packet.
         buf.truncate(signature_pos);
         buf.extend_from_slice(signature.as_ref());
         buf
     }
 
-    pub(crate) fn check(
-        &self,
+    pub fn check<K>(
+        key: &K,
         address: &SocketAddr,
         data: &[u8],
-    ) -> Option<(ConnectionId, SystemTime)> {
+    ) -> Option<(ConnectionId, SystemTime)>
+    where
+        K: HmacKey,
+    {
         let mut reader = io::Cursor::new(data);
         let dst_cid_len = reader.get::<u8>().ok()? as usize;
         if dst_cid_len > reader.remaining()
@@ -341,7 +342,7 @@ impl TokenKey {
         }
         buf.write(address.port());
 
-        hmac::verify_with_own_key(&self.inner, &buf, &data[signature_start..]).ok()?;
+        key.verify(&buf, &data[signature_start..]).ok()?;
         Some((dst_cid, issued))
     }
 }
@@ -371,6 +372,7 @@ impl crypto::HmacKey for hmac::SigningKey {
 mod test {
     use super::*;
     use crate::crypto::{HeaderKeys, Keys};
+    use crate::MAX_CID_SIZE;
     use rand::{self, RngCore};
 
     #[test]
@@ -451,16 +453,19 @@ mod test {
 
     #[test]
     fn token_sanity() {
-        use std::net::Ipv6Addr;
+        use crate::crypto::HmacKey;
+        use crate::MAX_CID_SIZE;
+        use std::net::{Ipv6Addr, SocketAddr};
+        use std::time::{Duration, UNIX_EPOCH};
 
-        let mut key = [0; TokenKey::SIZE];
+        let mut key = [0; 64];
         rand::thread_rng().fill_bytes(&mut key);
-        let key = TokenKey::new(&key);
+        let key = <SigningKey as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
-        let token = key.generate(&addr, &dst_cid, issued);
-        let (dst_cid2, issued2) = key.check(&addr, &token).expect("token didn't validate");
+        let token = token::generate(&key, &addr, &dst_cid, issued);
+        let (dst_cid2, issued2) = token::check(&key, &addr, &token).expect("token didn't validate");
         assert_eq!(dst_cid, dst_cid2);
         assert_eq!(issued, issued2);
     }
