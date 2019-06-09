@@ -10,9 +10,10 @@ use ring::{digest, hmac::SigningKey};
 use slog::Logger;
 
 use crate::connection::Timer;
+use crate::crypto::HmacKey;
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
-use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -230,7 +231,7 @@ pub struct ServerConfig<S> {
     pub crypto: S,
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: crypto::ring::TokenKey,
+    pub token_key: SigningKey,
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
@@ -264,7 +265,8 @@ where
             transport: Arc::new(TransportConfig::default()),
             crypto: S::default(),
 
-            token_key: crypto::ring::TokenKey::new(&token_value),
+            // Safe unwrap: key length is as necessary (for SigningKey HmacKey impl)
+            token_key: <SigningKey as HmacKey>::new(&token_value).unwrap(),
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
