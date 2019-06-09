@@ -5,11 +5,11 @@
 //! $ cargo run --example insecure_connection --features="rustls/dangerous_configuration"
 //! ```
 
-use futures::{Future, Stream};
+use futures::{StreamExt, TryFutureExt};
 use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::sync::Arc;
-use tokio::runtime::current_thread::{self, Runtime};
+use tokio::runtime::current_thread::Runtime;
 
 use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
 
@@ -31,26 +31,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// Runs a QUIC server bound to given address.
 fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Box<dyn Error>> {
-    let (driver, incoming, _server_cert) = make_server_endpoint(addr)?;
+    let (driver, mut incoming, _server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
-    let handle_incoming_conns = incoming.take(1).for_each(move |incoming_conn| {
-        current_thread::spawn(
-            incoming_conn
-                .and_then(|new_conn| {
-                    println!(
-                        "[server] incoming connection: id={} addr={}",
-                        new_conn.connection.remote_id(),
-                        new_conn.connection.remote_address()
-                    );
-                    new_conn.driver
-                })
-                .map_err(|_| ()),
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    // accept a single connection
+    runtime.spawn(async move {
+        let incoming_conn = incoming.next().await.unwrap();
+        let new_conn = incoming_conn.await.unwrap();
+        println!(
+            "[server] connection accepted: id={} addr={}",
+            new_conn.connection.remote_id(),
+            new_conn.connection.remote_address()
         );
-        Ok(())
+        // Drive the connection to completion
+        if let Err(e) = new_conn.driver.await {
+            println!("[server] connection lost: {}", e);
+        }
     });
-    runtime.spawn(handle_incoming_conns);
-
     Ok(())
 }
 
@@ -60,22 +57,28 @@ fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<dyn Err
     endpoint_builder.default_client_config(client_cfg);
 
     let (driver, endpoint, _) = endpoint_builder.bind("0.0.0.0:0")?;
-    runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
 
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
-    let connect = endpoint
-        .connect(&server_addr, "localhost")?
-        .map_err(|e| panic!("Failed to connect: {}", e))
-        .and_then(|new_conn| {
-            current_thread::spawn(new_conn.driver.map_err(|_| ()));
-            println!(
-                "[client] connected: id={}, addr={}",
-                new_conn.connection.remote_id(),
-                new_conn.connection.remote_address()
-            );
-            Ok(())
-        });
-    runtime.spawn(connect);
+    // connect to server
+    runtime.spawn(async move {
+        let quinn::NewConnection {
+            driver, connection, ..
+        } = endpoint
+            .connect(&server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        println!(
+            "[client] connected: id={}, addr={}",
+            connection.remote_id(),
+            connection.remote_address()
+        );
+        // Dropping handles allows the corresponding objects to automatically shut down
+        drop((endpoint, connection));
+        // Drive the connection to completion
+        driver.await.unwrap();
+    });
 
     Ok(())
 }

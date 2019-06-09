@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::rc::Rc;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Benchmark, Criterion, Throughput};
-use futures::{try_ready, Async, Future, Poll, Stream};
+use futures::{StreamExt, TryFutureExt};
 use tokio;
 
 use quinn::{ClientConfigBuilder, Endpoint, NewStream, ReadError, RecvStream, ServerConfigBuilder};
@@ -23,7 +23,7 @@ fn throughput(c: &mut Criterion) {
     server.listen(server_config.build());
     let server_sock = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
     let server_addr = server_sock.local_addr().unwrap();
-    let (server_driver, _, server_incoming) = server.with_socket(server_sock).unwrap();
+    let (server_driver, _, mut server_incoming) = server.with_socket(server_sock).unwrap();
 
     let mut client_config = ClientConfigBuilder::default();
     client_config.add_certificate_authority(cert).unwrap();
@@ -35,30 +35,27 @@ fn throughput(c: &mut Criterion) {
         .unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(server_driver.map_err(|e| panic!("server driver failed: {}", e)));
-    runtime.spawn(client_driver.map_err(|e| panic!("client driver failed: {}", e)));
+    runtime.spawn(server_driver.unwrap_or_else(|e| panic!("server driver failed: {}", e)));
+    runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client driver failed: {}", e)));
 
     let runtime = Rc::new(RefCell::new(runtime));
-    runtime
-        .borrow_mut()
-        .spawn(server_incoming.for_each(move |connecting| {
-            connecting
-                .and_then(|new_conn| {
-                    tokio::runtime::current_thread::spawn(
-                        new_conn
-                            .driver
-                            .map_err(|e| ignore_timeout("server connection driver", e)),
-                    );
-                    new_conn.streams.for_each(|stream| {
-                        if let NewStream::Uni(recv) = stream {
-                            ReadAllUnordered { stream: recv }.map_err(|e| panic!(e))
-                        } else {
-                            unreachable!("only benchmarking uni streams")
-                        }
-                    })
-                })
-                .map_err(|e| panic!("server connection establishment failed: {}", e))
-        }));
+    runtime.borrow_mut().spawn(async move {
+        while let Some(connecting) = server_incoming.next().await {
+            let mut new_conn = connecting.await.unwrap();
+            tokio::runtime::current_thread::spawn(
+                new_conn
+                    .driver
+                    .unwrap_or_else(|e| ignore_timeout("server connection driver", e)),
+            );
+            while let Some(stream) = new_conn.streams.next().await {
+                if let NewStream::Uni(recv) = stream.unwrap() {
+                    read_all(recv).await.unwrap();
+                } else {
+                    unreachable!("only benchmarking uni streams")
+                }
+            }
+        }
+    });
 
     let new_conn = runtime
         .borrow_mut()
@@ -69,7 +66,7 @@ fn throughput(c: &mut Criterion) {
 
     runtime
         .borrow_mut()
-        .spawn(driver.map_err(|e| ignore_timeout("client connection driver", e)));
+        .spawn(driver.unwrap_or_else(|e| ignore_timeout("client connection driver", e)));
 
     {
         const DATA: &[u8] = &[0xAB; 128 * 1024];
@@ -84,19 +81,11 @@ fn throughput(c: &mut Criterion) {
                             .block_on(connection.open_uni())
                             .expect("failed opening stream")
                     },
-                    |stream| {
-                        runtime
-                            .borrow_mut()
-                            .block_on(
-                                tokio::io::write_all(stream, DATA)
-                                    .map_err(|e| panic!("write to stream failed: {}", e))
-                                    .and_then(|(stream, _)| {
-                                        tokio::io::shutdown(stream).map_err(|e| {
-                                            panic!("send stream shutdown failed: {}", e)
-                                        })
-                                    }),
-                            )
-                            .expect("failed writing data")
+                    |mut stream| {
+                        runtime.borrow_mut().block_on(async move {
+                            stream.write_all(DATA).await.expect("write failed");
+                            stream.finish().await.unwrap();
+                        })
                     },
                     BatchSize::PerIteration,
                 )
@@ -159,22 +148,7 @@ fn ignore_timeout(ty: &'static str, e: quinn::ConnectionError) {
     }
 }
 
-struct ReadAllUnordered {
-    stream: RecvStream,
-}
-
-impl Future for ReadAllUnordered {
-    type Item = ();
-    type Error = ReadError;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match try_ready!(self.stream.poll_read_unordered()) {
-                Some(_) => {}
-                None => {
-                    return Ok(Async::Ready(()));
-                }
-            }
-        }
-    }
+async fn read_all(mut stream: RecvStream) -> Result<(), ReadError> {
+    while let Some(_) = stream.read_unordered().await? {}
+    Ok(())
 }

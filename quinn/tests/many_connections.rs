@@ -3,14 +3,15 @@ use std::time::Instant;
 use std::{fmt, io, str};
 
 use crc::crc32;
-use futures::{Future, Stream};
+use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
 use slog::{Drain, Logger, KV};
 use tokio::runtime::current_thread::{self, Runtime};
 use unwrap::unwrap;
 
 struct Shared {
-    errors: Vec<quinn::ConnectionError>,
+    errors: Vec<ConnectionError>,
 }
 
 #[test]
@@ -23,7 +24,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let mut ep_builder = quinn::Endpoint::builder();
     ep_builder.listen(cfg);
     let (driver, endpoint, incoming_conns) = unwrap!(ep_builder.bind(&("127.0.0.1", 0)));
-    runtime.spawn(driver.map_err(|e| panic!("Listener IO error: {}", e)));
+    runtime.spawn(driver.unwrap_or_else(|e| panic!("Listener IO error: {}", e)));
     let listener_addr = unwrap!(endpoint.local_addr());
 
     let expected_messages = 50;
@@ -31,27 +32,25 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let epoch = Instant::now();
     let shared2 = shared.clone();
     let read_incoming_data = incoming_conns
-        .and_then(|connect| connect.map_err(|_| ()))
+        .filter_map(|connect| connect.map(|x| x.ok()))
         .take(expected_messages as u64)
-        .map_err(|()| panic!("Listener failed"))
         .for_each(move |new_conn| {
-            let quinn::NewConnection {
-                driver,
-                connection: conn,
-                streams,
-                ..
-            } = new_conn;
+            let conn = new_conn.connection;
             let logs = LogBuffer::new();
             conn.set_logger(Logger::root(logs.clone().fuse(), slog::o!()));
-            current_thread::spawn(driver.map_err(|_| ()));
+            current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
 
             let shared = shared2.clone();
-            let task = streams
-                .for_each(move |stream| {
+            let task = new_conn
+                .streams
+                .try_for_each(move |stream| {
                     let conn = conn.clone();
-                    read_from_peer(stream).map(move |_| conn.close(0u32.into(), &[]))
+                    read_from_peer(stream).map(move |_| {
+                        conn.close(0u32.into(), &[]);
+                        Ok(())
+                    })
                 })
-                .map_err(move |e| {
+                .unwrap_or_else(move |e| {
                     let logs = logs.buffer.lock().unwrap();
                     eprintln!("======== incoming connection failed: {}\nlogs:", e);
                     for (time, line) in &*logs {
@@ -61,7 +60,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                 });
             current_thread::spawn(task);
 
-            Ok(())
+            future::ready(())
         });
     runtime.spawn(read_incoming_data);
 
@@ -74,16 +73,15 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
             .and_then(move |new_conn| {
-                let quinn::NewConnection {
-                    driver, connection, ..
-                } = new_conn;
-                current_thread::spawn(write_to_peer(&connection, data).map_err(move |e| {
-                    // Error will also be propagated to the driver
-                    eprintln!("write failed: {}", e);
-                }));
-                driver
+                current_thread::spawn(write_to_peer(new_conn.connection, data).unwrap_or_else(
+                    move |e| {
+                        // Error will also be propagated to the driver
+                        eprintln!("write failed: {}", e);
+                    },
+                ));
+                new_conn.driver
             })
-            .map_err(move |e| {
+            .unwrap_or_else(move |e| {
                 match e {
                     quinn::ConnectionError::ApplicationClosed { .. }
                     | quinn::ConnectionError::Reset => {}
@@ -115,40 +113,36 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     }
 }
 
-fn read_from_peer(
-    stream: quinn::NewStream,
-) -> impl Future<Item = (), Error = quinn::ConnectionError> {
-    let stream = match stream {
-        quinn::NewStream::Bi(_, _) => panic!("Unexpected bidirectional stream here"),
-        quinn::NewStream::Uni(uni) => uni,
-    };
-
-    stream
-        .read_to_end(1024 * 1024 * 5)
-        .map_err(|e| {
-            use quinn::{ReadError::*, ReadToEndError::*};
+async fn read_from_peer(stream: quinn::NewStream) -> Result<(), quinn::ConnectionError> {
+    match stream.unwrap_uni().read_to_end(1024 * 1024 * 5).await {
+        Ok(data) => {
+            assert!(hash_correct(&data));
+            Ok(())
+        }
+        Err(e) => {
+            use quinn::ReadToEndError::*;
+            use ReadError::*;
             match e {
                 TooLong | Read(UnknownStream) | Read(ZeroRttRejected) => unreachable!(),
                 Read(Reset { error_code }) => panic!("unexpected stream reset: {}", error_code),
-                Read(ConnectionClosed(e)) => e,
+                Read(ConnectionClosed(e)) => Err(e),
             }
-        })
-        .and_then(move |data| {
-            assert!(hash_correct(&data));
-            Ok(())
-        })
+        }
+    }
 }
 
-fn write_to_peer(
-    conn: &quinn::Connection,
-    data: Vec<u8>,
-) -> impl Future<Item = (), Error = io::Error> {
-    conn.open_uni()
-        .map_err(|e| io::Error::from(e))
-        .and_then(move |o_stream| tokio::io::write_all(o_stream, data))
-        // Suppress shutdown errors, since the peer may close before ACKing
-        .and_then(move |(o_stream, _)| tokio::io::shutdown(o_stream).then(|_| Ok(())))
-        .map(|_| ())
+async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), WriteError> {
+    let mut s = conn
+        .open_uni()
+        .await
+        .map_err(WriteError::ConnectionClosed)?;
+    s.write_all(&data).await?;
+    // Suppress finish errors, since the peer may close before ACKing
+    match s.finish().await {
+        Ok(()) => Ok(()),
+        Err(WriteError::ConnectionClosed(ConnectionError::ApplicationClosed { .. })) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Builds client configuration. Trusts given node certificate.

@@ -1,18 +1,18 @@
 use std::collections::VecDeque;
 use std::mem;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bytes::Bytes;
 use fnv::FnvHashMap;
-use futures::sync::{mpsc, oneshot};
-use futures::task::{self, Task};
-use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll};
+use futures::channel::{mpsc, oneshot};
+use futures::task::{Context, Waker};
+use futures::{ready, Future, FutureExt, Poll, StreamExt};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
 use slog::Logger;
-use tokio_timer::Delay;
+use tokio_timer::{delay, Delay};
 
 use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent, VarInt};
@@ -70,23 +70,26 @@ impl Connecting {
 }
 
 impl Future for Connecting {
-    type Item = NewConnection;
-    type Error = ConnectionError;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let connected = match &mut self.0 {
-            Some(driver) => match driver.poll()? {
-                Async::Ready(()) => {
-                    return Err((driver.0).lock().unwrap().error.as_ref().unwrap().clone());
+    type Output = Result<NewConnection, ConnectionError>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let connected = match self.0 {
+            Some(ref mut driver) => {
+                let r = driver.poll_unpin(cx)?;
+                let driver = self.0.as_mut().unwrap().0.lock().unwrap(); // borrowck workaround
+                match r {
+                    Poll::Ready(()) => {
+                        return Poll::Ready(Err(driver.error.as_ref().unwrap().clone()));
+                    }
+                    Poll::Pending => driver.connected,
                 }
-                Async::NotReady => (driver.0).lock().unwrap().connected,
-            },
+            }
             None => panic!("polled after yielding Ready"),
         };
         if connected {
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            Ok(Async::Ready(NewConnection::new(conn)))
+            Poll::Ready(Ok(NewConnection::new(conn)))
         } else {
-            Ok(Async::NotReady)
+            Poll::Pending
         }
     }
 }
@@ -130,20 +133,19 @@ impl NewConnection {
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
-    type Item = ();
-    type Error = ConnectionError;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    type Output = Result<(), ConnectionError>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
 
         loop {
             let now = Instant::now();
             let mut keep_going = false;
-            if let Err(e) = conn.process_conn_events() {
+            if let Err(e) = conn.process_conn_events(cx) {
                 conn.terminate(e.clone());
-                return Err(e);
+                return Poll::Ready(Err(e));
             }
             conn.drive_transmit(now);
-            keep_going |= conn.drive_timers(now);
+            keep_going |= conn.drive_timers(cx, now);
             keep_going |= conn.handle_timer_updates();
             conn.forward_endpoint_events();
             conn.forward_app_events();
@@ -153,12 +155,12 @@ impl Future for ConnectionDriver {
         }
 
         if !conn.inner.is_drained() {
-            conn.driver = Some(task::current());
-            return Ok(Async::NotReady);
+            conn.driver = Some(cx.waker().clone());
+            return Poll::Pending;
         }
         match conn.error {
-            Some(ConnectionError::LocallyClosed) => Ok(Async::Ready(())),
-            Some(ref e) => Err(e.clone()),
+            Some(ConnectionError::LocallyClosed) => Poll::Ready(Ok(())),
+            Some(ref e) => Poll::Ready(Err(e.clone())),
             None => unreachable!("drained connections always have an error"),
         }
     }
@@ -288,10 +290,10 @@ impl Connection {
 /// received on earlier streams.
 pub struct IncomingStreams(ConnectionRef);
 
-impl FuturesStream for IncomingStreams {
-    type Item = NewStream;
-    type Error = ConnectionError;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+impl futures::Stream for IncomingStreams {
+    type Item = Result<NewStream, ConnectionError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept() {
             mem::drop(conn); // Release the lock so clone can take it
@@ -303,14 +305,14 @@ impl FuturesStream for IncomingStreams {
                     RecvStream::new(self.0.clone(), x, false),
                 )
             };
-            Ok(Async::Ready(Some(stream)))
+            Poll::Ready(Some(Ok(stream)))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
-            Ok(Async::Ready(None))
+            Poll::Ready(None)
         } else if let Some(ref e) = conn.error {
-            Err(e.clone())
+            Poll::Ready(Some(Err(e.clone())))
         } else {
-            conn.incoming_streams_reader = Some(task::current());
-            Ok(Async::NotReady)
+            conn.incoming_streams_reader = Some(cx.waker().clone());
+            Poll::Pending
         }
     }
 }
@@ -322,22 +324,18 @@ pub struct OpenUni {
 }
 
 impl Future for OpenUni {
-    type Item = SendStream;
-    type Error = ConnectionError;
+    type Output = Result<SendStream, ConnectionError>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.recv.poll() {
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(Err(c))) => Err(c),
-            Err(_) => unreachable!(
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match ready!(self.recv.poll_unpin(cx)) {
+            Err(oneshot::Canceled) => unreachable!(
                 "oneshot sender won't be dropped while `self.conn` is keeping the \
                  `ConnectionInner` alive"
             ),
-            Ok(Async::Ready(Ok((stream, is_0rtt)))) => Ok(Async::Ready(SendStream::new(
-                self.conn.clone(),
-                stream,
-                is_0rtt,
-            ))),
+            Ok(Err(c)) => Poll::Ready(Err(c)),
+            Ok(Ok((stream, is_0rtt))) => {
+                Poll::Ready(Ok(SendStream::new(self.conn.clone(), stream, is_0rtt)))
+            }
         }
     }
 }
@@ -349,18 +347,16 @@ pub struct OpenBi {
 }
 
 impl Future for OpenBi {
-    type Item = (SendStream, RecvStream);
-    type Error = ConnectionError;
+    type Output = Result<(SendStream, RecvStream), ConnectionError>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.recv.poll() {
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Ok(Async::Ready(Err(c))) => Err(c),
-            Err(_) => unreachable!(
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match ready!(self.recv.poll_unpin(cx)) {
+            Err(oneshot::Canceled) => unreachable!(
                 "oneshot sender won't be dropped while `self.conn` is keeping the \
                  `ConnectionInner` alive"
             ),
-            Ok(Async::Ready(Ok((stream, is_0rtt)))) => Ok(Async::Ready((
+            Ok(Err(c)) => Poll::Ready(Err(c)),
+            Ok(Ok((stream, is_0rtt))) => Poll::Ready(Ok((
                 SendStream::new(self.conn.clone(), stream, is_0rtt),
                 RecvStream::new(self.conn.clone(), stream, is_0rtt),
             ))),
@@ -438,17 +434,17 @@ pub struct ConnectionInner {
     log: Logger,
     epoch: Instant,
     pub(crate) inner: proto::Connection,
-    driver: Option<Task>,
+    driver: Option<Waker>,
     handle: ConnectionHandle,
     connected: bool,
     timers: proto::TimerTable<Option<Delay>>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
-    pub(crate) blocked_writers: FnvHashMap<StreamId, Task>,
-    pub(crate) blocked_readers: FnvHashMap<StreamId, Task>,
+    pub(crate) blocked_writers: FnvHashMap<StreamId, Waker>,
+    pub(crate) blocked_readers: FnvHashMap<StreamId, Waker>,
     uni_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
-    incoming_streams_reader: Option<Task>,
+    incoming_streams_reader: Option<Waker>,
     pub(crate) finishing: FnvHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
@@ -476,27 +472,23 @@ impl ConnectionInner {
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
-    fn process_conn_events(&mut self) -> Result<(), ConnectionError> {
+    fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
         loop {
-            match self
-                .conn_events
-                .poll()
-                .expect("mpsc receiver is infallible")
-            {
-                Async::Ready(Some(ConnectionEvent::Proto(event))) => {
+            match self.conn_events.poll_next_unpin(cx) {
+                Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
                     self.inner.handle_event(event);
                 }
-                Async::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
+                Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason);
                 }
-                Async::Ready(None) => {
+                Poll::Ready(None) => {
                     return Err(ConnectionError::TransportError(proto::TransportError {
                         code: proto::TransportErrorCode::INTERNAL_ERROR,
                         frame: None,
                         reason: "endpoint driver future was dropped".to_string(),
                     }));
                 }
-                Async::NotReady => {
+                Poll::Pending => {
                     return Ok(());
                 }
             }
@@ -515,17 +507,17 @@ impl ConnectionInner {
                 }
                 StreamWritable { stream } => {
                     if let Some(writer) = self.blocked_writers.remove(&stream) {
-                        writer.notify();
+                        writer.wake();
                     }
                 }
                 StreamOpened => {
                     if let Some(x) = self.incoming_streams_reader.take() {
-                        x.notify();
+                        x.wake();
                     }
                 }
                 StreamReadable { stream } => {
                     if let Some(reader) = self.blocked_readers.remove(&stream) {
-                        reader.notify();
+                        reader.wake();
                     }
                 }
                 StreamAvailable { dir } => {
@@ -556,19 +548,19 @@ impl ConnectionInner {
         }
     }
 
-    fn drive_timers(&mut self, now: Instant) -> bool {
+    fn drive_timers(&mut self, cx: &mut Context, now: Instant) -> bool {
         let mut keep_going = false;
         for (timer, slot) in &mut self.timers {
             if let Some(ref mut delay) = slot {
-                match delay.poll().unwrap() {
-                    Async::Ready(()) => {
+                match delay.poll_unpin(cx) {
+                    Poll::Ready(()) => {
                         *slot = None;
                         trace!(self.log, "{timer:?} timeout", timer = timer);
                         self.inner.handle_timeout(now, timer);
                         // Timeout call may have queued sends
                         keep_going = true;
                     }
-                    Async::NotReady => {}
+                    Poll::Pending => {}
                 }
             }
         }
@@ -586,7 +578,7 @@ impl ConnectionInner {
                 } => match self.timers[timer] {
                     ref mut x @ None => {
                         trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
-                        *x = Some(Delay::new(time));
+                        *x = Some(delay(time));
                     }
                     Some(ref mut x) => {
                         trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time.duration_since(self.epoch));
@@ -607,9 +599,9 @@ impl ConnectionInner {
     }
 
     /// Wake up a blocked `Driver` task to process I/O
-    pub(crate) fn notify(&self) {
-        if let Some(x) = self.driver.as_ref() {
-            x.notify();
+    pub(crate) fn wake(&mut self) {
+        if let Some(x) = self.driver.take() {
+            x.wake();
         }
     }
 
@@ -617,10 +609,10 @@ impl ConnectionInner {
     fn terminate(&mut self, reason: ConnectionError) {
         self.error = Some(reason.clone());
         for (_, writer) in self.blocked_writers.drain() {
-            writer.notify()
+            writer.wake()
         }
         for (_, reader) in self.blocked_readers.drain() {
-            reader.notify()
+            reader.wake()
         }
         for x in self.uni_opening.drain(..) {
             let _ = x.send(Err(reason.clone()));
@@ -629,7 +621,7 @@ impl ConnectionInner {
             let _ = x.send(Err(reason.clone()));
         }
         if let Some(x) = self.incoming_streams_reader.take() {
-            x.notify();
+            x.wake();
         }
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(WriteError::ConnectionClosed(reason.clone())));
@@ -639,7 +631,7 @@ impl ConnectionInner {
     fn close(&mut self, error_code: VarInt, reason: Bytes) {
         self.inner.close(Instant::now(), error_code, reason);
         self.terminate(ConnectionError::LocallyClosed);
-        self.notify();
+        self.wake();
     }
 
     /// Close for a reason other than the application's explicit request

@@ -1,16 +1,16 @@
 use std::collections::VecDeque;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
+use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bytes::Bytes;
 use fnv::FnvHashMap;
-use futures::sync::mpsc;
-use futures::task::{self, Task};
-use futures::Stream as FuturesStream;
-use futures::{Async, Future, Poll};
+use futures::channel::mpsc;
+use futures::task::{Context, Waker};
+use futures::{Future, FutureExt, Poll, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 use slog::Logger;
 
@@ -82,7 +82,7 @@ impl Endpoint {
     pub fn rebind(
         &self,
         socket: std::net::UdpSocket,
-        reactor: &tokio_reactor::Handle,
+        reactor: &tokio_net::driver::Handle,
     ) -> io::Result<()> {
         let addr = socket.local_addr()?;
         let socket = UdpSocket::from_std(socket, &reactor)?;
@@ -112,7 +112,7 @@ impl Endpoint {
             });
         }
         if let Some(task) = endpoint.incoming_reader.take() {
-            task.notify();
+            task.wake();
         }
     }
 }
@@ -131,31 +131,28 @@ impl Endpoint {
 pub struct EndpointDriver(pub(crate) EndpointRef);
 
 impl Future for EndpointDriver {
-    type Item = ();
-    type Error = io::Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    type Output = Result<(), io::Error>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver.is_none() {
-            endpoint.driver = Some(task::current());
+            endpoint.driver = Some(cx.waker().clone());
         }
         loop {
             let now = Instant::now();
             let mut keep_going = false;
-            keep_going |= endpoint.drive_recv(now)?;
-            endpoint.drive_incoming();
-            endpoint.handle_events();
-            keep_going |= endpoint.drive_send()?;
+            keep_going |= endpoint.drive_recv(cx, now)?;
+            endpoint.drive_incoming(cx);
+            endpoint.handle_events(cx);
+            keep_going |= endpoint.drive_send(cx)?;
             if !keep_going {
                 break;
             }
         }
-        Ok(
-            if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
-                Async::Ready(())
-            } else {
-                Async::NotReady
-            },
-        )
+        if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -164,7 +161,7 @@ impl Drop for EndpointDriver {
         let mut endpoint = self.0.lock().unwrap();
         endpoint.driver_lost = true;
         if let Some(task) = endpoint.incoming_reader.take() {
-            task.notify();
+            task.wake();
         }
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
@@ -178,10 +175,10 @@ pub(crate) struct EndpointInner {
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<ConnectionDriver>,
-    incoming_reader: Option<Task>,
+    incoming_reader: Option<Waker>,
     /// Whether the `Incoming` stream has not yet been dropped
     incoming_live: bool,
-    driver: Option<Task>,
+    driver: Option<Waker>,
     ipv6: bool,
     connections: FnvHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
     // Stored to give out clones to new ConnectionInners
@@ -195,12 +192,12 @@ pub(crate) struct EndpointInner {
 }
 
 impl EndpointInner {
-    fn drive_recv(&mut self, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         let mut buf = [0; 64 * 1024];
         let mut recvd = 0;
         loop {
-            match self.socket.poll_recv(&mut buf) {
-                Ok(Async::Ready((n, addr, ecn))) => {
+            match self.socket.poll_recv(cx, &mut buf) {
+                Poll::Ready(Ok((n, addr, ecn))) => {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
                             let conn = ConnectionDriver(self.create_connection(None, handle, conn));
@@ -209,7 +206,7 @@ impl EndpointInner {
                             }
                             self.incoming.push_back(conn);
                             if let Some(task) = self.incoming_reader.take() {
-                                task.notify();
+                                task.wake();
                             }
                         }
                         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
@@ -223,15 +220,15 @@ impl EndpointInner {
                         None => {}
                     }
                 }
-                Ok(Async::NotReady) => {
+                Poll::Pending => {
                     break;
                 }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
-                Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
                     continue;
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
@@ -243,10 +240,10 @@ impl EndpointInner {
         Ok(false)
     }
 
-    fn drive_incoming(&mut self) {
+    fn drive_incoming(&mut self, cx: &mut Context) {
         for i in (0..self.incoming.len()).rev() {
-            match self.incoming[i].poll() {
-                Ok(Async::Ready(())) | Err(_) if !self.incoming_live => {
+            match self.incoming[i].poll_unpin(cx) {
+                Poll::Ready(Ok(())) | Poll::Ready(Err(_)) if !self.incoming_live => {
                     let _ = self.incoming.swap_remove_back(i);
                 }
                 // It's safe to poll an already dead connection
@@ -255,24 +252,27 @@ impl EndpointInner {
         }
     }
 
-    fn drive_send(&mut self) -> Result<bool, io::Error> {
+    fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         let mut sent = 0;
         while let Some(t) = self
             .outgoing
             .pop_front()
             .or_else(|| self.inner.poll_transmit())
         {
-            match self.socket.poll_send(&t.destination, t.ecn, &t.contents) {
-                Ok(Async::Ready(_)) => {}
-                Ok(Async::NotReady) => {
+            match self
+                .socket
+                .poll_send(cx, &t.destination, t.ecn, &t.contents)
+            {
+                Poll::Ready(Ok(_)) => {}
+                Poll::Pending => {
                     self.outgoing.push_front(t);
                     break;
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::PermissionDenied => {
                     self.outgoing.push_front(t);
                     break;
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
@@ -284,11 +284,11 @@ impl EndpointInner {
         Ok(false)
     }
 
-    fn handle_events(&mut self) {
+    fn handle_events(&mut self, cx: &mut Context) {
         use EndpointEvent::*;
         loop {
-            match self.events.poll() {
-                Ok(Async::Ready(Some((ch, event)))) => match event {
+            match self.events.poll_next_unpin(cx) {
+                Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
                             self.connections.remove(&ch);
@@ -304,11 +304,10 @@ impl EndpointInner {
                     }
                     Transmit(t) => self.outgoing.push_back(t),
                 },
-                Ok(Async::Ready(None)) => unreachable!("EndpointInner owns one sender"),
-                Ok(Async::NotReady) => {
+                Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
+                Poll::Pending => {
                     return;
                 }
-                Err(_) => unreachable!(),
             }
         }
     }
@@ -354,21 +353,20 @@ impl Incoming {
     }
 }
 
-impl FuturesStream for Incoming {
+impl futures::Stream for Incoming {
     type Item = Connecting;
-    type Error = (); // FIXME: Infallible
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
-            Ok(Async::Ready(None))
+            Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            Ok(Async::Ready(Some(Connecting::new(conn.0))))
+            Poll::Ready(Some(Connecting::new(conn.0)))
         } else if endpoint.close.is_some() {
-            Ok(Async::Ready(None))
+            Poll::Ready(None)
         } else {
-            endpoint.incoming_reader = Some(task::current());
-            Ok(Async::NotReady)
+            endpoint.incoming_reader = Some(cx.waker().clone());
+            Poll::Pending
         }
     }
 }
@@ -426,7 +424,7 @@ impl Drop for EndpointRef {
                 // If the driver is about to be on its own, ensure it can shut down if the last
                 // connection is gone.
                 if let Some(task) = endpoint.driver.take() {
-                    task.notify();
+                    task.wake();
                 }
             }
         }

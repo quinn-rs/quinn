@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use failure::Error;
-use futures::Future;
+use futures::TryFutureExt;
 use slog::{Drain, Logger};
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
@@ -99,7 +99,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
     let mut runtime = Runtime::new()?;
-    runtime.spawn(endpoint_driver.map_err(|e| eprintln!("IO error: {}", e)));
+    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -109,61 +109,60 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
         .ok_or(format_err!("no hostname specified"))?;
-    runtime.block_on(
-        endpoint
+    let r: Result<()> = runtime.block_on(async {
+        let new_conn = endpoint
             .connect(&remote, &host)?
-            .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(move |new_conn| {
-                eprintln!("connected at {:?}", start.elapsed());
-                tokio_current_thread::spawn(
-                    new_conn
-                        .driver
-                        .map_err(|e| eprintln!("connection lost: {}", e)),
-                );
-                let conn = new_conn.connection;
-                let stream = conn.open_bi();
-                stream
-                    .map_err(|e| format_err!("failed to open stream: {}", e))
-                    .and_then(move |(send, recv)| {
-                        if rebind {
-                            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                            let addr = socket.local_addr().unwrap();
-                            eprintln!("rebinding to {}", addr);
-                            endpoint
-                                .rebind(socket, &tokio_reactor::Handle::default())
-                                .expect("rebind failed");
-                        }
+            .await
+            .map_err(|e| format_err!("failed to connect: {}", e))?;
+        eprintln!("connected at {:?}", start.elapsed());
+        tokio::runtime::current_thread::spawn(
+            new_conn
+                .driver
+                .unwrap_or_else(|e| eprintln!("connection lost: {}", e)),
+        );
+        let conn = new_conn.connection;
+        let (mut send, recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        if rebind {
+            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+            let addr = socket.local_addr().unwrap();
+            eprintln!("rebinding to {}", addr);
+            endpoint
+                .rebind(socket, &tokio_net::driver::Handle::default())
+                .expect("rebind failed");
+        }
 
-                        tokio::io::write_all(send, request.as_bytes().to_owned())
-                            .map_err(|e| format_err!("failed to send request: {}", e))
-                            .and_then(|(send, _)| {
-                                send.finish()
-                                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-                            })
-                            .and_then(move |_| {
-                                let response_start = Instant::now();
-                                eprintln!("request sent at {:?}", response_start - start);
-                                recv.read_to_end(usize::max_value())
-                                    .map_err(|e| format_err!("failed to read response: {}", e))
-                                    .map(move |x| (x, response_start))
-                            })
-                    })
-                    .map(move |(data, response_start)| {
-                        let duration = response_start.elapsed();
-                        eprintln!(
-                            "response received in {:?} - {} KiB/s",
-                            duration,
-                            data.len() as f32 / (duration_secs(&duration) * 1024.0)
-                        );
-                        io::stdout().write_all(&data).unwrap();
-                        io::stdout().flush().unwrap();
-                        conn.close(0u32.into(), b"done");
-                    })
-                    .map(|()| eprintln!("drained"))
-            }),
-    )?;
+        send.write_all(request.as_bytes())
+            .await
+            .map_err(|e| format_err!("failed to send request: {}", e))?;
+        send.finish()
+            .await
+            .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
+        let response_start = Instant::now();
+        eprintln!("request sent at {:?}", response_start - start);
+        let resp = recv
+            .read_to_end(usize::max_value())
+            .await
+            .map_err(|e| format_err!("failed to read response: {}", e))?;
+        let duration = response_start.elapsed();
+        eprintln!(
+            "response received in {:?} - {} KiB/s",
+            duration,
+            resp.len() as f32 / (duration_secs(&duration) * 1024.0)
+        );
+        io::stdout().write_all(&resp).unwrap();
+        io::stdout().flush().unwrap();
+        conn.close(0u32.into(), b"done");
+        Ok(())
+    });
+    r?;
 
-    // Let the connection to finish closing gracefully
+    // Allow the endpoint driver to automatically shut down
+    drop(endpoint);
+
+    // Let the connection finish closing gracefully
     runtime.run()?;
 
     Ok(())

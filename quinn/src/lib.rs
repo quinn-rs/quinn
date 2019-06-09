@@ -7,17 +7,14 @@
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
 //! ```
-//! # extern crate tokio;
-//! # extern crate quinn;
-//! # extern crate futures;
-//! # use futures::Future;
+//! # use futures::TryFutureExt;
 //! # fn main() {
-//! let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+//! let mut runtime = tokio::runtime::Runtime::new().unwrap();
 //! let mut builder = quinn::Endpoint::builder();
 //! // <configure builder>
 //! let (endpoint_driver, endpoint, _) = builder.bind("[::]:0").unwrap();
-//! runtime.spawn(endpoint_driver.map_err(|e| panic!("IO error: {}", e)));
-//! // ...
+//! runtime.spawn(endpoint_driver.unwrap_or_else(|e| panic!("I/O error: {}", e)));
+//! // <use endpoint>
 //! # }
 //! ```
 //! # About QUIC
@@ -75,7 +72,8 @@ pub use endpoint::{Endpoint, EndpointDriver, Incoming};
 
 mod streams;
 pub use streams::{
-    NewStream, ReadError, ReadToEnd, ReadToEndError, RecvStream, SendStream, WriteError,
+    NewStream, Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream,
+    SendStream, WriteError,
 };
 
 #[cfg(test)]
