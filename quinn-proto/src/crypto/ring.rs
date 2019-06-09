@@ -11,7 +11,7 @@ use ring::hmac::{self, SigningKey};
 
 use crate::coding::{BufExt, BufMutExt};
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
-use crate::shared::{ConnectionId, ResetToken};
+use crate::shared::{ConfigError, ConnectionId, ResetToken};
 use crate::{crypto, Side, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 pub(crate) fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
@@ -343,6 +343,27 @@ impl TokenKey {
 
         hmac::verify_with_own_key(&self.inner, &buf, &data[signature_start..]).ok()?;
         Some((dst_cid, issued))
+    }
+}
+
+impl crypto::HmacKey for hmac::SigningKey {
+    const KEY_LEN: usize = 64;
+    type Signature = hmac::Signature;
+
+    fn new(key: &[u8]) -> Result<Self, ConfigError> {
+        if key.len() == Self::KEY_LEN {
+            Ok(hmac::SigningKey::new(&digest::SHA512_256, key))
+        } else {
+            Err(ConfigError::IllegalValue("key length must be 64 bytes"))
+        }
+    }
+
+    fn sign(&self, data: &[u8]) -> Self::Signature {
+        hmac::sign(self, data)
+    }
+
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()> {
+        hmac::verify_with_own_key(self, data, signature).map_err(|_| ())
     }
 }
 
