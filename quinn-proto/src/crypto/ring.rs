@@ -11,8 +11,8 @@ use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConnectionId, ResetToken};
 use crate::{crypto, Side, RESET_TOKEN_SIZE};
 
-pub(crate) fn reset_token_for(key: &SigningKey, id: &ConnectionId) -> ResetToken {
-    let signature = hmac::sign(key, id);
+pub(crate) fn reset_token_for<H>(key: &H, id: &ConnectionId) -> ResetToken where H: crypto::HmacKey {
+    let signature = key.sign(id);
     // TODO: Server ID??
     let mut result = [0; RESET_TOKEN_SIZE];
     result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
