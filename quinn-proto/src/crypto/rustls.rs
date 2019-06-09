@@ -2,6 +2,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{fmt, io, str};
 
+use ring::hmac;
 use rustls::quic::{ClientQuicExt, ServerQuicExt};
 pub use rustls::TLSError;
 use rustls::{self, internal::pemfile, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
@@ -30,6 +31,7 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     type ClientConfig = ClientConfig;
+    type HmacKey = hmac::SigningKey;
     type Keys = Crypto;
     type ServerConfig = ServerConfig;
 
