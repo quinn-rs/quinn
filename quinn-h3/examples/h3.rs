@@ -16,9 +16,9 @@ use url::Url;
 
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
-    client::ClientBuilder,
+    client::Builder as ClientBuilder,
     connection::ConnectionDriver,
-    server::{IncomingRequest, RequestReady, ServerBuilder},
+    server::{Builder as ServerBuilder, IncomingRequest, RequestReady},
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
