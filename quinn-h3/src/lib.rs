@@ -22,7 +22,7 @@ mod frame;
 
 use err_derive::Error;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Settings {
     pub max_header_list_size: u64,
     pub num_placeholders: u64,

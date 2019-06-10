@@ -20,6 +20,7 @@ use crate::{
     try_take, Error, Settings,
 };
 
+#[derive(Clone, Debug, Default)]
 pub struct Builder {
     endpoint: EndpointBuilder,
     log: Option<Logger>,

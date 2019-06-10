@@ -23,6 +23,7 @@ use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 /// link with a 100ms round trip time, with remote endpoints opening at most 320 new streams per
 /// second. Applications which do not require remotely-initiated streams should set the stream
 /// windows to zero.
+#[derive(Debug)]
 pub struct TransportConfig {
     /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
     /// accepted locally
@@ -179,6 +180,7 @@ impl TransportConfig {
 }
 
 /// Global configuration for the endpoint, affecting all connections
+#[derive(Clone)]
 pub struct EndpointConfig {
     /// Length of connection IDs for the endpoint.
     ///
@@ -190,6 +192,15 @@ pub struct EndpointConfig {
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
     pub reset_key: Vec<u8>,
+}
+
+impl fmt::Debug for EndpointConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("EndpointConfig")
+            .field("local_cid_len", &self.local_cid_len)
+            .field("reset_key", &"[ elided ]")
+            .finish()
+    }
 }
 
 impl Default for EndpointConfig {
@@ -250,6 +261,24 @@ where
     pub migration: bool,
 }
 
+impl<S> fmt::Debug for ServerConfig<S>
+where
+    S: crypto::Session,
+    S::ServerConfig: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("ServerConfig<T>")
+            .field("transport", &self.transport)
+            .field("crypto", &self.crypto)
+            .field("token_key", &"[ elided ]")
+            .field("use_stateless_retry", &self.use_stateless_retry)
+            .field("retry_token_lifetime", &self.retry_token_lifetime)
+            .field("accept_buffer", &self.accept_buffer)
+            .field("migration", &self.migration)
+            .finish()
+    }
+}
+
 impl<S> Default for ServerConfig<S>
 where
     S: crypto::Session,
@@ -272,6 +301,24 @@ where
             accept_buffer: 1024,
 
             migration: true,
+        }
+    }
+}
+
+impl<S> Clone for ServerConfig<S>
+where
+    S: crypto::Session,
+    S::ServerConfig: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transport: self.transport.clone(),
+            crypto: self.crypto.clone(),
+            token_key: self.token_key.clone(),
+            use_stateless_retry: self.use_stateless_retry,
+            retry_token_lifetime: self.retry_token_lifetime,
+            accept_buffer: self.accept_buffer,
+            migration: self.migration,
         }
     }
 }

@@ -13,6 +13,7 @@ use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::udp::UdpSocket;
 
 /// A helper for constructing an `Endpoint`.
+#[derive(Clone, Debug)]
 pub struct EndpointBuilder {
     reactor: Option<tokio_reactor::Handle>,
     logger: Logger,

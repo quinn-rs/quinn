@@ -189,6 +189,12 @@ impl Default for ClientConfig {
     }
 }
 
+impl fmt::Debug for ClientConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "ClientConfig(rustls::ClientConfig)")
+    }
+}
+
 impl Deref for ClientConfig {
     type Target = Arc<rustls::ClientConfig>;
     fn deref(&self) -> &Self::Target {
@@ -254,6 +260,12 @@ impl ServerConfig {
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn set_protocols(&mut self, protocols: &[&[u8]]) {
         Arc::make_mut(&mut self.0).alpn_protocols = protocols.iter().map(|x| x.to_vec()).collect();
+    }
+}
+
+impl fmt::Debug for ServerConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "ServerConfig(rustls::ServerConfig)")
     }
 }
 
