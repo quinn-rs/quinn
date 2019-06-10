@@ -80,7 +80,7 @@ pub type ClientConfig = generic::ClientConfig<crypto::rustls::ClientConfig>;
 /// An `Endpoint` using rustls for the cryptography protocol
 pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
 /// A `ServerConfig` containing server-side rustls configuration
-pub type ServerConfig = generic::ServerConfig<crypto::rustls::ServerConfig>;
+pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_0014;
