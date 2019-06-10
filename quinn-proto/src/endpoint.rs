@@ -690,7 +690,7 @@ pub(crate) struct ConnectionMeta {
 }
 
 /// Configuration for outgoing connections
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ClientConfig<C> {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
