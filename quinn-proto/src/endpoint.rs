@@ -52,7 +52,7 @@ where
     connection_reset_tokens: HashMap<ResetToken, ConnectionHandle>,
     connections: Slab<ConnectionMeta>,
     config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
+    server_config: Option<Arc<ServerConfig<S>>>,
     incoming_handshakes: usize,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
@@ -70,7 +70,7 @@ where
     pub fn new(
         log: Logger,
         config: Arc<EndpointConfig>,
-        server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
+        server_config: Option<Arc<ServerConfig<S>>>,
     ) -> Result<Self, ConfigError> {
         config.validate()?;
         let rng = OsRng::new().unwrap();
@@ -409,7 +409,7 @@ where
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new::<S::ServerConfig>(&config.transport, None);
+                let params = TransportParameters::new::<S>(&config.transport, None);
                 (
                     config.crypto.start_session(&server_name, &params)?,
                     Some(ClientOpts {

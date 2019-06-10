@@ -6,7 +6,8 @@ use err_derive::Error;
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
-    varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
+    crypto, varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
+    RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -69,7 +70,10 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self {
+    pub fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self
+    where
+        S: crypto::Session,
+    {
         TransportParameters {
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,

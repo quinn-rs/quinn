@@ -42,7 +42,7 @@ where
 {
     log: Logger,
     endpoint_config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
+    server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
     rng: OsRng,
     tls: S,
@@ -161,7 +161,7 @@ where
     pub(crate) fn new(
         log: Logger,
         endpoint_config: Arc<EndpointConfig>,
-        server_config: Option<Arc<ServerConfig<S::ServerConfig>>>,
+        server_config: Option<Arc<ServerConfig<S>>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -1293,7 +1293,7 @@ where
                             .crypto
                             .start_session(
                                 &client_opts.server_name,
-                                &TransportParameters::new::<S::ServerConfig>(&self.config, None),
+                                &TransportParameters::new::<S>(&self.config, None),
                             )
                             .unwrap();
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials

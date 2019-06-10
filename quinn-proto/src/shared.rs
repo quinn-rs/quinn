@@ -13,7 +13,7 @@ use crate::connection::Timer;
 use crate::crypto::HmacKey;
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
-use crate::{varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -221,17 +221,20 @@ impl EndpointConfig {
 }
 
 /// Parameters governing incoming connections.
-pub struct ServerConfig<S> {
+pub struct ServerConfig<S>
+where
+    S: crypto::Session,
+{
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,
 
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: S,
+    pub crypto: S::ServerConfig,
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: SigningKey,
+    pub token_key: S::HmacKey,
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
@@ -253,7 +256,8 @@ pub struct ServerConfig<S> {
 
 impl<S> Default for ServerConfig<S>
 where
-    S: Default,
+    S: crypto::Session,
+    S::ServerConfig: Default,
 {
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
@@ -263,10 +267,9 @@ where
 
         Self {
             transport: Arc::new(TransportConfig::default()),
-            crypto: S::default(),
+            crypto: S::ServerConfig::default(),
 
-            // Safe unwrap: key length is as necessary (for SigningKey HmacKey impl)
-            token_key: <SigningKey as HmacKey>::new(&token_value).unwrap(),
+            token_key: S::HmacKey::new(&token_value).unwrap(),
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
