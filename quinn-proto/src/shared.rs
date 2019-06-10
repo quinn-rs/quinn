@@ -6,11 +6,9 @@ use std::{cmp, fmt};
 use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
-use ring::{digest, hmac::SigningKey};
 use slog::Logger;
 
 use crate::connection::Timer;
-use crate::crypto::HmacKey;
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
 use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
@@ -189,20 +187,18 @@ pub struct EndpointConfig {
     /// responsible for making sure that the pool is large enough to cover the intended usage.
     pub local_cid_len: usize,
 
-    /// Private key used to send authenticated connection resets to peers who were communicating
-    /// with a previous instance of this endpoint.
-    ///
-    /// Must be persisted across restarts to be useful.
-    pub reset_key: SigningKey,
+    /// Private key used to send authenticated connection resets to peers who were
+    /// communicating with a previous instance of this endpoint.
+    pub reset_key: Vec<u8>,
 }
 
 impl Default for EndpointConfig {
     fn default() -> Self {
-        let mut reset_value = [0; 64];
-        rand::thread_rng().fill_bytes(&mut reset_value);
+        let mut reset_key = vec![0; 64];
+        rand::thread_rng().fill_bytes(&mut reset_key);
         Self {
             local_cid_len: 8,
-            reset_key: SigningKey::new(&digest::SHA512_256, &reset_value),
+            reset_key,
         }
     }
 }
@@ -234,7 +230,7 @@ where
     pub crypto: S::ServerConfig,
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: S::HmacKey,
+    pub token_key: Vec<u8>,
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
@@ -262,14 +258,14 @@ where
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
 
-        let mut token_value = [0; 64];
-        rng.fill_bytes(&mut token_value);
+        let mut token_key = vec![0; 64];
+        rng.fill_bytes(&mut token_key);
 
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto: S::ServerConfig::default(),
 
-            token_key: S::HmacKey::new(&token_value).unwrap(),
+            token_key,
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
