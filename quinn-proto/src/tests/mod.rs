@@ -5,8 +5,6 @@ use std::time::{Duration, Instant};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use rand::RngCore;
-use ring::digest;
-use ring::hmac::SigningKey;
 use rustls::internal::msgs::enums::AlertDescription;
 
 use super::*;
@@ -131,11 +129,9 @@ fn stateless_retry() {
 
 #[test]
 fn server_stateless_reset() {
-    let mut reset_value = [0; 64];
+    let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut reset_value);
-
-    let reset_key = SigningKey::new(&digest::SHA512_256, &reset_value);
+    rng.fill_bytes(&mut reset_key);
 
     let endpoint_config = Arc::new(EndpointConfig {
         reset_key,
@@ -168,11 +164,9 @@ fn server_stateless_reset() {
 
 #[test]
 fn client_stateless_reset() {
-    let mut reset_value = [0; 64];
+    let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut reset_value);
-
-    let reset_key = SigningKey::new(&digest::SHA512_256, &reset_value);
+    rng.fill_bytes(&mut reset_key);
 
     let endpoint_config = Arc::new(EndpointConfig {
         reset_key,

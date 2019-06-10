@@ -15,7 +15,7 @@ use slog::{self, Logger};
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
 use crate::crypto::{
-    self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig,
+    self, ClientConfig as ClientCryptoConfig, HmacKey, Keys, ServerConfig as ServerCryptoConfig,
 };
 use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
@@ -58,6 +58,8 @@ where
     ///
     /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
     reject_new_connections: bool,
+    reset_key: S::HmacKey,
+    token_key: Option<S::HmacKey>, // only available when server_config.is_some()
 }
 
 impl<S> Endpoint<S>
@@ -84,9 +86,14 @@ where
             connection_reset_tokens: HashMap::new(),
             connections: Slab::new(),
             incoming_handshakes: 0,
+            reject_new_connections: false,
+            reset_key: S::HmacKey::new(&config.reset_key)?,
+            token_key: server_config
+                .as_ref()
+                .map(|c| S::HmacKey::new(&c.token_key))
+                .transpose()?,
             config,
             server_config,
-            reject_new_connections: false,
         })
     }
 
@@ -333,7 +340,7 @@ where
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
-        buf.extend_from_slice(&reset_token_for(&self.config.reset_key, dst_cid));
+        buf.extend_from_slice(&reset_token_for(&self.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
@@ -379,7 +386,7 @@ where
             ids.push(NewConnectionId {
                 sequence,
                 id,
-                reset_token: reset_token_for(&self.config.reset_key, &id),
+                reset_token: reset_token_for(&self.reset_key, &id),
             });
         }
         ConnectionEvent::NewIdentifiers(ids)
@@ -426,7 +433,7 @@ where
                 let config = self.server_config.as_ref().unwrap();
                 let params = TransportParameters::new(&config.transport, Some(config));
                 let server_params = TransportParameters {
-                    stateless_reset_token: Some(reset_token_for(&self.config.reset_key, &loc_cid)),
+                    stateless_reset_token: Some(reset_token_for(&self.reset_key, &loc_cid)),
                     original_connection_id: orig_dst_cid,
                     ..params
                 };
@@ -555,7 +562,7 @@ where
         let mut retry_cid = None;
         if server_config.use_stateless_retry {
             if let Some((token_dst_cid, token_issued)) =
-                token::check(&server_config.token_key, &remote, &token)
+                token::check(self.token_key.as_ref().unwrap(), &remote, &token)
             {
                 let expires = token_issued
                     + Duration::from_micros(
@@ -571,7 +578,7 @@ where
             }
             if retry_cid.is_none() {
                 let token = token::generate(
-                    &server_config.token_key,
+                    self.token_key.as_ref().unwrap(),
                     &remote,
                     &dst_cid,
                     SystemTime::now(),
