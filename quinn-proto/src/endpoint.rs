@@ -747,18 +747,9 @@ pub enum ConnectError {
     /// The domain name supplied was malformed
     #[error(display = "invalid DNS name: {}", _0)]
     InvalidDnsName(String),
-    /// The TLS configuration was invalid
-    #[error(display = "TLS error: {}", _0)]
-    Tls(crypto::rustls::TLSError),
     /// The transport configuration was invalid
     #[error(display = "transport configuration error: {}", _0)]
     Config(ConfigError),
-}
-
-impl From<crypto::rustls::TLSError> for ConnectError {
-    fn from(x: crypto::rustls::TLSError) -> Self {
-        ConnectError::Tls(x)
-    }
 }
 
 impl From<ConfigError> for ConnectError {
