@@ -9,7 +9,7 @@ use quinn::{
 };
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
-use tokio::io::{self, Shutdown, WriteAll};
+use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
     body::{Body, RecvBody, SendBody},
@@ -198,20 +198,20 @@ impl Future for SendRequest {
                     let mut encoded_header = vec![];
                     header_block.encode(&mut encoded_header);
 
-                    let send = io::write_all(send, encoded_header);
+                    let send = tokio_io::io::write_all(send, encoded_header);
                     self.state = SendRequestState::Sending(send);
                 }
                 SendRequestState::Sending(ref mut send) => {
                     let (send, _) = try_ready!(send.poll());
                     self.state = match self.body.take() {
-                        None => SendRequestState::Sent(io::shutdown(send)),
+                        None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
                         Some(b) => SendRequestState::SendingBody(SendBody::new(send, b)),
                     };
                 }
                 SendRequestState::SendingBody(ref mut send_body) => {
                     let send = try_ready!(send_body.poll());
                     self.state = match self.trailers.take() {
-                        None => SendRequestState::Sent(io::shutdown(send)),
+                        None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
                         Some(t) => {
                             let block = {
                                 let conn = &mut self.conn.h3.lock().unwrap().inner;
@@ -219,14 +219,14 @@ impl Future for SendRequest {
                             };
                             let mut encoded_header = vec![];
                             block.encode(&mut encoded_header);
-                            let write = io::write_all(send, encoded_header);
+                            let write = tokio_io::io::write_all(send, encoded_header);
                             SendRequestState::SendingTrailers(write)
                         }
                     }
                 }
                 SendRequestState::SendingTrailers(ref mut send_trailers) => {
                     let (send, _) = try_ready!(send_trailers.poll());
-                    self.state = SendRequestState::Sent(tokio::io::shutdown(send));
+                    self.state = SendRequestState::Sent(tokio_io::io::shutdown(send));
                 }
                 SendRequestState::Sent(ref mut shut) => {
                     try_ready!(shut.poll());
