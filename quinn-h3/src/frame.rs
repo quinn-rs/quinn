@@ -50,6 +50,8 @@ where
                 }
             };
             self.buf.truncate(self.buf.len() - Self::READ_SIZE + size);
+        } else if self.buf.len() == 0 {
+            return Ok(Async::Ready(None));
         }
 
         let (pos, decoded) = {
@@ -59,15 +61,9 @@ where
         };
 
         match decoded {
-            Err(frame::Error::UnexpectedEnd) => match self.buf.len() {
+            Err(frame::Error::Incomplete(_)) => match self.buf.len() {
                 Self::READ_SIZE => Err(Error::Overflow),
-                _ => {
-                    if self.finished {
-                        Ok(Async::Ready(None))
-                    } else {
-                        Ok(Async::NotReady)
-                    }
-                }
+                _ => Ok(Async::NotReady),
             },
             Err(e) => Err(e)?,
             Ok(f) => {
@@ -148,7 +144,7 @@ mod tests {
         let mut reader = FrameStream::new(MockStream::new(&buf));
         assert_matches!(reader.poll(), Ok(Async::Ready(Some(HttpFrame::Headers(_)))));
         assert_matches!(reader.poll(), Ok(Async::Ready(Some(HttpFrame::Data(_)))));
-        assert_matches!(reader.poll(), Ok(Async::Ready(None)));
+        assert_matches!(reader.poll(), Ok(Async::NotReady));
     }
 
     #[test]
