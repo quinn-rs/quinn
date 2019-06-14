@@ -8,7 +8,7 @@ use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
-use tokio::io::{Shutdown, WriteAll};
+use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
     body::{Body, RecvBody, SendBody},
@@ -424,7 +424,7 @@ impl Future for SendResponse {
                     let send = try_take(&mut self.send, "polled after finished")?;
                     mem::replace(
                         &mut self.state,
-                        SendResponseState::SendingHeader(tokio::io::write_all(send, encoded)),
+                        SendResponseState::SendingHeader(tokio_io::io::write_all(send, encoded)),
                     );
                 }
                 SendResponseState::SendingHeader(ref mut write) => {
@@ -440,7 +440,7 @@ impl Future for SendResponse {
                 SendResponseState::SendingBody(ref mut body) => {
                     let send = try_ready!(body.poll());
                     let state = match self.trailer.take() {
-                        None => SendResponseState::Closing(tokio::io::shutdown(send)),
+                        None => SendResponseState::Closing(tokio_io::io::shutdown(send)),
                         Some(trailer) => {
                             let block = {
                                 let conn = &mut self.conn.h3.lock().unwrap().inner;
@@ -450,7 +450,9 @@ impl Future for SendResponse {
                             let mut encoded = Vec::new();
                             block.encode(&mut encoded);
 
-                            SendResponseState::SendingTrailers(tokio::io::write_all(send, encoded))
+                            SendResponseState::SendingTrailers(tokio_io::io::write_all(
+                                send, encoded,
+                            ))
                         }
                     };
                     mem::replace(&mut self.state, state);
@@ -459,7 +461,7 @@ impl Future for SendResponse {
                     let (send, _) = try_ready!(write.poll());
                     mem::replace(
                         &mut self.state,
-                        SendResponseState::Closing(tokio::io::shutdown(send)),
+                        SendResponseState::Closing(tokio_io::io::shutdown(send)),
                     );
                 }
                 SendResponseState::Closing(ref mut shut) => {

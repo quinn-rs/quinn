@@ -5,7 +5,7 @@ use futures::{try_ready, Async, Future, Poll, Stream};
 use http::HeaderMap;
 use quinn::{RecvStream, SendStream};
 use quinn_proto::StreamId;
-use tokio::io::WriteAll;
+use tokio_io::io::WriteAll;
 
 use crate::{
     connection::ConnectionRef,
@@ -75,7 +75,7 @@ impl Future for SendBody {
 
                         mem::replace(
                             &mut self.state,
-                            SendBodyState::SendingBuf(tokio::io::write_all(send, buf.into())),
+                            SendBodyState::SendingBuf(tokio_io::io::write_all(send, buf.into())),
                         );
                     }
                 },
