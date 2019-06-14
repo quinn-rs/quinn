@@ -13,7 +13,7 @@ use tokio_io::io::{Shutdown, WriteAll};
 use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
-    frame::FrameStream,
+    frame::{FrameDecoder, FrameStream},
     proto::{
         frame::{HeadersFrame, HttpFrame},
         headers::Header,
@@ -135,7 +135,7 @@ impl Stream for IncomingRequest {
 }
 
 enum RecvRequestState {
-    Receiving(FrameStream<RecvStream>, SendStream),
+    Receiving(FrameStream, SendStream),
     Decoding(HeadersFrame),
     Ready,
 }
@@ -144,7 +144,7 @@ pub struct RecvRequest {
     state: RecvRequestState,
     conn: ConnectionRef,
     stream_id: StreamId,
-    streams: Option<(FrameStream<RecvStream>, SendStream)>,
+    streams: Option<(FrameStream, SendStream)>,
 }
 
 impl RecvRequest {
@@ -153,7 +153,7 @@ impl RecvRequest {
             conn,
             stream_id: send.id(),
             streams: None,
-            state: RecvRequestState::Receiving(FrameStream::new(recv), send),
+            state: RecvRequestState::Receiving(FrameDecoder::stream(recv), send),
         }
     }
 }
@@ -208,7 +208,7 @@ impl Future for RecvRequest {
 
 pub struct RequestReady {
     request: Request<()>,
-    frame_stream: FrameStream<RecvStream>,
+    frame_stream: FrameStream,
     send: SendStream,
     stream_id: StreamId,
     conn: ConnectionRef,
@@ -217,7 +217,7 @@ pub struct RequestReady {
 impl RequestReady {
     fn build(
         headers: Header,
-        frame_stream: FrameStream<RecvStream>,
+        frame_stream: FrameStream,
         send: SendStream,
         stream_id: StreamId,
         conn: ConnectionRef,
@@ -287,7 +287,7 @@ pub struct RecvBodyServer {
 impl RecvBodyServer {
     pub(crate) fn new(
         send: SendStream,
-        recv: FrameStream<RecvStream>,
+        recv: FrameStream,
         conn: ConnectionRef,
         stream_id: StreamId,
     ) -> Self {

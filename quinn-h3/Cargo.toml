@@ -26,6 +26,7 @@ travis-ci = { repository = "djc/quinn" }
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
 tokio-io = "0.1"
+tokio-codec = "0.1"
 futures = "0.1.21"
 bytes = "0.4.7"
 bitlab = "0.8.1"
@@ -38,7 +39,6 @@ string = "0.2"
 [dev-dependencies]
 proptest = "0.9.1"
 assert_matches = "1.1"
-tokio-mockstream = "*"
 
 # Example
 failure = "0.1"

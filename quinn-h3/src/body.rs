@@ -3,7 +3,7 @@ use std::mem;
 use bytes::{Bytes, BytesMut};
 use futures::{try_ready, Async, Future, Poll, Stream};
 use http::HeaderMap;
-use quinn::{RecvStream, SendStream};
+use quinn::SendStream;
 use quinn_proto::StreamId;
 use tokio_io::io::WriteAll;
 
@@ -96,14 +96,14 @@ pub struct RecvBody {
     state: RecvBodyState,
     max_size: usize,
     body: Option<Bytes>,
-    recv: FrameStream<RecvStream>,
+    recv: FrameStream,
     conn: ConnectionRef,
     stream_id: StreamId,
 }
 
 impl RecvBody {
     pub(crate) fn with_capacity(
-        recv: FrameStream<RecvStream>,
+        recv: FrameStream,
         capacity: usize,
         max_size: usize,
         conn: ConnectionRef,

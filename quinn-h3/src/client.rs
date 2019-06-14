@@ -4,9 +4,7 @@ use std::net::ToSocketAddrs;
 
 use futures::{try_ready, Async, Future, Poll, Stream};
 use http::{request::Parts, HeaderMap, Request, Response};
-use quinn::{
-    Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, RecvStream, SendStream,
-};
+use quinn::{Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
@@ -14,7 +12,7 @@ use tokio_io::io::{Shutdown, WriteAll};
 use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
-    frame::FrameStream,
+    frame::{FrameDecoder, FrameStream},
     proto::{
         frame::{HeadersFrame, HttpFrame},
         headers::Header,
@@ -133,7 +131,7 @@ enum SendRequestState {
     SendingBody(SendBody),
     SendingTrailers(WriteAll<SendStream, Vec<u8>>),
     Sent(Shutdown<SendStream>),
-    Receiving(FrameStream<RecvStream>),
+    Receiving(FrameStream),
     Decoding(HeadersFrame),
     Ready(Header),
     Finished,
@@ -146,7 +144,7 @@ pub struct SendRequest {
     state: SendRequestState,
     conn: ConnectionRef,
     stream_id: Option<StreamId>,
-    recv: Option<FrameStream<RecvStream>>,
+    recv: Option<FrameStream>,
 }
 
 impl SendRequest {
@@ -187,7 +185,7 @@ impl Future for SendRequest {
             match self.state {
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = try_ready!(o.poll());
-                    self.recv = Some(FrameStream::new(recv));
+                    self.recv = Some(FrameDecoder::stream(recv));
                     self.stream_id = Some(send.id());
 
                     let header_block = {
@@ -284,7 +282,7 @@ impl Future for SendRequest {
 
 pub struct RecvResponse {
     response: Response<()>,
-    recv: FrameStream<RecvStream>,
+    recv: FrameStream,
     stream_id: StreamId,
     conn: ConnectionRef,
 }
@@ -292,7 +290,7 @@ pub struct RecvResponse {
 impl RecvResponse {
     fn build(
         header: Header,
-        recv: FrameStream<RecvStream>,
+        recv: FrameStream,
         stream_id: StreamId,
         conn: ConnectionRef,
     ) -> Result<Self, Error> {
