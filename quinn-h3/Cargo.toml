@@ -23,33 +23,31 @@ maintenance = { status = "experimental" }
 travis-ci = { repository = "djc/quinn" }
 
 [dependencies]
+bitlab = "0.8.1"
+bytes = "0.4.7"
+err-derive = "0.1.5"
+futures = "0.1.21"
+http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
+lazy_static = "1"
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
+slog = "2.1"
+string = "0.2"
 tokio-io = "0.1"
 tokio-codec = "0.1"
-futures = "0.1.21"
-bytes = "0.4.7"
-bitlab = "0.8.1"
-lazy_static = "1"
-err-derive = "0.1.5"
-slog = "2.1"
-http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
-string = "0.2"
 
 [dev-dependencies]
-proptest = "0.9.1"
 assert_matches = "1.1"
-
-# Example
+directories = "2.0.1"
 failure = "0.1"
+proptest = "0.9.1"
+rand = "0.6.5"
+rcgen = "0.3"
 slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
 url = "1.7"
-rcgen = "0.3"
-directories = "2.0.1"
-rand = "0.6.5"
 
 [[example]]
 name = "h3"
