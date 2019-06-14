@@ -10,6 +10,7 @@ pub enum Error {
     UnsupportedFrame,
     UnexpectedEnd,
     InvalidFrameValue,
+    Incomplete(usize),
 }
 
 #[derive(Debug, PartialEq)]
@@ -47,7 +48,7 @@ impl HttpFrame {
         let len = buf.get_var()?;
 
         if buf.remaining() < len as usize {
-            return Err(Error::UnexpectedEnd);
+            return Err(Error::Incomplete(2 + len as usize));
         }
 
         let mut payload = buf.take(len as usize);
@@ -411,7 +412,7 @@ mod tests {
     fn buffer_too_short() {
         let mut buf = Cursor::new(&[04, 0x4, 0, 255, 128]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::UnexpectedEnd));
+        assert_eq!(decoded, Err(Error::Incomplete(6)));
     }
 
     #[test]
