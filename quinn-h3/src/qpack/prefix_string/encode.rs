@@ -1,5 +1,3 @@
-extern crate bitlab;
-
 use bitlab::*;
 
 use super::BitWindow;
