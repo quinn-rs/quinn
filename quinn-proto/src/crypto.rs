@@ -17,8 +17,10 @@ use crate::transport_parameters::TransportParameters;
 use crate::{ConnectError, Side, TransportError};
 
 /// Cryptography interface based on *ring*
+#[cfg(feature = "ring")]
 pub mod ring;
 /// TLS interface based on rustls
+#[cfg(feature = "rustls")]
 pub mod rustls;
 
 /// A cryptographic session (commonly TLS)

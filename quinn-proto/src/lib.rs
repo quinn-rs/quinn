@@ -16,10 +16,10 @@
 #[cfg(test)]
 #[macro_use]
 extern crate assert_matches;
-#[cfg(test)]
+#[cfg(all(test, feature = "ring"))]
 #[macro_use]
 extern crate hex_literal;
-#[cfg(test)]
+#[cfg(all(test, feature = "rustls"))]
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -36,7 +36,7 @@ pub mod coding;
 mod packet;
 mod range_set;
 mod spaces;
-#[cfg(test)]
+#[cfg(all(test, feature = "rustls"))]
 mod tests;
 mod transport_parameters;
 #[doc(hidden)]
@@ -73,14 +73,22 @@ pub mod generic {
     pub use crate::shared::ServerConfig;
 }
 
-/// A `Connection` using rustls for the cryptography protocol
-pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
-/// A `ClientConfig` containing client-side rustls configuration
-pub type ClientConfig = generic::ClientConfig<crypto::rustls::ClientConfig>;
-/// An `Endpoint` using rustls for the cryptography protocol
-pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
-/// A `ServerConfig` containing server-side rustls configuration
-pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
+#[cfg(feature = "rustls")]
+mod rustls_impls {
+    use crate::{crypto, generic};
+
+    /// A `Connection` using rustls for the cryptography protocol
+    pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
+    /// A `ClientConfig` containing client-side rustls configuration
+    pub type ClientConfig = generic::ClientConfig<crypto::rustls::ClientConfig>;
+    /// An `Endpoint` using rustls for the cryptography protocol
+    pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
+    /// A `ServerConfig` containing server-side rustls configuration
+    pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
+}
+
+#[cfg(feature = "rustls")]
+pub use crate::rustls_impls::*;
 
 /// The QUIC protocol version implemented
 pub const VERSION: u32 = 0xff00_0014;
