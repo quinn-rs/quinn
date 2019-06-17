@@ -42,6 +42,7 @@ script:
 - RUST_BACKTRACE=1 cargo test --all-features -- --ignored
 - if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     cargo fmt -- --check;
+    cd quinn-proto && cargo test --no-default-features;
   fi
 - if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
     RUST_BACKTRACE=1 cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash);
