@@ -23,7 +23,8 @@ pub struct Crypto {
 }
 
 impl Crypto {
-    pub(crate) fn new_0rtt(secret: &[u8]) -> Self {
+    /// Create keys for 0-RTT packets based on the given secret
+    pub fn new_0rtt(secret: &[u8]) -> Self {
         Self::new(
             Side::Client, // Meaningless when the secrets are equal
             &digest::SHA256,

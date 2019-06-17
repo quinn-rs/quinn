@@ -2852,13 +2852,13 @@ where
 
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn bytes_in_flight(&self) -> u64 {
         self.in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn congestion_state(&self) -> u64 {
         self.congestion_window.saturating_sub(self.in_flight.bytes)
     }
@@ -2871,13 +2871,13 @@ where
     }
 
     /// Total number of outgoing packets that have been deemed lost
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn lost_packets(&self) -> u64 {
         self.lost_packets
     }
 
     /// Whether explicit congestion notification is in use on outgoing packets.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn using_ecn(&self) -> bool {
         self.sending_ecn
     }

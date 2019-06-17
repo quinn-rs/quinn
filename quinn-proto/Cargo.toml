@@ -16,6 +16,10 @@ all-features = true
 [badges]
 maintenance = { status = "experimental" }
 
+[features]
+default = ["tls-rustls"]
+tls-rustls = ["rustls", "webpki", "ring"]
+
 [dependencies]
 byteorder = "1.1"
 bytes = "0.4.7"
@@ -23,12 +27,12 @@ err-derive = "0.1.5"
 fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.6"
-ring = "0.14.1"
-rustls = { version = "0.15.2", features = ["quic"] }
+ring = { version = "0.14.1", optional = true }
+rustls = { version = "0.15.2", features = ["quic"], optional = true }
 slab = "0.4"
 slog = "2.2"
 untrusted = "0.6.2"
-webpki = "0.19"
+webpki = { version = "0.19", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"

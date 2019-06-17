@@ -658,7 +658,7 @@ where
         self.reject_new_connections = true;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();
         debug_assert_eq!(x, self.connection_ids_initial.len());
@@ -669,7 +669,7 @@ where
         x
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rustls"))]
     pub(crate) fn known_cids(&self) -> usize {
         self.connection_ids.len()
     }
@@ -867,10 +867,10 @@ impl From<ConfigError> for ConnectError {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
+    #[cfg(feature = "ring")]
     #[test]
     fn token_sanity() {
+        use super::*;
         use crate::crypto::HmacKey;
         use ring::hmac::SigningKey;
         use std::net::Ipv6Addr;

@@ -844,8 +844,6 @@ impl slog::Value for SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{ring::Crypto, Keys};
-    use crate::Side;
     use std::io;
 
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {
@@ -881,8 +879,12 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ring")]
     #[test]
     fn header_encoding() {
+        use crate::crypto::{ring::Crypto, Keys};
+        use crate::Side;
+
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client_crypto = Crypto::new_initial(&dcid, Side::Client);
         let client_header_crypto = client_crypto.header_keys();
