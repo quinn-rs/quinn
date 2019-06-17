@@ -17,23 +17,6 @@ pub struct Error {
     pub reason: String,
 }
 
-impl Error {
-    pub(crate) fn new<T>(code: Code, frame: Option<frame::Type>, reason: T) -> Self
-    where
-        T: Into<String>,
-    {
-        Self {
-            code,
-            frame,
-            reason: reason.into(),
-        }
-    }
-
-    pub(crate) fn crypto(code: u8, reason: String) -> Self {
-        Self::new(Code::crypto(code), None, reason)
-    }
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.code.fmt(f)?;
