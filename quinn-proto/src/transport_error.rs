@@ -5,7 +5,6 @@ use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::frame;
-use rustls::internal::msgs::{codec::Codec, enums::AlertDescription};
 
 /// Transport-level errors occur when a peer violates the protocol specification
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -117,10 +116,7 @@ macro_rules! errors {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if x >= 0x100 && x < 0x200 => match AlertDescription::read_bytes(&[self.0 as u8]) {
-                        Some(desc) => write!(f, "Code::crypto({:?})", desc),
-                        None => write!(f, "Code::crypto({:02x})", self.0 as u8),
-                    },
+                    x if x >= 0x100 && x < 0x200 => write!(f, "Code::crypto({:02x})", self.0 as u8),
                     _ => write!(f, "Code({:04x})", self.0),
                 }
             }
