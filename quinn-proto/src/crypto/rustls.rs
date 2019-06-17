@@ -10,7 +10,7 @@ use webpki::DNSNameRef;
 
 use super::ring::Crypto;
 use crate::transport_parameters::TransportParameters;
-use crate::{crypto, ConnectError, Side, TransportError};
+use crate::{crypto, ConnectError, Side, TransportError, TransportErrorCode};
 
 /// A rustls TLS session
 pub enum TlsSession {
@@ -61,7 +61,11 @@ impl crypto::Session for TlsSession {
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError> {
         self.read_hs(buf).map_err(|e| {
             if let Some(alert) = self.get_alert() {
-                TransportError::crypto(alert.get_u8(), e.to_string())
+                TransportError {
+                    code: TransportErrorCode::crypto(alert.get_u8()),
+                    frame: None,
+                    reason: e.to_string(),
+                }
             } else {
                 TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
             }
