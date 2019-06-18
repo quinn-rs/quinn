@@ -174,11 +174,13 @@ fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
 }
 
 fn gen_cert() -> (Vec<u8>, quinn::PrivateKey) {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]);
+    let cert = unwrap!(rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string()
+    ]));
     let key = unwrap!(quinn::PrivateKey::from_der(
         &cert.serialize_private_key_der()
     ));
-    (cert.serialize_der(), key)
+    (unwrap!(cert.serialize_der()), key)
 }
 
 /// Constructs a buffer with random bytes of given size prefixed with a hash of this data.

@@ -145,9 +145,9 @@ fn read_after_close() {
     let mut endpoint = Endpoint::builder();
 
     let mut server_config = ServerConfigBuilder::default();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
+    let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
     let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
     server_config.certificate(cert_chain, key).unwrap();
     endpoint.listen(server_config.build());
@@ -241,9 +241,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     {
         let log = logger();
         let mut server_config = ServerConfigBuilder::default();
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-        let cert = crate::Certificate::from_der(&cert.serialize_der()).unwrap();
+        let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
         let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
         server_config.certificate(cert_chain, key).unwrap();
 

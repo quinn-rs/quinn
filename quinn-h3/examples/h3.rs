@@ -299,9 +299,9 @@ fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certifica
             Ok(x) => x,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
                 info!(log, "generating self-signed certificate");
-                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
                 let key = cert.serialize_private_key_der();
-                let cert = cert.serialize_der();
+                let cert = cert.serialize_der().unwrap();
                 fs::create_dir_all(&path).context("failed to create certificate directory")?;
                 fs::write(&cert_path, &cert).context("failed to write certificate")?;
                 fs::write(&key_path, &key).context("failed to write private key")?;
