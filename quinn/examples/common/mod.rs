@@ -58,8 +58,8 @@ fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<Error>> 
 
 /// Returns default server configuration along with its certificate.
 fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<Error>> {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
-    let cert_der = cert.serialize_der();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = cert.serialize_der().unwrap();
     let priv_key = cert.serialize_private_key_der();
     let priv_key = PrivateKey::from_der(&priv_key)?;
 

@@ -389,7 +389,7 @@ where
 
 pub fn server_config() -> ServerConfig {
     let key = CERTIFICATE.serialize_private_key_der();
-    let cert = CERTIFICATE.serialize_pem();
+    let cert = CERTIFICATE.serialize_pem().unwrap();
 
     let mut crypto = crypto::rustls::ServerConfig::default();
     crypto.set_protocols(&[ALPN_QUIC_HTTP]);
@@ -406,7 +406,7 @@ pub fn server_config() -> ServerConfig {
 }
 
 pub fn client_config() -> ClientConfig {
-    let cert = CERTIFICATE.serialize_der();
+    let cert = CERTIFICATE.serialize_der().unwrap();
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
     let anchor_vec = vec![anchor];
 
@@ -438,5 +438,5 @@ lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
     static ref CERTIFICATE: rcgen::Certificate =
-        rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
 }

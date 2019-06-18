@@ -13,9 +13,9 @@ criterion_main!(benches);
 
 fn throughput(c: &mut Criterion) {
     let mut server_config = ServerConfigBuilder::default();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]);
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = quinn::Certificate::from_der(&cert.serialize_der()).unwrap();
+    let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
     let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
     server_config.certificate(cert_chain, key).unwrap();
 
