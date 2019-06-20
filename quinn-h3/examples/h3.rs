@@ -130,7 +130,7 @@ fn server(
         ..Default::default()
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(&[quinn::ALPN_QUIC_H3]);
+    server_config.protocols(&[quinn_h3::ALPN]);
 
     if options.stateless_retry {
         server_config.use_stateless_retry(true);
@@ -232,7 +232,7 @@ fn client(
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(&[quinn::ALPN_QUIC_H3]);
+    client_config.protocols(&[quinn_h3::ALPN]);
     endpoint.logger(log.clone());
 
     client_config.add_certificate_authority(cert)?;
