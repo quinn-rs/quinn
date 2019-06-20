@@ -392,7 +392,6 @@ pub fn server_config() -> ServerConfig {
     let cert = CERTIFICATE.serialize_pem().unwrap();
 
     let mut crypto = crypto::rustls::ServerConfig::default();
-    crypto.set_protocols(&[ALPN_QUIC_HTTP]);
     crypto
         .set_certificate(
             CertificateChain::from_pem(cert.as_bytes()).unwrap(),
@@ -411,8 +410,6 @@ pub fn client_config() -> ClientConfig {
     let anchor_vec = vec![anchor];
 
     let mut tls_client_config = crypto::rustls::ClientConfig::default();
-    Arc::make_mut(&mut tls_client_config)
-        .set_protocols(&[str::from_utf8(ALPN_QUIC_HTTP).unwrap().into()]);
     Arc::make_mut(&mut tls_client_config)
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));

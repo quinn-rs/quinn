@@ -301,16 +301,9 @@ fn stop_stream() {
 
 #[test]
 fn reject_self_signed_cert() {
-    let mut crypto = crypto::rustls::ClientConfig::default();
-    crypto.set_protocols(&[ALPN_QUIC_HTTP]);
-    let client_config = ClientConfig {
-        crypto,
-        ..Default::default()
-    };
-
     let mut pair = Pair::default();
     info!(pair.log, "connecting");
-    let client_ch = pair.begin_connect(client_config);
+    let client_ch = pair.begin_connect(ClientConfig::default());
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
@@ -400,11 +393,18 @@ fn zero_rtt() {
 
 #[test]
 fn zero_rtt_rejection() {
-    let mut pair = Pair::default();
-    let mut config = client_config();
+    let mut server_config = server_config();
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into()]);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let mut client_config = client_config();
+    Arc::get_mut(&mut client_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into()]);
 
     // Establish normal connection
-    let client_ch = pair.begin_connect(config.clone());
+    let client_ch = pair.begin_connect(client_config.clone());
     pair.drive();
     let server_conn = pair.server.assert_accept();
     assert_matches!(
@@ -427,11 +427,11 @@ fn zero_rtt_rejection() {
     pair.server.connections.clear();
 
     // Changing protocols invalidates 0-RTT
-    Arc::get_mut(&mut config.crypto)
+    Arc::get_mut(&mut client_config.crypto)
         .unwrap()
-        .set_protocols(&["foo".into()]);
+        .set_protocols(&["bar".into()]);
     info!(pair.log, "resuming session");
-    let client_ch = pair.begin_connect(config);
+    let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair
         .client_conn_mut(client_ch)
