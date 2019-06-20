@@ -101,3 +101,6 @@ impl From<proto::headers::Error> for Error {
 fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
     item.take().ok_or_else(|| Error::Internal(msg))
 }
+
+/// TLS ALPN value for H3
+pub const ALPN: &[u8] = b"h3-20";

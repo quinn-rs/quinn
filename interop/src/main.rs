@@ -218,7 +218,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     h3_tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    h3_tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_H3.into()];
+    h3_tls_config.alpn_protocols = vec![quinn_h3::ALPN.into()];
     let h3_client_config = quinn::ClientConfig {
         crypto: quinn::crypto::rustls::ClientConfig::new(h3_tls_config),
         transport: client_config.transport.clone(),
