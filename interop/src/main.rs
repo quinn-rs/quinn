@@ -75,7 +75,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    tls_config.alpn_protocols = vec![quinn::ALPN_QUIC_HTTP.into()];
+    tls_config.alpn_protocols = vec![ALPN_QUIC_HTTP.into()];
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
@@ -391,3 +391,5 @@ impl rustls::ServerCertVerifier for InteropVerifier {
         Ok(rustls::ServerCertVerified::assertion())
     }
 }
+
+pub const ALPN_QUIC_HTTP: &[u8] = b"hq-20";

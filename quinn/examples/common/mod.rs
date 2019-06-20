@@ -76,3 +76,5 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<Error>> {
 
     Ok((cfg_builder.build(), cert_der))
 }
+
+pub const ALPN_QUIC_HTTP: &[u8] = b"hq-20";
