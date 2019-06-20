@@ -16,6 +16,8 @@ use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 use url::Url;
 
+mod common;
+
 type Result<T> = std::result::Result<T, Error>;
 
 /// HTTP/0.9 over QUIC client
@@ -69,7 +71,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
+    client_config.protocols(&[common::ALPN_QUIC_HTTP]);
     endpoint.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();

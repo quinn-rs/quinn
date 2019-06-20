@@ -15,6 +15,8 @@ use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::Runtime;
 
+mod common;
+
 type Result<T> = std::result::Result<T, Error>;
 
 pub struct PrettyErr<'a>(&'a dyn Fail);
@@ -91,7 +93,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         ..Default::default()
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(&[quinn::ALPN_QUIC_HTTP]);
+    server_config.protocols(&[common::ALPN_QUIC_HTTP]);
 
     if options.keylog {
         server_config.enable_keylog();
