@@ -42,8 +42,11 @@ mod transport_parameters;
 #[doc(hidden)]
 pub mod varint;
 
+mod timer;
+pub use timer::{Timer, TimerTable, TimerTableIter, TimerTableIterMut};
+
 mod connection;
-pub use crate::connection::{ConnectionError, Event, Timer, TimerSetting, TimerUpdate};
+pub use crate::connection::{ConnectionError, Event, TimerSetting, TimerUpdate};
 
 pub mod crypto;
 
