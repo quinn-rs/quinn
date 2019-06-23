@@ -204,10 +204,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::Connecting) {
 }
 
 fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
-    let (send, recv) = match stream {
-        quinn::NewStream::Bi(send, recv) => (send, recv),
-        quinn::NewStream::Uni(_) => unreachable!("disabled by endpoint configuration"),
-    };
+    let (send, recv) = stream.unwrap_bi();
     let root = root.clone();
     let log = log.clone();
     let log2 = log.clone();

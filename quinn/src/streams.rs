@@ -19,6 +19,30 @@ pub enum NewStream {
     Bi(SendStream, RecvStream),
 }
 
+impl NewStream {
+    /// Assume this is a unidirectional stream
+    ///
+    /// Panics if this is actually a bidirectional stream. Useful if the behavior of the peer is
+    /// guaranteed, e.g. by setting `TransportConfig::stream_window_bidi` to 0.
+    pub fn unwrap_uni(self) -> RecvStream {
+        match self {
+            NewStream::Uni(x) => x,
+            NewStream::Bi(_, _) => panic!("unexpected bidirectional stream"),
+        }
+    }
+
+    /// Assume this is a bidirectional stream
+    ///
+    /// Panics if this is actually a unidirectional stream. Useful if the behavior of the peer is
+    /// guaranteed, e.g. by setting `TransportConfig::stream_window_uni` to 0.
+    pub fn unwrap_bi(self) -> (SendStream, RecvStream) {
+        match self {
+            NewStream::Uni(_) => panic!("unexpected unirectional stream"),
+            NewStream::Bi(x, y) => (x, y),
+        }
+    }
+}
+
 /// A stream that can only be used to send data
 ///
 /// If dropped, streams that haven't been explicitly `reset` will continue to (re)transmit
