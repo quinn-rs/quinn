@@ -306,7 +306,7 @@ impl RecvStream {
 
     /// Convenience method to read the entire stream into a buffer
     ///
-    /// The returned future fails with `ReadError::Finished` if it's longer than `size_limit`
+    /// The returned future fails with `ReadToEnd::TooLong` if it's longer than `size_limit`
     /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would
     /// allow. `size_limit` should be set to limit worst-case memory use.
     pub fn read_to_end(self, size_limit: usize) -> Result<ReadToEnd, AlreadyRead> {
