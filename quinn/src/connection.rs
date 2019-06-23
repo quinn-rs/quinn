@@ -357,7 +357,7 @@ impl ConnectionRef {
             driver: None,
             handle,
             connected: false,
-            timers: [None, None, None, None, None, None],
+            timers: Default::default(),
             conn_events,
             endpoint_events,
             blocked_writers: FnvHashMap::default(),
@@ -413,7 +413,7 @@ pub struct ConnectionInner {
     driver: Option<Task>,
     handle: ConnectionHandle,
     connected: bool,
-    timers: [Option<Delay>; proto::Timer::COUNT],
+    timers: proto::TimerTable<Option<Delay>>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FnvHashMap<StreamId, Task>,
@@ -530,7 +530,7 @@ impl ConnectionInner {
 
     fn drive_timers(&mut self, now: Instant) -> bool {
         let mut keep_going = false;
-        for (timer, slot) in proto::Timer::iter().zip(&mut self.timers) {
+        for (timer, slot) in &mut self.timers {
             if let Some(ref mut delay) = slot {
                 match delay.poll().unwrap() {
                     Async::Ready(()) => {
@@ -555,7 +555,7 @@ impl ConnectionInner {
                 TimerUpdate {
                     timer,
                     update: proto::TimerSetting::Start(time),
-                } => match self.timers[timer as usize] {
+                } => match self.timers[timer] {
                     ref mut x @ None => {
                         trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
                         *x = Some(Delay::new(time));
@@ -569,7 +569,7 @@ impl ConnectionInner {
                     timer,
                     update: proto::TimerSetting::Stop,
                 } => {
-                    if self.timers[timer as usize].take().is_some() {
+                    if self.timers[timer].take().is_some() {
                         trace!(self.log, "{timer:?} timer stop", timer = timer);
                     }
                 }

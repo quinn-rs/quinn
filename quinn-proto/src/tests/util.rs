@@ -13,6 +13,7 @@ use untrusted::Input;
 
 use super::*;
 use crate::crypto::rustls::{CertificateChain, PrivateKey};
+use crate::timer::TimerKind;
 
 pub struct Pair {
     pub log: Logger,
@@ -172,7 +173,7 @@ pub struct TestEndpoint {
     pub endpoint: Endpoint,
     pub addr: SocketAddr,
     socket: Option<UdpSocket>,
-    timers: [Option<Instant>; Timer::COUNT],
+    timers: TimerTable<Option<Instant>>,
     pub outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
     pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
@@ -197,7 +198,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            timers: [None; Timer::COUNT],
+            timers: Default::default(),
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
             inbound: VecDeque::new(),
@@ -244,8 +245,8 @@ impl TestEndpoint {
 
         let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
         for (ch, conn) in self.connections.iter_mut() {
-            for timer in Timer::iter() {
-                if let Some(time) = self.timers[timer as usize] {
+            for (timer, setting) in &mut self.timers {
+                if let Some(time) = *setting {
                     if time <= now {
                         trace!(
                             log,
@@ -253,8 +254,8 @@ impl TestEndpoint {
                             side = self.side,
                             timer = timer
                         );
-                        self.timers[timer as usize] = None;
-                        conn.timeout(now, timer);
+                        *setting = None;
+                        conn.handle_timeout(now, timer);
                     }
                 }
             }
@@ -274,7 +275,7 @@ impl TestEndpoint {
             }
 
             while let Some(x) = conn.poll_timers() {
-                self.timers[x.timer as usize] = match x.update {
+                self.timers[x.timer] = match x.update {
                     TimerSetting::Stop => {
                         trace!(
                             log,
@@ -308,14 +309,14 @@ impl TestEndpoint {
     }
 
     pub fn next_wakeup(&self) -> Option<Instant> {
-        let next_timer = self.timers.iter().cloned().filter_map(|t| t).min();
+        let next_timer = self.timers.iter().filter_map(|(_, t)| *t).min();
         let next_inbound = self.inbound.front().map(|x| x.0);
         min_opt(next_timer, next_inbound)
     }
 
     fn is_idle(&self) -> bool {
         let t = self.next_wakeup();
-        t == self.timers[Timer::Idle as usize] || t == self.timers[Timer::KeepAlive as usize]
+        t == self.timers[Timer(TimerKind::Idle)] || t == self.timers[Timer(TimerKind::KeepAlive)]
     }
 
     pub fn delay_outbound(&mut self) {
