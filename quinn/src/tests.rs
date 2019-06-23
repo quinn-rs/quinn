@@ -204,6 +204,7 @@ fn read_after_close() {
                     })
             }),
     );
+    // The endpoint driver won't finish if we could still create new connections
     drop(endpoint);
 
     runtime.run().unwrap();
