@@ -242,6 +242,12 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Set the logger to use
+    pub fn logger(&mut self, logger: Logger) -> &mut Self {
+        self.config.log = Some(logger);
+        self
+    }
+
     /// Begin connecting from `endpoint` to `addr`.
     pub fn build(self) -> ClientConfig {
         self.config
