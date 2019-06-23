@@ -191,11 +191,9 @@ fn read_after_close() {
                             .into_future()
                             .map_err(|(e, _)| panic!("incoming streams: {}", e))
                             .and_then(|(stream, _)| {
-                                let stream = match stream.expect("missing stream") {
-                                    NewStream::Uni(s) => s,
-                                    _ => unreachable!(),
-                                };
                                 stream
+                                    .expect("missing stream")
+                                    .unwrap_uni()
                                     .read_to_end(usize::max_value())
                                     .unwrap()
                                     .map_err(|e| panic!("read_to_end: {}", e))
@@ -312,14 +310,11 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
 }
 
 fn echo(stream: NewStream) -> impl Future<Item = (), Error = ()> {
-    match stream {
-        NewStream::Bi(send, recv) => tokio::io::read_to_end(recv, Vec::new())
-            .and_then(|(_, data)| tokio::io::write_all(send, data))
-            .and_then(|(send, _)| tokio::io::shutdown(send))
-            .map_err(|_| ())
-            .map(|_| ()),
-        _ => panic!("only bidi streams allowed"),
-    }
+    let (send, recv) = stream.unwrap_bi();
+    tokio::io::copy(recv, send)
+        .and_then(|(_, _, send)| tokio::io::shutdown(send))
+        .map_err(|_| ())
+        .map(|_| ())
 }
 
 fn logger() -> Logger {
