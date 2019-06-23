@@ -34,7 +34,7 @@ use quinn::Endpoint;
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let mut runtime = Runtime::new()?;
     let server1_cert = run_server(&mut runtime, "0.0.0.0:5000")?;
     let server2_cert = run_server(&mut runtime, "0.0.0.0:5001")?;
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<Error>> {
 }
 
 /// Runs a QUIC server bound to given address and returns server certificate.
-fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8>, Box<Error>> {
+fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8>, Box<dyn Error>> {
     let (driver, incoming, server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
     runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
@@ -85,7 +85,7 @@ fn run_client(
     runtime: &mut Runtime,
     endpoint: &Endpoint,
     server_port: u16,
-) -> Result<(), Box<Error>> {
+) -> Result<(), Box<dyn Error>> {
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
     let connect = endpoint
         .connect(&server_addr, "localhost")?

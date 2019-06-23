@@ -22,7 +22,7 @@ use common::{make_client_endpoint, make_server_endpoint};
 
 const SERVER_PORT: u16 = 5000;
 
-fn main() -> Result<(), Box<std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = Runtime::new()?;
 
     let (driver, incoming, server_cert) = make_server_endpoint(("0.0.0.0", SERVER_PORT))?;

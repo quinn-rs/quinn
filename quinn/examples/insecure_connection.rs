@@ -18,7 +18,7 @@ use common::make_server_endpoint;
 
 const SERVER_PORT: u16 = 5000;
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let mut runtime = Runtime::new()?;
 
     // server and client are running on the same thread asynchronously
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<Error>> {
 }
 
 /// Runs a QUIC server bound to given address.
-fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Box<Error>> {
+fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Box<dyn Error>> {
     let (driver, incoming, _server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
     runtime.spawn(driver.map_err(|e| panic!("IO error: {}", e)));
@@ -54,7 +54,7 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Bo
     Ok(())
 }
 
-fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<Error>> {
+fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<dyn Error>> {
     let client_cfg = configure_client();
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
