@@ -7,7 +7,9 @@ use futures::{Future, Stream};
 use slog::{o, Drain, Logger, KV};
 use tokio;
 
-use super::{ClientConfigBuilder, Endpoint, NewStream, ServerConfigBuilder};
+use super::{
+    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewStream, ServerConfigBuilder,
+};
 
 #[test]
 fn handshake_timeout() {
@@ -142,23 +144,7 @@ fn local_addr() {
 
 #[test]
 fn read_after_close() {
-    let mut endpoint = Endpoint::builder();
-
-    let mut server_config = ServerConfigBuilder::default();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
-    let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
-    server_config.certificate(cert_chain, key).unwrap();
-    endpoint.listen(server_config.build());
-    let mut client_config = ClientConfigBuilder::default();
-    client_config.add_certificate_authority(cert).unwrap();
-    endpoint.default_client_config(client_config.build());
-
-    let (driver, endpoint, incoming) = endpoint
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .unwrap();
-
+    let (_, driver, endpoint, incoming) = endpoint();
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     runtime.spawn(driver.map_err(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
@@ -210,8 +196,8 @@ fn read_after_close() {
     runtime.run().unwrap();
 }
 
-#[test]
-fn zero_rtt() {
+/// Construct an endpoint suitable for connecting to itself
+fn endpoint() -> (Logger, EndpointDriver, Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();
 
     let log = logger();
@@ -229,9 +215,15 @@ fn zero_rtt() {
     endpoint.default_client_config(client_config.build());
     endpoint.logger(log.new(o!("side" => "Server")));
 
-    let (driver, endpoint, incoming) = endpoint
+    let (x, y, z) = endpoint
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
+    (log, x, y, z)
+}
+
+#[test]
+fn zero_rtt() {
+    let (log, driver, endpoint, incoming) = endpoint();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     runtime.spawn(driver.map_err(|e| panic!("{}", e)));
@@ -363,6 +355,8 @@ fn echo_dualstack() {
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
     {
+        // We don't use the `endpoint` helper here because we want two different endpoints with
+        // different addresses.
         let log = logger();
         let mut server_config = ServerConfigBuilder::default();
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
