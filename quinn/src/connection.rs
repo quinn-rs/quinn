@@ -57,15 +57,15 @@ impl Connecting {
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
     pub fn into_0rtt(mut self) -> Result<(ConnectionDriver, Connection, IncomingStreams), Self> {
-        if (self.0.as_mut().unwrap().0)
-            .lock()
-            .unwrap()
-            .inner
-            .has_0rtt()
-        {
+        // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
+        // have to release it explicitly before returning `self` by value.
+        let conn = (self.0.as_mut().unwrap().0).lock().unwrap();
+        if conn.inner.has_0rtt() || conn.inner.side().is_server() {
+            drop(conn);
             let ConnectionDriver(conn) = self.0.take().unwrap();
             Ok(new_connection(conn))
         } else {
+            drop(conn);
             Err(self)
         }
     }
