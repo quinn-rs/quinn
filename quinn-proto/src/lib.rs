@@ -69,8 +69,8 @@ pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportE
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
     pub use crate::connection::Connection;
-    pub use crate::endpoint::{ClientConfig, Endpoint};
-    pub use crate::shared::ServerConfig;
+    pub use crate::endpoint::Endpoint;
+    pub use crate::shared::{ClientConfig, ServerConfig};
 }
 
 #[cfg(feature = "rustls")]
