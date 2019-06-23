@@ -210,6 +210,131 @@ fn read_after_close() {
 }
 
 #[test]
+fn zero_rtt() {
+    let mut endpoint = Endpoint::builder();
+
+    let log = logger();
+    let mut server_config = ServerConfigBuilder::default();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+    let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+    let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
+    server_config.certificate(cert_chain, key).unwrap();
+    endpoint.listen(server_config.build());
+
+    let mut client_config = ClientConfigBuilder::default();
+    client_config.logger(log.new(o!("side" => "Client")));
+    client_config.add_certificate_authority(cert).unwrap();
+    endpoint.default_client_config(client_config.build());
+    endpoint.logger(log.new(o!("side" => "Server")));
+
+    let (driver, endpoint, incoming) = endpoint
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
+
+    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
+    runtime.spawn(driver.map_err(|e| panic!("{}", e)));
+    const MSG: &[u8] = b"goodbye!";
+    runtime.spawn(incoming.take(2).for_each(|incoming| {
+        let (driver, conn, streams) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+        tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
+        tokio::runtime::current_thread::spawn(streams.map_err(|_| ()).for_each(|x| {
+            x.unwrap_uni()
+                .read_to_end(usize::max_value())
+                .unwrap()
+                .map_err(|_| ())
+                .map(|msg| {
+                    assert_eq!(msg, MSG);
+                })
+        }));
+        conn.open_uni()
+            .map_err(|e| panic!("open_uni: {}", e))
+            .and_then(|s| {
+                tokio::io::write_all(s, MSG.to_vec())
+                    .map_err(|e| panic!("write: {}", e))
+                    .and_then(|(s, _)| s.finish().map_err(|e| panic!("finish: {}", e)))
+            })
+    }));
+    runtime
+        .block_on(
+            endpoint
+                .connect(&endpoint.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .into_0rtt()
+                .err()
+                .expect("0-RTT succeeded without keys")
+                .map_err(|e| panic!("connect: {}", e))
+                .and_then(|(driver, _, streams)| {
+                    tokio::runtime::current_thread::spawn(
+                        // Buy time for the driver to process the server's NewSessionTicket
+                        tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
+                            .map_err(|_| unreachable!())
+                            .and_then(|()| {
+                                streams
+                                    .into_future()
+                                    .map_err(|(e, _)| panic!("incoming streams: {}", e))
+                                    .and_then(|(stream, _)| {
+                                        stream
+                                            .expect("missing stream")
+                                            .unwrap_uni()
+                                            .read_to_end(usize::max_value())
+                                            .unwrap()
+                                            .map_err(|e| panic!("read_to_end: {}", e))
+                                            .map(|msg| {
+                                                assert_eq!(msg, MSG);
+                                            })
+                                    })
+                            }),
+                    );
+                    driver.then(|_| Ok(()))
+                }),
+        )
+        .unwrap();
+    info!(log, "initial connection complete");
+    let (driver, conn, streams) = endpoint
+        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .unwrap()
+        .into_0rtt()
+        .ok()
+        .expect("missing 0-RTT keys");
+    runtime.spawn(
+        conn.open_uni()
+            .map_err(|e| panic!("0-RTT open_uni: {}", e))
+            .and_then(|s| {
+                tokio::io::write_all(s, MSG.to_vec())
+                    .map_err(|e| panic!("0-RTT write: {}", e))
+                    .and_then(|(s, _)| s.finish().map_err(|e| panic!("0-RTT finish: {}", e)))
+            }),
+    );
+    // The connection won't implicitly close if we could still open new streams
+    drop(conn);
+    runtime.spawn(driver.map_err(|_| ()));
+    runtime
+        .block_on(
+            streams
+                .into_future()
+                .map_err(|(e, _)| panic!("incoming streams: {}", e))
+                .and_then(|(stream, _)| {
+                    stream
+                        .expect("missing stream")
+                        .unwrap_uni()
+                        .read_to_end(usize::max_value())
+                        .unwrap()
+                        .map_err(|e| panic!("read_to_end: {}", e))
+                        .map(|msg| {
+                            assert_eq!(msg, MSG);
+                        })
+                }),
+        )
+        .unwrap();
+
+    // The endpoint driver won't finish if we could still create new connections
+    drop(endpoint);
+
+    runtime.run().unwrap();
+}
+
+#[test]
 fn echo_v6() {
     run_echo(
         SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
