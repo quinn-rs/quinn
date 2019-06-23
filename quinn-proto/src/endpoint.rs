@@ -20,8 +20,8 @@ use crate::crypto::{
 use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
-    ClientConfig, ClientOpts, ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint,
-    EndpointConfig, EndpointEvent, ResetToken, ServerConfig,
+    ClientConfig, ClientOpts, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId,
+    EcnCodepoint, EndpointConfig, EndpointEvent, ResetToken, ServerConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
@@ -232,13 +232,13 @@ where
         if let Some(ch) = known_ch {
             return Some((
                 ch,
-                DatagramEvent::ConnectionEvent(ConnectionEvent::Datagram {
+                DatagramEvent::ConnectionEvent(ConnectionEvent(ConnectionEventInner::Datagram {
                     now,
                     remote,
                     ecn,
                     first_decode,
                     remaining,
-                }),
+                })),
             ));
         }
 
@@ -389,7 +389,7 @@ where
                 reset_token: reset_token_for(&self.reset_key, &id),
             });
         }
-        ConnectionEvent::NewIdentifiers(ids)
+        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
     }
 
     fn new_cid(&mut self) -> ConnectionId {

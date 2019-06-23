@@ -8,7 +8,6 @@ use err_derive::Error;
 use rand::{Rng, RngCore};
 use slog::Logger;
 
-use crate::connection::Timer;
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
 use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
@@ -351,24 +350,19 @@ pub enum ConfigError {
 }
 
 /// Events to be sent to the Connection
-pub enum ConnectionEvent {
+pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
+
+pub(crate) enum ConnectionEventInner {
     /// A datagram has been received for the Connection
     Datagram {
-        #[doc(hidden)]
         now: Instant,
-        #[doc(hidden)]
         remote: SocketAddr,
-        #[doc(hidden)]
         ecn: Option<EcnCodepoint>,
-        #[doc(hidden)]
         first_decode: PartialDecode,
-        #[doc(hidden)]
         remaining: Option<BytesMut>,
     },
     /// New connection identifiers have been issued for the Connection
     NewIdentifiers(Vec<NewConnectionId>),
-    /// A timeout has fired for a Connection
-    Timer(Instant, Timer),
 }
 
 /// Events to be sent to the Endpoint
