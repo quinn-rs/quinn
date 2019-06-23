@@ -536,8 +536,7 @@ impl ConnectionInner {
                     Async::Ready(()) => {
                         *slot = None;
                         trace!(self.log, "{timer:?} timeout", timer = timer);
-                        self.inner
-                            .handle_event(proto::ConnectionEvent::Timer(now, timer));
+                        self.inner.handle_timeout(now, timer);
                         // Timeout call may have queued sends
                         keep_going = true;
                     }
