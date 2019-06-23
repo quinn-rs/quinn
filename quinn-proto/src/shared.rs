@@ -323,6 +323,21 @@ where
     }
 }
 
+/// Configuration for outgoing connections
+#[derive(Clone, Debug, Default)]
+pub struct ClientConfig<C> {
+    /// Transport configuration to use
+    pub transport: Arc<TransportConfig>,
+
+    /// Cryptographic configuration to use
+    pub crypto: C,
+
+    /// Diagnostic logger
+    ///
+    /// If unset, the endpoint's logger is used.
+    pub log: Option<Logger>,
+}
+
 /// Errors in the configuration of an endpoint
 #[derive(Debug, Error)]
 pub enum ConfigError {
