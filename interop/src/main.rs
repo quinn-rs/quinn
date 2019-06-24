@@ -33,11 +33,13 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
     let code = {
-        let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
+        let decorator = slog_term::TermDecorator::new().stderr().build();
         let drain = slog_term::FullFormat::new(decorator)
             .use_original_order()
             .build()
             .fuse();
+        // We use a mutex-protected drain for simplicity; this tool is single-threaded anyway.
+        let drain = std::sync::Mutex::new(drain).fuse();
         if let Err(e) = run(Logger::root(drain, o!()), opt) {
             eprintln!("ERROR: {}", e);
             1
