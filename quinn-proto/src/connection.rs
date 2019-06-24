@@ -533,10 +533,9 @@ where
                     // Might have a key update to discard too
                     self.set_key_discard_timer(now);
                 } else if let Some(ref prev) = self.prev_crypto {
-                    if prev
-                        .update_ack_time
-                        .map_or(false, |x| instant_saturating_sub(now, x) >= self.pto() * 3)
-                    {
+                    if prev.end_packet.map_or(false, |(_, recvd)| {
+                        instant_saturating_sub(now, recvd) >= self.pto() * 3
+                    }) {
                         self.prev_crypto = None;
                     } else {
                         self.set_key_discard_timer(now);
@@ -562,8 +561,8 @@ where
             // gains access to an endpoint's internal state shortly after the handshake completes to
             // decrypt packets sent previously within the same connection.
             now + self.pto() * 3 * 100
-        } else if let Some(time) = self.prev_crypto.as_ref().and_then(|x| x.update_ack_time) {
-            time + self.pto() * 3
+        } else if let Some((_, recvd)) = self.prev_crypto.as_ref().and_then(|x| x.end_packet) {
+            recvd + self.pto() * 3
         } else {
             return;
         };
@@ -2642,17 +2641,30 @@ where
         } else if key_phase == self.key_phase || space != SpaceId::Data {
             &self.spaces[space as usize].crypto.as_mut().unwrap().packet
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
-            if number < crypto.end_packet {
+            // If this packet comes prior to acknowledgment of the key update by the peer,
+            if crypto.end_packet.map_or(true, |(pn, _)| number < pn) {
+                // use the previous keys.
                 Some(crypto)
             } else {
+                // Otherwise, this must be a remotely-initiated key update, so fall through to the
+                // final case.
                 None
             }
         }) {
             &prev.crypto
         } else {
+            // We're in the Data space with a key phase mismatch and either there is no locally
+            // initiated key update or the locally initiated key update was acknowledged by a
+            // lower-numbered packet. The key phase mismatch must therefore represent a new
+            // remotely-initiated key update.
             crypto_update = Some(
-                self.tls
-                    .update_keys(&self.spaces[space as usize].crypto.as_ref().unwrap().packet),
+                self.tls.update_keys(
+                    &self.spaces[SpaceId::Data as usize]
+                        .crypto
+                        .as_ref()
+                        .unwrap()
+                        .packet,
+                ),
             );
             crypto_update.as_ref().unwrap()
         };
@@ -2669,9 +2681,9 @@ where
             })?;
 
         if let Some(ref mut prev) = self.prev_crypto {
-            if prev.update_ack_time.is_none() && key_phase == self.key_phase {
+            if prev.end_packet.is_none() && key_phase == self.key_phase {
                 // Key update newly acknowledged
-                prev.update_ack_time = Some(now);
+                prev.end_packet = Some((number, now));
                 self.set_key_discard_timer(now);
             }
         }
@@ -2698,9 +2710,7 @@ where
                 )));
             }
             trace!(self.log, "key update authenticated");
-            self.update_keys(crypto, number, true);
-            // No need to wait for confirmation of a remotely-initiated key update
-            self.prev_crypto.as_mut().unwrap().update_ack_time = Some(now);
+            self.update_keys(crypto, Some((number, now)), true);
             self.set_key_discard_timer(now);
         }
 
@@ -2708,11 +2718,10 @@ where
     }
 
     #[doc(hidden)]
-    pub fn force_key_update(&mut self) {
+    pub fn initiate_key_update(&mut self) {
         let space = self.space(SpaceId::Data);
         let update = self.tls.update_keys(&space.crypto.as_ref().unwrap().packet);
-        let number = space.next_packet_number;
-        self.update_keys(update, number, false);
+        self.update_keys(update, None, false);
     }
 
     /// Send data on the given stream
@@ -2781,7 +2790,7 @@ where
         Ok(n)
     }
 
-    fn update_keys(&mut self, crypto: S::Keys, number: u64, remote: bool) {
+    fn update_keys(&mut self, crypto: S::Keys, end_packet: Option<(u64, Instant)>, remote: bool) {
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize]
                 .crypto
@@ -2792,8 +2801,7 @@ where
         );
         self.prev_crypto = Some(PrevCrypto {
             crypto: old,
-            end_packet: number,
-            update_ack_time: None,
+            end_packet,
             update_unacked: remote,
         });
         self.key_phase = !self.key_phase;
@@ -3165,10 +3173,16 @@ struct PrevCrypto<K>
 where
     K: crypto::Keys,
 {
+    /// The keys used for the previous key phase, temporarily retained to decrypt packets sent by
+    /// the peer prior to its own key update.
     crypto: K,
-    end_packet: u64,
-    /// Time at which a packet using the following key phase was received
-    update_ack_time: Option<Instant>,
+    /// The incoming packet that ends the interval for which these keys are applicable, and the time
+    /// of its receipt.
+    ///
+    /// Incoming packets should be decrypted using these keys iff this is `None` or their packet
+    /// number is lower. `None` indicates that we have not yet received a packet using newer keys,
+    /// which implies that the update was locally initiated.
+    end_packet: Option<(u64, Instant)>,
     /// Whether the following key phase is from a remotely initiated update that we haven't acked
     update_unacked: bool,
 }

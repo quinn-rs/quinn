@@ -246,7 +246,7 @@ impl Connection {
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
-        self.0.lock().unwrap().inner.force_key_update()
+        self.0.lock().unwrap().inner.initiate_key_update()
     }
 
     /// Replace the diagnostic logger
