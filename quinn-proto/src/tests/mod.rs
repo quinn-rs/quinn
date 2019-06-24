@@ -566,6 +566,9 @@ fn key_update() {
         pair.server_conn_mut(server_ch).read_unordered(s),
         Ok(Some((ref data, 6))) if data == MSG2
     );
+
+    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
 }
 
 #[test]
@@ -608,6 +611,7 @@ fn key_update_reordered() {
     assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
 }
 
 #[test]
