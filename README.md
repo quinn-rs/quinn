@@ -45,7 +45,21 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 - [x] Session resumption
 - [ ] HTTP over QUIC
 
-## Certificates
+## Usage Notes
+
+### Buffers
+
+A Quinn endpoint corresponds to a single UDP socket, no matter how many
+connections are in use. Handling high aggregate data rates on a single endpoint
+can require a larger UDP buffer than is configured by default in most
+environments. If you observe erratic latency and/or throughput over a stable
+network link, consider increasing the buffer sizes used. For example, you could
+adjust the `SO_SNDBUF` and `SO_RCVBUF` options of the UDP socket to be used
+before passing it in to Quinn. Note that some platforms (e.g. Linux) require
+elevated privileges or modified system configuration for a process to increase
+its UDP buffer sizes.
+
+### Certificates
 
 By default, Quinn clients validate the cryptographic identity of servers they
 connect to. This prevents an active, on-path attacker from intercepting
