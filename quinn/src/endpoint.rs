@@ -143,7 +143,7 @@ impl Future for EndpointDriver {
             let mut keep_going = false;
             keep_going |= endpoint.drive_recv(now)?;
             endpoint.drive_incoming();
-            endpoint.handle_events()?;
+            endpoint.handle_events();
             keep_going |= endpoint.drive_send()?;
             if !keep_going {
                 break;
@@ -284,7 +284,7 @@ impl EndpointInner {
         Ok(false)
     }
 
-    fn handle_events(&mut self) -> Result<(), io::Error> {
+    fn handle_events(&mut self) {
         use EndpointEvent::*;
         loop {
             match self.events.poll() {
@@ -306,7 +306,7 @@ impl EndpointInner {
                 },
                 Ok(Async::Ready(None)) => unreachable!("EndpointInner owns one sender"),
                 Ok(Async::NotReady) => {
-                    return Ok(());
+                    return;
                 }
                 Err(_) => unreachable!(),
             }
