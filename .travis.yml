@@ -21,11 +21,6 @@ matrix:
     - os: linux
       rust: nightly
 
-before_cache:
-  if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
-    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install -f cargo-tarpaulin;
-  fi
-
 before_script:
   - if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
       rustup component add rustfmt;
@@ -43,7 +38,4 @@ script:
 - if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     cargo fmt -- --check;
     cd quinn-proto && cargo test --no-default-features;
-  fi
-- if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
-    RUST_BACKTRACE=1 cargo tarpaulin --out Xml && bash <(curl -s https://codecov.io/bash);
   fi
