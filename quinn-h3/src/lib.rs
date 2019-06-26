@@ -13,6 +13,7 @@ pub use body::Body;
 
 pub mod client;
 pub mod connection;
+pub mod headers;
 pub mod proto;
 pub mod qpack;
 pub mod server;
