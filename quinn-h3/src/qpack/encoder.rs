@@ -226,7 +226,7 @@ mod tests {
     fn check_encode_field(
         init_fields: &[HeaderField],
         field: &[HeaderField],
-        check: &Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
+        check: &dyn Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
         let mut table = build_table();
         table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
@@ -238,7 +238,7 @@ mod tests {
         init_fields: &[HeaderField],
         field: &[HeaderField],
         stream_id: u64,
-        check: &Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
+        check: &dyn Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
         for field in init_fields {
             table.inserter().put_field(field.clone()).unwrap();
