@@ -349,9 +349,11 @@ pub enum ConfigError {
     VarIntBounds(&'static str),
 }
 
-/// Events to be sent to the Connection
+/// Events sent from an Endpoint to a Connection
+#[derive(Debug)]
 pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
 
+#[derive(Debug)]
 pub(crate) enum ConnectionEventInner {
     /// A datagram has been received for the Connection
     Datagram {

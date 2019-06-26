@@ -18,6 +18,7 @@ use crate::{crypto, VERSION};
 // across QUIC versions), which gives us the destination CID and allows us
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
+#[derive(Debug)]
 pub struct PartialDecode {
     plain_header: PlainHeader,
     buf: io::Cursor<BytesMut>,
@@ -471,6 +472,7 @@ impl PartialEncode {
     }
 }
 
+#[derive(Debug)]
 pub enum PlainHeader {
     Initial {
         dst_cid: ConnectionId,
