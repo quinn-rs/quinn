@@ -399,7 +399,7 @@ impl EncodedDir {
 struct QifFile(PathBuf);
 
 impl QifFile {
-    fn compare(&self, other: &mut Iterator<Item = &qpack::HeaderField>) -> Result<(), Error> {
+    fn compare(&self, other: &mut dyn Iterator<Item = &qpack::HeaderField>) -> Result<(), Error> {
         let value = String::from_utf8_lossy(&fs::read(&self.0)?)
             .split('\n')
             .filter(|l| !l.is_empty())
