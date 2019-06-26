@@ -10,7 +10,8 @@ use tokio_io::io::WriteAll;
 use crate::{
     connection::ConnectionRef,
     frame::FrameStream,
-    proto::frame::{DataFrame, HeadersFrame, HttpFrame},
+    headers::DecodeHeaders,
+    proto::frame::{DataFrame, HttpFrame},
     try_take, Error,
 };
 
@@ -126,7 +127,7 @@ impl RecvBody {
 
 enum RecvBodyState {
     Receiving(BytesMut),
-    Decoding(HeadersFrame),
+    Decoding(DecodeHeaders),
     Finished,
 }
 
@@ -144,8 +145,12 @@ impl Future for RecvBody {
                         }
                         body.extend(d.payload);
                     }
-                    Some(HttpFrame::Headers(d)) => {
-                        match mem::replace(&mut self.state, RecvBodyState::Decoding(d)) {
+                    Some(HttpFrame::Headers(t)) => {
+                        let decode_trailer =
+                            DecodeHeaders::new(t, self.conn.clone(), self.stream_id);
+                        let old_state =
+                            mem::replace(&mut self.state, RecvBodyState::Decoding(decode_trailer));
+                        match old_state {
                             RecvBodyState::Receiving(b) => self.body = Some(b.into()),
                             _ => unreachable!(),
                         };
@@ -159,25 +164,13 @@ impl Future for RecvBody {
                     }
                     _ => return Err(Error::peer("invalid frame type in data")),
                 },
-                RecvBodyState::Decoding(ref frame) => {
-                    let result = {
-                        let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(self.stream_id, frame)
-                    };
-
-                    match result {
-                        Ok(None) => return Ok(Async::NotReady),
-                        Err(e) => {
-                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
-                        }
-                        Ok(Some(decoded)) => {
-                            self.state = RecvBodyState::Finished;
-                            return Ok(Async::Ready((
-                                try_take(&mut self.body, "body absent")?,
-                                Some(decoded.into_fields()),
-                            )));
-                        }
-                    }
+                RecvBodyState::Decoding(ref mut trailer) => {
+                    let trailer = try_ready!(trailer.poll());
+                    self.state = RecvBodyState::Finished;
+                    return Ok(Async::Ready((
+                        try_take(&mut self.body, "body absent")?,
+                        Some(trailer.into_fields()),
+                    )));
                 }
                 _ => return Err(Error::Poll),
             }

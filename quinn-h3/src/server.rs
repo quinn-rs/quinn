@@ -14,10 +14,8 @@ use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
-    proto::{
-        frame::{HeadersFrame, HttpFrame},
-        headers::Header,
-    },
+    headers::DecodeHeaders,
+    proto::{frame::HttpFrame, headers::Header},
     try_take, Error, Settings,
 };
 
@@ -136,7 +134,7 @@ impl Stream for IncomingRequest {
 
 enum RecvRequestState {
     Receiving(FrameStream, SendStream),
-    Decoding(HeadersFrame),
+    Decoding(DecodeHeaders),
     Ready,
 }
 
@@ -168,37 +166,26 @@ impl Future for RecvRequest {
                 RecvRequestState::Receiving(ref mut frames, _) => match try_ready!(frames.poll()) {
                     None => return Err(Error::peer("received an empty request")),
                     Some(HttpFrame::Headers(f)) => {
-                        match mem::replace(&mut self.state, RecvRequestState::Decoding(f)) {
+                        let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
+                        match mem::replace(&mut self.state, RecvRequestState::Decoding(decode)) {
                             RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),
                             _ => unreachable!("Invalid state"),
                         }
                     }
                     Some(_) => return Err(Error::peer("first frame is not headers")),
                 },
-                RecvRequestState::Decoding(ref mut frame) => {
-                    let result = {
-                        let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(self.stream_id, frame)
-                    };
-
-                    match result {
-                        Ok(None) => return Ok(Async::NotReady),
-                        Err(e) => {
-                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
-                        }
-                        Ok(Some(decoded)) => {
-                            self.state = RecvRequestState::Ready;
-                            let (frame_stream, send) =
-                                try_take(&mut self.streams, "Recv request invalid state")?;
-                            return Ok(Async::Ready(RequestReady::build(
-                                decoded,
-                                frame_stream,
-                                send,
-                                self.stream_id,
-                                self.conn.clone(),
-                            )?));
-                        }
-                    }
+                RecvRequestState::Decoding(ref mut decode) => {
+                    let header = try_ready!(decode.poll());
+                    self.state = RecvRequestState::Ready;
+                    let (frame_stream, send) =
+                        try_take(&mut self.streams, "Recv request invalid state")?;
+                    return Ok(Async::Ready(RequestReady::build(
+                        header,
+                        frame_stream,
+                        send,
+                        self.stream_id,
+                        self.conn.clone(),
+                    )?));
                 }
                 RecvRequestState::Ready => return Err(Error::peer("polled after ready")),
             };

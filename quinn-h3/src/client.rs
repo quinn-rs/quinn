@@ -13,8 +13,9 @@ use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
+    headers::DecodeHeaders,
     proto::{
-        frame::{HeadersFrame, HttpFrame},
+        frame::HttpFrame,
         headers::Header,
     },
     try_take, Error, Settings,
@@ -133,7 +134,7 @@ enum SendRequestState {
     SendingTrailers(WriteAll<SendStream, Vec<u8>>),
     Sent(Shutdown<SendStream>),
     Receiving(FrameStream),
-    Decoding(HeadersFrame),
+    Decoding(DecodeHeaders),
     Ready(Header),
     Finished,
 }
@@ -235,8 +236,11 @@ impl Future for SendRequest {
                 SendRequestState::Receiving(ref mut frames) => match try_ready!(frames.poll()) {
                     None => return Err(Error::peer("received an empty response")),
                     Some(f) => match f {
-                        HttpFrame::Headers(headers) => {
-                            match mem::replace(&mut self.state, SendRequestState::Decoding(headers))
+                        HttpFrame::Headers(h) => {
+                            let stream_id =
+                                self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
+                            let decode = DecodeHeaders::new(h, self.conn.clone(), stream_id);
+                            match mem::replace(&mut self.state, SendRequestState::Decoding(decode))
                             {
                                 SendRequestState::Receiving(frames) => self.recv = Some(frames),
                                 _ => unreachable!(),
@@ -245,22 +249,9 @@ impl Future for SendRequest {
                         _ => return Err(Error::peer("first frame is not headers")),
                     },
                 },
-                SendRequestState::Decoding(ref mut frame) => {
-                    let stream_id = self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
-                    let result = {
-                        let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.decode_header(stream_id, frame)
-                    };
-
-                    match result {
-                        Ok(None) => return Ok(Async::NotReady),
-                        Ok(Some(decoded)) => {
-                            self.state = SendRequestState::Ready(decoded);
-                        }
-                        Err(e) => {
-                            return Err(Error::peer(format!("decoding header failed: {:?}", e)))
-                        }
-                    }
+                SendRequestState::Decoding(ref mut decode) => {
+                    let header = try_ready!(decode.poll());
+                    self.state = SendRequestState::Ready(header);
                 }
                 SendRequestState::Ready(_) => {
                     match mem::replace(&mut self.state, SendRequestState::Finished) {
