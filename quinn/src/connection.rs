@@ -634,7 +634,7 @@ impl Drop for ConnectionInner {
             // Ensure the endpoint can tidy up
             let _ = self.endpoint_events.unbounded_send((
                 self.handle,
-                EndpointEvent::Proto(proto::EndpointEvent::Drained),
+                EndpointEvent::Proto(proto::EndpointEvent::drained()),
             ));
         }
     }

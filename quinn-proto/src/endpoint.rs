@@ -21,7 +21,7 @@ use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientConfig, ClientOpts, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId,
-    EcnCodepoint, EndpointConfig, EndpointEvent, ResetToken, ServerConfig,
+    EcnCodepoint, EndpointConfig, EndpointEvent, EndpointEventInner, ResetToken, ServerConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
@@ -114,20 +114,21 @@ where
         ch: ConnectionHandle,
         event: EndpointEvent,
     ) -> Option<ConnectionEvent> {
-        match event {
-            EndpointEvent::NeedIdentifiers => {
+        use EndpointEventInner::*;
+        match event.0 {
+            NeedIdentifiers => {
                 if self.config.local_cid_len != 0 {
                     // We've already issued one CID as part of the normal handshake process.
                     return Some(self.send_new_identifiers(ch, LOC_CID_COUNT - 1));
                 }
             }
-            EndpointEvent::ResetToken(token) => {
+            ResetToken(token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace(token) {
                     self.connection_reset_tokens.remove(&old).unwrap();
                 }
                 self.connection_reset_tokens.insert(token, ch);
             }
-            EndpointEvent::RetireConnectionId(seq) => {
+            RetireConnectionId(seq) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!(
                         self.log,
@@ -139,7 +140,7 @@ where
                     return Some(self.send_new_identifiers(ch, 1));
                 }
             }
-            EndpointEvent::Drained => {
+            Drained => {
                 let conn = self.connections.remove(ch.0);
                 if conn.init_cid.len() > 0 {
                     self.connection_ids_initial.remove(&conn.init_cid);
@@ -625,7 +626,9 @@ where
                 trace!(self.log, "connection incoming; ICID {icid}", icid = dst_cid);
                 self.incoming_handshakes += 1;
                 if conn.has_1rtt() {
-                    if let Some(event) = self.handle_event(ch, EndpointEvent::NeedIdentifiers) {
+                    if let Some(event) =
+                        self.handle_event(ch, EndpointEvent(EndpointEventInner::NeedIdentifiers))
+                    {
                         conn.handle_event(event);
                     }
                 }
@@ -633,7 +636,7 @@ where
             }
             Err(e) => {
                 debug!(self.log, "handshake failed"; "reason" => %e);
-                self.handle_event(ch, EndpointEvent::Drained);
+                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
