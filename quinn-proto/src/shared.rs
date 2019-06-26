@@ -84,7 +84,9 @@ pub struct TransportConfig {
     /// The RTT used before an RTT sample is taken (μs)
     pub initial_rtt: u64,
 
-    /// The max packet size that was used for calculating default and minimum congestion windows.
+    /// The sender’s maximum payload size. Does not include UDP or IP overhead.
+    ///
+    /// Used for calculating initial and minimum congestion windows.
     pub max_datagram_size: u64,
     /// Default limit on the amount of outstanding data in bytes.
     ///
