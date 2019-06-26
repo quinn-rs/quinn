@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
-use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
-use std::str;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::{io, slice, str};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use fnv::FnvHashMap;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
@@ -192,16 +191,24 @@ pub(crate) struct EndpointInner {
     /// Set if the endpoint has been manually closed
     close: Option<(u16, Bytes)>,
     driver_lost: bool,
+    recv_buf: BytesMut,
 }
 
 impl EndpointInner {
     fn drive_recv(&mut self, now: Instant) -> Result<bool, io::Error> {
-        let mut buf = [0; 64 * 1024];
         let mut recvd = 0;
         loop {
-            match self.socket.poll_recv(&mut buf) {
+            const MAX_DATAGRAM_SIZE: usize = 64 * 1024;
+            debug_assert_eq!(self.recv_buf.len(), 0);
+            self.recv_buf.reserve(MAX_DATAGRAM_SIZE);
+            match self.socket.poll_recv(unsafe {
+                slice::from_raw_parts_mut(self.recv_buf.as_mut_ptr(), MAX_DATAGRAM_SIZE)
+            }) {
                 Ok(Async::Ready((n, addr, ecn))) => {
-                    match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
+                    unsafe {
+                        self.recv_buf.set_len(n);
+                    }
+                    match self.inner.handle(now, addr, ecn, self.recv_buf.take()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
                             let conn = ConnectionDriver(self.create_connection(None, handle, conn));
                             if !self.incoming_live {
@@ -406,6 +413,7 @@ impl EndpointRef {
             ref_count: 0,
             close: None,
             driver_lost: false,
+            recv_buf: BytesMut::new(),
         })))
     }
 }
