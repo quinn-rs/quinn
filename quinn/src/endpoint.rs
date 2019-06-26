@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::{io, slice, str};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use fnv::FnvHashMap;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
@@ -199,8 +199,12 @@ impl EndpointInner {
         let mut recvd = 0;
         loop {
             const MAX_DATAGRAM_SIZE: usize = 64 * 1024;
+            const RECV_BUFFER_SIZE: usize = 2 * MAX_DATAGRAM_SIZE;
             debug_assert_eq!(self.recv_buf.len(), 0);
-            self.recv_buf.reserve(MAX_DATAGRAM_SIZE);
+
+            if self.recv_buf.remaining_mut() <= MAX_DATAGRAM_SIZE {
+                self.recv_buf.reserve(RECV_BUFFER_SIZE - self.recv_buf.remaining_mut());
+            }
             match self.socket.poll_recv(unsafe {
                 slice::from_raw_parts_mut(self.recv_buf.as_mut_ptr(), MAX_DATAGRAM_SIZE)
             }) {
