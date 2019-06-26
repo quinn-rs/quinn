@@ -20,7 +20,7 @@ use crate::packet::{
 use crate::range_set::RangeSet;
 use crate::shared::{
     ClientOpts, ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-    EndpointEvent, ServerConfig, TransportConfig,
+    EndpointEvent, EndpointEventInner, ServerConfig, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
@@ -81,7 +81,7 @@ where
     lost_packets: u64,
     io: IoQueue,
     events: VecDeque<Event>,
-    endpoint_events: VecDeque<EndpointEvent>,
+    endpoint_events: VecDeque<EndpointEventInner>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
     /// Outgoing spin bit state
@@ -303,7 +303,7 @@ where
 
     /// Return endpoint-facing events
     pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
-        self.endpoint_events.pop_front()
+        self.endpoint_events.pop_front().map(EndpointEvent)
     }
 
     fn on_packet_sent(
@@ -518,13 +518,13 @@ where
         match timer.0 {
             TimerKind::Close => {
                 self.state = State::Drained;
-                self.endpoint_events.push_back(EndpointEvent::Drained);
+                self.endpoint_events.push_back(EndpointEventInner::Drained);
             }
             TimerKind::Idle => {
                 self.close_common();
                 self.events.push_back(ConnectionError::TimedOut.into());
                 self.state = State::Drained;
-                self.endpoint_events.push_back(EndpointEvent::Drained);
+                self.endpoint_events.push_back(EndpointEventInner::Drained);
             }
             TimerKind::KeepAlive => {
                 trace!(self.log, "sending keep-alive");
@@ -1251,7 +1251,7 @@ where
             }
         }
         if !was_drained && self.state.is_drained() {
-            self.endpoint_events.push_back(EndpointEvent::Drained);
+            self.endpoint_events.push_back(EndpointEventInner::Drained);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
             self.io.timer_stop(TimerKind::Close);
@@ -1371,13 +1371,14 @@ where
                                     }
                                 }
                             }
-                            self.endpoint_events.push_back(EndpointEvent::ResetToken(
-                                params.stateless_reset_token.unwrap(),
-                            ));
+                            self.endpoint_events
+                                .push_back(EndpointEventInner::ResetToken(
+                                    params.stateless_reset_token.unwrap(),
+                                ));
                             self.validate_params(&params)?;
                             self.set_params(params);
                             self.endpoint_events
-                                .push_back(EndpointEvent::NeedIdentifiers);
+                                .push_back(EndpointEventInner::NeedIdentifiers);
                         }
 
                         self.events.push_back(Event::Connected);
@@ -1803,7 +1804,7 @@ where
                         ));
                     }
                     self.endpoint_events
-                        .push_back(EndpointEvent::RetireConnectionId(sequence));
+                        .push_back(EndpointEventInner::RetireConnectionId(sequence));
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -1915,7 +1916,7 @@ where
         self.rem_cid = new.id;
         self.rem_cid_seq = new.sequence;
         self.endpoint_events
-            .push_back(EndpointEvent::ResetToken(new.reset_token));
+            .push_back(EndpointEventInner::ResetToken(new.reset_token));
         self.params.stateless_reset_token = Some(new.reset_token);
     }
 

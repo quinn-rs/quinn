@@ -290,7 +290,7 @@ impl EndpointInner {
             match self.events.poll() {
                 Ok(Async::Ready(Some((ch, event)))) => match event {
                     Proto(e) => {
-                        if let proto::EndpointEvent::Drained = e {
+                        if e.is_drained() {
                             self.connections.remove(&ch);
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
