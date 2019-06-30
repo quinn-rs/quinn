@@ -3280,11 +3280,11 @@ impl RttEstimator {
 /// Events of interest to the application
 #[derive(Debug)]
 pub enum Event {
-    /// A connection was successfully established.
+    /// The connection was successfully established
     Connected,
-    /// A connection was lost.
+    /// The connection was lost
     ///
-    /// Emitted at the end of the lifetime of a connection, even if it was closed locally.
+    /// Emitted if the peer closes the connection or an error is encountered.
     ConnectionLost {
         /// Reason that the connection was closed
         reason: ConnectionError,
