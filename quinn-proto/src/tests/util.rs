@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use std::{cmp, env, fmt, mem, str};
 
 use fnv::FnvHashMap;
+use lazy_static::lazy_static;
 use rustls::KeyLogFile;
 use slog::{Drain, Logger, KV};
 use untrusted::Input;

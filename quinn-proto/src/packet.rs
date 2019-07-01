@@ -846,6 +846,7 @@ impl slog::Value for SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex_literal::hex;
     use std::io;
 
     fn check_pn(typed: PacketNumber, encoded: &[u8]) {

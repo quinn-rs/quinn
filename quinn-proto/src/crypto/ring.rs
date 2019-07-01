@@ -284,6 +284,7 @@ mod test {
     use super::*;
     use crate::crypto::{HeaderKeys, Keys};
     use crate::MAX_CID_SIZE;
+    use hex_literal::hex;
     use rand;
 
     #[test]
