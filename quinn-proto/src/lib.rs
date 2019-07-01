@@ -13,15 +13,6 @@
 //! managing a single connection and all the related state (such as streams).
 
 #![warn(missing_docs)]
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;
-#[cfg(all(test, feature = "ring"))]
-#[macro_use]
-extern crate hex_literal;
-#[cfg(all(test, feature = "rustls"))]
-#[macro_use]
-extern crate lazy_static;
 #[macro_use]
 extern crate slog;
 

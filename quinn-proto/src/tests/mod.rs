@@ -2,8 +2,10 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use assert_matches::assert_matches;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
+use hex_literal::hex;
 use rand::RngCore;
 use rustls::internal::msgs::enums::AlertDescription;
 
@@ -27,12 +29,7 @@ fn version_negotiate_server() {
         client_addr,
         None,
         // Long-header packet with reserved version number
-        hex!(
-            "80 0a1a2a3a
-                        11 00000000 00000000
-                        00"
-        )[..]
-            .into(),
+        hex!("80 0a1a2a3a 11 00000000 00000000 00")[..].into(),
     );
     assert!(event.is_none());
 

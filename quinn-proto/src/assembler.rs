@@ -135,6 +135,7 @@ impl PartialEq for Chunk {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assert_matches::assert_matches;
 
     #[test]
     fn assemble_ordered() {
