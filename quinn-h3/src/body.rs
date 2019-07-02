@@ -11,7 +11,7 @@ use crate::{
     connection::ConnectionRef,
     frame::FrameStream,
     headers::DecodeHeaders,
-    proto::frame::{DataFrame, HttpFrame},
+    proto::frame::{DataFrame, HttpFrame, HeadersFrame},
     try_take, Error,
 };
 
@@ -174,6 +174,54 @@ impl Future for RecvBody {
                 }
                 _ => return Err(Error::Poll),
             }
+        }
+    }
+}
+
+pub struct RecvBodyStream {
+    recv: FrameStream,
+    trailers: Option<HeadersFrame>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+}
+
+impl RecvBodyStream {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        RecvBodyStream {
+            recv,
+            conn,
+            stream_id,
+            trailers: None,
+        }
+    }
+
+    pub fn has_trailers(&self) -> bool {
+        self.trailers.is_some()
+    }
+
+    pub fn trailers(self) -> Option<DecodeHeaders> {
+        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
+        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    }
+}
+
+impl Stream for RecvBodyStream {
+    type Item = Bytes;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match try_ready!(self.recv.poll()) {
+            Some(HttpFrame::Data(d)) => {
+                Ok(Async::Ready(Some(d.payload)))
+            }
+            Some(HttpFrame::Headers(d)) => {
+                self.trailers = Some(d);
+                Ok(Async::Ready(None))
+            }
+            None => {
+                Ok(Async::Ready(None))
+            }
+            _ => Err(Error::peer("invalid frame type in data")),
         }
     }
 }

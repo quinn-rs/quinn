@@ -11,6 +11,7 @@ extern crate assert_matches;
 
 pub use body::Body;
 
+pub mod body;
 pub mod client;
 pub mod connection;
 pub mod headers;
@@ -18,7 +19,6 @@ pub mod proto;
 pub mod qpack;
 pub mod server;
 
-mod body;
 mod frame;
 
 use err_derive::Error;
