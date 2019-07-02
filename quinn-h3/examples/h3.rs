@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
-use std::{fmt, fs, io};
+use std::{fmt, fs, io, mem};
 
 use failure::{bail, format_err, Error, Fail, ResultExt};
-use futures::{Future, Stream};
+use futures::{try_ready, Future, Poll, Stream};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
 use slog::{info, o, Drain, Logger};
 use structopt::{self, StructOpt};
@@ -16,8 +16,11 @@ use url::Url;
 
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
+    self,
+    body::RecvBodyStream,
     client::Builder as ClientBuilder,
     connection::ConnectionDriver,
+    headers::DecodeHeaders,
     server::{Builder as ServerBuilder, IncomingRequest, RequestReady},
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
@@ -268,19 +271,63 @@ fn client(
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
                     println!("received headers: {:?}", response.response());
-                    response.body().map_err(|e| format_err!("recv body: {}", e))
-                })
-                .and_then(|(data, trailers)| {
-                    println!("received body: {:?}", data);
-                    if let Some(trailers) = trailers {
-                        println!("received trailers: {:?}", trailers);
+                    ProcessResponse {
+                        state: ProcessResponseState::Body(response.body_stream()),
                     }
-                    futures::future::ok(())
+                    .map_err(|e| format_err!("send request: {}", e))
                 })
         });
 
     Ok((endpoint_driver, Box::new(fut)))
 }
+
+struct ProcessResponse {
+    state: ProcessResponseState,
+}
+
+impl Future for ProcessResponse {
+    type Item = ();
+    type Error = quinn_h3::Error;
+
+    fn poll(&mut self) -> Poll<(), Self::Error> {
+        loop {
+            match self.state {
+                ProcessResponseState::Body(ref mut b) => match try_ready!(b.poll()) {
+                    Some(chunk) => {
+                        println!("got chunk = {:?}", chunk);
+                    }
+                    None => {
+                        if b.has_trailers() {
+                            self.state =
+                                match mem::replace(&mut self.state, ProcessResponseState::Finished)
+                                {
+                                    ProcessResponseState::Body(b) => {
+                                        ProcessResponseState::Trailers(b.trailers().unwrap())
+                                    }
+                                    _ => unreachable!(),
+                                }
+                        } else {
+                            self.state = ProcessResponseState::Finished;
+                        }
+                    }
+                },
+                ProcessResponseState::Trailers(ref mut t) => {
+                    let trailers = try_ready!(t.poll());
+                    println!("got trailers: {:?}", trailers.into_fields());
+                    return Ok(().into());
+                }
+                ProcessResponseState::Finished => panic!("polled after finished"),
+            }
+        }
+    }
+}
+
+enum ProcessResponseState {
+    Body(RecvBodyStream),
+    Trailers(DecodeHeaders),
+    Finished,
+}
+
 
 fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certificate, PrivateKey)> {
     if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
