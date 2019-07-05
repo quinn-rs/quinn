@@ -178,7 +178,6 @@ where
         } else {
             Side::Server
         };
-        let rng = OsRng::new().expect("failed to construct RNG");
 
         let initial_space = PacketSpace {
             crypto: Some(CryptoSpace::new(S::Keys::new_initial(&init_cid, side))),
@@ -192,7 +191,7 @@ where
             log,
             endpoint_config,
             server_config,
-            rng,
+            rng: OsRng,
             tls,
             handshake_cid: loc_cid,
             rem_cid,
