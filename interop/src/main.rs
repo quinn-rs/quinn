@@ -333,7 +333,6 @@ fn h3_get(
         .map_err(|e| format_err!("failed to send Request frame: {}", e))
         .and_then(|(_, _)| {
             recv.read_to_end(usize::max_value())
-                .unwrap()
                 .map_err(|e| format_err!("failed to send Request frame: {}", e))
         })
         .and_then(move |data| h3_resp(&table, data))
@@ -374,7 +373,6 @@ fn get(
         })
         .and_then(move |_| {
             recv.read_to_end(usize::max_value())
-                .unwrap()
                 .map_err(|e| format_err!("failed to read response: {}", e))
         })
         .map(|data| data)

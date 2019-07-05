@@ -304,21 +304,22 @@ impl RecvStream {
         }
     }
 
-    /// Convenience method to read the entire stream into a buffer
+    /// Convenience method to read all remaining data into a buffer
     ///
     /// The returned future fails with `ReadToEnd::TooLong` if it's longer than `size_limit`
     /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would
     /// allow. `size_limit` should be set to limit worst-case memory use.
-    pub fn read_to_end(self, size_limit: usize) -> Result<ReadToEnd, AlreadyRead> {
-        if self.any_data_read {
-            return Err(AlreadyRead {});
-        }
-        Ok(ReadToEnd {
+    ///
+    /// If unordered reads have already been made, the resulting buffer may have gaps containing
+    /// arbitrary data.
+    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
+        ReadToEnd {
             stream: self,
             size_limit,
             read: Vec::new(),
-            len: 0,
-        })
+            start: u64::max_value(),
+            end: 0,
+        }
     }
 
     /// Close the receive stream immediately.
@@ -342,16 +343,12 @@ impl RecvStream {
     }
 }
 
-/// Error returned by `read_to_end` on a stream that's already been read from
-#[derive(Debug, Error, Clone)]
-#[error(display = "cannot read an entire stream when some data has already been read from it")]
-pub struct AlreadyRead {}
-
 /// Future produced by `read_to_end`
 pub struct ReadToEnd {
     stream: RecvStream,
-    read: Vec<(Bytes, usize)>,
-    len: usize,
+    read: Vec<(Bytes, u64)>,
+    start: u64,
+    end: u64,
     size_limit: usize,
 }
 
@@ -366,12 +363,14 @@ impl Future for ReadToEnd {
                     if end > self.size_limit as u64 {
                         return Err(ReadToEndError::TooLong);
                     }
-                    self.len = self.len.max(end as usize);
-                    self.read.push((data, offset as usize));
+                    self.start = self.start.min(offset);
+                    self.end = self.end.max(end);
+                    self.read.push((data, offset));
                 }
                 None => {
-                    let mut buffer = vec![0; self.len];
+                    let mut buffer = vec![0; (self.end - self.start) as usize];
                     for (data, offset) in self.read.drain(..) {
+                        let offset = (offset - self.start) as usize;
                         buffer[offset..offset + data.len()].copy_from_slice(&data);
                     }
                     return Ok(Async::Ready(buffer));
