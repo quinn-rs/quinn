@@ -181,7 +181,6 @@ fn read_after_close() {
                                     .expect("missing stream")
                                     .unwrap_uni()
                                     .read_to_end(usize::max_value())
-                                    .unwrap()
                                     .map_err(|e| panic!("read_to_end: {}", e))
                                     .map(|msg| {
                                         assert_eq!(msg, MSG);
@@ -234,7 +233,6 @@ fn zero_rtt() {
         tokio::runtime::current_thread::spawn(streams.map_err(|_| ()).for_each(|x| {
             x.unwrap_uni()
                 .read_to_end(usize::max_value())
-                .unwrap()
                 .map_err(|_| ())
                 .map(|msg| {
                     assert_eq!(msg, MSG);
@@ -271,7 +269,6 @@ fn zero_rtt() {
                                             .expect("missing stream")
                                             .unwrap_uni()
                                             .read_to_end(usize::max_value())
-                                            .unwrap()
                                             .map_err(|e| panic!("read_to_end: {}", e))
                                             .map(|msg| {
                                                 assert_eq!(msg, MSG);
@@ -312,7 +309,6 @@ fn zero_rtt() {
                         .expect("missing stream")
                         .unwrap_uni()
                         .read_to_end(usize::max_value())
-                        .unwrap()
                         .map_err(|e| panic!("read_to_end: {}", e))
                         .map(|msg| {
                             assert_eq!(msg, MSG);
@@ -414,7 +410,6 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                                     .and_then(move |_| {
                                         // Rely on send being implicitly finished when we drop it
                                         recv.read_to_end(usize::max_value())
-                                            .unwrap()
                                             .map_err(|e| panic!("read: {}", e))
                                     })
                             })

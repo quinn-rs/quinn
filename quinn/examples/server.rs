@@ -213,7 +213,6 @@ fn handle_request(root: &PathBuf, log: &Logger, stream: quinn::NewStream) {
 
     tokio_current_thread::spawn(
         recv.read_to_end(64 * 1024) // Read the request, which must be at most 64KiB
-            .unwrap()
             .map_err(|e| format_err!("failed reading request: {}", e))
             .and_then(move |req| {
                 let mut escaped = String::new();
