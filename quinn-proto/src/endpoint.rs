@@ -75,10 +75,9 @@ where
         server_config: Option<Arc<ServerConfig<S>>>,
     ) -> Result<Self, ConfigError> {
         config.validate()?;
-        let rng = OsRng::new().unwrap();
         Ok(Self {
             log,
-            rng,
+            rng: OsRng,
             transmits: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),
