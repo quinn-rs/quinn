@@ -133,6 +133,10 @@ impl Streams {
         }
     }
 
+    /// Access a receive stream due to a message from the peer
+    ///
+    /// Similar to `get_recv_mut`, but with additional sanity-checks are performed to detect peer
+    /// misbehavior.
     pub fn get_recv_stream(
         &mut self,
         side: Side,
