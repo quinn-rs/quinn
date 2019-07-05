@@ -359,11 +359,11 @@ impl Future for ReadToEnd {
         loop {
             match try_ready!(self.stream.poll_read_unordered()) {
                 Some((data, offset)) => {
+                    self.start = self.start.min(offset);
                     let end = data.len() as u64 + offset;
-                    if end > self.size_limit as u64 {
+                    if (end - self.start) > self.size_limit as u64 {
                         return Err(ReadToEndError::TooLong);
                     }
-                    self.start = self.start.min(offset);
                     self.end = self.end.max(end);
                     self.read.push((data, offset));
                 }
