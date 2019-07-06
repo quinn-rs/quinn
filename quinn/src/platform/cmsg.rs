@@ -15,11 +15,10 @@ pub struct Encoder<'a> {
 
 impl<'a> Encoder<'a> {
     /// # Safety
-    /// - `buf` must have the alignment of `cmsghdr`.
+    /// - `hdr.msg_control` must be a suitably aligned pointer to `hdr.msg_controllen` bytes that
+    ///   can be safely written
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
-    pub unsafe fn new(hdr: &'a mut libc::msghdr, buf: &'a mut [u8]) -> Self {
-        hdr.msg_control = buf.as_mut_ptr() as _;
-        hdr.msg_controllen = buf.len() as _;
+    pub unsafe fn new(hdr: &'a mut libc::msghdr) -> Self {
         Self {
             cmsg: libc::CMSG_FIRSTHDR(hdr).as_mut(),
             hdr,

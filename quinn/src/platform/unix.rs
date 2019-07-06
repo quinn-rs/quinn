@@ -1,6 +1,7 @@
 use std::os::unix::io::AsRawFd;
 use std::{
-    io, mem,
+    io,
+    mem::{self, MaybeUninit},
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     ptr,
 };
@@ -97,13 +98,16 @@ impl super::UdpExt for UdpSocket {
         hdr.msg_control = ptr::null_mut();
         hdr.msg_controllen = 0;
         hdr.msg_flags = 0;
-        let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
-            cmsg::Aligned(unsafe { mem::uninitialized() });
+        // We may never fully initialize this, and it's only written/read via `ptr::write`/syscalls,
+        // so no `assume_init` call can or should be made.
+        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+        hdr.msg_controllen = CMSG_LEN as _;
         let is_ipv4 = match remote {
             SocketAddr::V4(_) => true,
             SocketAddr::V6(ref addr) => addr.ip().segments().starts_with(&[0, 0, 0, 0, 0, 0xffff]),
         };
-        let mut encoder = unsafe { cmsg::Encoder::new(&mut hdr, &mut ctrl.0) };
+        let mut encoder = unsafe { cmsg::Encoder::new(&mut hdr) };
         if is_ipv4 {
             encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
         } else {
@@ -124,15 +128,14 @@ impl super::UdpExt for UdpSocket {
     }
 
     fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
-        let mut name: libc::sockaddr_storage = unsafe { mem::uninitialized() };
+        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
         let mut iov = libc::iovec {
             iov_base: buf.as_ptr() as *mut _,
             iov_len: buf.len(),
         };
-        let mut ctrl: cmsg::Aligned<[u8; CMSG_LEN]> =
-            cmsg::Aligned(unsafe { mem::uninitialized() });
-        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
-        hdr.msg_name = &mut name as *mut _ as _;
+        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+        let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+        hdr.msg_name = name.as_mut_ptr() as _;
         hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
         hdr.msg_iov = &mut iov;
         hdr.msg_iovlen = 1;
@@ -150,6 +153,7 @@ impl super::UdpExt for UdpSocket {
             }
             break n;
         };
+        let name = unsafe { name.assume_init() };
         let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
             Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
                 // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
