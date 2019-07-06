@@ -497,11 +497,15 @@ where
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.rst_stream {
-            if let streams::SendState::ResetSent { stop_reason } =
-                self.streams.send_mut(id).unwrap().state
-            {
-                self.streams.send_mut(id).unwrap().state =
-                    streams::SendState::ResetRecvd { stop_reason };
+            let ss = match self.streams.send_mut(id) {
+                Some(ss) => ss,
+                None => {
+                    info!(self.log, "no send stream found for acked reset: {:?}", id);
+                    continue;
+                }
+            };
+            if let streams::SendState::ResetSent { stop_reason } = ss.state {
+                ss.state = streams::SendState::ResetRecvd { stop_reason };
                 if stop_reason.is_none() {
                     self.streams.maybe_cleanup(id);
                 }
