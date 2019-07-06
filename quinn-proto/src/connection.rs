@@ -58,6 +58,9 @@ where
     state: State,
     side: Side,
     mtu: u16,
+    /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
+    zero_rtt_enabled: bool,
+    /// Set if 0-RTT is supported, then cleared when no longer needed.
     zero_rtt_crypto: Option<CryptoSpace<S::Keys>>,
     key_phase: bool,
     /// Transport parameters set by the peer
@@ -101,6 +104,8 @@ where
     permit_idle_reset: bool,
     /// Negotiated idle timeout
     idle_timeout: u64,
+    /// Number of the first 1-RTT packet transmitted
+    first_1rtt_sent: Option<u64>,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -202,6 +207,7 @@ where
             side,
             state,
             mtu: MIN_MTU,
+            zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
@@ -227,6 +233,7 @@ where
             accepted_0rtt: false,
             permit_idle_reset: true,
             idle_timeout: config.idle_timeout,
+            first_1rtt_sent: None,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -337,15 +344,6 @@ where
             }
             self.set_loss_detection_timer();
         }
-
-        if space == SpaceId::Handshake
-            && !self.state.is_handshake()
-            && self.side.is_server()
-            && !self.space(SpaceId::Handshake).permit_ack_only
-        {
-            // We've acked the TLS FIN.
-            self.set_key_discard_timer(now);
-        }
     }
 
     fn on_ack_received(&mut self, now: Instant, space: SpaceId, ack: frame::Ack) {
@@ -387,14 +385,12 @@ where
             self.on_packet_acked(space, packet);
         }
 
-        if space == SpaceId::Handshake
-            && !self.state.is_handshake()
-            && self.side.is_client()
-            && self.in_flight.crypto == 0
-            && self.space(SpaceId::Handshake).pending.crypto.is_empty()
+        if self.space(SpaceId::Handshake).crypto.is_some()
+            && space == SpaceId::Data
+            && self.first_1rtt_sent.map_or(false, |pn| ack.largest >= pn)
         {
-            // All Handshake CRYPTO data sent and acked.
-            self.set_key_discard_timer(now);
+            // Received first acknowledgment of 1-RTT packet
+            self.discard_space(SpaceId::Handshake);
         }
 
         // Must be called before crypto/pto_count are clobbered
@@ -533,19 +529,8 @@ where
                 self.on_loss_detection_timeout(now);
             }
             TimerKind::KeyDiscard => {
-                if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
-                    self.discard_space(SpaceId::Handshake);
-                    // Might have a key update to discard too
-                    self.set_key_discard_timer(now);
-                } else if let Some(ref prev) = self.prev_crypto {
-                    if prev.end_packet.map_or(false, |(_, recvd)| {
-                        instant_saturating_sub(now, recvd) >= self.pto() * 3
-                    }) {
-                        self.prev_crypto = None;
-                    } else {
-                        self.set_key_discard_timer(now);
-                    }
-                }
+                self.zero_rtt_crypto = None;
+                self.prev_crypto = None;
             }
             TimerKind::PathValidation => {
                 debug!(self.log, "path validation failed");
@@ -560,18 +545,19 @@ where
     }
 
     fn set_key_discard_timer(&mut self, now: Instant) {
-        let time = if self.spaces[SpaceId::Handshake as usize].crypto.is_some() {
-            // Severe packet loss during this period can cause the connection to fail, so allocate
-            // lots of extra time to retry. This makes it marginally easier for an attacker that
-            // gains access to an endpoint's internal state shortly after the handshake completes to
-            // decrypt packets sent previously within the same connection.
-            now + self.pto() * 3 * 100
-        } else if let Some((_, recvd)) = self.prev_crypto.as_ref().and_then(|x| x.end_packet) {
-            recvd + self.pto() * 3
+        let start = if self.zero_rtt_crypto.is_some() {
+            now
         } else {
-            return;
+            self.prev_crypto
+                .as_ref()
+                .expect("no previous keys")
+                .end_packet
+                .as_ref()
+                .expect("update not acknowledged yet")
+                .1
         };
-        self.io.timer_start(TimerKind::KeyDiscard, time);
+        self.io
+            .timer_start(TimerKind::KeyDiscard, start + self.pto() * 3);
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
@@ -741,6 +727,7 @@ where
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
         spin: bool,
+        is_1rtt: bool,
     ) {
         self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
         self.reset_keep_alive(now);
@@ -761,12 +748,17 @@ where
             space = space_id,
             packet = packet
         );
-        if self.spaces[SpaceId::Initial as usize].crypto.is_some()
-            && space_id == SpaceId::Handshake
-            && self.side.is_server()
-        {
-            // A server stops sending and processing Initial packets when it receives its first Handshake packet.
-            self.discard_space(SpaceId::Initial);
+        if self.side.is_server() {
+            if self.spaces[SpaceId::Initial as usize].crypto.is_some()
+                && space_id == SpaceId::Handshake
+            {
+                // A server stops sending and processing Initial packets when it receives its first Handshake packet.
+                self.discard_space(SpaceId::Initial);
+            }
+            if self.zero_rtt_crypto.is_some() && is_1rtt {
+                // Discard 0-RTT keys soon after receiving a 1-RTT packet
+                self.set_key_discard_timer(now)
+            }
         }
         let space = &mut self.spaces[space_id as usize];
         space.pending_acks.insert_one(packet);
@@ -890,7 +882,14 @@ where
         let len = packet.header_data.len() + packet.payload.len();
         self.total_recvd = len as u64;
 
-        self.on_packet_authenticated(now, SpaceId::Initial, ecn, Some(packet_number), false);
+        self.on_packet_authenticated(
+            now,
+            SpaceId::Initial,
+            ecn,
+            Some(packet_number),
+            false,
+            false,
+        );
         self.process_early_payload(now, packet)?;
         if self.state.is_closed() {
             return Ok(());
@@ -939,6 +938,7 @@ where
             }
         }
         trace!(self.log, "0-RTT enabled");
+        self.zero_rtt_enabled = true;
         self.zero_rtt_crypto = Some(CryptoSpace {
             header: packet.header_keys(),
             packet,
@@ -1032,6 +1032,10 @@ where
         self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
+        if space == SpaceId::Data && self.side.is_client() {
+            // Discard 0-RTT keys because 1-RTT keys are available.
+            self.zero_rtt_crypto = None;
+        }
     }
 
     fn discard_space(&mut self, space: SpaceId) {
@@ -1211,7 +1215,14 @@ where
                             Header::Short { spin, .. } => spin,
                             _ => false,
                         };
-                        self.on_packet_authenticated(now, packet.header.space(), ecn, number, spin);
+                        self.on_packet_authenticated(
+                            now,
+                            packet.header.space(),
+                            ecn,
+                            number,
+                            spin,
+                            packet.header.is_1rtt(),
+                        );
                     }
                     self.handle_connected_inner(now, remote, number, packet)
                 }
@@ -2081,6 +2092,9 @@ where
 
             let space = &mut self.spaces[space_id as usize];
             let crypto = if let Some(ref crypto) = space.crypto {
+                if self.first_1rtt_sent.is_none() && space_id == SpaceId::Data {
+                    self.first_1rtt_sent = Some(exact_number);
+                }
                 crypto
             } else if space_id == SpaceId::Data {
                 self.zero_rtt_crypto.as_ref().unwrap()
@@ -2687,7 +2701,7 @@ where
 
         if let Some(ref mut prev) = self.prev_crypto {
             if prev.end_packet.is_none() && key_phase == self.key_phase {
-                // Key update newly acknowledged
+                // Outgoing key update newly acknowledged
                 prev.end_packet = Some((number, now));
                 self.set_key_discard_timer(now);
             }
@@ -2704,6 +2718,7 @@ where
         }
 
         if let Some(crypto) = crypto_update {
+            // Validate and commit incoming key update
             if number <= rx_packet
                 || self
                     .prev_crypto
@@ -2834,9 +2849,9 @@ where
         self.accepted_0rtt
     }
 
-    /// Whether the connection has 0-RTT keys available
+    /// Whether 0-RTT is/was possible during the handshake
     pub fn has_0rtt(&self) -> bool {
-        self.zero_rtt_crypto.is_some()
+        self.zero_rtt_enabled
     }
 
     pub(crate) fn has_1rtt(&self) -> bool {
