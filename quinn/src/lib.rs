@@ -6,9 +6,6 @@
 //!
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
-//! The futures and streams defined in this crate are not `Send` because they necessarily share
-//! state with each other. As a result, they must be spawned on a single-threaded tokio runtime.
-//!
 //! ```
 //! # extern crate tokio;
 //! # extern crate quinn;
