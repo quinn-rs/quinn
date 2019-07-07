@@ -254,8 +254,8 @@ fn initial_secret(conn_id: &ConnectionId) -> SigningKey {
 }
 
 const INITIAL_SALT: [u8; 20] = [
-    0xef, 0x4f, 0xb0, 0xab, 0xb4, 0x74, 0x70, 0xc4, 0x1b, 0xef, 0xcf, 0x80, 0x31, 0x33, 0x4f, 0xae,
-    0x48, 0x5e, 0x09, 0xa0,
+    0x7f, 0xbc, 0xdb, 0x0e, 0x7c, 0x66, 0xbb, 0xe9, 0x19, 0x3a, 0x96, 0xcd, 0x21, 0x51, 0x9e, 0xbd,
+    0x7a, 0x02, 0x64, 0x4a,
 ];
 
 impl crypto::HmacKey for hmac::SigningKey {
@@ -310,22 +310,23 @@ mod test {
         let cipher = &aead::AES_128_GCM;
         let initial_secret = initial_secret(&id);
         let client_secret = expanded_initial_secret(&initial_secret, b"client in");
+        println!();
         assert_eq!(
             &client_secret[..],
-            hex!("8a3515a14ae3c31b9c2d6d5bc58538ca 5cd2baa119087143e60887428dcb52f6")
+            hex!("7712ead935b044cb18e993a6f7a8c711 19d2439ffdd3b6151ad7f9d9e77e2fb9")
         );
         let (client_key, client_iv) = Crypto::get_keys(digest, cipher, &client_secret);
-        assert_eq!(&client_key[..], hex!("98b0d7e5e7a402c67c33f350fa65ea54"));
-        assert_eq!(&client_iv[..], hex!("19e94387805eb0b46c03a788"));
+        assert_eq!(&client_key[..], hex!("07863d9c083786bc86766ce0d02bf93f"));
+        assert_eq!(&client_iv[..], hex!("fb33da41a8f297d482df670e"));
 
         let server_secret = expanded_initial_secret(&initial_secret, b"server in");
         assert_eq!(
             &server_secret[..],
-            hex!("47b2eaea6c266e32c0697a9e2a898bdf 5c4fb3e5ac34f0e549bf2c58581a3811")
+            hex!("dc33b018d3bf848d1a35d9339e2a7049 4e88e82504deb1a1bac5585d48214956")
         );
         let (server_key, server_iv) = Crypto::get_keys(digest, cipher, &server_secret);
-        assert_eq!(&server_key[..], hex!("9a8be902a9bdd91d16064ca118045fb4"));
-        assert_eq!(&server_iv[..], hex!("0a82086d32205ba22241d8dc"));
+        assert_eq!(&server_key[..], hex!("baefa0f549e8f5aee4b9e574dfebf52d"));
+        assert_eq!(&server_iv[..], hex!("74fc8e534408a0b3928a3906"));
     }
 
     #[test]
@@ -344,11 +345,11 @@ mod test {
         );
         const HEADER_LEN: usize = 19;
         let protected = hex!(
-            "c2ff00001205f067a5502a4262b50040 7428f63f2abf65a03e3e7ce041087cb1
-             1fd7ba338b4fcd9e22bbdb5cff66218a 8ac48269098d73577222d3e02af7eb40
-             1796a2d67c1c9e89d0dc5a5dfc6ceead f4ebd4eae0e3185dfe99a7f59288afaa
-             75539cfad2bab440126a57213325f86d 3b8a5cb13b33f73a6317e34f73ac35ba
-             3d7a1f0b5c"
+            "cfff00001205f067a5502a4262b5004074b517
+             cacd4600a63aee6eff75daa86546b48f 0c560e2730cb549780493f537a3a6e3b
+             de8cbdd2dc6037a784e54651b6b78c76 a65be06d0adc945c134f327c00c28edf
+             9dcec89806ebf5087a462b9a856e0ad6 085f14ebc6ffbb7288e691da3fb71b75
+             7efcf8a4c83ca4a3f69ecb7a510f2e03 4fcd"
         );
         let mut packet = plaintext.to_vec();
         packet.resize(packet.len() + server.tag_len(), 0);
