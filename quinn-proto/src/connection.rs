@@ -28,7 +28,7 @@ use crate::timer::{Timer, TimerKind, TimerTable};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection
@@ -831,12 +831,12 @@ where
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, stream_id: StreamId, error_code: u64) {
+    pub fn reset(&mut self, stream_id: StreamId, error_code: VarInt) {
         self.reset_inner(stream_id, error_code, false);
     }
 
     /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
-    fn reset_inner(&mut self, stream_id: StreamId, error_code: u64, stopped: bool) {
+    fn reset_inner(&mut self, stream_id: StreamId, error_code: VarInt, stopped: bool) {
         assert!(
             stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
@@ -2486,7 +2486,7 @@ where
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: Instant, error_code: u64, reason: Bytes) {
+    pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
         let was_closed = self.state.is_closed();
         if !was_closed {
             self.close_common();
@@ -2640,7 +2640,7 @@ where
     }
 
     /// Signal to the peer that it should stop sending on the given recv stream
-    pub fn stop_sending(&mut self, id: StreamId, error_code: u64) {
+    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) {
         assert!(
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
@@ -3350,7 +3350,7 @@ pub enum Event {
         /// Which stream has been finished
         stream: StreamId,
         /// Error code supplied by the peer if the stream was stopped
-        stop_reason: Option<u64>,
+        stop_reason: Option<VarInt>,
     },
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {

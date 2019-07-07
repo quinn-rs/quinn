@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use bytes::{Buf, BufMut, Bytes};
 use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
-use quinn_proto::varint;
+use quinn_proto::VarInt;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -166,7 +166,7 @@ pub struct PushPromiseFrame {
 impl FrameHeader for PushPromiseFrame {
     const TYPE: Type = Type::PUSH_PROMISE;
     fn len(&self) -> usize {
-        varint::size(self.push_id).unwrap() + self.encoded.as_ref().len()
+        VarInt::from_u64(self.push_id).unwrap().size() + self.encoded.as_ref().len()
     }
 }
 
@@ -266,13 +266,13 @@ impl FrameHeader for PriorityFrame {
 
         size += match self.prioritized {
             Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
-                varint::size(id).unwrap()
+                VarInt::from_u64(id).unwrap().size()
             }
             _ => 0,
         };
         size += match self.dependency {
             Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
-                varint::size(id).unwrap()
+                VarInt::from_u64(id).unwrap().size()
             }
             _ => 0,
         };
@@ -346,14 +346,17 @@ impl SettingsFrame {
 impl FrameHeader for SettingsFrame {
     const TYPE: Type = Type::SETTINGS;
     fn len(&self) -> usize {
-        varint::size(SettingId::NUM_PLACEHOLDERS.0).unwrap()
-            + varint::size(self.num_placeholders).unwrap()
-            + varint::size(SettingId::MAX_HEADER_LIST_SIZE.0).unwrap()
-            + varint::size(self.max_header_list_size).unwrap()
-            + varint::size(SettingId::QPACK_MAX_TABLE_CAPACITY.0).unwrap()
-            + varint::size(self.qpack_max_table_capacity).unwrap()
-            + varint::size(SettingId::QPACK_BLOCKED_STREAMS.0).unwrap()
-            + varint::size(self.qpack_blocked_streams).unwrap()
+        fn sz(x: u64) -> usize {
+            VarInt::from_u64(x).unwrap().size()
+        }
+        sz(SettingId::NUM_PLACEHOLDERS.0)
+            + sz(self.num_placeholders)
+            + sz(SettingId::MAX_HEADER_LIST_SIZE.0)
+            + sz(self.max_header_list_size)
+            + sz(SettingId::QPACK_MAX_TABLE_CAPACITY.0)
+            + sz(self.qpack_max_table_capacity)
+            + sz(SettingId::QPACK_BLOCKED_STREAMS.0)
+            + sz(self.qpack_blocked_streams)
     }
 }
 
@@ -540,7 +543,7 @@ mod tests {
     #[test]
     fn reserved_frame() {
         let mut raw = vec![];
-        varint::write(0x21 + 2 * 0x1f, &mut raw).unwrap();
+        VarInt::from_u32(0x21 + 2 * 0x1f).encode(&mut raw);
         raw.extend(&[6, 0, 255, 128, 0, 250, 218]);
         let mut buf = Cursor::new(&raw);
         let decoded = HttpFrame::decode(&mut buf);

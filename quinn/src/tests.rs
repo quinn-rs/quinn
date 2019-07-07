@@ -124,7 +124,7 @@ fn close_endpoint() {
                 }
             }),
     );
-    endpoint.close(0, &[]);
+    endpoint.close(0u32.into(), &[]);
     runtime.run().unwrap();
 }
 
@@ -415,7 +415,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                             })
                             .map(move |data| {
                                 assert_eq!(&data[..], b"foo");
-                                conn.close(0, b"done");
+                                conn.close(0u32.into(), b"done");
                             })
                     }),
             )

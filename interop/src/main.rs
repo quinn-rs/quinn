@@ -122,7 +122,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     .map(move |data| {
                         println!("read {} bytes, closing", data.len());
                         *stream_data = true;
-                        conn.close(0, b"done");
+                        conn.close(0u32.into(), b"done");
                     })
                     .and_then(|_| {
                         println!("attempting resumption");
@@ -161,7 +161,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                     })
                                     .map(move |_| {
                                         *rebinding = true;
-                                        conn.close(0, b"done");
+                                        conn.close(0u32.into(), b"done");
                                     })
                             })
                     })
@@ -203,7 +203,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 .connect_with(client_config.clone(), &remote, host)?
                 .and_then(|(conn_driver, conn, _)| {
                     retry = true;
-                    conn.close(0, b"done");
+                    conn.close(0u32.into(), b"done");
                     conn_driver
                 })
                 .map(|()| {
@@ -259,7 +259,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                             data.len(),
                             String::from_utf8_lossy(&data)
                         );
-                        conn.close(0, b"done");
+                        conn.close(0u32.into(), b"done");
                     });
                 control_fut.and_then(|_| req_fut).map(|_| h3 = true)
             }),

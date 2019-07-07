@@ -1,90 +1,174 @@
+use std::fmt;
+
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
-/// The largest value representable as a varint
-pub const MAX_VALUE: u64 = (1 << 62) - 1;
+use crate::coding::{self, Codec, UnexpectedEnd};
 
-pub fn size(x: u64) -> Option<usize> {
-    if x < 2u64.pow(6) {
-        Some(1)
-    } else if x < 2u64.pow(14) {
-        Some(2)
-    } else if x < 2u64.pow(30) {
-        Some(4)
-    } else if x < 2u64.pow(62) {
-        Some(8)
-    } else {
-        None
+/// An integer less than 2^62
+///
+/// Values of this type are suitable for encoding as QUIC variable-length integer.
+// It would be neat if we could express to Rust that the top two bits are available for use as enum
+// discriminants
+#[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct VarInt(pub(crate) u64);
+
+impl VarInt {
+    /// The largest representable value
+    pub const MAX: VarInt = VarInt((1 << 62) - 1);
+
+    /// Construct a `VarInt` infallibly
+    pub const fn from_u32(x: u32) -> Self {
+        VarInt(x as u64)
+    }
+
+    /// Succeeds iff `x` < 2^62
+    pub fn from_u64(x: u64) -> Result<Self, VarIntBoundsExceeded> {
+        if x < 2u64.pow(62) {
+            Ok(VarInt(x))
+        } else {
+            Err(VarIntBoundsExceeded)
+        }
+    }
+
+    /// Create a VarInt without ensuring it's in range
+    ///
+    /// # Safety
+    ///
+    /// `x` must be less than 2^62.
+    pub const unsafe fn from_u64_unchecked(x: u64) -> Self {
+        VarInt(x)
+    }
+
+    /// Extract the integer value
+    pub const fn into_inner(self) -> u64 {
+        self.0
+    }
+
+    /// Compute the number of bytes needed to encode this value
+    pub fn size(self) -> usize {
+        let x = self.0;
+        if x < 2u64.pow(6) {
+            1
+        } else if x < 2u64.pow(14) {
+            2
+        } else if x < 2u64.pow(30) {
+            4
+        } else if x < 2u64.pow(62) {
+            8
+        } else {
+            unreachable!("malformed VarInt");
+        }
     }
 }
 
-pub fn read<R: Buf>(r: &mut R) -> Option<u64> {
-    if !r.has_remaining() {
-        return None;
+impl From<VarInt> for u64 {
+    fn from(x: VarInt) -> u64 {
+        x.0
     }
-    let mut buf = [0; 8];
-    buf[0] = r.get_u8();
-    let tag = buf[0] >> 6;
-    buf[0] &= 0b0011_1111;
-    Some(match tag {
-        0b00 => u64::from(buf[0]),
-        0b01 => {
-            if r.remaining() < 1 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..2]);
-            u64::from(BigEndian::read_u16(&buf))
-        }
-        0b10 => {
-            if r.remaining() < 3 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..4]);
-            u64::from(BigEndian::read_u32(&buf))
-        }
-        0b11 => {
-            if r.remaining() < 7 {
-                return None;
-            }
-            r.copy_to_slice(&mut buf[1..8]);
-            BigEndian::read_u64(&buf)
-        }
-        _ => unreachable!(),
-    })
 }
 
+impl From<u8> for VarInt {
+    fn from(x: u8) -> Self {
+        VarInt(x.into())
+    }
+}
+
+impl From<u16> for VarInt {
+    fn from(x: u16) -> Self {
+        VarInt(x.into())
+    }
+}
+
+impl From<u32> for VarInt {
+    fn from(x: u32) -> Self {
+        VarInt(x.into())
+    }
+}
+
+impl std::convert::TryFrom<u64> for VarInt {
+    type Error = VarIntBoundsExceeded;
+    /// Succeeds iff `x` < 2^62
+    fn try_from(x: u64) -> Result<Self, VarIntBoundsExceeded> {
+        VarInt::from_u64(x)
+    }
+}
+
+impl std::convert::TryFrom<usize> for VarInt {
+    type Error = VarIntBoundsExceeded;
+    /// Succeeds iff `x` < 2^62
+    fn try_from(x: usize) -> Result<Self, VarIntBoundsExceeded> {
+        VarInt::try_from(x as u64)
+    }
+}
+
+impl fmt::Debug for VarInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Display for VarInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Error returned when constructing a `VarInt` from a value >= 2^62
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
-pub enum WriteError {
-    #[error(display = "insufficient space to encode value")]
-    InsufficientSpace,
-    #[error(display = "value too large for varint encoding")]
-    OversizedValue,
-}
+#[error(display = "value too large for varint encoding")]
+pub struct VarIntBoundsExceeded;
 
-pub fn write<W: BufMut>(x: u64, w: &mut W) -> Result<(), WriteError> {
-    if x < 2u64.pow(6) {
-        if w.remaining_mut() < 1 {
-            return Err(WriteError::InsufficientSpace);
+impl Codec for VarInt {
+    fn decode<B: Buf>(r: &mut B) -> coding::Result<Self> {
+        if !r.has_remaining() {
+            return Err(UnexpectedEnd);
         }
-        w.put_u8(x as u8);
-    } else if x < 2u64.pow(14) {
-        if w.remaining_mut() < 2 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u16_be(0b01 << 14 | x as u16);
-    } else if x < 2u64.pow(30) {
-        if w.remaining_mut() < 4 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u32_be(0b10 << 30 | x as u32);
-    } else if x < 2u64.pow(62) {
-        if w.remaining_mut() < 8 {
-            return Err(WriteError::InsufficientSpace);
-        }
-        w.put_u64_be(0b11 << 62 | x);
-    } else {
-        return Err(WriteError::OversizedValue);
+        let mut buf = [0; 8];
+        buf[0] = r.get_u8();
+        let tag = buf[0] >> 6;
+        buf[0] &= 0b0011_1111;
+        let x = match tag {
+            0b00 => u64::from(buf[0]),
+            0b01 => {
+                if r.remaining() < 1 {
+                    return Err(UnexpectedEnd);
+                }
+                r.copy_to_slice(&mut buf[1..2]);
+                u64::from(BigEndian::read_u16(&buf))
+            }
+            0b10 => {
+                if r.remaining() < 3 {
+                    return Err(UnexpectedEnd);
+                }
+                r.copy_to_slice(&mut buf[1..4]);
+                u64::from(BigEndian::read_u32(&buf))
+            }
+            0b11 => {
+                if r.remaining() < 7 {
+                    return Err(UnexpectedEnd);
+                }
+                r.copy_to_slice(&mut buf[1..8]);
+                BigEndian::read_u64(&buf)
+            }
+            _ => unreachable!(),
+        };
+        Ok(VarInt(x))
     }
-    Ok(())
+
+    fn encode<B: BufMut>(&self, w: &mut B) {
+        let x = self.0;
+        if x < 2u64.pow(6) {
+            w.put_u8(x as u8);
+        } else if x < 2u64.pow(14) {
+            w.put_u16_be(0b01 << 14 | x as u16);
+        } else if x < 2u64.pow(30) {
+            w.put_u32_be(0b10 << 30 | x as u32);
+        } else if x < 2u64.pow(62) {
+            w.put_u64_be(0b11 << 62 | x);
+        } else {
+            unreachable!("malformed VarInt")
+        }
+    }
 }

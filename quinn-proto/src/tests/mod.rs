@@ -94,15 +94,15 @@ fn lifecycle() {
 
     const REASON: &[u8] = b"whee";
     info!(pair.log, "closing");
-    pair.client
-        .connections
-        .get_mut(&client_ch)
-        .unwrap()
-        .close(pair.time, 42, REASON.into());
+    pair.client.connections.get_mut(&client_ch).unwrap().close(
+        pair.time,
+        VarInt(42),
+        REASON.into(),
+    );
     pair.drive();
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
-                        reason: ApplicationClose { error_code: 42, ref reason }
+                        reason: ApplicationClose { error_code: VarInt(42), ref reason }
                     }}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(pair.client.known_connections(), 0);
@@ -145,7 +145,7 @@ fn server_stateless_reset() {
     // Send something big enough to allow room for a smaller stateless reset.
     pair.client.connections.get_mut(&client_ch).unwrap().close(
         pair.time,
-        42,
+        VarInt(42),
         (&[0xab; 128][..]).into(),
     );
     info!(pair.log, "resetting");
@@ -180,7 +180,7 @@ fn client_stateless_reset() {
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
         pair.time,
-        42,
+        VarInt(42),
         (&[0xab; 128][..]).into(),
     );
     info!(pair.log, "resetting");
@@ -241,7 +241,7 @@ fn reset_stream() {
     pair.drive();
 
     info!(pair.log, "resetting stream");
-    const ERROR: u64 = 42;
+    const ERROR: VarInt = VarInt(42);
     pair.client_conn_mut(client_ch).reset(s, ERROR);
     pair.drive();
 
@@ -271,7 +271,7 @@ fn stop_stream() {
     pair.drive();
 
     info!(pair.log, "stopping stream");
-    const ERROR: u64 = 42;
+    const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive();
 
@@ -361,7 +361,7 @@ fn zero_rtt() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .close(pair.time, 0, [][..].into());
+        .close(pair.time, VarInt(0), [][..].into());
     pair.drive();
 
     pair.client.addr = SocketAddr::new(
@@ -412,7 +412,7 @@ fn zero_rtt_rejection() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .close(pair.time, 0, [][..].into());
+        .close(pair.time, VarInt(0), [][..].into());
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_conn).poll(),
@@ -632,13 +632,13 @@ fn instant_close() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .close(pair.time, 0, Bytes::new());
+        .close(pair.time, VarInt(0), Bytes::new());
     pair.drive();
     let server_ch = pair.server.assert_accept();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
         reason: ConnectionError::ApplicationClosed {
-            reason: ApplicationClose { error_code: 0, ref reason }
+            reason: ApplicationClose { error_code: VarInt(0), ref reason }
         }
     }) if reason.is_empty());
 }
@@ -654,13 +654,13 @@ fn instant_close_2() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .close(pair.time, 42, Bytes::new());
+        .close(pair.time, VarInt(42), Bytes::new());
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     let server_ch = pair.server.assert_accept();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
         reason: ConnectionError::ApplicationClosed {
-            reason: ApplicationClose { error_code: 42, ref reason }
+            reason: ApplicationClose { error_code: VarInt(42), ref reason }
         }
     }) if reason.is_empty());
 }
@@ -790,11 +790,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         Err(WriteError::Blocked)
     );
     pair.drive();
-    pair.client_conn_mut(client_conn).reset(s, 42);
+    pair.client_conn_mut(client_conn).reset(s, VarInt(42));
     pair.drive();
     assert_eq!(
         pair.server_conn_mut(server_conn).read(s, &mut buf),
-        Err(ReadError::Reset { error_code: 42 })
+        Err(ReadError::Reset {
+            error_code: VarInt(42)
+        })
     );
 
     // Happy path
@@ -897,7 +899,7 @@ fn stop_opens_bidi() {
         .client_conn_mut(client_conn)
         .open(Directionality::Bi)
         .unwrap();
-    const ERROR: u64 = 42;
+    const ERROR: VarInt = VarInt(42);
     pair.client
         .connections
         .get_mut(&server_conn)
@@ -961,13 +963,13 @@ fn zero_length_cid() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .close(pair.time, 42, Bytes::new());
+        .close(pair.time, VarInt(42), Bytes::new());
     pair.drive();
     pair.server
         .connections
         .get_mut(&server_ch)
         .unwrap()
-        .close(pair.time, 42, Bytes::new());
+        .close(pair.time, VarInt(42), Bytes::new());
     pair.connect();
 }
 
@@ -1087,7 +1089,7 @@ fn stop_before_finish() {
     pair.drive();
 
     info!(pair.log, "stopping stream");
-    const ERROR: u64 = 42;
+    const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive();
 
@@ -1112,7 +1114,7 @@ fn stop_during_finish() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     info!(pair.log, "stopping and finishing stream");
-    const ERROR: u64 = 42;
+    const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive_server();
     pair.client_conn_mut(client_ch).finish(s).unwrap();

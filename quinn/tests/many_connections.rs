@@ -43,7 +43,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
             let task = incoming
                 .for_each(move |stream| {
                     let conn = conn.clone();
-                    read_from_peer(stream).map(move |_| conn.close(0, &[]))
+                    read_from_peer(stream).map(move |_| conn.close(0u32.into(), &[]))
                 })
                 .map_err(move |e| {
                     let logs = logs.buffer.lock().unwrap();

@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
-use crate::varint;
+use crate::VarInt;
 
 #[derive(Error, Debug, Copy, Clone, Eq, PartialEq)]
 #[error(display = "unexpected end of buffer")]
@@ -103,7 +103,7 @@ impl<T: Buf> BufExt for T {
     }
 
     fn get_var(&mut self) -> Result<u64> {
-        varint::read(self).ok_or(UnexpectedEnd)
+        Ok(VarInt::decode(self)?.into_inner())
     }
 }
 
@@ -118,6 +118,6 @@ impl<T: BufMut> BufMutExt for T {
     }
 
     fn write_var(&mut self, x: u64) {
-        varint::write(x, self).unwrap()
+        VarInt::from_u64(x).unwrap().encode(self);
     }
 }

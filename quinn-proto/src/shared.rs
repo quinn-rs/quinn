@@ -10,7 +10,7 @@ use slog::Logger;
 
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
-use crate::{crypto, varint, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, VarInt, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -165,7 +165,7 @@ impl TransportConfig {
             ("idle_timeout", self.idle_timeout),
         ]
         .iter()
-        .find(|&&(_, x)| x > varint::MAX_VALUE)
+        .find(|&&(_, x)| x > VarInt::MAX.into_inner())
         {
             return Err(ConfigError::VarIntBounds(name));
         }

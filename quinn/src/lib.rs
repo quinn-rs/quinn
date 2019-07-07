@@ -58,7 +58,7 @@ mod udp;
 pub use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 pub use proto::{
     crypto, ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
-    Transmit, TransportConfig,
+    Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::{
@@ -81,7 +81,7 @@ mod tests;
 
 enum ConnectionEvent {
     Close {
-        error_code: u64,
+        error_code: VarInt,
         reason: bytes::Bytes,
     },
     Proto(proto::ConnectionEvent),

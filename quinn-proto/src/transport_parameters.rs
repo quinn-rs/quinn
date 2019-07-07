@@ -6,7 +6,7 @@ use err_derive::Error;
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
-    crypto, varint, Side, TransportConfig, TransportError, MAX_CID_SIZE, MIN_CID_SIZE,
+    crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, MIN_CID_SIZE,
     RESET_TOKEN_SIZE,
 };
 
@@ -188,7 +188,7 @@ impl TransportParameters {
                 $(
                     if self.$name != $default {
                         buf.write::<u16>($code);
-                        buf.write::<u16>(varint::size(self.$name).expect("value too large") as u16);
+                        buf.write::<u16>(VarInt::from_u64(self.$name).expect("value too large").size() as u16);
                         buf.write_var(self.$name);
                     }
                 )*
@@ -296,7 +296,7 @@ impl TransportParameters {
                             match id {
                                 $($code => {
                                     params.$name = r.get_var()?;
-                                    if len != varint::size(params.$name).unwrap() as u16 || got.$name { return Err(Error::Malformed); }
+                                    if len != VarInt::from_u64(params.$name).unwrap().size() as u16 || got.$name { return Err(Error::Malformed); }
                                     got.$name = true;
                                 })*
                                 _ => r.advance(len as usize),

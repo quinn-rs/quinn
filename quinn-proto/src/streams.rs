@@ -8,7 +8,7 @@ use slog::Logger;
 use crate::assembler::Assembler;
 use crate::frame;
 use crate::range_set::RangeSet;
-use crate::{Directionality, Side, StreamId, TransportError};
+use crate::{Directionality, Side, StreamId, TransportError, VarInt};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
@@ -262,7 +262,7 @@ impl Send {
         }
     }
 
-    fn take_stop_reason(&mut self) -> Option<u64> {
+    fn take_stop_reason(&mut self) -> Option<VarInt> {
         match self.state {
             SendState::ResetSent {
                 ref mut stop_reason,
@@ -285,7 +285,7 @@ pub enum WriteError {
     #[error(display = "stopped by peer: error {}", error_code)]
     Stopped {
         /// Application-defined reason for stopping the stream
-        error_code: u64,
+        error_code: VarInt,
     },
     /// Unknown stream
     #[error(display = "unknown stream")]
@@ -438,7 +438,7 @@ impl Recv {
         }
     }
 
-    pub fn reset(&mut self, error_code: u64, final_offset: u64) {
+    pub fn reset(&mut self, error_code: VarInt, final_offset: u64) {
         if self.is_closed() {
             return;
         }
@@ -464,7 +464,7 @@ pub enum ReadError {
     #[error(display = "reset by peer: error {}", error_code)]
     Reset {
         /// Application-defined reason for resetting the stream
-        error_code: u64,
+        error_code: VarInt,
     },
     /// Unknown stream
     #[error(display = "unknown stream")]
@@ -477,9 +477,9 @@ pub enum ReadError {
 pub enum SendState {
     Ready,
     DataSent,
-    ResetSent { stop_reason: Option<u64> },
+    ResetSent { stop_reason: Option<VarInt> },
     DataRecvd,
-    ResetRecvd { stop_reason: Option<u64> },
+    ResetRecvd { stop_reason: Option<VarInt> },
 }
 
 impl SendState {
@@ -496,7 +496,7 @@ impl SendState {
 pub enum RecvState {
     Recv { size: Option<u64> },
     DataRecvd { size: u64 },
-    ResetRecvd { size: u64, error_code: u64 },
+    ResetRecvd { size: u64, error_code: VarInt },
     Closed,
 }
 
@@ -507,7 +507,7 @@ pub enum FinishError {
     #[error(display = "stopped by peer: error {}", error_code)]
     Stopped {
         /// Application-defined reason for stopping the stream
-        error_code: u64,
+        error_code: VarInt,
     },
     /// The stream has not yet been created or is already considered destroyed
     #[error(display = "unknown stream")]
