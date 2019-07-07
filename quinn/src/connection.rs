@@ -223,7 +223,7 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
     /// is preserved in full, it should be kept under 1KiB.
-    pub fn close(&self, error_code: u16, reason: &[u8]) {
+    pub fn close(&self, error_code: u64, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
         conn.close(error_code, reason.into());
     }
@@ -608,7 +608,7 @@ impl ConnectionInner {
         }
     }
 
-    fn close(&mut self, error_code: u16, reason: Bytes) {
+    fn close(&mut self, error_code: u64, reason: Bytes) {
         self.inner.close(Instant::now(), error_code, reason);
         self.terminate(ConnectionError::LocallyClosed);
         self.notify();

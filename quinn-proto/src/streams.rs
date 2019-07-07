@@ -262,7 +262,7 @@ impl Send {
         }
     }
 
-    fn take_stop_reason(&mut self) -> Option<u16> {
+    fn take_stop_reason(&mut self) -> Option<u64> {
         match self.state {
             SendState::ResetSent {
                 ref mut stop_reason,
@@ -285,7 +285,7 @@ pub enum WriteError {
     #[error(display = "stopped by peer: error {}", error_code)]
     Stopped {
         /// Application-defined reason for stopping the stream
-        error_code: u16,
+        error_code: u64,
     },
     /// Unknown stream
     #[error(display = "unknown stream")]
@@ -438,7 +438,7 @@ impl Recv {
         }
     }
 
-    pub fn reset(&mut self, error_code: u16, final_offset: u64) {
+    pub fn reset(&mut self, error_code: u64, final_offset: u64) {
         if self.is_closed() {
             return;
         }
@@ -464,7 +464,7 @@ pub enum ReadError {
     #[error(display = "reset by peer: error {}", error_code)]
     Reset {
         /// Application-defined reason for resetting the stream
-        error_code: u16,
+        error_code: u64,
     },
     /// Unknown stream
     #[error(display = "unknown stream")]
@@ -477,9 +477,9 @@ pub enum ReadError {
 pub enum SendState {
     Ready,
     DataSent,
-    ResetSent { stop_reason: Option<u16> },
+    ResetSent { stop_reason: Option<u64> },
     DataRecvd,
-    ResetRecvd { stop_reason: Option<u16> },
+    ResetRecvd { stop_reason: Option<u64> },
 }
 
 impl SendState {
@@ -496,7 +496,7 @@ impl SendState {
 pub enum RecvState {
     Recv { size: Option<u64> },
     DataRecvd { size: u64 },
-    ResetRecvd { size: u64, error_code: u16 },
+    ResetRecvd { size: u64, error_code: u64 },
     Closed,
 }
 
@@ -507,7 +507,7 @@ pub enum FinishError {
     #[error(display = "stopped by peer: error {}", error_code)]
     Stopped {
         /// Application-defined reason for stopping the stream
-        error_code: u16,
+        error_code: u64,
     },
     /// The stream has not yet been created or is already considered destroyed
     #[error(display = "unknown stream")]

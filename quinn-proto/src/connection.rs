@@ -831,12 +831,12 @@ where
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, stream_id: StreamId, error_code: u16) {
+    pub fn reset(&mut self, stream_id: StreamId, error_code: u64) {
         self.reset_inner(stream_id, error_code, false);
     }
 
     /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
-    fn reset_inner(&mut self, stream_id: StreamId, error_code: u16, stopped: bool) {
+    fn reset_inner(&mut self, stream_id: StreamId, error_code: u64, stopped: bool) {
         assert!(
             stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
@@ -1794,7 +1794,7 @@ where
                 } => {
                     debug!(self.log, "peer claims to be blocked opening more than {limit} {directionality} streams", limit=limit, directionality=directionality);
                 }
-                Frame::StopSending { id, error_code } => {
+                Frame::StopSending(frame::StopSending { id, error_code }) => {
                     if id.initiator() != self.side {
                         if id.directionality() == Directionality::Uni {
                             debug!(
@@ -2345,23 +2345,21 @@ where
         }
 
         // STOP_SENDING
-        while buf.len() + 11 < max_size && space_id == SpaceId::Data {
-            let (id, error_code) = match space.pending.stop_sending.pop() {
+        while buf.len() + frame::StopSending::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let frame = match space.pending.stop_sending.pop() {
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.streams.get_recv_mut(id) {
+            let stream = match self.streams.get_recv_mut(frame.id) {
                 Some(x) => x,
                 None => continue,
             };
             if stream.is_finished() {
                 continue;
             }
-            trace!(self.log, "STOP_SENDING"; "stream" => id.0);
-            sent.stop_sending.push((id, error_code));
-            buf.write(frame::Type::STOP_SENDING);
-            buf.write(id);
-            buf.write(error_code);
+            trace!(self.log, "STOP_SENDING"; "stream" => frame.id);
+            frame.encode(buf);
+            sent.stop_sending.push(frame);
         }
 
         // MAX_DATA
@@ -2488,7 +2486,7 @@ where
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility
     /// to call this only when all important communications have been completed.
-    pub fn close(&mut self, now: Instant, error_code: u16, reason: Bytes) {
+    pub fn close(&mut self, now: Instant, error_code: u64, reason: Bytes) {
         let was_closed = self.state.is_closed();
         if !was_closed {
             self.close_common();
@@ -2642,7 +2640,7 @@ where
     }
 
     /// Signal to the peer that it should stop sending on the given recv stream
-    pub fn stop_sending(&mut self, id: StreamId, error_code: u16) {
+    pub fn stop_sending(&mut self, id: StreamId, error_code: u64) {
         assert!(
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
@@ -2651,7 +2649,10 @@ where
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
             let space = &mut self.spaces[SpaceId::Data as usize];
-            space.pending.stop_sending.push((id, error_code));
+            space
+                .pending
+                .stop_sending
+                .push(frame::StopSending { id, error_code });
         }
     }
 
@@ -3349,7 +3350,7 @@ pub enum Event {
         /// Which stream has been finished
         stream: StreamId,
         /// Error code supplied by the peer if the stream was stopped
-        stop_reason: Option<u16>,
+        stop_reason: Option<u64>,
     },
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {

@@ -100,7 +100,7 @@ impl Endpoint {
     /// Close all of this endpoint's connections immediately and cease accepting new connections.
     ///
     /// See `Connection::close` for details.
-    pub fn close(&self, error_code: u16, reason: &[u8]) {
+    pub fn close(&self, error_code: u64, reason: &[u8]) {
         let reason = Bytes::from(reason);
         let mut endpoint = self.inner.lock().unwrap();
         endpoint.close = Some((error_code, reason.clone()));
@@ -190,7 +190,7 @@ pub(crate) struct EndpointInner {
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     /// Set if the endpoint has been manually closed
-    close: Option<(u16, Bytes)>,
+    close: Option<(u64, Bytes)>,
     driver_lost: bool,
 }
 
