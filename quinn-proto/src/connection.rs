@@ -11,7 +11,7 @@ use rand::{rngs::OsRng, Rng};
 use slog::Logger;
 
 use crate::coding::BufMutExt;
-use crate::crypto::{self, ClientConfig, HeaderKeys, Keys};
+use crate::crypto::{self, HeaderKeys, Keys};
 use crate::frame::FrameStruct;
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
@@ -19,7 +19,7 @@ use crate::packet::{
 };
 use crate::range_set::RangeSet;
 use crate::shared::{
-    ClientOpts, ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
+    ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
     EndpointEvent, EndpointEventInner, ServerConfig, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
@@ -78,7 +78,6 @@ where
     local_max_data: u64,
     /// Stream data we're sending that hasn't been acknowledged or reset yet
     unacked_data: u64,
-    client_opts: Option<ClientOpts<S::ClientConfig>>,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -176,17 +175,11 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        client_opts: Option<ClientOpts<S::ClientConfig>>,
+        side: Side,
         tls: S,
         now: Instant,
         remote_validated: bool,
     ) -> Self {
-        let side = if client_opts.is_some() {
-            Side::Client
-        } else {
-            Side::Server
-        };
-
         let initial_space = PacketSpace {
             crypto: Some(CryptoSpace::new(S::Keys::new_initial(&init_cid, side))),
             ..PacketSpace::new(now)
@@ -194,6 +187,7 @@ where
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             token: None,
+            client_hello: None,
         });
         let mut rng = OsRng;
         let mut this = Self {
@@ -220,7 +214,6 @@ where
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
             unacked_data: 0,
-            client_opts,
             orig_rem_cid: None,
             lost_packets: 0,
             io: IoQueue::new(),
@@ -1030,6 +1023,12 @@ where
                 break;
             }
             let offset = self.space_mut(space).crypto_offset;
+            let outgoing = Bytes::from(outgoing);
+            if let State::Handshake(ref mut state) = self.state {
+                if space == SpaceId::Initial && offset == 0 && self.side.is_client() {
+                    state.client_hello = Some(outgoing.clone());
+                }
+            }
             self.space_mut(space).crypto_offset += outgoing.len() as u64;
             trace!(
                 self.log,
@@ -1042,7 +1041,7 @@ where
                 .crypto
                 .push_back(frame::Crypto {
                     offset,
-                    data: outgoing.into(),
+                    data: outgoing,
                 });
         }
     }
@@ -1307,7 +1306,7 @@ where
         packet: Packet,
     ) -> Result<(), ConnectionError> {
         match self.state {
-            State::Handshake(ref state) => {
+            State::Handshake(ref mut state) => {
                 match packet.header {
                     Header::Retry {
                         src_cid: rem_cid,
@@ -1327,34 +1326,30 @@ where
                             return Ok(());
                         }
                         trace!(self.log, "retrying with CID {rem_cid}", rem_cid = rem_cid);
+                        let client_hello = state.client_hello.take().unwrap();
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
                         self.rem_handshake_cid = rem_cid;
                         self.on_packet_acked(SpaceId::Initial, 0);
 
-                        // Reset to initial state
-                        let client_opts = self.client_opts.as_ref().unwrap();
-                        self.tls = client_opts
-                            .crypto
-                            .start_session(
-                                &client_opts.server_name,
-                                &TransportParameters::new::<S>(&self.config, None),
-                            )
-                            .unwrap();
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
                             crypto: Some(CryptoSpace::new(S::Keys::new_initial(
                                 &rem_cid, self.side,
                             ))),
                             next_packet_number: self.spaces[0].next_packet_number,
+                            crypto_offset: client_hello.len() as u64,
                             ..PacketSpace::new(now)
                         };
-
-                        self.write_tls();
+                        self.spaces[0].pending.crypto.push_back(frame::Crypto {
+                            offset: 0,
+                            data: client_hello,
+                        });
 
                         self.state = State::Handshake(state::Handshake {
                             token: Some(packet.payload.into()),
                             rem_cid_set: false,
+                            client_hello: None,
                         });
                         Ok(())
                     }
@@ -2047,7 +2042,7 @@ where
             {
                 // A client stops both sending and processing Initial packets when it
                 // sends its first Handshake packet.
-                self.discard_space(SpaceId::Initial)
+                self.discard_space(SpaceId::Initial);
             }
             if let Some(ref mut prev) = self.prev_crypto {
                 prev.update_unacked = false;
@@ -3147,8 +3142,18 @@ mod state {
 
     #[derive(Clone)]
     pub struct Handshake {
+        /// Whether the remote CID has been set by the peer yet
+        ///
+        /// Always set for servers
         pub rem_cid_set: bool,
+        /// Stateless retry token, if the peer has provided one
+        ///
+        /// Only set for clients
         pub token: Option<Bytes>,
+        /// First cryptographic message
+        ///
+        /// Only set for clients
+        pub client_hello: Option<Bytes>,
     }
 
     #[derive(Clone)]

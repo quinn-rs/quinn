@@ -20,8 +20,8 @@ use crate::crypto::{
 use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
-    ClientConfig, ClientOpts, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId,
-    EcnCodepoint, EndpointConfig, EndpointEvent, EndpointEventInner, ResetToken, ServerConfig,
+    ClientConfig, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint,
+    EndpointConfig, EndpointEvent, EndpointEventInner, ResetToken, ServerConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
@@ -413,18 +413,15 @@ where
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         let loc_cid = self.new_cid();
-        let (tls, client_opts, transport_config, log) = match opts {
+        let (side, tls, transport_config, log) = match opts {
             ConnectionOpts::Client {
                 config,
                 server_name,
             } => {
                 let params = TransportParameters::new::<S>(&config.transport, None);
                 (
+                    Side::Client,
                     config.crypto.start_session(&server_name, &params)?,
-                    Some(ClientOpts {
-                        crypto: config.crypto,
-                        server_name,
-                    }),
                     config.transport,
                     config
                         .log
@@ -440,17 +437,18 @@ where
                     ..params
                 };
                 (
+                    Side::Server,
                     config.crypto.start_session(&server_params),
-                    None,
                     config.transport.clone(),
                     self.log.new(o!("connection" => loc_cid)),
                 )
             }
         };
 
-        let remote_validated = self.server_config.as_ref().map_or(false, |cfg| {
-            cfg.use_stateless_retry && client_opts.is_none()
-        });
+        let remote_validated = self
+            .server_config
+            .as_ref()
+            .map_or(false, |cfg| cfg.use_stateless_retry && side.is_server());
         let conn = Connection::new(
             log,
             Arc::clone(&self.config),
@@ -460,7 +458,7 @@ where
             loc_cid,
             rem_cid,
             remote,
-            client_opts,
+            side,
             tls,
             now,
             remote_validated,
