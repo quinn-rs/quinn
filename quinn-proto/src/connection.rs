@@ -367,9 +367,16 @@ where
 
         if let Some(info) = self.space(space).sent_packets.get(&ack.largest) {
             if info.ack_eliciting {
-                let delay = Duration::from_micros(ack.delay << self.params.ack_delay_exponent);
+                let delay = if space != SpaceId::Data {
+                    Duration::from_micros(0)
+                } else {
+                    cmp::min(
+                        self.max_ack_delay(),
+                        Duration::from_micros(ack.delay << self.params.ack_delay_exponent),
+                    )
+                };
                 let rtt = instant_saturating_sub(now, info.time_sent);
-                self.rtt.update(cmp::min(delay, self.max_ack_delay()), rtt);
+                self.rtt.update(delay, rtt);
             }
         }
 
