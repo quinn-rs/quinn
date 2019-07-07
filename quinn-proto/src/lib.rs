@@ -253,9 +253,10 @@ pub struct Transmit {
 // Useful internal constants
 //
 
-/// Draft 17 §5.1.1: endpoints SHOULD provide and maintain at least eight
-/// connection IDs
-const LOC_CID_COUNT: usize = 8;
+/// The maximum number of CIDs we bother to issue per connection
+const LOC_CID_COUNT: u64 = 8;
+/// The maximum number of remote CIDs we're willing to store per connection
+const REM_CID_COUNT: u64 = 32;
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 18;
 const MIN_CID_SIZE: usize = 4;

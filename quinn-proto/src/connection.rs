@@ -28,7 +28,8 @@ use crate::timer::{Timer, TimerKind, TimerTable};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
     frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
+    TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection
@@ -917,6 +918,12 @@ where
             })?;
         self.validate_params(&params)?;
         self.set_params(params);
+        if params.active_connection_id_limit != 0 {
+            self.endpoint_events
+                .push_back(EndpointEventInner::NeedIdentifiers(
+                    params.active_connection_id_limit,
+                ));
+        }
         self.write_tls();
         self.init_0rtt();
         if let Some(data) = remaining {
@@ -941,6 +948,7 @@ where
                         preferred_address: None,
                         stateless_reset_token: None,
                         ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
+                        active_connection_id_limit: 0,
                         ..params
                     };
                     self.set_params(params);
@@ -1410,8 +1418,13 @@ where
                                 ));
                             self.validate_params(&params)?;
                             self.set_params(params);
-                            self.endpoint_events
-                                .push_back(EndpointEventInner::NeedIdentifiers);
+                            if params.active_connection_id_limit != 0 {
+                                self.endpoint_events.push_back(
+                                    EndpointEventInner::NeedIdentifiers(
+                                        params.active_connection_id_limit,
+                                    ),
+                                );
+                            }
                         }
 
                         self.events.push_back(Event::Connected);
@@ -1859,7 +1872,7 @@ where
                         self.update_rem_cid(frame);
                     } else {
                         // Reasonable limit to bound memory use
-                        if self.rem_cids.len() < 32 {
+                        if (self.rem_cids.len() as u64) < REM_CID_COUNT {
                             self.rem_cids.push(frame);
                         }
                     }
@@ -2882,10 +2895,6 @@ where
     /// Whether 0-RTT is/was possible during the handshake
     pub fn has_0rtt(&self) -> bool {
         self.zero_rtt_enabled
-    }
-
-    pub(crate) fn has_1rtt(&self) -> bool {
-        self.spaces[SpaceId::Data as usize].crypto.is_some()
     }
 
     /// Look up whether we're the client or server of this Connection

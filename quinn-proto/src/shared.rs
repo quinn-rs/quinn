@@ -403,7 +403,7 @@ pub(crate) enum EndpointEventInner {
     /// A stateless reset token has been issued for the connection
     ResetToken(ResetToken),
     /// The connection needs connection identifiers
-    NeedIdentifiers,
+    NeedIdentifiers(u64),
     /// Stop routing connection ID for this sequence number to the connection
     RetireConnectionId(u64),
 }
