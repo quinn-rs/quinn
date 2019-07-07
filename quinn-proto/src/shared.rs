@@ -509,13 +509,6 @@ impl EcnCodepoint {
     }
 }
 
-/// Internal structure for client-specific data
-#[derive(Clone)]
-pub struct ClientOpts<C> {
-    pub server_name: String,
-    pub crypto: C,
-}
-
 /// Stateless reset token
 ///
 /// Used for an endpoint to securely communicate that it has lost state for a connection.
