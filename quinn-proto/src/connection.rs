@@ -1314,6 +1314,11 @@ where
                         orig_dst_cid,
                         ..
                     } => {
+                        if self.side.is_server() {
+                            return Err(
+                                TransportError::PROTOCOL_VIOLATION("client sent Retry").into()
+                            );
+                        }
                         if self.orig_rem_cid.is_some() || orig_dst_cid != self.rem_cid {
                             // A client MUST accept and process at most one Retry packet for each
                             // connection attempt, and clients MUST discard Retry packets that
