@@ -53,26 +53,26 @@ impl slog::Value for Error {
 
 /// Transport-level error code
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Code(u16);
+pub struct Code(u64);
 
 impl Code {
     /// Create QUIC error code from TLS alert code
     pub(crate) fn crypto(code: u8) -> Self {
-        Code(0x100 | u16::from(code))
+        Code(0x100 | u64::from(code))
     }
 }
 
 impl coding::Codec for Code {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Code(buf.get::<u16>()?))
+        Ok(Code(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.write::<u16>(self.0)
+        buf.write_var(self.0)
     }
 }
 
-impl From<Code> for u16 {
-    fn from(x: Code) -> u16 {
+impl From<Code> for u64 {
+    fn from(x: Code) -> u64 {
         x.0
     }
 }
@@ -101,7 +101,7 @@ macro_rules! errors {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
                     x if x >= 0x100 && x < 0x200 => write!(f, "Code::crypto({:02x})", self.0 as u8),
-                    _ => write!(f, "Code({:04x})", self.0),
+                    _ => write!(f, "Code({:x})", self.0),
                 }
             }
         }
