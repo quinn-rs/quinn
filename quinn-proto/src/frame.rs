@@ -423,7 +423,7 @@ impl Stream {
             ty |= 0x01;
         }
         out.write_var(ty); // 1 byte
-        out.write_var(self.id.0); // <=8 bytes
+        out.write(self.id); // <=8 bytes
         if self.offset != 0 {
             out.write_var(self.offset); // <=8 bytes
         }
@@ -712,7 +712,7 @@ impl FrameStruct for ResetStream {
 impl ResetStream {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::RESET_STREAM); // 1 byte
-        out.write_var(self.id.0); // <= 8 bytes
+        out.write(self.id); // <= 8 bytes
         out.write_var(self.error_code); // <= 8 bytes
         out.write_var(self.final_offset); // <= 8 bytes
     }
