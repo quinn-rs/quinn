@@ -893,6 +893,7 @@ where
         packet: Packet,
         remaining: Option<BytesMut>,
     ) -> Result<(), TransportError> {
+        debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
         self.total_recvd = len as u64;
 
