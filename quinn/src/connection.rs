@@ -17,7 +17,7 @@ use slog::Logger;
 use tokio_timer::Delay;
 
 use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
-use crate::{ConnectionEvent, EndpointEvent};
+use crate::{ConnectionEvent, EndpointEvent, VarInt};
 
 /// In-progress connection attempt future
 ///
@@ -223,7 +223,7 @@ impl Connection {
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
     /// is preserved in full, it should be kept under 1KiB.
-    pub fn close(&self, error_code: u64, reason: &[u8]) {
+    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
         conn.close(error_code, reason.into());
     }
@@ -608,7 +608,7 @@ impl ConnectionInner {
         }
     }
 
-    fn close(&mut self, error_code: u64, reason: Bytes) {
+    fn close(&mut self, error_code: VarInt, reason: Bytes) {
         self.inner.close(Instant::now(), error_code, reason);
         self.terminate(ConnectionError::LocallyClosed);
         self.notify();
@@ -616,7 +616,7 @@ impl ConnectionInner {
 
     /// Close for a reason other than the application's explicit request
     pub fn implicit_close(&mut self) {
-        self.close(0, Bytes::new());
+        self.close(0u32.into(), Bytes::new());
     }
 
     pub(crate) fn check_0rtt(&self) -> Result<(), ()> {

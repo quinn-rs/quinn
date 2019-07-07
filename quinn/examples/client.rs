@@ -155,7 +155,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                         );
                         io::stdout().write_all(&data).unwrap();
                         io::stdout().flush().unwrap();
-                        conn.close(0, b"done");
+                        conn.close(0u32.into(), b"done");
                     })
                     .map(|()| eprintln!("drained"))
             }),

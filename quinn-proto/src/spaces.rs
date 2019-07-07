@@ -7,7 +7,7 @@ use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
 use crate::range_set::RangeSet;
-use crate::{crypto, frame, StreamId};
+use crate::{crypto, frame, StreamId, VarInt};
 
 pub struct PacketSpace<K>
 where
@@ -169,7 +169,7 @@ pub struct Retransmits {
     pub max_uni_stream_id: bool,
     pub max_bi_stream_id: bool,
     pub stream: VecDeque<frame::Stream>,
-    pub rst_stream: Vec<(StreamId, u64)>,
+    pub rst_stream: Vec<(StreamId, VarInt)>,
     pub stop_sending: Vec<frame::StopSending>,
     pub max_stream_data: FnvHashSet<StreamId>,
     pub crypto: VecDeque<frame::Crypto>,

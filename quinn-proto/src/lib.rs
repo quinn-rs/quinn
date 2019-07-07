@@ -30,8 +30,9 @@ mod spaces;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
 mod transport_parameters;
-#[doc(hidden)]
-pub mod varint;
+mod varint;
+
+pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod timer;
 pub use timer::{Timer, TimerTable, TimerTableIter, TimerTableIterMut};
@@ -230,10 +231,10 @@ impl StreamId {
 
 impl coding::Codec for StreamId {
     fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<StreamId> {
-        varint::read(buf).map(StreamId).ok_or(coding::UnexpectedEnd)
+        VarInt::decode(buf).map(|x| StreamId(x.into_inner()))
     }
     fn encode<B: bytes::BufMut>(&self, buf: &mut B) {
-        varint::write(self.0, buf).unwrap()
+        VarInt::from_u64(self.0).unwrap().encode(buf);
     }
 }
 
