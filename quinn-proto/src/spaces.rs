@@ -30,7 +30,7 @@ where
     /// The packet number of the next packet that will be sent, if any.
     pub next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
-    pub largest_acked_packet: u64,
+    pub largest_acked_packet: Option<u64>,
     pub largest_acked_packet_sent: Instant,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
@@ -70,7 +70,7 @@ where
             permit_ack_only: false,
 
             next_packet_number: 0,
-            largest_acked_packet: 0,
+            largest_acked_packet: None,
             largest_acked_packet_sent: now,
             sent_packets: BTreeMap::new(),
             ecn_feedback: frame::EcnCounts::ZERO,
