@@ -126,10 +126,7 @@ pub enum Frame {
     Ping,
     Ack(Ack),
     ResetStream(ResetStream),
-    StopSending {
-        id: StreamId,
-        error_code: u16,
-    },
+    StopSending(StopSending),
     Crypto(Crypto),
     NewToken {
         token: Bytes,
@@ -256,13 +253,13 @@ impl From<TransportError> for ConnectionClose {
 }
 
 impl FrameStruct for ConnectionClose {
-    const SIZE_BOUND: usize = 1 + 2 + 8 + 8;
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 8;
 }
 
 impl ConnectionClose {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::CONNECTION_CLOSE); // 1 byte
-        out.write(self.error_code); // 2 bytes
+        out.write(self.error_code); // <= 8 bytes
         let ty = self.frame_type.map_or(0, |x| x.0);
         out.write_var(ty); // <= 8 bytes
         let max_len = max_len
@@ -281,7 +278,7 @@ impl ConnectionClose {
 #[derive(Debug, Clone)]
 pub struct ApplicationClose {
     /// Application-specific reason code
-    pub error_code: u16,
+    pub error_code: u64,
     /// Human-readable reason for the close
     pub reason: Bytes,
 }
@@ -301,13 +298,13 @@ impl fmt::Display for ApplicationClose {
 }
 
 impl FrameStruct for ApplicationClose {
-    const SIZE_BOUND: usize = 1 + 2 + 8;
+    const SIZE_BOUND: usize = 1 + 8 + 8;
 }
 
 impl ApplicationClose {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(Type::APPLICATION_CLOSE); // 1 byte
-        out.write(self.error_code); // 2 bytes
+        out.write_var(self.error_code); // <= 8 bytes
         let max_len = max_len as usize - 3 - varint::size(self.reason.len() as u64).unwrap();
         let actual_len = self.reason.len().min(max_len);
         out.write_var(actual_len as u64); // <= 8 bytes
@@ -508,7 +505,7 @@ impl Iter {
             Type::PADDING => Frame::Padding,
             Type::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
-                error_code: self.bytes.get()?,
+                error_code: self.bytes.get_var()?,
                 final_offset: self.bytes.get_var()?,
             }),
             Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
@@ -524,7 +521,7 @@ impl Iter {
                 reason: self.take_len()?,
             }),
             Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
-                error_code: self.bytes.get()?,
+                error_code: self.bytes.get_var()?,
                 reason: self.take_len()?,
             }),
             Type::MAX_DATA => Frame::MaxData(self.bytes.get_var()?),
@@ -556,10 +553,10 @@ impl Iter {
                 directionality: Directionality::Uni,
                 limit: self.bytes.get_var()?,
             },
-            Type::STOP_SENDING => Frame::StopSending {
+            Type::STOP_SENDING => Frame::StopSending(StopSending {
                 id: self.bytes.get()?,
-                error_code: self.bytes.get()?,
-            },
+                error_code: self.bytes.get_var()?,
+            }),
             Type::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
                 sequence: self.bytes.get_var()?,
             },
@@ -704,20 +701,38 @@ impl<'a> Iterator for AckIter<'a> {
 #[derive(Debug, Copy, Clone)]
 pub struct ResetStream {
     pub id: StreamId,
-    pub error_code: u16,
+    pub error_code: u64,
     pub final_offset: u64,
 }
 
 impl FrameStruct for ResetStream {
-    const SIZE_BOUND: usize = 1 + 8 + 2 + 8;
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 8;
 }
 
 impl ResetStream {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::RESET_STREAM); // 1 byte
         out.write_var(self.id.0); // <= 8 bytes
-        out.write(self.error_code); // 2 bytes
+        out.write_var(self.error_code); // <= 8 bytes
         out.write_var(self.final_offset); // <= 8 bytes
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct StopSending {
+    pub id: StreamId,
+    pub error_code: u64,
+}
+
+impl FrameStruct for StopSending {
+    const SIZE_BOUND: usize = 1 + 8 + 8;
+}
+
+impl StopSending {
+    pub fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(Type::STOP_SENDING); // 1 byte
+        out.write(self.id); // <= 8 bytes
+        out.write_var(self.error_code) // <= 8 bytes
     }
 }
 

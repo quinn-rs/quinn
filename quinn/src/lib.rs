@@ -81,7 +81,7 @@ mod tests;
 
 enum ConnectionEvent {
     Close {
-        error_code: u16,
+        error_code: u64,
         reason: bytes::Bytes,
     },
     Proto(proto::ConnectionEvent),

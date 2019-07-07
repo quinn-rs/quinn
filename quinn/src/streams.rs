@@ -141,7 +141,7 @@ impl SendStream {
     /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
     /// was called previously and all data has already been transmitted at least once, the peer
     /// may still receive all written data.
-    pub fn reset(&mut self, error_code: u16) {
+    pub fn reset(&mut self, error_code: u64) {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return;
@@ -332,7 +332,7 @@ impl RecvStream {
     ///
     /// Has no effect if the incoming stream already finished, even if the local application hasn't
     /// yet read all buffered data.
-    pub fn stop(&mut self, error_code: u16) {
+    pub fn stop(&mut self, error_code: u64) {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return;
@@ -434,7 +434,7 @@ pub enum ReadError {
     #[error(display = "stream reset by peer: error {}", error_code)]
     Reset {
         /// The error code supplied by the peer.
-        error_code: u16,
+        error_code: u64,
     },
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
@@ -470,7 +470,7 @@ pub enum WriteError {
     #[error(display = "sending stopped by peer: error {}", error_code)]
     Stopped {
         /// The error code supplied by the peer.
-        error_code: u16,
+        error_code: u64,
     },
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]

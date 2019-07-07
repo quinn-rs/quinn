@@ -241,7 +241,7 @@ fn reset_stream() {
     pair.drive();
 
     info!(pair.log, "resetting stream");
-    const ERROR: u16 = 42;
+    const ERROR: u64 = 42;
     pair.client_conn_mut(client_ch).reset(s, ERROR);
     pair.drive();
 
@@ -271,7 +271,7 @@ fn stop_stream() {
     pair.drive();
 
     info!(pair.log, "stopping stream");
-    const ERROR: u16 = 42;
+    const ERROR: u64 = 42;
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive();
 
@@ -897,7 +897,7 @@ fn stop_opens_bidi() {
         .client_conn_mut(client_conn)
         .open(Directionality::Bi)
         .unwrap();
-    const ERROR: u16 = 42;
+    const ERROR: u64 = 42;
     pair.client
         .connections
         .get_mut(&server_conn)
@@ -1087,7 +1087,7 @@ fn stop_before_finish() {
     pair.drive();
 
     info!(pair.log, "stopping stream");
-    const ERROR: u16 = 42;
+    const ERROR: u64 = 42;
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive();
 
@@ -1112,7 +1112,7 @@ fn stop_during_finish() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     info!(pair.log, "stopping and finishing stream");
-    const ERROR: u16 = 42;
+    const ERROR: u64 = 42;
     pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
     pair.drive_server();
     pair.client_conn_mut(client_ch).finish(s).unwrap();
