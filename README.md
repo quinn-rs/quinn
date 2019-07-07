@@ -34,7 +34,7 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 
 ## Status
 
-- [x] QUIC draft 20 with TLS 1.3
+- [x] QUIC draft 22 with TLS 1.3
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
