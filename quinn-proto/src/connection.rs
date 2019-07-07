@@ -1328,6 +1328,7 @@ where
                             crypto: Some(CryptoSpace::new(S::Keys::new_initial(
                                 &rem_cid, self.side,
                             ))),
+                            next_packet_number: self.spaces[0].next_packet_number,
                             ..PacketSpace::new(now)
                         };
 
