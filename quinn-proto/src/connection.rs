@@ -27,8 +27,8 @@ use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
 use crate::timer::{Timer, TimerKind, TimerTable};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, MAX_STREAM_COUNT,
-    MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 /// Protocol state and logic for a single QUIC connection
@@ -897,7 +897,11 @@ where
         let params = self
             .tls
             .transport_parameters()?
-            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("transport parameters missing"))?;
+            .ok_or_else(|| TransportError {
+                code: TransportErrorCode::crypto(0x6d),
+                frame: None,
+                reason: "transport parameters missing".into(),
+            })?;
         self.validate_params(&params)?;
         self.set_params(params);
         self.write_tls();
@@ -1353,9 +1357,14 @@ where
 
                         if self.side.is_client() {
                             // Client-only beceause server params were set from the client's Initial
-                            let params = self.tls.transport_parameters()?.ok_or_else(|| {
-                                TransportError::PROTOCOL_VIOLATION("transport parameters missing")
-                            })?;
+                            let params =
+                                self.tls
+                                    .transport_parameters()?
+                                    .ok_or_else(|| TransportError {
+                                        code: TransportErrorCode::crypto(0x6d),
+                                        frame: None,
+                                        reason: "transport parameters missing".into(),
+                                    })?;
 
                             if self.has_0rtt() {
                                 if !self.tls.early_data_accepted().unwrap() {
