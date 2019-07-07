@@ -110,6 +110,11 @@ pub struct TransportConfig {
     pub keep_alive_interval: u32,
     /// Maximum quantity of out-of-order crypto layer data to buffer
     pub crypto_buffer_size: usize,
+    /// Whether the implementation is permitted to set the spin bit on this connection
+    ///
+    /// This allows passive observers to easily judge the round trip time of a connection, which can
+    /// be useful for network administration but sacrifices a small amount of privacy.
+    pub allow_spin: bool,
 }
 
 impl Default for TransportConfig {
@@ -145,6 +150,7 @@ impl Default for TransportConfig {
             persistent_congestion_threshold: 3,
             keep_alive_interval: 0,
             crypto_buffer_size: 16 * 1024,
+            allow_spin: true,
         }
     }
 }

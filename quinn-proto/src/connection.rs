@@ -87,6 +87,8 @@ where
     endpoint_events: VecDeque<EndpointEventInner>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
+    /// Whether the spin bit is in use for this connection
+    spin_enabled: bool,
     /// Outgoing spin bit state
     spin: bool,
     /// Packet number spaces: initial, handshake, 1-RTT
@@ -192,11 +194,11 @@ where
             rem_cid_set: side.is_server(),
             token: None,
         });
+        let mut rng = OsRng;
         let mut this = Self {
             log,
             endpoint_config,
             server_config,
-            rng: OsRng,
             tls,
             handshake_cid: loc_cid,
             rem_cid,
@@ -224,6 +226,7 @@ where
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
             cids_issued: 0,
+            spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
             highest_space: SpaceId::Initial,
@@ -260,6 +263,7 @@ where
             streams: Streams::new(side, config.stream_window_uni, config.stream_window_bidi),
             config,
             rem_cids: Vec::new(),
+            rng,
         };
         if side.is_client() {
             // Kick off the connection
@@ -1947,6 +1951,8 @@ where
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(new.reset_token));
         self.params.stateless_reset_token = Some(new.reset_token);
+        // Reduce linkability
+        self.spin = false;
     }
 
     /// Returns packets to transmit
@@ -2041,7 +2047,11 @@ where
                 SpaceId::Data if space.crypto.is_some() => Header::Short {
                     dst_cid: self.rem_cid,
                     number,
-                    spin: self.spin,
+                    spin: if self.spin_enabled {
+                        self.spin
+                    } else {
+                        self.rng.gen()
+                    },
                     key_phase: self.key_phase,
                 },
                 SpaceId::Data => Header::Long {

@@ -100,7 +100,6 @@ fn lifecycle() {
         .unwrap()
         .close(pair.time, 42, REASON.into());
     pair.drive();
-    assert!(pair.spins > 0);
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
                         reason: ApplicationClose { error_code: 42, ref reason }
