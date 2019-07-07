@@ -7,7 +7,7 @@ use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
     crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, MIN_CID_SIZE,
-    RESET_TOKEN_SIZE,
+    REM_CID_COUNT, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -32,6 +32,7 @@ macro_rules! apply_params {
 
             ack_delay_exponent(0x000a) = 3,
             max_ack_delay(0x000b) = 25,
+            active_connection_id_limit(0x000e) = 0,
         }
     };
 }
@@ -84,6 +85,7 @@ impl TransportParameters {
             idle_timeout: config.idle_timeout,
             max_ack_delay: 0, // Unimplemented
             disable_migration: server_config.map_or(false, |c| !c.migration),
+            active_connection_id_limit: REM_CID_COUNT,
             ..Self::default()
         }
     }

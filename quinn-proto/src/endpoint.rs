@@ -115,10 +115,12 @@ where
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers => {
+            NeedIdentifiers(max) => {
                 if self.config.local_cid_len != 0 {
                     // We've already issued one CID as part of the normal handshake process.
-                    return Some(self.send_new_identifiers(ch, LOC_CID_COUNT - 1));
+                    return Some(
+                        self.send_new_identifiers(ch, max.min(LOC_CID_COUNT - 1) as usize),
+                    );
                 }
             }
             ResetToken(token) => {
@@ -624,13 +626,6 @@ where
             Ok(()) => {
                 trace!(self.log, "connection incoming; ICID {icid}", icid = dst_cid);
                 self.incoming_handshakes += 1;
-                if conn.has_1rtt() {
-                    if let Some(event) =
-                        self.handle_event(ch, EndpointEvent(EndpointEventInner::NeedIdentifiers))
-                    {
-                        conn.handle_event(event);
-                    }
-                }
                 Some((ch, conn))
             }
             Err(e) => {
