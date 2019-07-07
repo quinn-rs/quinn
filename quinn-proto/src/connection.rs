@@ -351,8 +351,11 @@ where
         let was_blocked = self.blocked();
         let new_largest = {
             let space = self.space_mut(space);
-            if ack.largest > space.largest_acked_packet {
-                space.largest_acked_packet = ack.largest;
+            if space
+                .largest_acked_packet
+                .map_or(true, |pn| ack.largest > pn)
+            {
+                space.largest_acked_packet = Some(ack.largest);
                 if let Some(info) = space.sent_packets.get(&ack.largest) {
                     // This should always succeed, but a misbehaving peer might ACK a packet we
                     // haven't sent. At worst, that will result in us spuriously reducing the
@@ -606,16 +609,14 @@ where
 
         // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
-        // Packets with packet numbers before this are deemed lost.
-        let lost_pn = self
-            .space(pn_space)
-            .largest_acked_packet
-            .saturating_sub(u64::from(self.config.packet_threshold));
+        let largest_acked_packet = self.space(pn_space).largest_acked_packet.unwrap();
+        let packet_threshold = self.config.packet_threshold as u64;
 
         let space = self.space_mut(pn_space);
         space.loss_time = None;
-        for (&packet, info) in space.sent_packets.range(0..space.largest_acked_packet) {
-            if info.time_sent <= lost_send_time || packet <= lost_pn {
+        for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
+            if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
+            {
                 lost_packets.push(packet);
             } else {
                 let next_loss_time = info.time_sent + loss_delay;
@@ -645,7 +646,7 @@ where
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
 
-            // InPersistentCongestion: Determine if all packets in the window before the newest
+            // InPersistentCongestion: Determine if all packets in the time period before the newest
             // lost packet, including the edges, are marked lost
             let congestion_period = self.pto() * self.config.persistent_congestion_threshold;
             let in_persistent_congestion = self.space(pn_space).largest_acked_packet_sent
@@ -2034,7 +2035,7 @@ where
                 space = space_id,
                 number = exact_number
             );
-            let number = PacketNumber::new(exact_number, space.largest_acked_packet);
+            let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
             let header = match space_id {
                 SpaceId::Data if space.crypto.is_some() => Header::Short {
                     dst_cid: self.rem_cid,
