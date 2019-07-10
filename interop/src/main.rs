@@ -69,6 +69,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut runtime = Runtime::new()?;
 
     let state = Arc::new(Mutex::new(State { saw_cert: false }));
+    let protocols = vec![b"hq-20"[..].into(), b"hq-22"[..].into()];
 
     let mut builder = quinn::Endpoint::builder();
     let mut tls_config = rustls::ClientConfig::new();
@@ -77,7 +78,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    tls_config.alpn_protocols = vec![ALPN_QUIC_HTTP.into()];
+    tls_config.alpn_protocols = protocols.clone();
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
@@ -232,7 +233,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     h3_tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    h3_tls_config.alpn_protocols = vec![quinn_h3::ALPN.into()];
+    h3_tls_config.alpn_protocols = protocols;
     let h3_client_config = quinn::ClientConfig {
         crypto: quinn::crypto::rustls::ClientConfig::new(h3_tls_config),
         transport: client_config.transport.clone(),
@@ -403,5 +404,3 @@ impl rustls::ServerCertVerifier for InteropVerifier {
         Ok(rustls::ServerCertVerified::assertion())
     }
 }
-
-pub const ALPN_QUIC_HTTP: &[u8] = b"hq-20";
