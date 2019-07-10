@@ -347,8 +347,16 @@ where
         }
     }
 
-    fn on_ack_received(&mut self, now: Instant, space: SpaceId, ack: frame::Ack) {
+    fn on_ack_received(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        ack: frame::Ack,
+    ) -> Result<(), TransportError> {
         trace!(self.log, "handling ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
+        if ack.largest >= self.space(space).next_packet_number {
+            return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
+        }
         let was_blocked = self.blocked();
         let new_largest = {
             let space = self.space_mut(space);
@@ -390,7 +398,7 @@ where
             .flat_map(|range| self.space(space).sent_packets.range(range).map(|(&n, _)| n))
             .collect::<Vec<_>>();
         if newly_acked.is_empty() {
-            return;
+            return Ok(());
         }
         for &packet in &newly_acked {
             self.on_packet_acked(space, packet);
@@ -434,6 +442,7 @@ where
                 self.events.push_back(Event::StreamWritable { stream });
             }
         }
+        Ok(())
     }
 
     /// Process a new ECN block from an in-order ACK
@@ -1534,7 +1543,7 @@ where
                     self.read_tls(packet.header.space(), &frame)?;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, packet.header.space(), ack);
+                    self.on_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::ConnectionClose(reason) => {
                     trace!(
@@ -1649,7 +1658,7 @@ where
                     self.on_stream_frame(true, stream);
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, SpaceId::Data, ack);
+                    self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::ConnectionClose(reason) => {
