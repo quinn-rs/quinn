@@ -258,8 +258,7 @@ const LOC_CID_COUNT: u64 = 8;
 /// The maximum number of remote CIDs we're willing to store per connection
 const REM_CID_COUNT: u64 = 32;
 const RESET_TOKEN_SIZE: usize = 16;
-const MAX_CID_SIZE: usize = 18;
-const MIN_CID_SIZE: usize = 4;
+const MAX_CID_SIZE: usize = 20;
 const MIN_INITIAL_SIZE: usize = 1200;
 const MIN_MTU: u16 = 1232;
 const TIMER_GRANULARITY: Duration = Duration::from_millis(1);

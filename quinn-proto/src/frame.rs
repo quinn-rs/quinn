@@ -8,7 +8,7 @@ use crate::range_set::RangeSet;
 use crate::shared::{EcnCodepoint, ResetToken};
 use crate::{
     ConnectionId, Directionality, StreamId, TransportError, TransportErrorCode, VarInt,
-    MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE,
+    MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -589,7 +589,7 @@ impl Iter {
             Type::NEW_CONNECTION_ID => {
                 let sequence = self.bytes.get_var()?;
                 let length = self.bytes.get::<u8>()? as usize;
-                if length < MIN_CID_SIZE || length > MAX_CID_SIZE {
+                if length > MAX_CID_SIZE {
                     return Err(IterErr::Malformed);
                 }
                 if length > self.bytes.remaining() {

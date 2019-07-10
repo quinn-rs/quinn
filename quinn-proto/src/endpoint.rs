@@ -318,7 +318,7 @@ where
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
-        const MIN_PADDING_LEN: usize = 23;
+        const MIN_PADDING_LEN: usize = 25;
 
         // Prevent amplification attacks and reset loops by ensuring we pad to at most 1 byte
         // smaller than the inciting packet.
@@ -705,7 +705,7 @@ mod token {
     use crate::coding::{BufExt, BufMutExt};
     use crate::crypto::HmacKey;
     use crate::shared::ConnectionId;
-    use crate::{MAX_CID_SIZE, MIN_CID_SIZE};
+    use crate::MAX_CID_SIZE;
 
     // TODO: Use AEAD to hide token details from clients for better stability guarantees:
     // - ticket consists of (random, aead-encrypted-data)
@@ -754,9 +754,7 @@ mod token {
     {
         let mut reader = io::Cursor::new(data);
         let dst_cid_len = reader.get::<u8>().ok()? as usize;
-        if dst_cid_len > reader.remaining()
-            || dst_cid_len != 0 && (dst_cid_len < MIN_CID_SIZE || dst_cid_len > MAX_CID_SIZE)
-        {
+        if dst_cid_len > reader.remaining() || dst_cid_len > MAX_CID_SIZE {
             return None;
         }
         let dst_cid = ConnectionId::new(&data[1..=dst_cid_len]);
