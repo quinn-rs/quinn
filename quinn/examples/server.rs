@@ -94,7 +94,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         ..Default::default()
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(&[common::ALPN_QUIC_HTTP]);
+    server_config.protocols(common::ALPN_QUIC_HTTP);
 
     if options.keylog {
         server_config.enable_keylog();
