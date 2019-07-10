@@ -136,32 +136,44 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                                     conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
                                 );
                                 resumption = !state.lock().unwrap().saw_cert;
-                                conn.force_key_update();
                                 let stream = conn.open_bi();
                                 let stream2 = conn.open_bi();
                                 let rebinding = &mut rebinding;
-                                stream
+                                let key_update = &mut key_update;
+                                conn.open_bi()
                                     .map_err(|e| format_err!("failed to open stream: {}", e))
                                     .and_then(move |(send, recv)| get(send, recv))
-                                    .inspect(|_| {
-                                        key_update = true;
-                                    })
                                     .and_then(move |_| {
-                                        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                                        let addr = socket.local_addr().unwrap();
-                                        println!("rebinding to {}", addr);
-                                        endpoint
-                                            .rebind(socket, &tokio_reactor::Handle::default())
-                                            .expect("rebind failed");
-                                        stream2
+                                        conn.force_key_update();
+                                        stream
                                             .map_err(|e| {
                                                 format_err!("failed to open stream: {}", e)
                                             })
                                             .and_then(move |(send, recv)| get(send, recv))
-                                    })
-                                    .map(move |_| {
-                                        *rebinding = true;
-                                        conn.close(0u32.into(), b"done");
+                                            .inspect(move |_| {
+                                                *key_update = true;
+                                            })
+                                            .and_then(move |_| {
+                                                let socket =
+                                                    std::net::UdpSocket::bind("[::]:0").unwrap();
+                                                let addr = socket.local_addr().unwrap();
+                                                println!("rebinding to {}", addr);
+                                                endpoint
+                                                    .rebind(
+                                                        socket,
+                                                        &tokio_reactor::Handle::default(),
+                                                    )
+                                                    .expect("rebind failed");
+                                                stream2
+                                                    .map_err(|e| {
+                                                        format_err!("failed to open stream: {}", e)
+                                                    })
+                                                    .and_then(move |(send, recv)| get(send, recv))
+                                            })
+                                            .map(move |_| {
+                                                *rebinding = true;
+                                                conn.close(0u32.into(), b"done");
+                                            })
                                     })
                             })
                     })
