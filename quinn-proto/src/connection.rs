@@ -12,7 +12,7 @@ use slog::Logger;
 
 use crate::coding::BufMutExt;
 use crate::crypto::{self, HeaderKeys, Keys};
-use crate::frame::FrameStruct;
+use crate::frame::{Close, FrameStruct};
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
     SHORT_RESERVED_BITS,
@@ -1489,7 +1489,7 @@ where
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
                     match frame {
-                        Frame::ApplicationClose(_) | Frame::ConnectionClose(_) => {
+                        Frame::Close(_) => {
                             trace!(self.log, "draining");
                             self.state = State::Draining;
                             return Ok(());
@@ -1531,20 +1531,8 @@ where
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), ack)?;
                 }
-                Frame::ConnectionClose(reason) => {
-                    trace!(
-                        self.log,
-                        "peer aborted the handshake: {error}",
-                        error = reason.error_code
-                    );
-                    self.events
-                        .push_back(ConnectionError::ConnectionClosed { reason }.into());
-                    self.state = State::Draining;
-                    return Ok(());
-                }
-                Frame::ApplicationClose(reason) => {
-                    self.events
-                        .push_back(ConnectionError::ApplicationClosed { reason }.into());
+                Frame::Close(reason) => {
+                    self.events.push_back(ConnectionError::from(reason).into());
                     self.state = State::Draining;
                     return Ok(());
                 }
@@ -1583,7 +1571,7 @@ where
             }
             if is_0rtt {
                 match frame {
-                    Frame::Crypto(_) | Frame::ConnectionClose(_) | Frame::ApplicationClose(_) => {
+                    Frame::Crypto(_) | Frame::Close(_) => {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "illegal frame type in 0-RTT",
                         ));
@@ -1647,15 +1635,8 @@ where
                     self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
-                Frame::ConnectionClose(reason) => {
-                    self.events
-                        .push_back(ConnectionError::ConnectionClosed { reason }.into());
-                    self.state = State::Draining;
-                    return Ok(());
-                }
-                Frame::ApplicationClose(reason) => {
-                    self.events
-                        .push_back(ConnectionError::ApplicationClosed { reason }.into());
+                Frame::Close(reason) => {
+                    self.events.push_back(ConnectionError::from(reason).into());
                     self.state = State::Draining;
                     return Ok(());
                 }
@@ -2124,12 +2105,7 @@ where
                     - partial_encode.header_len
                     - space.crypto.as_ref().unwrap().packet.tag_len();
                 match self.state {
-                    State::Closed(state::Closed {
-                        reason: state::CloseReason::Application(ref x),
-                    }) => x.encode(&mut buf, max_len),
-                    State::Closed(state::Closed {
-                        reason: state::CloseReason::Connection(ref x),
-                    }) => x.encode(&mut buf, max_len),
+                    State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
                     _ => unreachable!(
                         "tried to make a close packet when the connection wasn't closed"
                     ),
@@ -2515,10 +2491,7 @@ where
             self.set_close_timer(now);
             self.io.close = true;
             self.state = State::Closed(state::Closed {
-                reason: state::CloseReason::Application(frame::ApplicationClose {
-                    error_code,
-                    reason,
-                }),
+                reason: Close::Application(frame::ApplicationClose { error_code, reason }),
             });
         }
     }
@@ -3008,7 +2981,7 @@ pub fn initial_close<K, R>(
 ) -> Box<[u8]>
 where
     K: crypto::Keys,
-    R: Into<state::CloseReason>,
+    R: Into<Close>,
 {
     let number = PacketNumber::U8(packet_number);
     let header = Header::Initial {
@@ -3021,11 +2994,7 @@ where
     let mut buf = Vec::<u8>::new();
     let partial_encode = header.encode(&mut buf);
     let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.tag_len();
-    match reason.into() {
-        state::CloseReason::Application(ref x) => x.encode(&mut buf, max_len),
-        state::CloseReason::Connection(ref x) => x.encode(&mut buf, max_len),
-    }
-
+    reason.into().encode(&mut buf, max_len);
     buf.resize(buf.len() + crypto.tag_len(), 0);
     partial_encode.finish(
         &mut buf,
@@ -3073,6 +3042,15 @@ impl From<TransportError> for ConnectionError {
     }
 }
 
+impl From<Close> for ConnectionError {
+    fn from(x: Close) -> Self {
+        match x {
+            Close::Connection(reason) => ConnectionError::ConnectionClosed { reason },
+            Close::Application(reason) => ConnectionError::ApplicationClosed { reason },
+        }
+    }
+}
+
 // For compatibility with API consumers
 impl From<ConnectionError> for io::Error {
     fn from(x: ConnectionError) -> io::Error {
@@ -3104,7 +3082,7 @@ enum State {
 }
 
 impl State {
-    fn closed<R: Into<state::CloseReason>>(reason: R) -> Self {
+    fn closed<R: Into<Close>>(reason: R) -> Self {
         State::Closed(state::Closed {
             reason: reason.into(),
         })
@@ -3162,30 +3140,8 @@ mod state {
     }
 
     #[derive(Clone)]
-    pub enum CloseReason {
-        Connection(frame::ConnectionClose),
-        Application(frame::ApplicationClose),
-    }
-
-    impl From<TransportError> for CloseReason {
-        fn from(x: TransportError) -> Self {
-            CloseReason::Connection(x.into())
-        }
-    }
-    impl From<frame::ConnectionClose> for CloseReason {
-        fn from(x: frame::ConnectionClose) -> Self {
-            CloseReason::Connection(x)
-        }
-    }
-    impl From<frame::ApplicationClose> for CloseReason {
-        fn from(x: frame::ApplicationClose) -> Self {
-            CloseReason::Application(x)
-        }
-    }
-
-    #[derive(Clone)]
     pub struct Closed {
-        pub reason: CloseReason,
+        pub reason: Close,
     }
 }
 
