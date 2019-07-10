@@ -1488,23 +1488,14 @@ where
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.into()) {
-                    let peer_reason = match frame {
-                        Frame::ApplicationClose(reason) => {
-                            ConnectionError::ApplicationClosed { reason }
+                    match frame {
+                        Frame::ApplicationClose(_) | Frame::ConnectionClose(_) => {
+                            trace!(self.log, "draining");
+                            self.state = State::Draining;
+                            return Ok(());
                         }
-                        Frame::ConnectionClose(reason) => {
-                            ConnectionError::ConnectionClosed { reason }
-                        }
-                        _ => {
-                            continue;
-                        }
+                        _ => {}
                     };
-                    self.events.push_back(Event::ConnectionLost {
-                        reason: peer_reason,
-                    });
-                    trace!(self.log, "draining");
-                    self.state = State::Draining;
-                    return Ok(());
                 }
                 Ok(())
             }
