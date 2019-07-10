@@ -6,7 +6,7 @@ use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::shared::ConnectionId;
-use crate::{crypto, VERSION};
+use crate::{crypto, MAX_CID_SIZE, VERSION};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -291,14 +291,10 @@ impl Header {
                 ref src_cid,
                 ref orig_dst_cid,
             } => {
-                let odcil = if orig_dst_cid.len() == 0 {
-                    0
-                } else {
-                    orig_dst_cid.len() as u8 - 3
-                };
-                w.write(u8::from(LongHeaderType::Retry) | odcil);
+                w.write(u8::from(LongHeaderType::Retry));
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
+                w.write(orig_dst_cid.len() as u8);
                 w.put_slice(orig_dst_cid);
                 PartialEncode {
                     start,
@@ -344,16 +340,9 @@ impl Header {
     }
 
     fn encode_cids<W: BufMut>(w: &mut W, dst_cid: &ConnectionId, src_cid: &ConnectionId) {
-        let mut dcil = dst_cid.len() as u8;
-        if dcil > 0 {
-            dcil -= 3;
-        }
-        let mut scil = src_cid.len() as u8;
-        if scil > 0 {
-            scil -= 3;
-        }
-        w.write(dcil << 4 | scil);
+        w.put(dst_cid.len() as u8);
         w.put_slice(dst_cid);
+        w.put(src_cid.len() as u8);
         w.put_slice(src_cid);
     }
 
@@ -530,13 +519,7 @@ impl PlainHeader {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
-
-            if buf.remaining() < local_cid_len {
-                return Err(PacketDecodeError::InvalidHeader(
-                    "destination connection ID longer than packet",
-                ));
-            }
-            let dst_cid = Self::get_cid(buf, local_cid_len);
+            let dst_cid = Self::get_cid(buf, local_cid_len)?;
 
             Ok(PlainHeader::Short {
                 first,
@@ -545,24 +528,14 @@ impl PlainHeader {
             })
         } else {
             let version = buf.get::<u32>()?;
-            let ci_lengths = buf.get::<u8>()?;
-            let mut dcil = (ci_lengths >> 4) as usize;
-            if dcil > 0 {
-                dcil += 3
-            };
-            let mut scil = (ci_lengths & 0xF) as usize;
-            if scil > 0 {
-                scil += 3
-            };
-            if buf.remaining() < (dcil + scil) as usize {
-                return Err(PacketDecodeError::InvalidHeader(
-                    "connection IDs longer than packet",
-                ));
-            }
 
-            let dst_cid = Self::get_cid(buf, dcil);
-            let src_cid = Self::get_cid(buf, scil);
+            let dcil = buf.get::<u8>()? as usize;
+            let dst_cid = Self::get_cid(buf, dcil)?;
 
+            let scil = buf.get::<u8>()? as usize;
+            let src_cid = Self::get_cid(buf, scil)?;
+
+            // TODO: Support long CIDs for compatibility with future QUIC versions
             if version == 0 {
                 let random = first & !LONG_HEADER_FORM;
                 return Ok(PlainHeader::VersionNegotiate {
@@ -594,9 +567,8 @@ impl PlainHeader {
                     })
                 }
                 LongHeaderType::Retry => {
-                    let odcil = first & 0xf;
-                    let odcil = if odcil == 0 { 0 } else { (odcil + 3) as usize };
-                    let orig_dst_cid = Self::get_cid(buf, odcil);
+                    let odcil = buf.get::<u8>()? as usize;
+                    let orig_dst_cid = Self::get_cid(buf, odcil)?;
 
                     Ok(PlainHeader::Retry {
                         dst_cid,
@@ -614,10 +586,20 @@ impl PlainHeader {
         }
     }
 
-    fn get_cid<R: Buf>(buf: &mut R, len: usize) -> ConnectionId {
+    fn get_cid<R: Buf>(buf: &mut R, len: usize) -> Result<ConnectionId, PacketDecodeError> {
+        if len > MAX_CID_SIZE {
+            return Err(PacketDecodeError::InvalidHeader(
+                "illegal connection ID length",
+            ));
+        }
+        if buf.remaining() < len {
+            return Err(PacketDecodeError::InvalidHeader(
+                "connection ID longer than packet",
+            ));
+        }
         let cid = ConnectionId::new(&buf.bytes()[..len]);
         buf.advance(len);
-        cid
+        Ok(cid)
     }
 }
 
@@ -910,8 +892,8 @@ mod tests {
         assert_eq!(
             buf[..],
             hex!(
-                "c4ff0000165006b858ec6f80452b004021e0e4
-                 b61459302616f71d1fcd1b5ce0090acbfff5ac09da1911331694c3dceba3d5"
+                "ccff0000160806b858ec6f80452b0000402109
+                 e4b61459302616f71d1fcd1b5ce0090a5557e4b0c5b47911d4713cc32ab8e590"
             )[..]
         );
 
@@ -921,7 +903,7 @@ mod tests {
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],
-            hex!("c0ff0000165006b858ec6f80452b00402100")[..]
+            hex!("c0ff0000160806b858ec6f80452b0000402100")[..]
         );
         server_crypto
             .decrypt(0, &packet.header_data, &mut packet.payload)

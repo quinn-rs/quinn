@@ -29,7 +29,7 @@ fn version_negotiate_server() {
         client_addr,
         None,
         // Long-header packet with reserved version number
-        hex!("80 0a1a2a3a 11 00000000 00000000 00")[..].into(),
+        hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
     assert!(event.is_none());
 
@@ -37,8 +37,8 @@ fn version_negotiate_server() {
     assert!(io.is_some());
     if let Some(Transmit { contents, .. }) = io {
         assert_ne!(contents[0] & 0x80, 0);
-        assert_eq!(&contents[1..14], hex!("00000000 11 00000000 00000000"));
-        assert!(contents[14..]
+        assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
+        assert!(contents[15..]
             .chunks(4)
             .any(|x| BigEndian::read_u32(x) == VERSION));
     }
@@ -68,7 +68,7 @@ fn version_negotiate_client() {
         None,
         // Version negotiation packet for reserved version
         hex!(
-            "80 00000000 00
+            "80 00000000 04 00000000 04 00000000
              0a1a2a3a"
         )[..]
             .into(),

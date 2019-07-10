@@ -6,8 +6,8 @@ use err_derive::Error;
 use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
-    crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, MIN_CID_SIZE,
-    REM_CID_COUNT, RESET_TOKEN_SIZE,
+    crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT,
+    RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -120,9 +120,7 @@ impl PreferredAddress {
         let ip_v6 = r.get::<Ipv6Addr>()?;
         let port_v6 = r.get::<u16>()?;
         let cid_len = r.get::<u8>()?;
-        if r.remaining() < cid_len as usize
-            || (cid_len != 0 && (cid_len < MIN_CID_SIZE as u8 || cid_len > MAX_CID_SIZE as u8))
-        {
+        if r.remaining() < cid_len as usize || cid_len > MAX_CID_SIZE as u8 {
             return Err(Error::Malformed);
         }
         let mut stage = [0; MAX_CID_SIZE];
@@ -260,10 +258,7 @@ impl TransportParameters {
 
             match id {
                 0x0000 => {
-                    if len < MIN_CID_SIZE as u16
-                        || len > MAX_CID_SIZE as u16
-                        || params.original_connection_id.is_some()
-                    {
+                    if len > MAX_CID_SIZE as u16 || params.original_connection_id.is_some() {
                         return Err(Error::Malformed);
                     }
                     let mut staging = [0; MAX_CID_SIZE];

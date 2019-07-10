@@ -10,7 +10,7 @@ use slog::Logger;
 
 use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
-use crate::{crypto, VarInt, MAX_CID_SIZE, MIN_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -223,11 +223,9 @@ impl Default for EndpointConfig {
 
 impl EndpointConfig {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if (self.local_cid_len != 0 && self.local_cid_len < MIN_CID_SIZE)
-            || self.local_cid_len > MAX_CID_SIZE
-        {
+        if self.local_cid_len > MAX_CID_SIZE {
             return Err(ConfigError::IllegalValue(
-                "local_cid_len must be 0 or in [4, 18]",
+                "local_cid_len must be at most 20",
             ));
         }
         Ok(())
@@ -419,9 +417,7 @@ pub struct ConnectionId {
 
 impl ConnectionId {
     pub(crate) fn new(bytes: &[u8]) -> Self {
-        debug_assert!(
-            bytes.is_empty() || (bytes.len() >= MIN_CID_SIZE && bytes.len() <= MAX_CID_SIZE)
-        );
+        debug_assert!(bytes.len() <= MAX_CID_SIZE);
         let mut res = Self {
             len: bytes.len() as u8,
             bytes: [0; MAX_CID_SIZE],
