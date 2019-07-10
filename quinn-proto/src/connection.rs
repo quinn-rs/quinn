@@ -554,7 +554,6 @@ where
                 self.path_challenge_pending = false;
                 if let Some(prev) = self.prev_remote.take() {
                     self.remote = prev;
-                    self.remote_validated = true;
                 }
             }
         }
@@ -744,7 +743,6 @@ where
         spin: bool,
         is_1rtt: bool,
     ) {
-        self.remote_validated |= self.state.is_handshake() && space_id == SpaceId::Handshake;
         self.reset_keep_alive(now);
         self.reset_idle_timeout(now);
         self.permit_idle_reset = true;
@@ -1370,6 +1368,7 @@ where
                             debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_handshake_cid, actual = rem_cid);
                             return Ok(());
                         }
+                        self.remote_validated = true;
 
                         let state = state.clone();
                         self.process_early_payload(now, packet)?;
@@ -1688,7 +1687,6 @@ where
                     trace!(self.log, "path validated");
                     self.io.timer_stop(TimerKind::PathValidation);
                     self.path_challenge = None;
-                    self.remote_validated = true;
                 }
                 Frame::MaxData(bytes) => {
                     let was_blocked = self.blocked();
@@ -1963,7 +1961,6 @@ where
             self.ssthresh = u64::max_value();
         }
         self.prev_remote = Some(mem::replace(&mut self.remote, remote));
-        self.remote_validated = false;
 
         // Initiate path validation
         self.io.timer_start(
