@@ -1638,6 +1638,7 @@ where
                 Frame::Close(reason) => {
                     self.events.push_back(ConnectionError::from(reason).into());
                     self.state = State::Draining;
+                    self.io.close = true;
                     return Ok(());
                 }
                 Frame::PathChallenge(token) => {
@@ -1984,10 +1985,10 @@ where
         }
 
         let (spaces, close) = match self.state {
-            State::Draining | State::Drained => {
+            State::Drained => {
                 return None;
             }
-            State::Closed(_) => {
+            State::Draining | State::Closed(_) => {
                 if mem::replace(&mut self.io.close, false) {
                     (vec![self.highest_space], true)
                 } else {
@@ -2106,6 +2107,12 @@ where
                     - space.crypto.as_ref().unwrap().packet.tag_len();
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
+                    State::Draining => frame::ConnectionClose {
+                        error_code: TransportErrorCode::NO_ERROR,
+                        frame_type: None,
+                        reason: Bytes::new(),
+                    }
+                    .encode(&mut buf, max_len),
                     _ => unreachable!(
                         "tried to make a close packet when the connection wasn't closed"
                     ),
