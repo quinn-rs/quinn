@@ -7,6 +7,7 @@ use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
 use crate::range_set::RangeSet;
+use crate::shared::IssuedCid;
 use crate::{crypto, frame, StreamId, VarInt};
 
 pub struct PacketSpace<K>
@@ -173,7 +174,7 @@ pub struct Retransmits {
     pub stop_sending: Vec<frame::StopSending>,
     pub max_stream_data: FnvHashSet<StreamId>,
     pub crypto: VecDeque<frame::Crypto>,
-    pub new_cids: Vec<frame::NewConnectionId>,
+    pub new_cids: Vec<IssuedCid>,
     pub retire_cids: Vec<u64>,
 }
 

@@ -588,6 +588,7 @@ impl Iter {
             Type::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
             Type::NEW_CONNECTION_ID => {
                 let sequence = self.bytes.get_var()?;
+                let retire_prior_to = self.bytes.get_var()?;
                 let length = self.bytes.get::<u8>()? as usize;
                 if length > MAX_CID_SIZE {
                     return Err(IterErr::Malformed);
@@ -605,6 +606,7 @@ impl Iter {
                 self.bytes.copy_to_slice(&mut reset_token);
                 Frame::NewConnectionId(NewConnectionId {
                     sequence,
+                    retire_prior_to,
                     id,
                     reset_token: reset_token.into(),
                 })
@@ -740,6 +742,7 @@ impl StopSending {
 #[derive(Debug, Copy, Clone)]
 pub struct NewConnectionId {
     pub sequence: u64,
+    pub retire_prior_to: u64,
     pub id: ConnectionId,
     pub reset_token: ResetToken,
 }
@@ -748,6 +751,7 @@ impl NewConnectionId {
     pub fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::NEW_CONNECTION_ID);
         out.write_var(self.sequence);
+        out.write_var(self.retire_prior_to);
         out.write(self.id.len() as u8);
         out.put_slice(&self.id);
         out.put_slice(&self.reset_token);

@@ -17,11 +17,10 @@ use crate::connection::{initial_close, Connection};
 use crate::crypto::{
     self, ClientConfig as ClientCryptoConfig, HmacKey, Keys, ServerConfig as ServerCryptoConfig,
 };
-use crate::frame::NewConnectionId;
 use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
 use crate::shared::{
     ClientConfig, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint,
-    EndpointConfig, EndpointEvent, EndpointEventInner, ResetToken, ServerConfig,
+    EndpointConfig, EndpointEvent, EndpointEventInner, IssuedCid, ResetToken, ServerConfig,
 };
 use crate::transport_parameters::TransportParameters;
 use crate::{
@@ -385,7 +384,7 @@ where
             meta.cids_issued += 1;
             let sequence = meta.cids_issued;
             meta.loc_cids.insert(sequence, id);
-            ids.push(NewConnectionId {
+            ids.push(IssuedCid {
                 sequence,
                 id,
                 reset_token: reset_token_for(&self.reset_key, &id),

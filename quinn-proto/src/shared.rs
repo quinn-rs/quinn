@@ -8,7 +8,6 @@ use err_derive::Error;
 use rand::{Rng, RngCore};
 use slog::Logger;
 
-use crate::frame::NewConnectionId;
 use crate::packet::PartialDecode;
 use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 
@@ -370,7 +369,7 @@ pub(crate) enum ConnectionEventInner {
         remaining: Option<BytesMut>,
     },
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<NewConnectionId>),
+    NewIdentifiers(Vec<IssuedCid>),
 }
 
 /// Events sent from a Connection to an Endpoint
@@ -537,4 +536,11 @@ impl fmt::Display for ResetToken {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct IssuedCid {
+    pub sequence: u64,
+    pub id: ConnectionId,
+    pub reset_token: ResetToken,
 }

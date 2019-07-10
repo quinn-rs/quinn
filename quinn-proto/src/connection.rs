@@ -20,7 +20,7 @@ use crate::packet::{
 use crate::range_set::RangeSet;
 use crate::shared::{
     ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-    EndpointEvent, EndpointEventInner, ServerConfig, TransportConfig,
+    EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
@@ -108,6 +108,8 @@ where
     idle_timeout: u64,
     /// Number of the first 1-RTT packet transmitted
     first_1rtt_sent: Option<u64>,
+    /// Sequence number of the first remote CID that we haven't been asked to retire
+    first_unretired_cid: u64,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -159,7 +161,7 @@ where
 
     streams: Streams,
     /// Surplus remote CIDs for future use on new paths
-    rem_cids: Vec<frame::NewConnectionId>,
+    rem_cids: Vec<IssuedCid>,
 }
 
 impl<S> Connection<S>
@@ -231,6 +233,7 @@ where
             permit_idle_reset: true,
             idle_timeout: config.idle_timeout,
             first_1rtt_sent: None,
+            first_unretired_cid: 0,
 
             path_challenge_pending: false,
             ping_pending: false,
@@ -1865,17 +1868,42 @@ where
                             "NEW_CONNECTION_ID when CIDs aren't in use",
                         ));
                     }
+                    if frame.retire_prior_to > frame.sequence {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "NEW_CONNECTION_ID retiring unissued CIDs",
+                        ));
+                    }
+
+                    if frame.retire_prior_to > self.first_unretired_cid {
+                        self.first_unretired_cid = frame.retire_prior_to;
+                        self.rem_cids
+                            .retain(|x| x.sequence >= frame.retire_prior_to);
+                    }
+
+                    let issued = IssuedCid {
+                        sequence: frame.sequence,
+                        id: frame.id,
+                        reset_token: frame.reset_token,
+                    };
                     if self.params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
                         debug_assert!(self.side.is_server());
                         debug_assert_eq!(self.rem_cid_seq, 0);
-                        self.update_rem_cid(frame);
+                        self.update_rem_cid(issued);
                     } else {
                         // Reasonable limit to bound memory use
                         if (self.rem_cids.len() as u64) < REM_CID_COUNT {
-                            self.rem_cids.push(frame);
+                            self.rem_cids.push(issued);
                         }
+                    }
+
+                    if self.rem_cid_seq < self.first_unretired_cid {
+                        // If our current CID is earlier than the first unretired one we must not
+                        // have adopted the one we just got, so it must be cached, so this unwrap is
+                        // guaranteed to succeed.
+                        let new = self.rem_cids.pop().unwrap();
+                        self.update_rem_cid(new);
                     }
                 }
                 Frame::NewToken { .. } => {
@@ -1948,7 +1976,7 @@ where
         self.path_challenge_pending = true;
     }
 
-    fn update_rem_cid(&mut self, new: frame::NewConnectionId) {
+    fn update_rem_cid(&mut self, new: IssuedCid) {
         trace!(
             self.log,
             "switching to remote CID {sequence}: {connection_id}",
@@ -2432,18 +2460,24 @@ where
 
         // NEW_CONNECTION_ID
         while buf.len() + 44 < max_size {
-            let frame = match space.pending.new_cids.pop() {
+            let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
             };
             trace!(
                 self.log,
                 "NEW_CONNECTION_ID {sequence} = {id}",
-                sequence = frame.sequence,
-                id = frame.id,
+                sequence = issued.sequence,
+                id = issued.id,
             );
-            frame.encode(buf);
-            sent.new_cids.push(frame);
+            frame::NewConnectionId {
+                sequence: issued.sequence,
+                retire_prior_to: 0,
+                id: issued.id,
+                reset_token: issued.reset_token,
+            }
+            .encode(buf);
+            sent.new_cids.push(issued);
         }
 
         // RETIRE_CONNECTION_ID
