@@ -158,8 +158,7 @@ pub enum Frame {
     },
     PathChallenge(u64),
     PathResponse(u64),
-    ConnectionClose(ConnectionClose),
-    ApplicationClose(ApplicationClose),
+    Close(Close),
     Invalid {
         ty: Type,
         reason: &'static str,
@@ -172,8 +171,8 @@ impl Frame {
         match *self {
             Padding => Type::PADDING,
             ResetStream(_) => Type::RESET_STREAM,
-            ConnectionClose(_) => Type::CONNECTION_CLOSE,
-            ApplicationClose(_) => Type::APPLICATION_CLOSE,
+            Close(self::Close::Connection(_)) => Type::CONNECTION_CLOSE,
+            Close(self::Close::Application(_)) => Type::APPLICATION_CLOSE,
             MaxData(_) => Type::MAX_DATA,
             MaxStreamData { .. } => Type::MAX_STREAM_DATA,
             MaxStreams {
@@ -215,6 +214,37 @@ impl Frame {
             NewToken { .. } => Type::NEW_TOKEN,
             Invalid { ty, .. } => ty,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Close {
+    Connection(ConnectionClose),
+    Application(ApplicationClose),
+}
+
+impl Close {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
+        match *self {
+            Close::Connection(ref x) => x.encode(out, max_len),
+            Close::Application(ref x) => x.encode(out, max_len),
+        }
+    }
+}
+
+impl From<TransportError> for Close {
+    fn from(x: TransportError) -> Self {
+        Close::Connection(x.into())
+    }
+}
+impl From<ConnectionClose> for Close {
+    fn from(x: ConnectionClose) -> Self {
+        Close::Connection(x)
+    }
+}
+impl From<ApplicationClose> for Close {
+    fn from(x: ApplicationClose) -> Self {
+        Close::Application(x)
     }
 }
 
@@ -509,7 +539,7 @@ impl Iter {
                 error_code: self.bytes.get()?,
                 final_offset: self.bytes.get_var()?,
             }),
-            Type::CONNECTION_CLOSE => Frame::ConnectionClose(ConnectionClose {
+            Type::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
                 error_code: self.bytes.get()?,
                 frame_type: {
                     let x = self.bytes.get_var()?;
@@ -520,11 +550,11 @@ impl Iter {
                     }
                 },
                 reason: self.take_len()?,
-            }),
-            Type::APPLICATION_CLOSE => Frame::ApplicationClose(ApplicationClose {
+            })),
+            Type::APPLICATION_CLOSE => Frame::Close(Close::Application(ApplicationClose {
                 error_code: self.bytes.get()?,
                 reason: self.take_len()?,
-            }),
+            })),
             Type::MAX_DATA => Frame::MaxData(self.bytes.get_var()?),
             Type::MAX_STREAM_DATA => Frame::MaxStreamData {
                 id: self.bytes.get()?,
