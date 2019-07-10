@@ -116,10 +116,7 @@ where
     //
     path_challenge_pending: bool,
     ping_pending: bool,
-    /// PATH_RESPONSEs to send on the current path
     path_response: Option<PathResponse>,
-    /// PATH_RESPONSEs to send on alternate paths, due to path validation probes
-    offpath_responses: Vec<(SocketAddr, u64)>,
 
     //
     // Loss Detection
@@ -238,7 +235,6 @@ where
             path_challenge_pending: false,
             ping_pending: false,
             path_response: None,
-            offpath_responses: Vec::new(),
 
             crypto_count: 0,
             pto_count: 0,
@@ -1674,19 +1670,15 @@ where
                     return Ok(());
                 }
                 Frame::PathChallenge(token) => {
-                    if remote == self.remote {
-                        if self
-                            .path_response
-                            .as_ref()
-                            .map_or(true, |x| x.packet <= number)
-                        {
-                            self.path_response = Some(PathResponse {
-                                packet: number,
-                                token,
-                            });
-                        }
-                    } else {
-                        self.offpath_responses.push((remote, token));
+                    if self
+                        .path_response
+                        .as_ref()
+                        .map_or(true, |x| x.packet <= number)
+                    {
+                        self.path_response = Some(PathResponse {
+                            packet: number,
+                            token,
+                        });
                     }
                 }
                 Frame::PathResponse(token) => {
@@ -2049,7 +2041,6 @@ where
             ),
         };
 
-        let mut remote = self.remote;
         let mut buf = Vec::with_capacity(self.mtu as usize);
         let mut coalesce = spaces.len() > 1;
         let pad_space = if self.side.is_client() && spaces.first() == Some(&SpaceId::Initial) {
@@ -2157,15 +2148,6 @@ where
                 }
                 coalesce = false;
                 None
-            } else if let Some((path_remote, token)) = self.offpath_responses.pop() {
-                // For simplicity's sake, we don't bother trying to batch together or deduplicate path
-                // validation probes.
-                trace!(self.log, "PATH_RESPONSE {token:08x}", token = token);
-                buf.write(frame::Type::PATH_RESPONSE);
-                buf.write(token);
-                remote = path_remote;
-                coalesce = false;
-                None
             } else {
                 Some(self.populate_packet(now, space_id, &mut buf))
             };
@@ -2251,16 +2233,11 @@ where
             return None;
         }
 
-        trace!(
-            self.log,
-            "{len} bytes to {remote}",
-            len = buf.len(),
-            remote = remote
-        );
+        trace!(self.log, "{len} bytes", len = buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
         Some(Transmit {
-            destination: remote,
+            destination: self.remote,
             contents: buf.into(),
             ecn: if self.sending_ecn {
                 Some(EcnCodepoint::ECT0)
@@ -2307,8 +2284,8 @@ where
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = micros_from(instant_saturating_sub(now, space.rx_packet_time))
-                >> ACK_DELAY_EXPONENT;
+            let delay = (instant_saturating_sub(now, space.rx_packet_time).as_micros()
+                >> ACK_DELAY_EXPONENT) as u64;
             trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
@@ -3009,10 +2986,7 @@ where
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.path_challenge_pending
-            || self.ping_pending
-            || self.path_response.is_some()
-            || !self.offpath_responses.is_empty()
+        self.path_challenge_pending || self.ping_pending || self.path_response.is_some()
     }
 
     /// Reset state to account for 0-RTT being ignored by the server
@@ -3432,10 +3406,6 @@ struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
     token: u64,
-}
-
-fn micros_from(x: Duration) -> u64 {
-    x.as_secs() * 1000 * 1000 + u64::from(x.subsec_micros())
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
