@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use bytes::{BufMut, BytesMut};
 use err_derive::Error;
 use fnv::FnvHashMap;
-use rand::{rngs::OsRng, Rng, RngCore};
+use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
 use slog::{self, Logger};
 
@@ -38,7 +38,7 @@ where
     S: crypto::Session,
 {
     log: Logger,
-    rng: OsRng,
+    rng: StdRng,
     transmits: VecDeque<Transmit>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
     connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
@@ -76,7 +76,7 @@ where
         config.validate()?;
         Ok(Self {
             log,
-            rng: OsRng,
+            rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
             connection_ids: FnvHashMap::default(),

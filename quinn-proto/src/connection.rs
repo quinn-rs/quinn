@@ -7,7 +7,7 @@ use std::{cmp, io, mem};
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use fnv::FnvHashSet;
-use rand::{rngs::OsRng, Rng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use slog::Logger;
 
 use crate::coding::BufMutExt;
@@ -46,7 +46,7 @@ where
     endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
-    rng: OsRng,
+    rng: StdRng,
     tls: S,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
@@ -188,7 +188,7 @@ where
             token: None,
             client_hello: None,
         });
-        let mut rng = OsRng;
+        let mut rng = StdRng::from_entropy();
         let mut this = Self {
             log,
             endpoint_config,
