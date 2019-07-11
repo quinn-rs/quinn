@@ -258,6 +258,15 @@ impl Connection {
 }
 
 /// A stream of QUIC streams initiated by a remote peer.
+///
+/// Incoming streams are *always* opened in the same order that the peer created them, but data can
+/// be delivered to open streams in any order. This allows meaning to be assigned to the sequence in
+/// which streams are opened. For example, a file transfer protocol might designate the first stream
+/// the client opens as a "control" stream, using all others for exchanging file data.
+///
+/// Processing streams in the order they're opened will produce head-of-line blocking. For best
+/// performance, an application should be prepared to fully process later streams before any data is
+/// received on earlier streams.
 pub struct IncomingStreams(ConnectionRef);
 
 impl FuturesStream for IncomingStreams {
