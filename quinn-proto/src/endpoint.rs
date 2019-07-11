@@ -412,14 +412,14 @@ where
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         let loc_cid = self.new_cid();
-        let (side, tls, transport_config, log) = match opts {
+        let (server_config, tls, transport_config, log) = match opts {
             ConnectionOpts::Client {
                 config,
                 server_name,
             } => {
                 let params = TransportParameters::new::<S>(&config.transport, None);
                 (
-                    Side::Client,
+                    None,
                     config.crypto.start_session(&server_name, &params)?,
                     config.transport,
                     config
@@ -436,7 +436,7 @@ where
                     ..params
                 };
                 (
-                    Side::Server,
+                    Some(config.clone()),
                     config.crypto.start_session(&server_params),
                     config.transport.clone(),
                     self.log.new(o!("connection" => loc_cid)),
@@ -444,23 +444,17 @@ where
             }
         };
 
-        let remote_validated = self
-            .server_config
-            .as_ref()
-            .map_or(false, |cfg| cfg.use_stateless_retry && side.is_server());
         let conn = Connection::new(
             log,
             Arc::clone(&self.config),
-            self.server_config.as_ref().map(Arc::clone),
+            server_config,
             transport_config,
             init_cid,
             loc_cid,
             rem_cid,
             remote,
-            side,
             tls,
             now,
-            remote_validated,
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,

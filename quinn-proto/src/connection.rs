@@ -174,11 +174,14 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        side: Side,
         tls: S,
         now: Instant,
-        remote_validated: bool,
     ) -> Self {
+        let side = if server_config.is_some() {
+            Side::Server
+        } else {
+            Side::Client
+        };
         let initial_space = PacketSpace {
             crypto: Some(CryptoSpace::new(S::Keys::new_initial(&init_cid, side))),
             ..PacketSpace::new(now)
@@ -189,6 +192,9 @@ where
             client_hello: None,
         });
         let mut rng = StdRng::from_entropy();
+        let remote_validated = server_config
+            .as_ref()
+            .map_or(false, |c| c.use_stateless_retry);
         let mut this = Self {
             log,
             endpoint_config,
