@@ -40,13 +40,16 @@ mod timer;
 pub use timer::{Timer, TimerTable, TimerTableIter, TimerTableIterMut};
 
 mod connection;
-pub use crate::connection::{ConnectionError, Event, TimerSetting, TimerUpdate};
+pub use crate::connection::{
+    ConnectionError, DatagramSender, DatagramTooLarge, Event, SendDatagramError, TimerSetting,
+    TimerUpdate,
+};
 
 pub mod crypto;
 
 mod frame;
 use crate::frame::Frame;
-pub use crate::frame::{ApplicationClose, ConnectionClose};
+pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram};
 
 mod endpoint;
 pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};

@@ -44,6 +44,7 @@ macro_rules! make_struct {
             $(pub $name : u64,)*
 
             pub disable_active_migration: bool,
+            pub max_datagram_frame_size: Option<VarInt>,
 
             // Server-only
             pub original_connection_id: Option<ConnectionId>,
@@ -58,6 +59,7 @@ macro_rules! make_struct {
                     $($name: $default,)*
 
                     disable_active_migration: false,
+                    max_datagram_frame_size: None,
 
                     original_connection_id: None,
                     stateless_reset_token: None,
@@ -86,6 +88,9 @@ impl TransportParameters {
             max_ack_delay: 0,
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: REM_CID_COUNT,
+            max_datagram_frame_size: config
+                .datagram_window
+                .map(|x| (x.min(u16::max_value().into()) as u16).into()),
             ..Self::default()
         }
     }
@@ -217,6 +222,12 @@ impl TransportParameters {
             buf.write::<u16>(0);
         }
 
+        if let Some(x) = self.max_datagram_frame_size {
+            buf.write::<u16>(0x0020);
+            buf.write::<u16>(x.size() as u16);
+            buf.write(x);
+        }
+
         if let Some(ref x) = self.preferred_address {
             buf.write::<u16>(0x000d);
             buf.write::<u16>(x.wire_size());
@@ -290,6 +301,12 @@ impl TransportParameters {
                     }
                     params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
+                }
+                0x0020 => {
+                    if len > 8 || params.max_datagram_frame_size.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    params.max_datagram_frame_size = Some(r.get().unwrap());
                 }
                 _ => {
                     macro_rules! parse {

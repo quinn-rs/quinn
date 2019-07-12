@@ -48,6 +48,7 @@
 #[macro_use]
 extern crate slog;
 
+mod broadcast;
 mod builders;
 mod platform;
 mod udp;

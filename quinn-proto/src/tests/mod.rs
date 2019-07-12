@@ -1144,3 +1144,113 @@ fn congested_tail_loss() {
         .write(s, &[42; 1024])
         .unwrap();
 }
+
+#[test]
+fn datagram_send_recv() {
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    assert_matches!(pair.client_conn_mut(client_ch).max_datagram_size(), Some(x) if x > 0);
+
+    const DATA: &[u8] = b"whee";
+    pair.client_conn_mut(client_ch)
+        .send_datagram()
+        .unwrap()
+        .send(DATA.into())
+        .unwrap();
+    pair.drive();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::DatagramReceived)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
+        DATA
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+}
+
+#[test]
+fn datagram_window() {
+    const WINDOW: usize = 100;
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            datagram_window: Some(WINDOW),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).max_datagram_size(),
+        Some(WINDOW)
+    );
+
+    const DATA1: &[u8] = &[0xAB; (WINDOW / 3) + 1];
+    const DATA2: &[u8] = &[0xBC; (WINDOW / 3) + 1];
+    const DATA3: &[u8] = &[0xCD; (WINDOW / 3) + 1];
+    pair.client_conn_mut(client_ch)
+        .send_datagram()
+        .unwrap()
+        .send(DATA1.into())
+        .unwrap();
+    pair.client_conn_mut(client_ch)
+        .send_datagram()
+        .unwrap()
+        .send(DATA2.into())
+        .unwrap();
+    pair.client_conn_mut(client_ch)
+        .send_datagram()
+        .unwrap()
+        .send(DATA3.into())
+        .unwrap();
+    pair.drive();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::DatagramReceived)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
+        DATA2
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
+        DATA3
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+
+    pair.client_conn_mut(client_ch)
+        .send_datagram()
+        .unwrap()
+        .send(DATA1.into())
+        .unwrap();
+    pair.drive();
+    assert_eq!(
+        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
+        DATA1
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+}
+
+#[test]
+fn datagram_unsupported() {
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            datagram_window: None,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    assert_matches!(pair.client_conn_mut(client_ch).max_datagram_size(), None);
+
+    match pair.client_conn_mut(client_ch).send_datagram() {
+        Err(SendDatagramError::UnsupportedByPeer) => {}
+        Err(e) => panic!("unexpected error: {}", e),
+        Ok(_) => panic!("unexpected success"),
+    }
+}
