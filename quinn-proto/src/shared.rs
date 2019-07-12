@@ -118,6 +118,12 @@ pub struct TransportConfig {
     /// This allows passive observers to easily judge the round trip time of a connection, which can
     /// be useful for network administration but sacrifices a small amount of privacy.
     pub allow_spin: bool,
+    /// Maximum number of application datagram bytes to buffer, or None to disable datagrams
+    ///
+    /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
+    /// of all datagrams that have been received from the peer but not consumed by the application
+    /// exceeds this value, old datagrams are dropped until it is no longer exceeded.
+    pub datagram_window: Option<usize>,
 }
 
 impl Default for TransportConfig {
@@ -154,6 +160,7 @@ impl Default for TransportConfig {
             keep_alive_interval: 0,
             crypto_buffer_size: 16 * 1024,
             allow_spin: true,
+            datagram_window: Some(STREAM_RWND as usize),
         }
     }
 }

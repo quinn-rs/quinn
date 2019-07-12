@@ -12,7 +12,7 @@ use slog::Logger;
 
 use crate::coding::BufMutExt;
 use crate::crypto::{self, HeaderKeys, Keys};
-use crate::frame::{Close, FrameStruct};
+use crate::frame::{Close, Datagram, FrameStruct};
 use crate::packet::{
     Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
     SHORT_RESERVED_BITS,
@@ -152,6 +152,8 @@ where
     streams: Streams,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: Vec<IssuedCid>,
+    /// State of the unreliable datagram extension
+    datagrams: DatagramState,
 }
 
 impl<S> Connection<S>
@@ -255,6 +257,7 @@ where
             total_sent: 0,
 
             streams: Streams::new(side, config.stream_window_uni, config.stream_window_bidi),
+            datagrams: DatagramState::new(),
             config,
             rem_cids: Vec::new(),
             rng,
@@ -351,6 +354,7 @@ where
         if ack.largest >= self.space(space).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
+        let was_congested = self.congestion_blocked();
         let was_blocked = self.blocked();
         let new_largest = {
             let space = self.space_mut(space);
@@ -439,6 +443,12 @@ where
             for stream in self.blocked_streams.drain() {
                 self.events.push_back(Event::StreamWritable { stream });
             }
+        }
+        if was_congested
+            && !self.congestion_blocked()
+            && mem::replace(&mut self.datagrams.send_blocked, false)
+        {
+            self.events.push_back(Event::DatagramSendUnblocked);
         }
         Ok(())
     }
@@ -1949,6 +1959,28 @@ where
                     trace!(self.log, "got new token");
                     // TODO: Cache, or perhaps forward to user?
                 }
+                Frame::Datagram(datagram) => {
+                    let window = match self.config.datagram_window {
+                        None => {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "unexpected DATAGRAM frame",
+                            ));
+                        }
+                        Some(x) => x,
+                    };
+                    if datagram.data.len() > window {
+                        return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
+                    }
+                    if self.datagrams.recv_buffered == 0 {
+                        self.events.push_back(Event::DatagramReceived);
+                    }
+                    while datagram.data.len() + self.datagrams.recv_buffered > window {
+                        debug!(self.log, "dropping stale datagram");
+                        self.recv_datagram();
+                    }
+                    self.datagrams.recv_buffered += datagram.data.len();
+                    self.datagrams.incoming.push_back(datagram);
+                }
             }
         }
 
@@ -2537,6 +2569,21 @@ where
             sent.retire_cids.push(seq);
         }
 
+        // DATAGRAM
+        while buf.len() + Datagram::SIZE_BOUND < max_size {
+            let datagram = match self.datagrams.outgoing.pop_front() {
+                Some(x) => x,
+                None => break,
+            };
+            if buf.len() + datagram.size(true) > max_size {
+                // Future work: we could be more clever about cramming small datagrams into
+                // mostly-full packets when a larger one is queued first
+                self.datagrams.outgoing.push_front(datagram);
+                break;
+            }
+            datagram.encode(true, buf);
+        }
+
         // STREAM
         while buf.len() + frame::Stream::SIZE_BOUND < max_size {
             let mut stream = match space.pending.stream.pop_front() {
@@ -2936,6 +2983,59 @@ where
         Ok(n)
     }
 
+    /// Prepare to transmit an unreliable, unordered datagram
+    ///
+    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
+    /// caller to defer materializing a datagram until one can be sent immediately without redundant
+    /// checks
+    ///
+    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
+    ///
+    /// If `Err(SendDatagramError::Blocked)` is returned, `Event::DatagramSendUnblocked` may be
+    /// emitted in the future.
+    pub fn send_datagram(&mut self) -> Result<DatagramSender<'_, S>, SendDatagramError> {
+        if self.config.datagram_window.is_none() {
+            return Err(SendDatagramError::Disabled);
+        }
+        let max = self
+            .max_datagram_size()
+            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+        if self.congestion_blocked() {
+            self.datagrams.send_blocked = true;
+            return Err(SendDatagramError::Blocked);
+        }
+        Ok(DatagramSender { max, conn: self })
+    }
+
+    /// Receive an unreliable, unordered datagram
+    pub fn recv_datagram(&mut self) -> Option<Bytes> {
+        let x = self.datagrams.incoming.pop_front()?.data;
+        self.datagrams.recv_buffered -= x.len();
+        Some(x)
+    }
+
+    /// Compute the maximum size of datagrams that may passed to `send_datagram`
+    ///
+    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
+    ///
+    /// This may change over the lifetime of a connection according to variation in the path MTU
+    /// estimate. The peer can also enforce an arbitrarily small fixed limit, but if the peer's
+    /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
+    ///
+    /// Not necessarily the maximum size of received datagrams.
+    pub fn max_datagram_size(&self) -> Option<usize> {
+        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
+        let max_size = self.mtu as usize
+            - 1                 // flags byte
+            - self.rem_cid.len()
+            - 4                 // worst-case packet number size
+            - self.space(SpaceId::Data).crypto.as_ref().or(self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
+            - Datagram::SIZE_BOUND;
+        self.config.datagram_window?;
+        let limit = self.params.max_datagram_frame_size?.into_inner();
+        Some(limit.min(max_size as u64) as usize)
+    }
+
     fn update_keys(&mut self, crypto: S::Keys, end_packet: Option<(u64, Instant)>, remote: bool) {
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize]
@@ -3050,7 +3150,10 @@ where
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.path_challenge_pending || self.ping_pending || self.path_response.is_some()
+        self.path_challenge_pending
+            || self.ping_pending
+            || self.path_response.is_some()
+            || !self.datagrams.outgoing.is_empty()
     }
 
     /// Reset state to account for 0-RTT being ignored by the server
@@ -3434,6 +3537,12 @@ pub enum Event {
         /// Directionality for which streams are newly available
         dir: Dir,
     },
+    /// One or more application datagrams have been received
+    DatagramReceived,
+    /// Outgoing application datagrams are no longer blocked by congestion control
+    ///
+    /// Emitted after `send_datagram` returns `Err(SendDatagramError::Blocked)`
+    DatagramSendUnblocked,
 }
 
 impl From<ConnectionError> for Event {
@@ -3472,4 +3581,64 @@ struct PathData {
     ssthresh: u64,
     /// Whether we're enabling ECN on outgoing packets
     sending_ecn: bool,
+}
+
+/// Errors that can arise when sending a datagram
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum SendDatagramError {
+    /// The connection does not have capacity for an additional datagram at this time
+    #[error(display = "sending blocked")]
+    Blocked,
+    /// The peer does not support receiving datagram frames
+    #[error(display = "datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error(display = "datagram support disabled")]
+    Disabled,
+}
+
+/// The datagram is larger than the connection can currently accommodate
+///
+/// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+/// exceeded.
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[error(display = "datagram too large")]
+pub struct DatagramTooLarge;
+
+/// Handle used to send a datagram
+pub struct DatagramSender<'a, S: crypto::Session> {
+    max: usize,
+    conn: &'a mut Connection<S>,
+}
+
+impl<S: crypto::Session> DatagramSender<'_, S> {
+    /// Send a datagram consisting of `data`
+    pub fn send(self, data: Bytes) -> Result<(), DatagramTooLarge> {
+        if data.len() > self.max {
+            return Err(DatagramTooLarge);
+        }
+        self.conn.datagrams.outgoing.push_back(Datagram { data });
+        Ok(())
+    }
+}
+
+struct DatagramState {
+    /// Number of bytes of datagrams that have been received by the local transport but not
+    /// delivered to the application
+    recv_buffered: usize,
+    /// Whether a `send_datagram` call failed due to congestion
+    send_blocked: bool,
+    incoming: VecDeque<Datagram>,
+    outgoing: VecDeque<Datagram>,
+}
+
+impl DatagramState {
+    fn new() -> Self {
+        Self {
+            recv_buffered: 0,
+            send_blocked: false,
+            incoming: VecDeque::new(),
+            outgoing: VecDeque::new(),
+        }
+    }
 }
