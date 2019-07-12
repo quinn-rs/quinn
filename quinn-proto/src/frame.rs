@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use std::{fmt, io, mem};
 
 use bytes::{Buf, BufMut, Bytes};
@@ -16,7 +16,7 @@ pub struct Type(u64);
 
 impl Type {
     fn stream(self) -> Option<StreamInfo> {
-        if self.0 >= STREAM_TY_MIN && self.0 <= STREAM_TY_MAX {
+        if STREAM_TYS.contains(&self.0) {
             Some(StreamInfo(self.0 as u8))
         } else {
             None
@@ -68,7 +68,7 @@ macro_rules! frame_types {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if x >= STREAM_TY_MIN && x <= STREAM_TY_MAX => f.write_str("STREAM"),
+                    x if STREAM_TYS.contains(&x) => f.write_str("STREAM"),
                     _ => write!(f, "<unknown {:02x}>", self.0),
                 }
             }
@@ -100,7 +100,7 @@ frame_types! {
     STOP_SENDING = 0x05,
     CRYPTO = 0x06,
     NEW_TOKEN = 0x07,
-    // STREAM = STREAM_TY_MIN..STREAM_TY_MAX,
+    // STREAM
     MAX_DATA = 0x10,
     MAX_STREAM_DATA = 0x11,
     MAX_STREAMS_BIDI = 0x12,
@@ -117,8 +117,7 @@ frame_types! {
     APPLICATION_CLOSE = 0x1d,
 }
 
-const STREAM_TY_MIN: u64 = 0x08;
-const STREAM_TY_MAX: u64 = 0x0f;
+const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
 
 #[derive(Debug)]
 pub enum Frame {
@@ -165,7 +164,7 @@ impl Frame {
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
             Stream(ref x) => {
-                let mut ty = STREAM_TY_MIN;
+                let mut ty = *STREAM_TYS.start();
                 if x.fin {
                     ty |= 0x01;
                 }
@@ -410,7 +409,7 @@ impl FrameStruct for Stream {
 
 impl Stream {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
-        let mut ty = STREAM_TY_MIN;
+        let mut ty = *STREAM_TYS.start();
         if self.offset != 0 {
             ty |= 0x04;
         }
