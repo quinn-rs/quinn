@@ -34,7 +34,7 @@ slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
-webpki = "0.19"
+webpki = "0.20"
 webpki-roots = "0.16"
 
 [dev-dependencies]

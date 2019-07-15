@@ -32,7 +32,7 @@ rustls = { version = "0.15.2", features = ["quic"], optional = true }
 slab = "0.4"
 slog = "2.2"
 untrusted = "0.6.2"
-webpki = { version = "0.19", optional = true }
+webpki = { version = "0.20", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"

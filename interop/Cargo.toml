@@ -18,7 +18,7 @@ rustls = { version = "0.15", features = ["dangerous_configuration"] }
 failure = "0.1"
 slog = "2.2"
 futures = "0.1.21"
-webpki = "0.19"
+webpki = "0.20"
 
 [[bin]]
 name = "main"
