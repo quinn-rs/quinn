@@ -48,6 +48,7 @@ impl Decoder for FrameDecoder {
             Err(e) => Err(e)?,
             Ok(frame) => {
                 src.advance(pos);
+                self.expected = None;
                 Ok(Some(frame))
             }
         }
