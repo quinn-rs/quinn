@@ -14,10 +14,7 @@ use crate::{
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
-    proto::{
-        frame::HttpFrame,
-        headers::Header,
-    },
+    proto::{frame::HttpFrame, headers::Header},
     try_take, Error, Settings,
 };
 

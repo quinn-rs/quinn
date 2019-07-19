@@ -15,7 +15,7 @@ use crate::{
     connection::ConnectionRef,
     frame::FrameStream,
     headers::DecodeHeaders,
-    proto::frame::{DataFrame, HttpFrame, HeadersFrame},
+    proto::frame::{DataFrame, HeadersFrame, HttpFrame},
     try_take, Error,
 };
 
@@ -215,16 +215,12 @@ impl Stream for RecvBodyStream {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.recv.poll()) {
-            Some(HttpFrame::Data(d)) => {
-                Ok(Async::Ready(Some(d.payload)))
-            }
+            Some(HttpFrame::Data(d)) => Ok(Async::Ready(Some(d.payload))),
             Some(HttpFrame::Headers(d)) => {
                 self.trailers = Some(d);
                 Ok(Async::Ready(None))
             }
-            None => {
-                Ok(Async::Ready(None))
-            }
+            None => Ok(Async::Ready(None)),
             _ => Err(Error::peer("invalid frame type in data")),
         }
     }
