@@ -10,14 +10,11 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, RecvBody, SendBody, RecvBodyStream},
+    body::{Body, RecvBody, RecvBodyStream, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
-    proto::{
-        frame::HttpFrame,
-        headers::Header,
-    },
+    proto::{frame::HttpFrame, headers::Header},
     try_take, Error, Settings,
 };
 
