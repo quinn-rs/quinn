@@ -328,7 +328,6 @@ enum ProcessResponseState {
     Finished,
 }
 
-
 fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certificate, PrivateKey)> {
     if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
