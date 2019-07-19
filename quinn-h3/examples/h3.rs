@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
-use std::{fmt, fs, io, mem};
+use std::{fmt, fs, io};
 
 use failure::{bail, format_err, Error, Fail, ResultExt};
-use futures::{try_ready, Future, Poll, Stream};
+use futures::{future::Either, Future, Stream};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
 use slog::{info, o, Drain, Logger};
 use structopt::{self, StructOpt};
@@ -17,10 +17,8 @@ use url::Url;
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
-    body::RecvBodyStream,
     client::Builder as ClientBuilder,
     connection::ConnectionDriver,
-    headers::DecodeHeaders,
     server::{Builder as ServerBuilder, IncomingRequest, RequestReady},
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
@@ -204,9 +202,10 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
                 println!("server received trailers: {:?}", trailers);
             }
 
+            let body = "r".repeat(1024 * 800);
             let response = Response::builder()
                 .status(StatusCode::OK)
-                .body("response body")
+                .body(body.as_str())
                 .expect("failed to build response");
 
             let mut trailer = HeaderMap::with_capacity(2);
@@ -270,64 +269,28 @@ fn client(
             conn.send_request_trailers(request, trailer)
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
-                    println!("received headers: {:?}", response.response());
-                    ProcessResponse {
-                        state: ProcessResponseState::Body(response.body_stream()),
-                    }
-                    .map_err(|e| format_err!("send request: {}", e))
+                    let buf = Vec::with_capacity(1024 * 10); // 10K
+                    tokio_io::io::read_to_end(response.body_reader(), buf)
+                        .map_err(|e| format_err!("receive response failed: {}", e))
+                        .and_then(|(reader, data)| {
+                            println!("received body len = {}", data.len());
+                            if let Some(decode_trailers) = reader.trailers() {
+                                return Either::A(
+                                    decode_trailers
+                                        .map_err(|e| format_err!("receive response failed: {}", e))
+                                        .and_then(|trailers| {
+                                            println!("received  trailers: {:?}", trailers);
+                                            futures::future::ok(())
+                                        }),
+                                );
+                            }
+                            Either::B(futures::future::ok(()))
+                        })
                 })
         });
 
     Ok((endpoint_driver, Box::new(fut)))
 }
-
-struct ProcessResponse {
-    state: ProcessResponseState,
-}
-
-impl Future for ProcessResponse {
-    type Item = ();
-    type Error = quinn_h3::Error;
-
-    fn poll(&mut self) -> Poll<(), Self::Error> {
-        loop {
-            match self.state {
-                ProcessResponseState::Body(ref mut b) => match try_ready!(b.poll()) {
-                    Some(chunk) => {
-                        println!("got chunk = {:?}", chunk);
-                    }
-                    None => {
-                        if b.has_trailers() {
-                            self.state =
-                                match mem::replace(&mut self.state, ProcessResponseState::Finished)
-                                {
-                                    ProcessResponseState::Body(b) => {
-                                        ProcessResponseState::Trailers(b.trailers().unwrap())
-                                    }
-                                    _ => unreachable!(),
-                                }
-                        } else {
-                            self.state = ProcessResponseState::Finished;
-                        }
-                    }
-                },
-                ProcessResponseState::Trailers(ref mut t) => {
-                    let trailers = try_ready!(t.poll());
-                    println!("got trailers: {:?}", trailers.into_fields());
-                    return Ok(().into());
-                }
-                ProcessResponseState::Finished => panic!("polled after finished"),
-            }
-        }
-    }
-}
-
-enum ProcessResponseState {
-    Body(RecvBodyStream),
-    Trailers(DecodeHeaders),
-    Finished,
-}
-
 
 fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certificate, PrivateKey)> {
     if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
