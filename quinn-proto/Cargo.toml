@@ -38,5 +38,5 @@ webpki = { version = "0.19", optional = true }
 assert_matches = "1.1"
 hex-literal = "0.2.0"
 untrusted = "0.6.2"
-rcgen = "0.4"
+rcgen = "0.5"
 #slog = { version = "2.2", features = ["max_level_trace"] } # For debugging
