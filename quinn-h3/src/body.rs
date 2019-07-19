@@ -1,11 +1,15 @@
-use std::mem;
+use std::{
+    cmp,
+    io::{self, ErrorKind},
+    mem,
+};
 
 use bytes::{Bytes, BytesMut};
 use futures::{try_ready, Async, Future, Poll, Stream};
 use http::HeaderMap;
 use quinn::SendStream;
 use quinn_proto::StreamId;
-use tokio_io::io::WriteAll;
+use tokio_io::{io::WriteAll, AsyncRead};
 
 use crate::{
     connection::ConnectionRef,
@@ -218,6 +222,89 @@ impl Stream for RecvBodyStream {
             }
             None => Ok(Async::Ready(None)),
             _ => Err(Error::peer("invalid frame type in data")),
+        }
+    }
+}
+
+pub struct BodyReader {
+    recv: FrameStream,
+    trailers: Option<HeadersFrame>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+    buf: Option<Bytes>,
+}
+
+impl BodyReader {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        BodyReader {
+            recv,
+            conn,
+            stream_id,
+            trailers: None,
+            buf: None,
+        }
+    }
+
+    fn buf_read(&mut self, buf: &mut [u8]) -> usize {
+        match self.buf {
+            None => 0,
+            Some(ref mut b) => {
+                let size = cmp::min(buf.len(), b.len());
+                buf[..size].copy_from_slice(&b.split_to(size));
+                if b.is_empty() {
+                    self.buf = None;
+                }
+                size
+            }
+        }
+    }
+
+    fn buf_put(&mut self, buf: Bytes) {
+        assert!(self.buf.is_none());
+        self.buf = Some(buf)
+    }
+
+    pub fn trailers(self) -> Option<DecodeHeaders> {
+        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
+        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    }
+}
+
+impl AsyncRead for BodyReader {
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
+        false
+    }
+}
+
+impl io::Read for BodyReader {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        let size = self.buf_read(buf);
+        if size == buf.len() {
+            return Ok(size);
+        }
+
+        match self.recv.poll() {
+            Err(err) => Err(io::Error::new(ErrorKind::Other, Error::from(err))),
+            Ok(Async::NotReady) => Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")),
+            Ok(Async::Ready(r)) => match r {
+                None => Ok(size),
+                Some(HttpFrame::Data(mut d)) => {
+                    if d.payload.len() >= buf.len() - size {
+                        let tail = d.payload.split_off(buf.len() - size);
+                        self.buf_put(tail);
+                    }
+                    buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
+                    Ok(size + d.payload.len())
+                }
+                Some(HttpFrame::Headers(d)) => {
+                    self.trailers = Some(d);
+                    Ok(size)
+                }
+                _ => Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "received an invalid frame type",
+                )),
+            },
         }
     }
 }

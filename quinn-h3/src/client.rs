@@ -10,7 +10,7 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, RecvBody, RecvBodyStream, SendBody},
+    body::{Body, BodyReader, RecvBody, RecvBodyStream, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
@@ -317,5 +317,9 @@ impl RecvResponse {
 
     pub fn body_stream(self) -> RecvBodyStream {
         RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+    }
+
+    pub fn body_reader(self) -> BodyReader {
+        BodyReader::new(self.recv, self.conn, self.stream_id)
     }
 }
