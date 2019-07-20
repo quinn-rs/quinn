@@ -2,7 +2,7 @@ use std::{io, net::SocketAddr};
 
 use mio::net::UdpSocket;
 
-use quinn_proto::EcnCodepoint;
+use proto::EcnCodepoint;
 
 impl super::UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
