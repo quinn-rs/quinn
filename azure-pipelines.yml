@@ -1,0 +1,12 @@
+stages:
+ - template: azure/stages.yml@templates
+   parameters:
+     minrust: false
+     codecov_token: $(CODECOV_TOKEN_SECRET)
+
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: crate-ci/azure-pipelines
+      endpoint: djc
