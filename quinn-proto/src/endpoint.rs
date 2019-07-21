@@ -126,7 +126,9 @@ where
                 if let Some(old) = self.connections[ch].reset_token.replace(token) {
                     self.connection_reset_tokens.remove(&old).unwrap();
                 }
-                self.connection_reset_tokens.insert(token, ch);
+                if self.connection_reset_tokens.insert(token, ch).is_some() {
+                    warn!(self.log, "duplicate reset token");
+                }
             }
             RetireConnectionId(seq) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
@@ -150,7 +152,7 @@ where
                 }
                 self.connection_remotes.remove(&conn.initial_remote);
                 if let Some(token) = conn.reset_token {
-                    self.connection_reset_tokens.remove(&token).unwrap();
+                    self.connection_reset_tokens.remove(&token);
                 }
             }
         }
