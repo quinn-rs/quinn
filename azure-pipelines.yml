@@ -3,6 +3,8 @@ stages:
    parameters:
      minrust: false
      codecov_token: $(CODECOV_TOKEN_SECRET)
+     test_ignored: true
+     nightly_coverage: true
 
 resources:
   repositories:
