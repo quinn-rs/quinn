@@ -31,7 +31,7 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     type ClientConfig = ClientConfig;
-    type HmacKey = hmac::SigningKey;
+    type HmacKey = hmac::Key;
     type Keys = Crypto;
     type ServerConfig = ServerConfig;
 
@@ -46,10 +46,9 @@ impl crypto::Session for TlsSession {
         let suite = self.get_negotiated_ciphersuite().unwrap();
         Some(Crypto::new(
             self.side(),
-            suite.get_hash(),
             suite.get_aead_alg(),
-            secret.into(),
-            secret.into(),
+            secret.clone(),
+            secret.clone(),
         ))
     }
 
@@ -105,7 +104,6 @@ impl crypto::Session for TlsSession {
             .expect("should not get secrets without cipher suite");
         Some(Crypto::new(
             self.side(),
-            suite.get_hash(),
             suite.get_aead_alg(),
             secrets.client,
             secrets.server,
@@ -122,7 +120,6 @@ impl crypto::Session for TlsSession {
         let suite = self.get_negotiated_ciphersuite().unwrap();
         Crypto::new(
             self.side(),
-            suite.get_hash(),
             suite.get_aead_alg(),
             secrets.client,
             secrets.server,
@@ -165,9 +162,7 @@ impl ClientConfig {
     /// manually and use rustls's `dangerous_configuration` feature to override the certificate
     /// verifier.
     pub fn add_certificate_authority(&mut self, cert: Certificate) -> Result<(), webpki::Error> {
-        let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(untrusted::Input::from(
-            &cert.inner.0,
-        ))?;
+        let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(&cert.inner.0)?;
         Arc::make_mut(&mut self.0)
             .root_store
             .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));

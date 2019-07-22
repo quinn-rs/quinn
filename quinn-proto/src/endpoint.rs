@@ -845,13 +845,13 @@ mod test {
     fn token_sanity() {
         use super::*;
         use crate::crypto::HmacKey;
-        use ring::hmac::SigningKey;
+        use ring::hmac;
         use std::net::Ipv6Addr;
         use std::time::{Duration, UNIX_EPOCH};
 
         let mut key = [0; 64];
         rand::thread_rng().fill_bytes(&mut key);
-        let key = <SigningKey as HmacKey>::new(&key).unwrap();
+        let key = <hmac::Key as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
