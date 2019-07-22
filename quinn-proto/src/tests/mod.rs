@@ -349,7 +349,7 @@ fn high_latency_handshake() {
 }
 
 #[test]
-fn zero_rtt() {
+fn zero_rtt_happypath() {
     let mut pair = Pair::default();
     let config = client_config();
 
