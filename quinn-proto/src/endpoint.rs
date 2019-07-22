@@ -648,7 +648,7 @@ where
         self.reject_new_connections = true;
     }
 
-    #[cfg(all(test, feature = "rustls"))]
+    #[cfg(test)]
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();
         debug_assert_eq!(x, self.connection_ids_initial.len());
@@ -659,7 +659,7 @@ where
         x
     }
 
-    #[cfg(all(test, feature = "rustls"))]
+    #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
         self.connection_ids.len()
     }

@@ -13,6 +13,8 @@
 //! managing a single connection and all the related state (such as streams).
 
 #![warn(missing_docs)]
+#![cfg_attr(test, allow(dead_code))]
+
 #[macro_use]
 extern crate slog;
 
