@@ -2,7 +2,7 @@
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
-[![Build Status](https://dev.azure.com/quinn-rs/Quinn/_apis/build/status/djc.quinn?branchName=master)](https://dev.azure.com/quinn-rs/Quinn/_build/latest?definitionId=1&branchName=master)
+[![Build Status](https://dev.azure.com/dochtman/Projects/_apis/build/status/Quinn?branchName=master)](https://dev.azure.com/dochtman/Projects/_build/latest?definitionId=1&branchName=master)
 [![codecov](https://codecov.io/gh/djc/quinn/branch/master/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
 [![Chat](https://badges.gitter.im/gitterHQ/gitter.svg)](https://gitter.im/djc/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
