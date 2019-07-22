@@ -21,7 +21,7 @@ azure-devops = { project = "quinn-rs/Quinn", pipeline = "djc", build = "1" }
 
 [dependencies]
 bytes = "0.4.7"
-ct-logs = "0.5"
+ct-logs = "0.6"
 err-derive = "0.1.5"
 fnv = "1.0.6"
 futures = "0.1.21"
