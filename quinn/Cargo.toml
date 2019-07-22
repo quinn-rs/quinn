@@ -35,7 +35,7 @@ tokio-reactor = "0.1.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
 webpki = "0.19"
-webpki-roots = "0.16"
+webpki-roots = "0.17"
 
 [dev-dependencies]
 crc = "1.8.1"
