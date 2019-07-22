@@ -86,7 +86,7 @@ mod rustls_impls {
 pub use crate::rustls_impls::*;
 
 /// The QUIC protocol version implemented
-pub const VERSION: u32 = 0xff00_0016;
+const VERSION: u32 = 0xff00_0016;
 
 /// Whether an endpoint was the initiator of a connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
