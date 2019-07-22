@@ -1,6 +1,7 @@
 stages:
  - template: azure/stages.yml@templates
    parameters:
+     benches: true
      minrust: false
      codecov_token: $(CODECOV_TOKEN_SECRET)
      test_ignored: true
