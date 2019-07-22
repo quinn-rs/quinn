@@ -841,18 +841,18 @@ mod tests {
 
     #[test]
     fn roundtrip_packet_numbers() {
-        check_pn(PacketNumber::U8(0x7f), &[0x7f]);
-        check_pn(PacketNumber::U16(0x80), &[0x00, 0x80]);
-        check_pn(PacketNumber::U16(0x3fff), &[0x3f, 0xff]);
-        check_pn(PacketNumber::U32(0x00004000), &[0x00, 0x00, 0x40, 0x00]);
-        check_pn(PacketNumber::U32(0xffffffff), &[0xff, 0xff, 0xff, 0xff]);
+        check_pn(PacketNumber::U8(0x7f), &hex!("7f"));
+        check_pn(PacketNumber::U16(0x80), &hex!("0080"));
+        check_pn(PacketNumber::U16(0x3fff), &hex!("3fff"));
+        check_pn(PacketNumber::U32(0x00004000), &hex!("00004000"));
+        check_pn(PacketNumber::U32(0xffffffff), &hex!("ffffffff"));
     }
 
     #[test]
     fn pn_encode() {
-        check_pn(PacketNumber::new(0x10, 0), &[0x10]);
-        check_pn(PacketNumber::new(0x100, 0), &[0x01, 0x00]);
-        check_pn(PacketNumber::new(0x10000, 0), &[0x01, 0x00, 0x00]);
+        check_pn(PacketNumber::new(0x10, 0), &hex!("10"));
+        check_pn(PacketNumber::new(0x100, 0), &hex!("0100"));
+        check_pn(PacketNumber::new(0x10000, 0), &hex!("010000"));
     }
 
     #[test]
