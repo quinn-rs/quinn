@@ -21,20 +21,20 @@ azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" 
 
 [dependencies]
 bytes = "0.4.7"
-ct-logs = "0.5"
+ct-logs = "0.6"
 err-derive = "0.1.5"
 fnv = "1.0.6"
 futures = "0.1.21"
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
-rustls = { version = "0.15.2", features = ["quic"] }
+rustls = { version = "0.16", features = ["quic"] }
 slog = "2.1"
 tokio-reactor = "0.1.1"
 tokio-io = "0.1"
 tokio-timer = "0.2.1"
-webpki = "0.19"
-webpki-roots = "0.16"
+webpki = "0.21"
+webpki-roots = "0.17"
 
 [dev-dependencies]
 crc = "1.8.1"
@@ -42,7 +42,7 @@ criterion = "0.3"
 directories = "2.0.0"
 failure = "0.1"
 rand = "0.7"
-rcgen = "0.4"
+rcgen = "0.5"
 slog-term = "2"
 structopt = "0.2.7"
 tokio = "0.1.6"

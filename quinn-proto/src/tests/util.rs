@@ -10,7 +10,6 @@ use fnv::FnvHashMap;
 use lazy_static::lazy_static;
 use rustls::KeyLogFile;
 use slog::{Drain, Logger, KV};
-use untrusted::Input;
 
 use super::*;
 use crate::crypto::rustls::{CertificateChain, PrivateKey};
@@ -408,7 +407,7 @@ pub fn server_config() -> ServerConfig {
 
 pub fn client_config() -> ClientConfig {
     let cert = CERTIFICATE.serialize_der().unwrap();
-    let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(Input::from(&cert)).unwrap();
+    let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(&cert).unwrap();
     let anchor_vec = vec![anchor];
 
     let mut tls_client_config = crypto::rustls::ClientConfig::default();

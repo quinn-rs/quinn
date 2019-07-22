@@ -1,11 +1,10 @@
 use std::io;
 
 use bytes::{Buf, BufMut, BytesMut};
-use ring::aead::quic::{HeaderProtectionKey, AES_128, AES_256, CHACHA20};
-use ring::aead::{self, Aad, Nonce};
-use ring::digest;
-use ring::hkdf;
-use ring::hmac::{self, SigningKey};
+use ring::{
+    aead::{self, Aad, Nonce},
+    hkdf, hmac,
+};
 
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConfigError, ConnectionId};
@@ -13,42 +12,40 @@ use crate::{crypto, Side};
 
 /// Keys for encrypting and decrypting packet payloads
 pub struct Crypto {
-    pub(crate) local_secret: Vec<u8>,
-    local_iv: Vec<u8>,
-    sealing_key: aead::SealingKey,
-    pub(crate) remote_secret: Vec<u8>,
-    remote_iv: Vec<u8>,
-    opening_key: aead::OpeningKey,
-    digest: &'static digest::Algorithm,
+    pub(crate) local_secret: hkdf::Prk,
+    local_iv: Iv,
+    sealing_key: aead::LessSafeKey,
+    pub(crate) remote_secret: hkdf::Prk,
+    remote_iv: Iv,
+    opening_key: aead::LessSafeKey,
 }
 
 impl Crypto {
     pub(crate) fn new(
         side: Side,
-        digest: &'static digest::Algorithm,
         cipher: &'static aead::Algorithm,
-        client_secret: Vec<u8>,
-        server_secret: Vec<u8>,
+        client_secret: hkdf::Prk,
+        server_secret: hkdf::Prk,
     ) -> Self {
         let (local_secret, remote_secret) = match side {
             Side::Client => (client_secret, server_secret),
             Side::Server => (server_secret, client_secret),
         };
 
-        let (local_key, local_iv) = Self::get_keys(digest, cipher, &local_secret);
-        let (remote_key, remote_iv) = Self::get_keys(digest, cipher, &remote_secret);
+        let (local_key, local_iv) = Self::get_keys(cipher, &local_secret);
+        let (remote_key, remote_iv) = Self::get_keys(cipher, &remote_secret);
+
         Crypto {
             local_secret,
-            sealing_key: aead::SealingKey::new(cipher, &local_key).unwrap(),
+            sealing_key: aead::LessSafeKey::new(local_key.into()),
             local_iv,
             remote_secret,
-            opening_key: aead::OpeningKey::new(cipher, &remote_key).unwrap(),
+            opening_key: aead::LessSafeKey::new(remote_key.into()),
             remote_iv,
-            digest,
         }
     }
 
-    fn write_nonce(&self, iv: &[u8], number: u64, out: &mut [u8]) {
+    fn write_nonce(&self, iv: &Iv, number: u64, out: &mut [u8]) {
         let out = {
             let mut write = io::Cursor::new(out);
             write.put_u32_be(0);
@@ -57,25 +54,41 @@ impl Crypto {
             write.into_inner()
         };
         debug_assert_eq!(out.len(), iv.len());
-        for (out, inp) in out.iter_mut().zip(iv.iter()) {
+        for (out, inp) in out.iter_mut().zip(iv.0.iter()) {
             *out ^= inp;
         }
     }
 
-    fn get_keys(
-        digest: &'static digest::Algorithm,
-        cipher: &'static aead::Algorithm,
-        secret: &[u8],
-    ) -> (Vec<u8>, Vec<u8>) {
-        let secret_key = SigningKey::new(digest, &secret);
+    fn get_keys(cipher: &'static aead::Algorithm, secret: &hkdf::Prk) -> (aead::UnboundKey, Iv) {
+        (
+            hkdf_expand(secret, b"quic key", cipher),
+            hkdf_expand(secret, b"quic iv", IvLen),
+        )
+    }
+}
 
-        let mut key = vec![0; cipher.key_len()];
-        hkdf_expand(&secret_key, b"quic key", &mut key);
+#[derive(Default)]
+struct Iv([u8; aead::NONCE_LEN]);
 
-        let mut iv = vec![0; cipher.nonce_len()];
-        hkdf_expand(&secret_key, b"quic iv", &mut iv);
+impl Iv {
+    fn len(&self) -> usize {
+        aead::NONCE_LEN
+    }
+}
 
-        (key, iv)
+struct IvLen;
+
+impl hkdf::KeyType for IvLen {
+    fn len(&self) -> usize {
+        aead::NONCE_LEN
+    }
+}
+
+impl From<hkdf::Okm<'_, IvLen>> for Iv {
+    fn from(okm: hkdf::Okm<IvLen>) -> Self {
+        let mut iv = Iv::default();
+        okm.fill(&mut iv.0[..]).unwrap();
+        iv
     }
 }
 
@@ -83,14 +96,14 @@ impl crypto::Keys for Crypto {
     type HeaderKeys = RingHeaderCrypto;
 
     fn new_initial(id: &ConnectionId, side: Side) -> Self {
-        let (digest, cipher) = (&digest::SHA256, &aead::AES_128_GCM);
+        let cipher = &aead::AES_128_GCM;
         const CLIENT_LABEL: &[u8] = b"client in";
         const SERVER_LABEL: &[u8] = b"server in";
         let hs_secret = initial_secret(id);
 
         let client_secret = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
         let server_secret = expanded_initial_secret(&hs_secret, SERVER_LABEL);
-        Self::new(side, digest, cipher, client_secret, server_secret)
+        Self::new(side, cipher, client_secret, server_secret)
     }
 
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
@@ -100,14 +113,19 @@ impl crypto::Keys for Crypto {
             &self.sealing_key,
         );
 
-        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let mut nonce_buf = [0u8; aead::NONCE_LEN];
         let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(&iv, packet, nonce);
+        self.write_nonce(iv, packet, nonce);
 
         let (header, payload) = buf.split_at_mut(header_len);
+        let (payload, tag) = payload.split_at_mut(payload.len() - cipher.tag_len());
         let header = Aad::from(header);
         let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
-        aead::seal_in_place(&key, nonce, header, payload, cipher.tag_len()).unwrap();
+        let tagged = key
+            .seal_in_place_separate_tag(nonce, header, payload)
+            .unwrap();
+
+        tag.copy_from_slice(tagged.as_ref());
     }
 
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
@@ -121,25 +139,24 @@ impl crypto::Keys for Crypto {
             &self.opening_key,
         );
 
-        let mut nonce_buf = [0u8; aead::MAX_TAG_LEN];
+        let mut nonce_buf = [0u8; aead::NONCE_LEN];
         let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(&iv, packet, nonce);
+        self.write_nonce(iv, packet, nonce);
         let payload_len = payload.len();
 
         let header = Aad::from(header);
         let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
-        aead::open_in_place(&key, nonce, header, 0, payload.as_mut()).map_err(|_| ())?;
+        key.open_in_place(nonce, header, payload.as_mut())
+            .map_err(|_| ())?;
         payload.split_off(payload_len - cipher.tag_len());
         Ok(())
     }
 
     fn header_keys(&self) -> RingHeaderCrypto {
-        let local = SigningKey::new(self.digest, &self.local_secret);
-        let remote = SigningKey::new(self.digest, &self.remote_secret);
         let cipher = self.sealing_key.algorithm();
         RingHeaderCrypto {
-            local: header_key_from_secret(cipher, &local),
-            remote: header_key_from_secret(cipher, &remote),
+            local: header_key_from_secret(cipher, &self.local_secret),
+            remote: header_key_from_secret(cipher, &self.remote_secret),
         }
     }
 
@@ -150,8 +167,8 @@ impl crypto::Keys for Crypto {
 
 /// Keys for encrypting and decrypting packet headers
 pub struct RingHeaderCrypto {
-    local: HeaderProtectionKey,
-    remote: HeaderProtectionKey,
+    local: aead::quic::HeaderProtectionKey,
+    remote: aead::quic::HeaderProtectionKey,
 }
 
 impl crypto::HeaderKeys for RingHeaderCrypto {
@@ -201,45 +218,40 @@ impl crypto::HeaderKeys for RingHeaderCrypto {
     }
 }
 
-fn header_key_from_secret(aead: &aead::Algorithm, secret_key: &SigningKey) -> HeaderProtectionKey {
+fn header_key_from_secret(
+    aead: &aead::Algorithm,
+    secret_key: &hkdf::Prk,
+) -> aead::quic::HeaderProtectionKey {
     const LABEL: &[u8] = b"quic hp";
     if aead == &aead::AES_128_GCM {
-        let mut pn = [0; 16];
-        hkdf_expand(&secret_key, LABEL, &mut pn);
-        HeaderProtectionKey::new(&AES_128, &pn).unwrap()
+        hkdf_expand(&secret_key, LABEL, &aead::quic::AES_128)
     } else if aead == &aead::AES_256_GCM {
-        let mut pn = [0; 32];
-        hkdf_expand(&secret_key, LABEL, &mut pn);
-        HeaderProtectionKey::new(&AES_256, &pn).unwrap()
+        hkdf_expand(&secret_key, LABEL, &aead::quic::AES_256)
     } else if aead == &aead::CHACHA20_POLY1305 {
-        let mut pn = [0; 32];
-        hkdf_expand(&secret_key, LABEL, &mut pn);
-        HeaderProtectionKey::new(&CHACHA20, &pn).unwrap()
+        hkdf_expand(&secret_key, LABEL, &aead::quic::CHACHA20)
     } else {
         unimplemented!()
     }
 }
 
-fn expanded_initial_secret(prk: &SigningKey, label: &[u8]) -> Vec<u8> {
-    let mut out = vec![0u8; digest::SHA256.output_len];
-    hkdf_expand(prk, label, &mut out);
-    out
+fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
+    hkdf_expand(prk, label, hkdf::HKDF_SHA256)
 }
 
-fn hkdf_expand(key: &SigningKey, label: &[u8], out: &mut [u8]) {
-    let mut info = Vec::with_capacity(2 + 1 + 5 + out.len());
-    info.put_u16_be(out.len() as u16);
+fn hkdf_expand<L, K>(key: &hkdf::Prk, label: &[u8], len: L) -> K
+where
+    L: hkdf::KeyType,
+    K: for<'b> From<hkdf::Okm<'b, L>>,
+{
+    let out_len = (len.len() as u16).to_be_bytes();
     const BASE_LABEL: &[u8] = b"tls13 ";
-    info.put_u8((BASE_LABEL.len() + label.len()) as u8);
-    info.extend_from_slice(BASE_LABEL);
-    info.extend_from_slice(&label);
-    info.put_u8(0);
-    hkdf::expand(key, &info, out);
+    let label_len = (BASE_LABEL.len() + label.len()) as u8;
+    let info = [&out_len, &[label_len][..], BASE_LABEL, label, &[0][..]];
+    key.expand(&info, len).unwrap().into()
 }
 
-fn initial_secret(conn_id: &ConnectionId) -> SigningKey {
-    let key = SigningKey::new(&digest::SHA256, &INITIAL_SALT);
-    hkdf::extract(&key, conn_id)
+fn initial_secret(conn_id: &ConnectionId) -> hkdf::Prk {
+    hkdf::Salt::new(hkdf::HKDF_SHA256, &INITIAL_SALT).extract(conn_id)
 }
 
 const INITIAL_SALT: [u8; 20] = [
@@ -247,13 +259,13 @@ const INITIAL_SALT: [u8; 20] = [
     0x7a, 0x02, 0x64, 0x4a,
 ];
 
-impl crypto::HmacKey for hmac::SigningKey {
+impl crypto::HmacKey for hmac::Key {
     const KEY_LEN: usize = 64;
-    type Signature = hmac::Signature;
+    type Signature = hmac::Tag;
 
     fn new(key: &[u8]) -> Result<Self, ConfigError> {
         if key.len() == Self::KEY_LEN {
-            Ok(hmac::SigningKey::new(&digest::SHA512_256, key))
+            Ok(hmac::Key::new(hmac::HMAC_SHA256, key))
         } else {
             Err(ConfigError::IllegalValue("key length must be 64 bytes"))
         }
@@ -264,7 +276,7 @@ impl crypto::HmacKey for hmac::SigningKey {
     }
 
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()> {
-        hmac::verify_with_own_key(self, data, signature).map_err(|_| ())
+        hmac::verify(self, data, signature).map_err(|_| ())
     }
 }
 
@@ -295,27 +307,18 @@ mod test {
     #[test]
     fn key_derivation() {
         let id = ConnectionId::new(&hex!("8394c8f03e515708"));
-        let digest = &digest::SHA256;
         let cipher = &aead::AES_128_GCM;
         let initial_secret = initial_secret(&id);
-        let client_secret = expanded_initial_secret(&initial_secret, b"client in");
         println!();
-        assert_eq!(
-            &client_secret[..],
-            hex!("7712ead935b044cb18e993a6f7a8c711 19d2439ffdd3b6151ad7f9d9e77e2fb9")
-        );
-        let (client_key, client_iv) = Crypto::get_keys(digest, cipher, &client_secret);
-        assert_eq!(&client_key[..], hex!("07863d9c083786bc86766ce0d02bf93f"));
-        assert_eq!(&client_iv[..], hex!("fb33da41a8f297d482df670e"));
+
+        // Key secrets are opaque, so we cannot check them
+        let client_secret = expanded_initial_secret(&initial_secret, b"client in");
+        let (_, client_iv) = Crypto::get_keys(cipher, &client_secret);
+        assert_eq!(&client_iv.0[..], hex!("fb33da41a8f297d482df670e"));
 
         let server_secret = expanded_initial_secret(&initial_secret, b"server in");
-        assert_eq!(
-            &server_secret[..],
-            hex!("dc33b018d3bf848d1a35d9339e2a7049 4e88e82504deb1a1bac5585d48214956")
-        );
-        let (server_key, server_iv) = Crypto::get_keys(digest, cipher, &server_secret);
-        assert_eq!(&server_key[..], hex!("baefa0f549e8f5aee4b9e574dfebf52d"));
-        assert_eq!(&server_iv[..], hex!("74fc8e534408a0b3928a3906"));
+        let (_, server_iv) = Crypto::get_keys(cipher, &server_secret);
+        assert_eq!(&server_iv.0[..], hex!("74fc8e534408a0b3928a3906"));
     }
 
     #[test]
@@ -356,30 +359,33 @@ mod test {
     #[test]
     fn key_derivation_1rtt() {
         // Pre-update test vectors generated by ngtcp2
-        let digest = &digest::SHA256;
-        let cipher = &aead::AES_128_GCM;
-        let onertt = Crypto::new(
-            Side::Client,
-            digest,
-            cipher,
-            vec![
+        let client_secret = hkdf::Prk::new_less_safe(
+            hkdf::HKDF_SHA256,
+            &[
                 0xb8, 0x76, 0x77, 0x08, 0xf8, 0x77, 0x23, 0x58, 0xa6, 0xea, 0x9f, 0xc4, 0x3e, 0x4a,
                 0xdd, 0x2c, 0x96, 0x1b, 0x3f, 0x52, 0x87, 0xa6, 0xd1, 0x46, 0x7e, 0xe0, 0xae, 0xab,
                 0x33, 0x72, 0x4d, 0xbf,
             ],
-            vec![
+        );
+
+        let server_secret = hkdf::Prk::new_less_safe(
+            hkdf::HKDF_SHA256,
+            &[
                 0x42, 0xdc, 0x97, 0x21, 0x40, 0xe0, 0xf2, 0xe3, 0x98, 0x45, 0xb7, 0x67, 0x61, 0x34,
                 0x39, 0xdc, 0x67, 0x58, 0xca, 0x43, 0x25, 0x9b, 0x87, 0x85, 0x06, 0x82, 0x4e, 0xb1,
                 0xe4, 0x38, 0xd8, 0x55,
             ],
         );
 
+        let cipher = &aead::AES_128_GCM;
+        let onertt = Crypto::new(Side::Client, cipher, client_secret, server_secret);
+
         assert_eq!(
-            &onertt.local_iv[..],
+            &onertt.local_iv.0[..],
             [0xd5, 0x1b, 0x16, 0x6a, 0x3e, 0xc4, 0x6f, 0x7e, 0x5f, 0x93, 0x27, 0x15]
         );
         assert_eq!(
-            &onertt.remote_iv[..],
+            &onertt.remote_iv.0[..],
             [0x03, 0xda, 0x92, 0xa0, 0x91, 0x95, 0xe4, 0xbf, 0x87, 0x98, 0xd3, 0x78]
         );
     }

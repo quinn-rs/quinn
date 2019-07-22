@@ -26,16 +26,14 @@ err-derive = "0.1.5"
 fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.7"
-ring = { version = "0.14.1", optional = true }
-rustls = { version = "0.15.2", features = ["quic"], optional = true }
+ring = { version = "0.16.7", optional = true }
+rustls = { version = "0.16", features = ["quic"], optional = true }
 slab = "0.4"
 slog = "2.2"
-untrusted = "0.6.2"
-webpki = { version = "0.19", optional = true }
+webpki = { version = "0.21", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"
 hex-literal = "0.2.0"
-untrusted = "0.6.2"
-rcgen = "0.4"
+rcgen = "0.5"
 #slog = { version = "2.2", features = ["max_level_trace"] } # For debugging
