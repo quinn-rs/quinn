@@ -40,8 +40,17 @@ impl crypto::Session for TlsSession {
     }
 
     fn early_crypto(&self) -> Option<Self::Keys> {
-        self.get_early_secret()
-            .map(|secret| Crypto::new_0rtt(secret))
+        let secret = self.get_early_secret()?;
+        // If an early secret is known, TLS guarantees it's associated with a resumption
+        // ciphersuite,
+        let suite = self.get_negotiated_ciphersuite().unwrap();
+        Some(Crypto::new(
+            self.side(),
+            suite.get_hash(),
+            suite.get_aead_alg(),
+            secret.into(),
+            secret.into(),
+        ))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
