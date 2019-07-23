@@ -1426,10 +1426,10 @@ where
                                     }
                                 }
                             }
-                            self.endpoint_events
-                                .push_back(EndpointEventInner::ResetToken(
-                                    params.stateless_reset_token.unwrap(),
-                                ));
+                            if let Some(token) = params.stateless_reset_token {
+                                self.endpoint_events
+                                    .push_back(EndpointEventInner::ResetToken(token));
+                            }
                             self.validate_params(&params)?;
                             self.set_params(params);
                             if params.active_connection_id_limit != 0 {
@@ -1863,10 +1863,9 @@ where
                         id: frame.id,
                         reset_token: frame.reset_token,
                     };
-                    if self.params.stateless_reset_token.is_none() {
+                    if self.side.is_server() && self.params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
-                        debug_assert!(self.side.is_server());
                         debug_assert_eq!(self.rem_cid_seq, 0);
                         self.update_rem_cid(issued);
                     } else {
