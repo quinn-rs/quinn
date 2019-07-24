@@ -65,8 +65,7 @@ fn main() {
 
 fn run(log: Logger, options: Opt) -> Result<()> {
     let url = options.url;
-    let remote = url
-        .with_default_port(|_| Ok(4433))?
+    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
         .ok_or(format_err!("couldn't resolve to an address"))?;
