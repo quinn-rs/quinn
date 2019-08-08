@@ -114,11 +114,12 @@ impl Future for Connecting {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (driver, conn, incoming) = try_ready!(self.connecting.poll());
-        let conn_ref = ConnectionRef::new(conn.clone(), self.settings.clone())?;
+        let mut conn = try_ready!(self.connecting.poll());
+        let driver = conn.driver();
+        let conn_ref = ConnectionRef::new(conn.handle(), self.settings.clone())?;
         Ok(Async::Ready((
             driver,
-            ConnectionDriver::new(conn_ref.clone(), incoming, self.log.clone()),
+            ConnectionDriver::new(conn_ref.clone(), conn.incoming_streams(), self.log.clone()),
             Connection(conn_ref),
         )))
     }

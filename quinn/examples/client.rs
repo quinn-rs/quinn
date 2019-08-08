@@ -114,11 +114,14 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         endpoint
             .connect(&remote, &host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(move |(conn_driver, conn, _)| {
+            .and_then(move |mut new_conn| {
                 eprintln!("connected at {:?}", start.elapsed());
                 tokio_current_thread::spawn(
-                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                    new_conn
+                        .driver()
+                        .map_err(|e| eprintln!("connection lost: {}", e)),
                 );
+                let conn = new_conn.handle();
                 let stream = conn.open_bi();
                 stream
                     .map_err(|e| format_err!("failed to open stream: {}", e))

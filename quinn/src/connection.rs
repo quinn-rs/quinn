@@ -56,14 +56,14 @@ impl Connecting {
     /// ticket is found, `self` is returned unmodified.
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
-    pub fn into_0rtt(mut self) -> Result<(ConnectionDriver, Connection, IncomingStreams), Self> {
+    pub fn into_0rtt(mut self) -> Result<NewConnection, Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
         let conn = (self.0.as_mut().unwrap().0).lock().unwrap();
         if conn.inner.has_0rtt() || conn.inner.side().is_server() {
             drop(conn);
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            Ok(new_connection(conn))
+            Ok(NewConnection::new(conn))
         } else {
             drop(conn);
             Err(self)
@@ -72,7 +72,7 @@ impl Connecting {
 }
 
 impl Future for Connecting {
-    type Item = (ConnectionDriver, Connection, IncomingStreams);
+    type Item = NewConnection;
     type Error = ConnectionError;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let connected = match &mut self.0 {
@@ -86,19 +86,64 @@ impl Future for Connecting {
         };
         if connected {
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            Ok(Async::Ready(new_connection(conn)))
+            Ok(Async::Ready(NewConnection::new(conn)))
         } else {
             Ok(Async::NotReady)
         }
     }
 }
 
-fn new_connection(conn: ConnectionRef) -> (ConnectionDriver, Connection, IncomingStreams) {
-    (
-        ConnectionDriver(conn.clone()),
-        Connection(conn.clone()),
-        IncomingStreams(conn),
-    )
+/// The elements of a new connection. Be sure to run the driver.
+///
+/// Methods other than `handle` can be called at most once. `driver` must be called, and the future
+/// it supplies must be ran for the connection to function.
+pub struct NewConnection {
+    conn: ConnectionRef,
+    driver: bool,
+    streams: bool,
+}
+
+impl NewConnection {
+    fn new(conn: ConnectionRef) -> Self {
+        Self {
+            conn,
+            driver: true,
+            streams: true,
+        }
+    }
+
+    /// The future that actually drives the connection's state machine
+    ///
+    /// The connection will not function if this future is not running.
+    pub fn driver(&mut self) -> ConnectionDriver {
+        if mem::replace(&mut self.driver, false) {
+            ConnectionDriver(self.conn.clone())
+        } else {
+            panic!("driver already taken");
+        }
+    }
+
+    /// Handle for manipulating the connection
+    pub fn handle(&self) -> Connection {
+        Connection(self.conn.clone())
+    }
+
+    /// `Stream` of remotely-initiated QUIC streams
+    pub fn incoming_streams(&mut self) -> IncomingStreams {
+        if mem::replace(&mut self.streams, false) {
+            IncomingStreams(self.conn.clone())
+        } else {
+            panic!("streams already taken");
+        }
+    }
+}
+
+impl Drop for NewConnection {
+    fn drop(&mut self) {
+        if self.driver {
+            panic!("connection drivers must be taken from NewConnection and ran");
+        }
+    }
 }
 
 /// A future that drives protocol logic for a connection
