@@ -28,7 +28,7 @@ fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.7"
 ring = { version = "0.14.1", optional = true }
-rustls = { version = "0.15.2", features = ["quic"], optional = true }
+rustls = { version = "0.16.0", features = ["quic"], optional = true }
 slab = "0.4"
 slog = "2.2"
 untrusted = "0.6.2"
