@@ -13,14 +13,18 @@ use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///
-/// This should be tuned to suit the application. In particular, window sizes for streams, stream
-/// data, and overall connection data should be set differently depending on the expected round trip
-/// time, link capacity, memory availability, and rate of stream creation. Tuning for higher
+/// Default values should be suitable for most internet applications. Applications protocols which
+/// forbid remotely-initiated streams should set `stream_window_bidi` and `stream_window_uni` to
+/// zero.
+///
+/// In some cases, performance or resource requirements can be improved by tuning these values to
+/// suit a particular application and/or network connection. In particular, window sizes for
+/// streams, stream data, and overall connection data can be tuned for a particular expected round
+/// trip time, link capacity, memory availability, and rate of stream creation. Tuning for higher
 /// bandwidths and latencies increases worst-case memory consumption, but does not impair
 /// performance at lower bandwidths and latencies. The default configuration is tuned for a 100Mbps
 /// link with a 100ms round trip time, with remote endpoints opening at most 320 new streams per
-/// second. Applications which do not require remotely-initiated streams should set the stream
-/// windows to zero.
+/// second.
 #[derive(Debug)]
 pub struct TransportConfig {
     /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
@@ -186,6 +190,8 @@ impl TransportConfig {
 }
 
 /// Global configuration for the endpoint, affecting all connections
+///
+/// Default values should be suitable for most internet applications.
 #[derive(Clone)]
 pub struct EndpointConfig {
     /// Length of connection IDs for the endpoint.
@@ -231,7 +237,9 @@ impl EndpointConfig {
     }
 }
 
-/// Parameters governing incoming connections.
+/// Parameters governing incoming connections
+///
+/// Default values should be suitable for most internet applications.
 pub struct ServerConfig<S>
 where
     S: crypto::Session,
@@ -328,6 +336,8 @@ where
 }
 
 /// Configuration for outgoing connections
+///
+/// Default values should be suitable for most internet applications.
 #[derive(Clone, Debug, Default)]
 pub struct ClientConfig<C> {
     /// Transport configuration to use
