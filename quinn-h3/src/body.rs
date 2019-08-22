@@ -108,11 +108,7 @@ pub struct RecvBody {
 }
 
 impl RecvBody {
-    pub(crate) fn new(
-        recv: FrameStream,
-        conn: ConnectionRef,
-        stream_id: StreamId,
-    ) -> Self {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
         Self {
             conn,
             stream_id,
@@ -124,11 +120,7 @@ impl RecvBody {
         }
     }
 
-    pub fn with_capacity(
-        mut self,
-        capacity: usize,
-        max_size: usize,
-    ) -> Self {
+    pub fn with_capacity(mut self, capacity: usize, max_size: usize) -> Self {
         match &self.state {
             RecvBodyState::Initial => (),
             _ => panic!("cannot change capacity once polled"),
@@ -152,14 +144,14 @@ enum RecvBodyState {
 }
 
 impl Future for RecvBody {
-    type Item = (Bytes, Option<HeaderMap>);
+    type Item = (Option<Bytes>, Option<HeaderMap>);
     type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.state {
                 RecvBodyState::Initial => {
-                   self.state = RecvBodyState::Receiving(BytesMut::with_capacity(self.capacity))
+                    self.state = RecvBodyState::Receiving(BytesMut::with_capacity(self.capacity))
                 }
                 RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
                     Some(HttpFrame::Data(d)) => {
@@ -180,7 +172,10 @@ impl Future for RecvBody {
                     }
                     None => {
                         let body = match mem::replace(&mut self.state, RecvBodyState::Finished) {
-                            RecvBodyState::Receiving(b) => b.into(),
+                            RecvBodyState::Receiving(b) => match b.len() {
+                                0 => None,
+                                _ => Some(b.into()),
+                            },
                             _ => unreachable!(),
                         };
                         return Ok(Async::Ready((body, None)));
@@ -191,7 +186,7 @@ impl Future for RecvBody {
                     let trailer = try_ready!(trailer.poll());
                     self.state = RecvBodyState::Finished;
                     return Ok(Async::Ready((
-                        try_take(&mut self.body, "body absent")?,
+                        Some(try_take(&mut self.body, "body absent")?),
                         Some(trailer.into_fields()),
                     )));
                 }

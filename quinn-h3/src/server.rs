@@ -1,7 +1,6 @@
 use std::mem;
 use std::net::ToSocketAddrs;
 
-use bytes::Bytes;
 use futures::task;
 use futures::{try_ready, Async, Future, Poll, Stream};
 use http::{response, HeaderMap, Request, Response};
@@ -154,10 +153,26 @@ impl RecvRequest {
             state: RecvRequestState::Receiving(FrameDecoder::stream(recv), send),
         }
     }
+
+    fn build_request(headers: Header) -> Result<Request<()>, Error> {
+        let (method, uri, headers) = headers.into_request_parts()?;
+        let mut request = Request::builder();
+        request.method(method);
+        request.uri(uri);
+        request.version(http::version::Version::HTTP_3);
+        match request.headers_mut() {
+            Some(h) => *h = headers,
+            None => return Err(Error::peer("invalid header")),
+        }
+
+        Ok(request
+            .body(())
+            .map_err(|e| Error::Peer(format!("invalid request: {:?}", e)))?)
+    }
 }
 
 impl Future for RecvRequest {
-    type Item = RequestReady;
+    type Item = (Request<()>, RecvBody, Sender);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -177,15 +192,16 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = try_ready!(decode.poll());
                     self.state = RecvRequestState::Ready;
-                    let (frame_stream, send) =
-                        try_take(&mut self.streams, "Recv request invalid state")?;
-                    return Ok(Async::Ready(RequestReady::build(
-                        header,
-                        frame_stream,
-                        send,
-                        self.stream_id,
-                        self.conn.clone(),
-                    )?));
+                    let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
+                    return Ok(Async::Ready((
+                        Self::build_request(header)?,
+                        RecvBody::new(recv, self.conn.clone(), self.stream_id),
+                        Sender {
+                            send,
+                            stream_id: self.stream_id,
+                            conn: self.conn.clone(),
+                        },
+                    )));
                 }
                 RecvRequestState::Ready => return Err(Error::peer("polled after ready")),
             };
@@ -193,132 +209,13 @@ impl Future for RecvRequest {
     }
 }
 
-pub struct RequestReady {
-    request: Request<()>,
-    frame_stream: FrameStream,
+pub struct Sender {
     send: SendStream,
-    stream_id: StreamId,
-    conn: ConnectionRef,
-}
-
-impl RequestReady {
-    fn build(
-        headers: Header,
-        frame_stream: FrameStream,
-        send: SendStream,
-        stream_id: StreamId,
-        conn: ConnectionRef,
-    ) -> Result<Self, Error> {
-        let (method, uri, headers) = headers.into_request_parts()?;
-        let mut request = Request::builder();
-        request.method(method);
-        request.uri(uri);
-        request.version(http::version::Version::HTTP_3);
-        match request.headers_mut() {
-            Some(h) => *h = headers,
-            None => return Err(Error::peer("invalid header")),
-        }
-
-        let request = request
-            .body(())
-            .map_err(|e| Error::Peer(format!("invalid request: {:?}", e)))?;
-
-        Ok(Self {
-            request,
-            frame_stream,
-            conn,
-            stream_id,
-            send,
-        })
-    }
-
-    pub fn request<'a>(&'a self) -> &'a Request<()> {
-        &self.request
-    }
-
-    pub fn body(self) -> RecvBodyServer {
-        RecvBodyServer::new(
-            self.send,
-            self.frame_stream,
-            self.conn.clone(),
-            self.stream_id,
-        )
-    }
-
-    pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
-        SendResponse::new(response, self.send, self.stream_id, self.conn)
-    }
-
-    pub fn send_response_trailers<T: Into<Body>>(
-        self,
-        response: Response<T>,
-        trailer: HeaderMap,
-    ) -> SendResponse {
-        SendResponse::with_trailers(
-            response,
-            Some(trailer),
-            self.send,
-            self.stream_id,
-            self.conn,
-        )
-    }
-}
-
-pub struct RecvBodyServer {
-    body: RecvBody,
-    send: Option<SendStream>,
     conn: ConnectionRef,
     stream_id: StreamId,
 }
 
-impl RecvBodyServer {
-    pub(crate) fn new(
-        send: SendStream,
-        recv: FrameStream,
-        conn: ConnectionRef,
-        stream_id: StreamId,
-    ) -> Self {
-        Self {
-            stream_id,
-            conn: conn.clone(),
-            send: Some(send),
-            body: RecvBody::new(recv, conn, stream_id),
-        }
-    }
-}
-
-impl Future for RecvBodyServer {
-    type Item = ReadyBody;
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (body, trailers) = try_ready!(self.body.poll());
-        Ok(Async::Ready(ReadyBody {
-            trailers,
-            body: Some(body),
-            send: try_take(&mut self.send, "send none")?,
-            conn: self.conn.clone(),
-            stream_id: self.stream_id,
-        }))
-    }
-}
-
-pub struct ReadyBody {
-    send: SendStream,
-    body: Option<Bytes>,
-    trailers: Option<HeaderMap>,
-    conn: ConnectionRef,
-    stream_id: StreamId,
-}
-
-impl ReadyBody {
-    pub fn take_body(&mut self) -> Option<Bytes> {
-        self.body.take()
-    }
-
-    pub fn take_trailers(&mut self) -> Option<HeaderMap> {
-        self.trailers.take()
-    }
-
+impl Sender {
     pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
         SendResponse::new(response, self.send, self.stream_id, self.conn)
     }

@@ -17,9 +17,10 @@ use url::Url;
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
+    body::RecvBody,
     client::Builder as ClientBuilder,
     connection::ConnectionDriver,
-    server::{Builder as ServerBuilder, IncomingRequest, RequestReady},
+    server::{Builder as ServerBuilder, IncomingRequest, Sender},
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
@@ -178,7 +179,7 @@ fn handle_connection(
             .for_each(|request| {
                 request
                     .map_err(|e| format_err!("recv request: {}", e))
-                    .and_then(|req| handle_request(req))
+                    .and_then(|(req, body, send)| handle_request(req, body, send))
             })
             .map_err(|e| eprintln!("server error: {}", e)),
     );
@@ -188,17 +189,19 @@ fn handle_connection(
     futures::future::ok(())
 }
 
-fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error> {
-    println!("received request: {:?}", request.request());
-    request
-        .body()
-        .map_err(|e| format_err!("failed to receive response body: {:?}", e))
-        .and_then(|mut ready| {
-            if let Some(body) = ready.take_body() {
+fn handle_request(
+    request: Request<()>,
+    body: RecvBody,
+    sender: Sender,
+) -> impl Future<Item = (), Error = Error> {
+    println!("received request: {:?}", request);
+    body.map_err(|e| format_err!("failed to receive response body: {:?}", e))
+        .and_then(move |(body, trailers)| {
+            if let Some(body) = body {
                 println!("server received body: {:?}", body);
             }
 
-            if let Some(trailers) = ready.take_trailers() {
+            if let Some(trailers) = trailers {
                 println!("server received trailers: {:?}", trailers);
             }
 
@@ -214,7 +217,7 @@ fn handle_request(request: RequestReady) -> impl Future<Item = (), Error = Error
                 HeaderValue::from_str("trailer").expect("trailer value"),
             );
 
-            ready
+            sender
                 .send_response_trailers(response, trailer)
                 .map_err(|e| format_err!("failed to send response: {:?}", e))
         })
