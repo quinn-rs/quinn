@@ -195,16 +195,25 @@ fn handle_request(
     sender: Sender,
 ) -> impl Future<Item = (), Error = Error> {
     println!("received request: {:?}", request);
-    body.map_err(|e| format_err!("failed to receive response body: {:?}", e))
-        .and_then(move |(body, trailers)| {
-            if let Some(body) = body {
-                println!("server received body: {:?}", body);
-            }
+    let content = Vec::with_capacity(1024);
+    tokio::io::read_to_end(body.into_reader(), content)
+        .map_err(|e| format_err!("failed to receive response body: {:?}", e))
+        .and_then(move |(reader, content)| {
+            println!("server received body: {:?}", content);
 
-            if let Some(trailers) = trailers {
-                println!("server received trailers: {:?}", trailers);
+            match reader.trailers() {
+                None => Either::A(futures::future::ok(())),
+                Some(decode_trailers) => Either::B(
+                    decode_trailers
+                        .map_err(|e| format_err!("decode trailers failed: {}", e))
+                        .and_then(move |trailers| {
+                            println!("received trailers: {:?}", trailers.into_fields());
+                            futures::future::ok(())
+                        }),
+                ),
             }
-
+        })
+        .and_then(move |_| {
             let body = "r".repeat(1024 * 800);
             let response = Response::builder()
                 .status(StatusCode::OK)
