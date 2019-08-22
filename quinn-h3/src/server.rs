@@ -10,7 +10,7 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, RecvBody, SendBody},
+    body::{Body, Receiver, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
@@ -172,7 +172,7 @@ impl RecvRequest {
 }
 
 impl Future for RecvRequest {
-    type Item = (Request<()>, RecvBody, Sender);
+    type Item = (Request<()>, Receiver, Sender);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -195,7 +195,7 @@ impl Future for RecvRequest {
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
                     return Ok(Async::Ready((
                         Self::build_request(header)?,
-                        RecvBody::new(recv, self.conn.clone(), self.stream_id),
+                        Receiver::new(recv, self.conn.clone(), self.stream_id),
                         Sender {
                             send,
                             stream_id: self.stream_id,

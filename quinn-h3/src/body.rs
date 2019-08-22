@@ -97,6 +97,34 @@ impl Future for SendBody {
     }
 }
 
+pub struct Receiver {
+    recv: FrameStream,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+}
+
+impl Receiver {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        Self {
+            conn,
+            stream_id,
+            recv,
+        }
+    }
+
+    pub fn into_future(self) -> RecvBody {
+        RecvBody::new(self.recv, self.conn, self.stream_id)
+    }
+
+    pub fn into_reader(self) -> BodyReader {
+        BodyReader::new(self.recv, self.conn, self.stream_id)
+    }
+
+    pub fn into_stream(self) -> RecvBodyStream {
+        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+    }
+}
+
 pub struct RecvBody {
     state: RecvBodyState,
     capacity: usize,
