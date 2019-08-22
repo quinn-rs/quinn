@@ -144,7 +144,7 @@ enum RecvBodyState {
 }
 
 impl Future for RecvBody {
-    type Item = (Bytes, Option<HeaderMap>);
+    type Item = (Option<Bytes>, Option<HeaderMap>);
     type Error = crate::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -172,7 +172,10 @@ impl Future for RecvBody {
                     }
                     None => {
                         let body = match mem::replace(&mut self.state, RecvBodyState::Finished) {
-                            RecvBodyState::Receiving(b) => b.into(),
+                            RecvBodyState::Receiving(b) => match b.len() {
+                                0 => None,
+                                _ => Some(b.into()),
+                            },
                             _ => unreachable!(),
                         };
                         return Ok(Async::Ready((body, None)));
@@ -183,7 +186,7 @@ impl Future for RecvBody {
                     let trailer = try_ready!(trailer.poll());
                     self.state = RecvBodyState::Finished;
                     return Ok(Async::Ready((
-                        try_take(&mut self.body, "body absent")?,
+                        Some(try_take(&mut self.body, "body absent")?),
                         Some(trailer.into_fields()),
                     )));
                 }
