@@ -306,13 +306,7 @@ impl RecvResponse {
     }
 
     pub fn body(self) -> RecvBody {
-        RecvBody::with_capacity(
-            self.recv,
-            10_240,
-            1_024_000,
-            self.conn.clone(),
-            self.stream_id,
-        )
+        RecvBody::new(self.recv, self.conn.clone(), self.stream_id)
     }
 
     pub fn body_stream(self) -> RecvBodyStream {

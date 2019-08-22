@@ -282,7 +282,7 @@ impl RecvBodyServer {
             stream_id,
             conn: conn.clone(),
             send: Some(send),
-            body: RecvBody::with_capacity(recv, 10_240, 1_024_000, conn, stream_id),
+            body: RecvBody::new(recv, conn, stream_id),
         }
     }
 }

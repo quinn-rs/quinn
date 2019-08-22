@@ -99,6 +99,7 @@ impl Future for SendBody {
 
 pub struct RecvBody {
     state: RecvBodyState,
+    capacity: usize,
     max_size: usize,
     body: Option<Bytes>,
     recv: FrameStream,
@@ -107,29 +108,36 @@ pub struct RecvBody {
 }
 
 impl RecvBody {
-    pub(crate) fn with_capacity(
-        recv: FrameStream,
-        capacity: usize,
-        max_size: usize,
-        conn: ConnectionRef,
-        stream_id: StreamId,
-    ) -> Self {
-        if capacity < 1 {
-            panic!("capacity cannot be 0");
-        }
-
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
         Self {
-            max_size,
             conn,
             stream_id,
-            state: RecvBodyState::Receiving(BytesMut::with_capacity(capacity)),
-            body: None,
             recv,
+            body: None,
+            max_size: RECV_BODY_MAX_SIZE_DEFAULT,
+            capacity: RECV_BODY_CAPACITY_DEFAULT,
+            state: RecvBodyState::Initial,
         }
+    }
+
+    pub fn with_capacity(mut self, capacity: usize, max_size: usize) -> Self {
+        match &self.state {
+            RecvBodyState::Initial => (),
+            _ => panic!("cannot change capacity once polled"),
+        }
+
+        self.max_size = max_size;
+        self.capacity = capacity;
+
+        self
     }
 }
 
+const RECV_BODY_MAX_SIZE_DEFAULT: usize = 20 * 1024 * 1024; // 20 MB
+const RECV_BODY_CAPACITY_DEFAULT: usize = 1024 * 1024;
+
 enum RecvBodyState {
+    Initial,
     Receiving(BytesMut),
     Decoding(DecodeHeaders),
     Finished,
@@ -142,6 +150,9 @@ impl Future for RecvBody {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.state {
+                RecvBodyState::Initial => {
+                    self.state = RecvBodyState::Receiving(BytesMut::with_capacity(self.capacity))
+                }
                 RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
                     Some(HttpFrame::Data(d)) => {
                         if d.payload.len() + body.len() >= self.max_size {
