@@ -131,6 +131,14 @@ impl RecvBody {
 
         self
     }
+
+    pub fn into_reader(self) -> BodyReader {
+        BodyReader::new(self.recv, self.conn, self.stream_id)
+    }
+
+    pub fn into_stream(self) -> RecvBodyStream {
+        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+    }
 }
 
 const RECV_BODY_MAX_SIZE_DEFAULT: usize = 20 * 1024 * 1024; // 20 MB
