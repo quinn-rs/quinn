@@ -17,7 +17,7 @@ use url::Url;
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
-    body::RecvBody,
+    body::Receiver,
     client::Builder as ClientBuilder,
     connection::ConnectionDriver,
     server::{Builder as ServerBuilder, IncomingRequest, Sender},
@@ -191,7 +191,7 @@ fn handle_connection(
 
 fn handle_request(
     request: Request<()>,
-    body: RecvBody,
+    body: Receiver,
     sender: Sender,
 ) -> impl Future<Item = (), Error = Error> {
     println!("received request: {:?}", request);
