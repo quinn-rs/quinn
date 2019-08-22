@@ -279,9 +279,10 @@ fn client(
 
             conn.send_request_trailers(request, trailer)
                 .map_err(|e| format_err!("send request: {}", e))
-                .and_then(|response| {
+                .and_then(|(response, body)| {
+                    println!("received response: {:?}", response);
                     let buf = Vec::with_capacity(1024 * 10); // 10K
-                    tokio_io::io::read_to_end(response.body_reader(), buf)
+                    tokio_io::io::read_to_end(body.into_reader(), buf)
                         .map_err(|e| format_err!("receive response failed: {}", e))
                         .and_then(|(reader, data)| {
                             println!("received body len = {}", data.len());

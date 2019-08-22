@@ -10,7 +10,7 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, BodyReader, RecvBody, RecvBodyStream, SendBody},
+    body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
@@ -173,10 +173,24 @@ impl SendRequest {
             recv: None,
         }
     }
+
+    fn build_response(header: Header) -> Result<Response<()>, Error> {
+        let (status, headers) = header.into_response_parts()?;
+        let mut response = Response::builder();
+        response.status(status);
+        response.version(http::version::Version::HTTP_3);
+        *response
+            .headers_mut()
+            .ok_or_else(|| Error::peer("invalid response"))? = headers;
+
+        Ok(response
+            .body(())
+            .or(Err(Error::Internal("failed to build response")))?)
+    }
 }
 
 impl Future for SendRequest {
-    type Item = RecvResponse;
+    type Item = (Response<()>, RecvBody);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -253,12 +267,14 @@ impl Future for SendRequest {
                 SendRequestState::Ready(_) => {
                     match mem::replace(&mut self.state, SendRequestState::Finished) {
                         SendRequestState::Ready(h) => {
-                            return Ok(Async::Ready(RecvResponse::build(
-                                h,
-                                try_take(&mut self.recv, "Recv is none")?,
-                                try_take(&mut self.stream_id, "stream is none")?,
-                                self.conn.clone(),
-                            )?));
+                            return Ok(Async::Ready((
+                                Self::build_response(h)?,
+                                RecvBody::new(
+                                    try_take(&mut self.recv, "Recv is none")?,
+                                    self.conn.clone(),
+                                    try_take(&mut self.stream_id, "stream is none")?,
+                                ),
+                            )));
                         }
                         _ => unreachable!(),
                     }
@@ -266,54 +282,5 @@ impl Future for SendRequest {
                 _ => return Err(Error::Poll),
             }
         }
-    }
-}
-
-pub struct RecvResponse {
-    response: Response<()>,
-    recv: FrameStream,
-    stream_id: StreamId,
-    conn: ConnectionRef,
-}
-
-impl RecvResponse {
-    fn build(
-        header: Header,
-        recv: FrameStream,
-        stream_id: StreamId,
-        conn: ConnectionRef,
-    ) -> Result<Self, Error> {
-        let (status, headers) = header.into_response_parts()?;
-        let mut response = Response::builder();
-        response.status(status);
-        response.version(http::version::Version::HTTP_3);
-        *response
-            .headers_mut()
-            .ok_or_else(|| Error::peer("invalid response"))? = headers;
-
-        Ok(Self {
-            recv,
-            conn,
-            stream_id,
-            response: response
-                .body(())
-                .or(Err(Error::Internal("failed to build response")))?,
-        })
-    }
-
-    pub fn response<'a>(&'a self) -> &'a Response<()> {
-        &self.response
-    }
-
-    pub fn body(self) -> RecvBody {
-        RecvBody::new(self.recv, self.conn.clone(), self.stream_id)
-    }
-
-    pub fn body_stream(self) -> RecvBodyStream {
-        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
-    }
-
-    pub fn body_reader(self) -> BodyReader {
-        BodyReader::new(self.recv, self.conn, self.stream_id)
     }
 }
