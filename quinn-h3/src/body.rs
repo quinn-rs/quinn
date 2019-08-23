@@ -112,8 +112,8 @@ impl RecvBody {
         }
     }
 
-    pub fn read_to_end(self) -> ReadToEnd {
-        ReadToEnd::new(self.recv, self.conn, self.stream_id)
+    pub fn read_to_end(self, capacity: usize, size_limit: usize) -> ReadToEnd {
+        ReadToEnd::new(self.recv, capacity, size_limit, self.conn, self.stream_id)
     }
 
     pub fn into_reader(self) -> BodyReader {
@@ -133,8 +133,7 @@ impl fmt::Debug for RecvBody {
 
 pub struct ReadToEnd {
     state: RecvBodyState,
-    capacity: usize,
-    max_size: usize,
+    size_limit: usize,
     body: Option<Bytes>,
     recv: FrameStream,
     conn: ConnectionRef,
@@ -142,28 +141,21 @@ pub struct ReadToEnd {
 }
 
 impl ReadToEnd {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        capacity: usize,
+        size_limit: usize,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+    ) -> Self {
         Self {
             conn,
             stream_id,
             recv,
+            size_limit,
             body: None,
-            max_size: RECV_BODY_MAX_SIZE_DEFAULT,
-            capacity: RECV_BODY_CAPACITY_DEFAULT,
-            state: RecvBodyState::Initial,
+            state: RecvBodyState::Receiving(BytesMut::with_capacity(capacity)),
         }
-    }
-
-    pub fn with_capacity(mut self, capacity: usize, max_size: usize) -> Self {
-        match &self.state {
-            RecvBodyState::Initial => (),
-            _ => panic!("cannot change capacity once polled"),
-        }
-
-        self.max_size = max_size;
-        self.capacity = capacity;
-
-        self
     }
 
     pub fn into_reader(self) -> BodyReader {
@@ -175,11 +167,7 @@ impl ReadToEnd {
     }
 }
 
-const RECV_BODY_MAX_SIZE_DEFAULT: usize = 20 * 1024 * 1024; // 20 MB
-const RECV_BODY_CAPACITY_DEFAULT: usize = 1024 * 1024;
-
 enum RecvBodyState {
-    Initial,
     Receiving(BytesMut),
     Decoding(DecodeHeaders),
     Finished,
@@ -192,12 +180,9 @@ impl Future for ReadToEnd {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.state {
-                RecvBodyState::Initial => {
-                    self.state = RecvBodyState::Receiving(BytesMut::with_capacity(self.capacity))
-                }
                 RecvBodyState::Receiving(ref mut body) => match try_ready!(self.recv.poll()) {
                     Some(HttpFrame::Data(d)) => {
-                        if d.payload.len() + body.len() >= self.max_size {
+                        if d.payload.len() + body.len() >= self.size_limit {
                             return Err(Error::Overflow);
                         }
                         body.extend(d.payload);
