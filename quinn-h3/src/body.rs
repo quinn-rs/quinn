@@ -157,14 +157,6 @@ impl ReadToEnd {
             state: RecvBodyState::Receiving(BytesMut::with_capacity(capacity)),
         }
     }
-
-    pub fn into_reader(self) -> BodyReader {
-        BodyReader::new(self.recv, self.conn, self.stream_id)
-    }
-
-    pub fn into_stream(self) -> RecvBodyStream {
-        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
-    }
 }
 
 enum RecvBodyState {
