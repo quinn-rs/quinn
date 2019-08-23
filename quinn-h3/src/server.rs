@@ -10,7 +10,7 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, Receiver, SendBody},
+    body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
@@ -177,7 +177,7 @@ impl RecvRequest {
 }
 
 impl Future for RecvRequest {
-    type Item = (Request<()>, Receiver, Sender);
+    type Item = (Request<()>, RecvBody, Sender);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
