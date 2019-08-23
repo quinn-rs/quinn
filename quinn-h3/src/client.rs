@@ -179,7 +179,7 @@ impl SendRequest {
         }
     }
 
-    fn build_response(header: Header) -> Result<Response<()>, Error> {
+    fn build_response(&mut self, header: Header) -> Result<Response<RecvBody>, Error> {
         let (status, headers) = header.into_response_parts()?;
         let mut response = Response::builder();
         response.status(status);
@@ -188,14 +188,20 @@ impl SendRequest {
             .headers_mut()
             .ok_or_else(|| Error::peer("invalid response"))? = headers;
 
+        let body = RecvBody::new(
+            try_take(&mut self.recv, "recv is none")?,
+            self.conn.clone(),
+            try_take(&mut self.stream_id, "stream is none")?,
+        );
+
         Ok(response
-            .body(())
+            .body(body)
             .or(Err(Error::Internal("failed to build response")))?)
     }
 }
 
 impl Future for SendRequest {
-    type Item = (Response<()>, RecvBody);
+    type Item = Response<RecvBody>;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -272,14 +278,7 @@ impl Future for SendRequest {
                 SendRequestState::Ready(_) => {
                     match mem::replace(&mut self.state, SendRequestState::Finished) {
                         SendRequestState::Ready(h) => {
-                            return Ok(Async::Ready((
-                                Self::build_response(h)?,
-                                RecvBody::new(
-                                    try_take(&mut self.recv, "Recv is none")?,
-                                    self.conn.clone(),
-                                    try_take(&mut self.stream_id, "stream is none")?,
-                                ),
-                            )));
+                            return Ok(Async::Ready(self.build_response(h)?));
                         }
                         _ => unreachable!(),
                     }
