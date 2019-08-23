@@ -164,10 +164,9 @@ impl RecvRequest {
         request.method(method);
         request.uri(uri);
         request.version(http::version::Version::HTTP_3);
-        match request.headers_mut() {
-            Some(h) => *h = headers,
-            None => return Err(Error::peer("invalid header")),
-        }
+        *request
+            .headers_mut()
+            .ok_or_else(|| Error::peer("invalid header"))? = headers;
 
         Ok(request
             .body(RecvBody::new(recv, self.conn.clone(), self.stream_id))
