@@ -179,7 +179,7 @@ fn handle_connection(
             .for_each(|request| {
                 request
                     .map_err(|e| format_err!("recv request: {}", e))
-                    .and_then(|(req, body, send)| handle_request(req, body, send))
+                    .and_then(|(req, send)| handle_request(req, send))
             })
             .map_err(|e| eprintln!("server error: {}", e)),
     );
@@ -190,11 +190,11 @@ fn handle_connection(
 }
 
 fn handle_request(
-    request: Request<()>,
-    body: RecvBody,
+    request: Request<RecvBody>,
     sender: Sender,
 ) -> impl Future<Item = (), Error = Error> {
     println!("received request: {:?}", request);
+    let (_, body) = request.into_parts();
     let content = Vec::with_capacity(1024);
     tokio::io::read_to_end(body.into_reader(), content)
         .map_err(|e| format_err!("failed to receive response body: {:?}", e))
@@ -279,8 +279,9 @@ fn client(
 
             conn.send_request_trailers(request, trailer)
                 .map_err(|e| format_err!("send request: {}", e))
-                .and_then(|(response, body)| {
+                .and_then(|response| {
                     println!("received response: {:?}", response);
+                    let (_, body) = response.into_parts();
                     let buf = Vec::with_capacity(1024 * 10); // 10K
                     tokio_io::io::read_to_end(body.into_reader(), buf)
                         .map_err(|e| format_err!("receive response failed: {}", e))
