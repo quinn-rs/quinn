@@ -1,8 +1,7 @@
 use std::{
-    cmp,
+    cmp, fmt,
     io::{self, ErrorKind},
     mem,
-    fmt,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -123,6 +122,12 @@ impl RecvBody {
 
     pub fn into_stream(self) -> RecvBodyStream {
         RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+    }
+}
+
+impl fmt::Debug for RecvBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RecvBody {{ stream_id: {:?} }}", self.stream_id)
     }
 }
 
