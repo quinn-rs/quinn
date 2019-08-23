@@ -154,7 +154,11 @@ impl RecvRequest {
         }
     }
 
-    fn build_request(headers: Header) -> Result<Request<()>, Error> {
+    fn build_request(
+        &self,
+        headers: Header,
+        recv: FrameStream,
+    ) -> Result<Request<RecvBody>, Error> {
         let (method, uri, headers) = headers.into_request_parts()?;
         let mut request = Request::builder();
         request.method(method);
@@ -166,13 +170,13 @@ impl RecvRequest {
         }
 
         Ok(request
-            .body(())
+            .body(RecvBody::new(recv, self.conn.clone(), self.stream_id))
             .map_err(|e| Error::Peer(format!("invalid request: {:?}", e)))?)
     }
 }
 
 impl Future for RecvRequest {
-    type Item = (Request<()>, RecvBody, Sender);
+    type Item = (Request<RecvBody>, Sender);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -194,8 +198,7 @@ impl Future for RecvRequest {
                     self.state = RecvRequestState::Ready;
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
                     return Ok(Async::Ready((
-                        Self::build_request(header)?,
-                        Receiver::new(recv, self.conn.clone(), self.stream_id),
+                        self.build_request(header, recv)?,
                         Sender {
                             send,
                             stream_id: self.stream_id,
