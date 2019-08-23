@@ -2,6 +2,7 @@ use std::{
     cmp,
     io::{self, ErrorKind},
     mem,
+    fmt,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -97,23 +98,23 @@ impl Future for SendBody {
     }
 }
 
-pub struct Receiver {
+pub struct RecvBody {
     recv: FrameStream,
     conn: ConnectionRef,
     stream_id: StreamId,
 }
 
-impl Receiver {
+impl RecvBody {
     pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
-        Self {
+        RecvBody {
             conn,
             stream_id,
             recv,
         }
     }
 
-    pub fn into_future(self) -> RecvBody {
-        RecvBody::new(self.recv, self.conn, self.stream_id)
+    pub fn read_to_end(self) -> ReadToEnd {
+        ReadToEnd::new(self.recv, self.conn, self.stream_id)
     }
 
     pub fn into_reader(self) -> BodyReader {
@@ -125,7 +126,7 @@ impl Receiver {
     }
 }
 
-pub struct RecvBody {
+pub struct ReadToEnd {
     state: RecvBodyState,
     capacity: usize,
     max_size: usize,
@@ -135,7 +136,7 @@ pub struct RecvBody {
     stream_id: StreamId,
 }
 
-impl RecvBody {
+impl ReadToEnd {
     pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
         Self {
             conn,
@@ -179,7 +180,7 @@ enum RecvBodyState {
     Finished,
 }
 
-impl Future for RecvBody {
+impl Future for ReadToEnd {
     type Item = (Option<Bytes>, Option<HeaderMap>);
     type Error = crate::Error;
 
