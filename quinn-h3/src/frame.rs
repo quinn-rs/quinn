@@ -29,6 +29,14 @@ impl FrameDecoder {
     }
 }
 
+macro_rules! decode {
+    ($buf:ident, $dec:expr) => {{
+        let mut cur = io::Cursor::new(&$buf);
+        let decoded = $dec(&mut cur);
+        (cur.position() as usize, decoded)
+    }};
+}
+
 impl Decoder for FrameDecoder {
     type Item = HttpFrame;
     type Error = Error;
@@ -44,11 +52,7 @@ impl Decoder for FrameDecoder {
         }
 
         if let Some(ref mut partial) = self.partial {
-            let (pos, frame) = {
-                let mut cur = io::Cursor::new(&src);
-                let frame = HttpFrame::Data(partial.decode_data(&mut cur));
-                (cur.position() as usize, frame)
-            };
+            let (pos, frame) = decode!(src, |cur| HttpFrame::Data(partial.decode_data(cur)));
             src.advance(pos);
 
             if partial.remaining() == 0 {
@@ -61,19 +65,12 @@ impl Decoder for FrameDecoder {
             return Ok(Some(frame));
         }
 
-        let (pos, decoded) = {
-            let mut cur = io::Cursor::new(&src);
-            let decoded = HttpFrame::decode(&mut cur);
-            (cur.position() as usize, decoded)
-        };
+        let (pos, decoded) = decode!(src, |cur| HttpFrame::decode(cur));
 
         match decoded {
             Err(frame::Error::IncompleteData(min)) if min > self.size_limit => {
-                let (pos, partial, frame) = {
-                    let mut cur = io::Cursor::new(&src);
-                    let (partial, frame) = PartialData::decode(&mut cur, self.size_limit)?;
-                    (cur.position() as usize, partial, frame)
-                };
+                let (pos, decoded) = decode!(src, |cur| PartialData::decode(cur, self.size_limit));
+                let (partial, frame) = decoded?;
                 src.advance(pos);
                 self.expected = Some(cmp::min(partial.remaining(), self.size_limit));
                 self.partial = Some(partial);
