@@ -107,11 +107,14 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         endpoint
             .connect_with(client_config.clone(), &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|(conn_driver, conn, _)| {
+            .and_then(|new_conn| {
                 println!("connected");
                 tokio_current_thread::spawn(
-                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                    new_conn
+                        .driver
+                        .map_err(|e| eprintln!("connection lost: {}", e)),
                 );
+                let conn = new_conn.connection;
                 assert!(state.lock().unwrap().saw_cert);
                 handshake = true;
                 let stream = conn.open_bi();
@@ -132,10 +135,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                             .connect_with(client_config.clone(), &remote, host)
                             .unwrap()
                             .map_err(|e| format_err!("failed to connect: {}", e))
-                            .and_then(|(conn_driver, conn, _)| {
+                            .and_then(|new_conn| {
                                 tokio_current_thread::spawn(
-                                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                                    new_conn
+                                        .driver
+                                        .map_err(|e| eprintln!("connection lost: {}", e)),
                                 );
+                                let conn = new_conn.connection;
                                 resumption = !state.lock().unwrap().saw_cert;
                                 let stream = conn.open_bi();
                                 let stream2 = conn.open_bi();
@@ -180,15 +186,15 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                     })
                     .and_then(|_| {
                         println!("attempting 0-RTT");
-                        let (conn_driver, conn, _) = endpoint
+                        let conn = endpoint
                             .connect_with(client_config.clone(), &remote, host)
                             .unwrap()
                             .into_0rtt()
                             .map_err(|_| format_err!("0-RTT unsupported by server"))?;
                         tokio_current_thread::spawn(
-                            conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                            conn.driver.map_err(|e| eprintln!("connection lost: {}", e)),
                         );
-                        Ok(conn)
+                        Ok(conn.connection)
                     })
                     .and_then(|conn| {
                         conn.open_bi()
@@ -214,10 +220,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         let result = runtime.block_on(
             endpoint
                 .connect_with(client_config.clone(), &remote, host)?
-                .and_then(|(conn_driver, conn, _)| {
+                .and_then(|conn| {
                     retry = true;
-                    conn.close(0u32.into(), b"done");
-                    conn_driver
+                    conn.connection.close(0u32.into(), b"done");
+                    conn.driver
                 })
                 .map(|()| {
                     close = true;
@@ -246,10 +252,13 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         endpoint
             .connect_with(h3_client_config, &remote, host)?
             .map_err(|e| format_err!("failed to connect: {}", e))
-            .and_then(|(conn_driver, conn, _)| {
+            .and_then(|new_conn| {
                 tokio_current_thread::spawn(
-                    conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
+                    new_conn
+                        .driver
+                        .map_err(|e| eprintln!("connection lost: {}", e)),
                 );
+                let conn = new_conn.connection;
                 let control_stream = conn.open_uni();
                 let control_fut = control_stream
                     .map_err(|e| format_err!("failed to open control stream: {}", e))

@@ -34,13 +34,19 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         .and_then(|connect| connect.map_err(|_| ()))
         .take(expected_messages as u64)
         .map_err(|()| panic!("Listener failed"))
-        .for_each(move |(conn_driver, conn, incoming)| {
+        .for_each(move |new_conn| {
+            let quinn::NewConnection {
+                driver,
+                connection: conn,
+                streams,
+                ..
+            } = new_conn;
             let logs = LogBuffer::new();
             conn.set_logger(Logger::root(logs.clone().fuse(), slog::o!()));
-            current_thread::spawn(conn_driver.map_err(|_| ()));
+            current_thread::spawn(driver.map_err(|_| ()));
 
             let shared = shared2.clone();
-            let task = incoming
+            let task = streams
                 .for_each(move |stream| {
                     let conn = conn.clone();
                     read_from_peer(stream).map(move |_| conn.close(0u32.into(), &[]))
@@ -67,12 +73,15 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let data = random_data_with_hash(1024 * 1024);
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
-            .and_then(move |(conn_driver, conn, _)| {
-                current_thread::spawn(write_to_peer(&conn, data).map_err(move |e| {
+            .and_then(move |new_conn| {
+                let quinn::NewConnection {
+                    driver, connection, ..
+                } = new_conn;
+                current_thread::spawn(write_to_peer(&connection, data).map_err(move |e| {
                     // Error will also be propagated to the driver
                     eprintln!("write failed: {}", e);
                 }));
-                conn_driver
+                driver
             })
             .map_err(move |e| {
                 match e {

@@ -43,11 +43,13 @@ fn throughput(c: &mut Criterion) {
         .borrow_mut()
         .spawn(server_incoming.for_each(move |connecting| {
             connecting
-                .and_then(|(driver, _, incoming)| {
+                .and_then(|new_conn| {
                     tokio::runtime::current_thread::spawn(
-                        driver.map_err(|e| ignore_timeout("server connection driver", e)),
+                        new_conn
+                            .driver
+                            .map_err(|e| ignore_timeout("server connection driver", e)),
                     );
-                    incoming.for_each(|stream| {
+                    new_conn.streams.for_each(|stream| {
                         if let NewStream::Uni(recv) = stream {
                             ReadAllUnordered { stream: recv }.map_err(|e| panic!(e))
                         } else {
@@ -58,10 +60,12 @@ fn throughput(c: &mut Criterion) {
                 .map_err(|e| panic!("server connection establishment failed: {}", e))
         }));
 
-    let (driver, connection, _) = runtime
+    let new_conn = runtime
         .borrow_mut()
         .block_on(client.connect(&server_addr, "localhost").unwrap())
         .unwrap();
+    let driver = new_conn.driver;
+    let connection = new_conn.connection;
 
     runtime
         .borrow_mut()
