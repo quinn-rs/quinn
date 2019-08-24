@@ -150,7 +150,7 @@ impl RecvRequest {
             conn,
             stream_id: send.id(),
             streams: None,
-            state: RecvRequestState::Receiving(FrameDecoder::stream(recv), send),
+            state: RecvRequestState::Receiving(FrameDecoder::stream(recv, 1024), send),
         }
     }
 

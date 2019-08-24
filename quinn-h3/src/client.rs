@@ -199,7 +199,7 @@ impl Future for SendRequest {
             match self.state {
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = try_ready!(o.poll());
-                    self.recv = Some(FrameDecoder::stream(recv));
+                    self.recv = Some(FrameDecoder::stream(recv, 1024));
                     self.stream_id = Some(send.id());
 
                     let header_block = {

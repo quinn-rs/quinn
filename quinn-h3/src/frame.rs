@@ -1,22 +1,31 @@
-use std::io;
+use std::{cmp, io};
 
 use bytes::BytesMut;
 use quinn::RecvStream;
 use tokio_codec::{Decoder, FramedRead};
 use tokio_io::AsyncRead;
 
-use super::proto::frame::{self, HttpFrame};
+use super::proto::frame::{self, HttpFrame, PartialData};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
 #[derive(Default)]
 pub struct FrameDecoder {
+    partial: Option<PartialData>,
     expected: Option<usize>,
+    size_limit: usize,
 }
 
 impl FrameDecoder {
-    pub fn stream<T: AsyncRead>(stream: T) -> FramedRead<T, Self> {
-        FramedRead::new(stream, FrameDecoder { expected: None })
+    pub fn stream<T: AsyncRead>(stream: T, size_limit: usize) -> FramedRead<T, Self> {
+        FramedRead::new(
+            stream,
+            FrameDecoder {
+                expected: None,
+                partial: None,
+                size_limit,
+            },
+        )
     }
 }
 
@@ -34,6 +43,24 @@ impl Decoder for FrameDecoder {
             }
         }
 
+        if let Some(ref mut partial) = self.partial {
+            let (pos, frame) = {
+                let mut cur = io::Cursor::new(&src);
+                let frame = HttpFrame::Data(partial.decode_data(&mut cur));
+                (cur.position() as usize, frame)
+            };
+            src.advance(pos);
+
+            if partial.remaining() == 0 {
+                self.expected = None;
+                self.partial = None;
+            } else {
+                self.expected = Some(cmp::min(partial.remaining(), self.size_limit));
+            }
+
+            return Ok(Some(frame));
+        }
+
         let (pos, decoded) = {
             let mut cur = io::Cursor::new(&src);
             let decoded = HttpFrame::decode(&mut cur);
@@ -41,7 +68,18 @@ impl Decoder for FrameDecoder {
         };
 
         match decoded {
-            Err(frame::Error::Incomplete(min)) => {
+            Err(frame::Error::IncompleteData(min)) if min > self.size_limit => {
+                let (pos, partial, frame) = {
+                    let mut cur = io::Cursor::new(&src);
+                    let (partial, frame) = PartialData::decode(&mut cur, self.size_limit)?;
+                    (cur.position() as usize, partial, frame)
+                };
+                src.advance(pos);
+                self.expected = Some(cmp::min(partial.remaining(), self.size_limit));
+                self.partial = Some(partial);
+                Ok(Some(HttpFrame::Data(frame)))
+            }
+            Err(frame::Error::Incomplete(min)) | Err(frame::Error::IncompleteData(min)) => {
                 self.expected = Some(min);
                 Ok(None)
             }
