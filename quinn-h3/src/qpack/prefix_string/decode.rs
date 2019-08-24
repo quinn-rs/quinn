@@ -1657,5 +1657,4 @@ mod tests {
         let res: Result<Vec<_>, Error> = bytes.hpack_decode().collect();
         assert_eq!(res, Ok(expected));
     }
-
 }

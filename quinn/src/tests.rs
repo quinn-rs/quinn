@@ -8,7 +8,8 @@ use slog::{o, Drain, Logger, KV};
 use tokio;
 
 use super::{
-    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewStream, ServerConfigBuilder,
+    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewConnection, NewStream,
+    ServerConfigBuilder,
 };
 
 #[test]
@@ -152,9 +153,11 @@ fn read_after_close() {
         incoming
             .take(1)
             .and_then(|incoming| incoming.map_err(|_| ()))
-            .for_each(|(driver, conn, _)| {
-                tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
-                conn.open_uni()
+            .for_each(|new_conn| {
+                tokio::runtime::current_thread::spawn(new_conn.driver.map_err(|_| ()));
+                new_conn
+                    .connection
+                    .open_uni()
                     .map_err(|e| panic!("open_uni: {}", e))
                     .and_then(|s| {
                         tokio::io::write_all(s, MSG.to_vec())
@@ -168,8 +171,9 @@ fn read_after_close() {
             .connect(&endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
             .map_err(|e| panic!("connect: {}", e))
-            .and_then(|(driver, _, streams)| {
-                tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
+            .and_then(|new_conn| {
+                tokio::runtime::current_thread::spawn(new_conn.driver.map_err(|_| ()));
+                let streams = new_conn.streams;
                 tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
                     .map_err(|_| unreachable!())
                     .and_then(move |()| {
@@ -228,7 +232,12 @@ fn zero_rtt() {
     runtime.spawn(driver.map_err(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(incoming.take(2).for_each(|incoming| {
-        let (driver, conn, streams) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+        let NewConnection {
+            driver,
+            connection,
+            streams,
+            ..
+        } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
         tokio::runtime::current_thread::spawn(driver.map_err(|_| ()));
         tokio::runtime::current_thread::spawn(streams.map_err(|_| ()).for_each(|x| {
             x.unwrap_uni()
@@ -238,7 +247,8 @@ fn zero_rtt() {
                     assert_eq!(msg, MSG);
                 })
         }));
-        conn.open_uni()
+        connection
+            .open_uni()
             .map_err(|e| panic!("open_uni: {}", e))
             .and_then(|s| {
                 tokio::io::write_all(s, MSG.to_vec())
@@ -255,7 +265,10 @@ fn zero_rtt() {
                 .err()
                 .expect("0-RTT succeeded without keys")
                 .map_err(|e| panic!("connect: {}", e))
-                .and_then(|(driver, _, streams)| {
+                .and_then(|new_conn| {
+                    let NewConnection {
+                        driver, streams, ..
+                    } = new_conn;
                     tokio::runtime::current_thread::spawn(
                         // Buy time for the driver to process the server's NewSessionTicket
                         tokio::timer::Delay::new(Instant::now() + Duration::from_millis(100))
@@ -281,14 +294,20 @@ fn zero_rtt() {
         )
         .unwrap();
     info!(log, "initial connection complete");
-    let (driver, conn, streams) = endpoint
+    let NewConnection {
+        driver,
+        connection,
+        streams,
+        ..
+    } = endpoint
         .connect(&endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .ok()
         .expect("missing 0-RTT keys");
     runtime.spawn(
-        conn.open_uni()
+        connection
+            .open_uni()
             .map_err(|e| panic!("0-RTT open_uni: {}", e))
             .and_then(|s| {
                 tokio::io::write_all(s, MSG.to_vec())
@@ -297,7 +316,7 @@ fn zero_rtt() {
             }),
     );
     // The connection won't implicitly close if we could still open new streams
-    drop(conn);
+    drop(connection);
     runtime.spawn(driver.map_err(|_| ()));
     runtime
         .block_on(
@@ -384,9 +403,11 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .into_future()
                 .map_err(|_| ())
                 .map(move |(conn, _)| {
-                    let (conn_driver, _, incoming_streams) = conn.unwrap();
-                    tokio::spawn(conn_driver.map_err(|_| ()));
-                    tokio::spawn(incoming_streams.map_err(|_| ()).for_each(echo));
+                    let NewConnection {
+                        driver, streams, ..
+                    } = conn.unwrap();
+                    tokio::spawn(driver.map_err(|_| ()));
+                    tokio::spawn(streams.map_err(|_| ()).for_each(echo));
                 }),
         );
 
@@ -397,11 +418,14 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                     .connect(&server_addr, "localhost")
                     .unwrap()
                     .map_err(|e| panic!("connection failed: {}", e))
-                    .and_then(move |(conn_driver, conn, _)| {
+                    .and_then(move |new_conn| {
+                        let NewConnection {
+                            driver, connection, ..
+                        } = new_conn;
                         tokio::spawn(
-                            conn_driver.map_err(|e| eprintln!("outgoing connection lost: {}", e)),
+                            driver.map_err(|e| eprintln!("outgoing connection lost: {}", e)),
                         );
-                        let stream = conn.open_bi();
+                        let stream = connection.open_bi();
                         stream
                             .map_err(|_| ())
                             .and_then(move |(send, recv)| {
@@ -415,7 +439,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                             })
                             .map(move |data| {
                                 assert_eq!(&data[..], b"foo");
-                                conn.close(0u32.into(), b"done");
+                                connection.close(0u32.into(), b"done");
                             })
                     }),
             )

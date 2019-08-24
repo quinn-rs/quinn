@@ -181,7 +181,8 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::Connecting) {
                     error!(log, "incoming handshake failed: {reason}", reason = e.to_string());
                 }
             })
-            .and_then(move |(conn_driver, conn, incoming_streams)| {
+            .and_then(move |new_conn| {
+                let conn = new_conn.connection;
                 info!(log, "connection established";
                       "remote_id" => %conn.remote_id(),
                       "address" => %conn.remote_address(),
@@ -190,7 +191,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::Connecting) {
 
                 // Each stream initiated by the client constitutes a new request.
                 tokio_current_thread::spawn(
-                    incoming_streams
+                    new_conn.streams
                         .map_err(move |e| info!(log2, "connection terminated"; "reason" => %e))
                         .for_each(move |stream| {
                             handle_request(&root, &log, stream);
@@ -199,7 +200,7 @@ fn handle_connection(root: &PathBuf, log: &Logger, conn: quinn::Connecting) {
                 );
 
                 // We ignore errors from the driver because they'll be reported by the `incoming` handler anyway.
-                conn_driver.map_err(|_| ())
+                new_conn.driver.map_err(|_| ())
             }),
     );
 }

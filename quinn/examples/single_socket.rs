@@ -63,13 +63,13 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8
     let handle_incoming_conns = incoming.take(1).for_each(move |incoming_conn| {
         current_thread::spawn(
             incoming_conn
-                .and_then(|(conn_driver, conn, _incoming)| {
+                .and_then(|new_conn| {
                     println!(
                         "[server] incoming connection: id={} addr={}",
-                        conn.remote_id(),
-                        conn.remote_address()
+                        new_conn.connection.remote_id(),
+                        new_conn.connection.remote_address()
                     );
-                    conn_driver
+                    new_conn.driver
                 })
                 .map_err(|_| ()),
         );
@@ -90,12 +90,12 @@ fn run_client(
     let connect = endpoint
         .connect(&server_addr, "localhost")?
         .map_err(|e| panic!("Failed to connect: {}", e))
-        .and_then(|(conn_driver, conn, _)| {
-            current_thread::spawn(conn_driver.map_err(|_| ()));
+        .and_then(|new_conn| {
+            current_thread::spawn(new_conn.driver.map_err(|_| ()));
             println!(
                 "[client] connected: id={}, addr={}",
-                conn.remote_id(),
-                conn.remote_address()
+                new_conn.connection.remote_id(),
+                new_conn.connection.remote_address()
             );
             Ok(())
         });
