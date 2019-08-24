@@ -11,6 +11,7 @@ pub enum Error {
     UnexpectedEnd,
     InvalidFrameValue,
     Incomplete(usize),
+    IncompleteData,
 }
 
 #[derive(Debug, PartialEq)]
@@ -48,6 +49,9 @@ impl HttpFrame {
         let len = buf.get_var()?;
 
         if buf.remaining() < len as usize {
+            if ty == Type::DATA {
+                return Err(Error::IncompleteData);
+            }
             return Err(Error::Incomplete(2 + len as usize));
         }
 
@@ -129,6 +133,38 @@ impl FrameHeader for DataFrame {
     const TYPE: Type = Type::DATA;
     fn len(&self) -> usize {
         self.payload.as_ref().len()
+    }
+}
+
+pub struct PartialData {
+    remaining: usize,
+}
+
+impl PartialData {
+    pub fn decode<B: Buf>(buf: &mut B) -> Result<(Self, DataFrame), Error> {
+        if Type::DATA != Type::decode(buf)? {
+            panic!("can only decode Data frames");
+        }
+
+        let len = buf.get_var()? as usize;
+        let payload = buf.collect::<Bytes>();
+
+        Ok((
+            Self {
+                remaining: len - payload.len(),
+            },
+            DataFrame { payload },
+        ))
+    }
+
+    pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame {
+        let payload = buf.take(self.remaining).collect::<Bytes>();
+        self.remaining -= payload.len();
+        DataFrame { payload }
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.remaining
     }
 }
 

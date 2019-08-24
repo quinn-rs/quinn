@@ -5,19 +5,34 @@ use quinn::RecvStream;
 use tokio_codec::{Decoder, FramedRead};
 use tokio_io::AsyncRead;
 
-use super::proto::frame::{self, HttpFrame};
+use super::proto::frame::{self, HttpFrame, PartialData};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
 #[derive(Default)]
 pub struct FrameDecoder {
+    partial: Option<PartialData>,
     expected: Option<usize>,
 }
 
 impl FrameDecoder {
     pub fn stream<T: AsyncRead>(stream: T) -> FramedRead<T, Self> {
-        FramedRead::new(stream, FrameDecoder { expected: None })
+        FramedRead::new(
+            stream,
+            FrameDecoder {
+                expected: None,
+                partial: None,
+            },
+        )
     }
+}
+
+macro_rules! decode {
+    ($buf:ident, $dec:expr) => {{
+        let mut cur = io::Cursor::new(&$buf);
+        let decoded = $dec(&mut cur);
+        (cur.position() as usize, decoded)
+    }};
 }
 
 impl Decoder for FrameDecoder {
@@ -28,19 +43,35 @@ impl Decoder for FrameDecoder {
         if src.len() == 0 {
             return Ok(None);
         }
+
+        if let Some(ref mut partial) = self.partial {
+            let (pos, frame) = decode!(src, |cur| HttpFrame::Data(partial.decode_data(cur)));
+            src.advance(pos);
+
+            if partial.remaining() == 0 {
+                self.partial = None;
+            }
+
+            return Ok(Some(frame));
+        }
+
         if let Some(min) = self.expected {
             if src.len() < min {
                 return Ok(None);
             }
         }
 
-        let (pos, decoded) = {
-            let mut cur = io::Cursor::new(&src);
-            let decoded = HttpFrame::decode(&mut cur);
-            (cur.position() as usize, decoded)
-        };
+        let (pos, decoded) = decode!(src, |cur| HttpFrame::decode(cur));
 
         match decoded {
+            Err(frame::Error::IncompleteData) => {
+                let (pos, decoded) = decode!(src, |cur| PartialData::decode(cur));
+                let (partial, frame) = decoded?;
+                src.advance(pos);
+                self.expected = None;
+                self.partial = Some(partial);
+                Ok(Some(HttpFrame::Data(frame)))
+            }
             Err(frame::Error::Incomplete(min)) => {
                 self.expected = Some(min);
                 Ok(None)
