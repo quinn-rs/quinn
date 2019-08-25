@@ -172,34 +172,35 @@ impl Field {
     {
         let name = name.as_ref();
         if name.is_empty() {
-            return Err(Error::InvalidHeaderName(format!("{:?}", name)));
+            return Err(Error::InvalidHeaderName("name is empty".into()));
         }
 
-        if name[0] == b':' {
-            let pseudo = match PSEUDO_MAP.get(name) {
-                Some(pseudo) => pseudo,
-                None => return Err(Error::invalid_name(name)),
-            };
-            return Ok(match pseudo {
-                PseudoType::SCHEME => Field::Scheme(try_value(name, value)?),
-                PseudoType::AUTHORITY => Field::Authority(try_value(name, value)?),
-                PseudoType::PATH => Field::Path(try_value(name, value)?),
-                PseudoType::METHOD => Field::Method(
-                    Method::from_bytes(value.as_ref())
-                        .or_else(|_| Err(Error::invalid_value(name, value)))?,
-                ),
-                PseudoType::STATUS => Field::Status(
-                    StatusCode::from_bytes(value.as_ref())
-                        .or_else(|_| Err(Error::invalid_value(name, value)))?,
-                ),
-            });
+        if name[0] != b':' {
+            return Ok(Field::Header((
+                HeaderName::from_bytes(name).or_else(|_| Err(Error::invalid_name(name)))?,
+                HeaderValue::from_bytes(value.as_ref())
+                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+            )));
         }
 
-        Ok(Field::Header((
-            HeaderName::from_bytes(name).or_else(|_| Err(Error::invalid_name(name)))?,
-            HeaderValue::from_bytes(value.as_ref())
-                .or_else(|_| Err(Error::invalid_value(name, value)))?,
-        )))
+        let pseudo = match PSEUDO_MAP.get(name) {
+            Some(pseudo) => pseudo,
+            None => return Err(Error::invalid_name(name)),
+        };
+
+        Ok(match pseudo {
+            PseudoType::SCHEME => Field::Scheme(try_value(name, value)?),
+            PseudoType::AUTHORITY => Field::Authority(try_value(name, value)?),
+            PseudoType::PATH => Field::Path(try_value(name, value)?),
+            PseudoType::METHOD => Field::Method(
+                Method::from_bytes(value.as_ref())
+                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+            ),
+            PseudoType::STATUS => Field::Status(
+                StatusCode::from_bytes(value.as_ref())
+                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+            ),
+        })
     }
 }
 
