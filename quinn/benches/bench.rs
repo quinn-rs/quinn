@@ -97,7 +97,7 @@ fn throughput(c: &mut Criterion) {
                     BatchSize::PerIteration,
                 )
             })
-            .throughput(Throughput::Bytes(DATA.len() as u32)),
+            .throughput(Throughput::Bytes(DATA.len() as u64)),
         );
     }
 
