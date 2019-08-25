@@ -176,22 +176,17 @@ impl SendRequest {
 
     fn build_response(&mut self, header: Header) -> Result<Response<RecvBody>, Error> {
         let (status, headers) = header.into_response_parts()?;
-        let mut response = Response::builder();
-        response.status(status);
-        response.version(http::version::Version::HTTP_3);
-        *response
-            .headers_mut()
-            .ok_or_else(|| Error::peer("invalid response"))? = headers;
-
-        let body = RecvBody::new(
-            try_take(&mut self.recv, "recv is none")?,
-            self.conn.clone(),
-            try_take(&mut self.stream_id, "stream is none")?,
-        );
-
-        Ok(response
-            .body(body)
-            .or(Err(Error::Internal("failed to build response")))?)
+        let mut response = Response::builder()
+            .status(status)
+            .version(http::version::Version::HTTP_3)
+            .body(RecvBody::new(
+                try_take(&mut self.recv, "recv is none")?,
+                self.conn.clone(),
+                try_take(&mut self.stream_id, "stream is none")?,
+            ))
+            .unwrap();
+        *response.headers_mut() = headers;
+        Ok(response)
     }
 }
 
