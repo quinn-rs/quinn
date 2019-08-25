@@ -165,17 +165,14 @@ impl RecvRequest {
         recv: FrameStream,
     ) -> Result<Request<RecvBody>, Error> {
         let (method, uri, headers) = headers.into_request_parts()?;
-        let mut request = Request::builder();
-        request.method(method);
-        request.uri(uri);
-        request.version(http::version::Version::HTTP_3);
-        *request
-            .headers_mut()
-            .ok_or_else(|| Error::peer("invalid header"))? = headers;
-
-        Ok(request
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .version(http::version::Version::HTTP_3)
             .body(RecvBody::new(recv, self.conn.clone(), self.stream_id))
-            .map_err(|e| Error::Peer(format!("invalid request: {:?}", e)))?)
+            .unwrap();
+        *request.headers_mut() = headers;
+        Ok(request)
     }
 }
 
