@@ -21,7 +21,6 @@ default = ["tls-rustls"]
 tls-rustls = ["rustls", "webpki", "ring"]
 
 [dependencies]
-byteorder = "1.1"
 bytes = "0.4.7"
 err-derive = "0.1.5"
 fnv = "1.0.6"
