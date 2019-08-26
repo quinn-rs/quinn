@@ -1,9 +1,9 @@
+use std::convert::TryInto;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use assert_matches::assert_matches;
-use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use hex_literal::hex;
 use rand::RngCore;
@@ -40,7 +40,7 @@ fn version_negotiate_server() {
         assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
         assert!(contents[15..]
             .chunks(4)
-            .any(|x| BigEndian::read_u32(x) == VERSION));
+            .any(|x| u32::from_be_bytes(x.try_into().unwrap()) == VERSION));
     }
     assert_matches!(server.poll_transmit(), None);
 }

@@ -1,6 +1,6 @@
+use std::convert::TryInto;
 use std::fmt;
 
-use byteorder::{BigEndian, ByteOrder};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
@@ -136,21 +136,21 @@ impl Codec for VarInt {
                     return Err(UnexpectedEnd);
                 }
                 r.copy_to_slice(&mut buf[1..2]);
-                u64::from(BigEndian::read_u16(&buf))
+                u64::from(u16::from_be_bytes(buf[..2].try_into().unwrap()))
             }
             0b10 => {
                 if r.remaining() < 3 {
                     return Err(UnexpectedEnd);
                 }
                 r.copy_to_slice(&mut buf[1..4]);
-                u64::from(BigEndian::read_u32(&buf))
+                u64::from(u32::from_be_bytes(buf[..4].try_into().unwrap()))
             }
             0b11 => {
                 if r.remaining() < 7 {
                     return Err(UnexpectedEnd);
                 }
                 r.copy_to_slice(&mut buf[1..8]);
-                BigEndian::read_u64(&buf)
+                u64::from_be_bytes(buf)
             }
             _ => unreachable!(),
         };
