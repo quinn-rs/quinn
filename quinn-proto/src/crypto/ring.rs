@@ -1,10 +1,7 @@
 use std::io;
 
 use bytes::{Buf, BufMut, BytesMut};
-use ring::{
-    aead::{self, Aad, Nonce},
-    hkdf, hmac,
-};
+use ring::{aead, hkdf, hmac};
 
 use crate::packet::{PacketNumber, LONG_HEADER_FORM};
 use crate::shared::{ConfigError, ConnectionId};
@@ -119,8 +116,8 @@ impl crypto::Keys for Crypto {
 
         let (header, payload) = buf.split_at_mut(header_len);
         let (payload, tag) = payload.split_at_mut(payload.len() - cipher.tag_len());
-        let header = Aad::from(header);
-        let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
+        let header = aead::Aad::from(header);
+        let nonce = aead::Nonce::try_assume_unique_for_key(nonce).unwrap();
         let tagged = key
             .seal_in_place_separate_tag(nonce, header, payload)
             .unwrap();
@@ -144,8 +141,8 @@ impl crypto::Keys for Crypto {
         self.write_nonce(iv, packet, nonce);
         let payload_len = payload.len();
 
-        let header = Aad::from(header);
-        let nonce = Nonce::try_assume_unique_for_key(nonce).unwrap();
+        let header = aead::Aad::from(header);
+        let nonce = aead::Nonce::try_assume_unique_for_key(nonce).unwrap();
         key.open_in_place(nonce, header, payload.as_mut())
             .map_err(|_| ())?;
         payload.split_off(payload_len - cipher.tag_len());
