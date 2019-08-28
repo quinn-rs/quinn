@@ -2869,7 +2869,7 @@ where
             &mut self.spaces[SpaceId::Data as usize]
                 .crypto
                 .as_mut()
-                .unwrap()
+                .unwrap() // safe because update_keys() can only be triggered by short packets
                 .packet,
             crypto,
         );
