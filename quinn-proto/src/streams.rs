@@ -513,3 +513,9 @@ pub enum FinishError {
     #[error(display = "unknown stream")]
     UnknownStream,
 }
+
+/// Unknown stream ID
+#[derive(Debug)]
+pub struct UnknownStream {
+    pub(crate) _private: (),
+}

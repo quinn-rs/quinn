@@ -272,7 +272,9 @@ fn stop_stream() {
 
     info!(pair.log, "stopping stream");
     const ERROR: VarInt = VarInt(42);
-    pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
+    pair.server_conn_mut(server_ch)
+        .stop_sending(s, ERROR)
+        .unwrap();
     pair.drive();
 
     assert_matches!(
@@ -904,7 +906,8 @@ fn stop_opens_bidi() {
         .connections
         .get_mut(&server_conn)
         .unwrap()
-        .stop_sending(s, ERROR);
+        .stop_sending(s, ERROR)
+        .unwrap();
     pair.drive();
 
     assert_matches!(
@@ -1090,7 +1093,9 @@ fn stop_before_finish() {
 
     info!(pair.log, "stopping stream");
     const ERROR: VarInt = VarInt(42);
-    pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
+    pair.server_conn_mut(server_ch)
+        .stop_sending(s, ERROR)
+        .unwrap();
     pair.drive();
 
     assert_matches!(
@@ -1115,7 +1120,9 @@ fn stop_during_finish() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(), Some(stream) if stream == s);
     info!(pair.log, "stopping and finishing stream");
     const ERROR: VarInt = VarInt(42);
-    pair.server_conn_mut(server_ch).stop_sending(s, ERROR);
+    pair.server_conn_mut(server_ch)
+        .stop_sending(s, ERROR)
+        .unwrap();
     pair.drive_server();
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive_client();
