@@ -6,7 +6,7 @@ use err_derive::Error;
 use futures::sync::oneshot;
 use futures::{task, try_ready};
 use futures::{Async, Future, Poll};
-use proto::{ConnectionError, StreamId};
+use proto::{self, ConnectionError, StreamId};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::connection::ConnectionRef;
@@ -333,14 +333,15 @@ impl RecvStream {
     ///
     /// Has no effect if the incoming stream already finished, even if the local application hasn't
     /// yet read all buffered data.
-    pub fn stop(&mut self, error_code: VarInt) {
+    pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
-            return;
+            return Ok(());
         }
-        conn.inner.stop_sending(self.stream, error_code);
+        conn.inner.stop_sending(self.stream, error_code)?;
         conn.notify();
         self.all_data_read = true;
+        Ok(())
     }
 }
 
@@ -422,7 +423,8 @@ impl Drop for RecvStream {
             return;
         }
         if !self.all_data_read {
-            conn.inner.stop_sending(self.stream, 0u32.into());
+            // Ignore UnknownStream errors
+            let _ = conn.inner.stop_sending(self.stream, 0u32.into());
             conn.notify();
         }
     }
@@ -497,5 +499,14 @@ impl From<WriteError> for io::Error {
             UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
+    }
+}
+
+#[derive(Debug)]
+pub struct UnknownStream {}
+
+impl From<proto::UnknownStream> for UnknownStream {
+    fn from(_: proto::UnknownStream) -> Self {
+        UnknownStream {}
     }
 }

@@ -23,7 +23,7 @@ use crate::shared::{
     EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
 };
 use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
-use crate::streams::{self, FinishError, ReadError, Streams, WriteError};
+use crate::streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError};
 use crate::timer::{Timer, TimerKind, TimerTable};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
@@ -818,8 +818,11 @@ where
         );
     }
 
-    fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) {
-        let ss = self.streams.send_mut(stream).unwrap();
+    fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) -> Result<(), WriteError> {
+        let ss = self
+            .streams
+            .send_mut(stream)
+            .ok_or(WriteError::UnknownStream)?;
         assert_eq!(ss.state, streams::SendState::Ready);
         let offset = ss.offset;
         ss.offset += data.len() as u64;
@@ -835,6 +838,7 @@ where
                 data,
                 id: stream,
             });
+        Ok(())
     }
 
     /// Abandon transmitting data on a stream
@@ -2656,12 +2660,15 @@ where
     }
 
     /// Signal to the peer that it should stop sending on the given recv stream
-    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
             id.directionality() == Directionality::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
-        let stream = self.streams.recv_mut(id).unwrap();
+        let stream = self
+            .streams
+            .recv_mut(id)
+            .ok_or(UnknownStream { _private: () })?;
         // Only bother if there's data we haven't received yet
         if !stream.is_finished() {
             let space = &mut self.spaces[SpaceId::Data as usize];
@@ -2670,6 +2677,7 @@ where
                 .stop_sending
                 .push(frame::StopSending { id, error_code });
         }
+        Ok(())
     }
 
     fn congestion_blocked(&self) -> bool {
@@ -2846,7 +2854,7 @@ where
             self.config.send_window - self.unacked_data,
         );
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.queue_stream_data(stream, (&data[0..n]).into());
+        self.queue_stream_data(stream, (&data[0..n]).into())?;
         trace!(
             self.log,
             "wrote {len} bytes to {stream}",

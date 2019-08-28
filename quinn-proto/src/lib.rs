@@ -58,7 +58,7 @@ pub use crate::shared::{
 };
 
 mod streams;
-pub use crate::streams::{FinishError, ReadError, WriteError};
+pub use crate::streams::{FinishError, ReadError, UnknownStream, WriteError};
 
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
