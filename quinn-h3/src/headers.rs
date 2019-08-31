@@ -1,5 +1,7 @@
-use futures::{Async, Future, Poll};
+use futures::{try_ready, Async, Future, Poll};
+use quinn::SendStream;
 use quinn_proto::StreamId;
+use tokio_io::io::WriteAll;
 
 use crate::{
     connection::ConnectionRef,
@@ -46,5 +48,36 @@ impl Future for DecodeHeaders {
                 }
             }
         }
+    }
+}
+
+pub(crate) struct SendHeaders(WriteAll<SendStream, Vec<u8>>);
+
+impl SendHeaders {
+    pub fn new(
+        header: Header,
+        conn: &ConnectionRef,
+        send: SendStream,
+        stream_id: StreamId,
+    ) -> Result<Self, Error> {
+        let block = {
+            let conn = &mut conn.h3.lock().unwrap().inner;
+            conn.encode_header(stream_id, header)?
+        };
+
+        let mut encoded = Vec::new();
+        block.encode(&mut encoded);
+
+        Ok(Self(tokio_io::io::write_all(send, encoded)))
+    }
+}
+
+impl Future for SendHeaders {
+    type Item = SendStream;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let (send, _) = try_ready!(self.0.poll());
+        Ok(Async::Ready(send))
     }
 }

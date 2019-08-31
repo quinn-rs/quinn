@@ -13,7 +13,7 @@ use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
-    headers::DecodeHeaders,
+    headers::{DecodeHeaders, SendHeaders},
     proto::{frame::HttpFrame, headers::Header},
     try_take, Error, Settings,
 };
@@ -220,7 +220,10 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn send_response<T: Into<Body>>(self, response: Response<T>) -> SendResponse {
+    pub fn send_response<T: Into<Body>>(
+        self,
+        response: Response<T>,
+    ) -> Result<SendResponse, Error> {
         SendResponse::new(response, self.send, self.stream_id, self.conn)
     }
 
@@ -228,7 +231,7 @@ impl Sender {
         self,
         response: Response<T>,
         trailer: HeaderMap,
-    ) -> SendResponse {
+    ) -> Result<SendResponse, Error> {
         SendResponse::with_trailers(
             response,
             Some(trailer),
@@ -240,8 +243,7 @@ impl Sender {
 }
 
 enum SendResponseState {
-    Encoding,
-    SendingHeader(WriteAll<SendStream, Vec<u8>>),
+    SendingHeader(SendHeaders),
     SendingBody(SendBody),
     SendingTrailers(WriteAll<SendStream, Vec<u8>>),
     Closing(Shutdown<SendStream>),
@@ -249,10 +251,8 @@ enum SendResponseState {
 
 pub struct SendResponse {
     state: SendResponseState,
-    header: Option<Header>,
     body: Option<Body>,
     trailer: Option<Header>,
-    send: Option<SendStream>,
     conn: ConnectionRef,
     stream_id: StreamId,
 }
@@ -263,7 +263,7 @@ impl SendResponse {
         send: SendStream,
         stream_id: StreamId,
         conn: ConnectionRef,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         Self::with_trailers(response, None, send, stream_id, conn)
     }
 
@@ -273,7 +273,7 @@ impl SendResponse {
         send: SendStream,
         stream_id: StreamId,
         conn: ConnectionRef,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let (
             response::Parts {
                 status, headers, ..
@@ -281,42 +281,29 @@ impl SendResponse {
             body,
         ) = response.into_parts();
 
-        Self {
+        let headers = Header::response(status, headers);
+        let state =
+            SendResponseState::SendingHeader(SendHeaders::new(headers, &conn, send, stream_id)?);
+
+        Ok(Self {
             conn,
+            state,
             stream_id,
             body: Some(body.into()),
-            send: Some(send),
             trailer: trailers.map(Header::trailer),
-            header: Some(Header::response(status, headers)),
-            state: SendResponseState::Encoding,
-        }
+        })
     }
 }
 
 impl Future for SendResponse {
     type Item = ();
     type Error = Error;
+
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.state {
-                SendResponseState::Encoding => {
-                    let header = try_take(&mut self.header, "polled after finished")?;
-                    let block = {
-                        let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        conn.encode_header(self.stream_id, header)?
-                    };
-
-                    let mut encoded = Vec::new();
-                    block.encode(&mut encoded);
-
-                    let send = try_take(&mut self.send, "polled after finished")?;
-                    mem::replace(
-                        &mut self.state,
-                        SendResponseState::SendingHeader(tokio_io::io::write_all(send, encoded)),
-                    );
-                }
                 SendResponseState::SendingHeader(ref mut write) => {
-                    let (send, _) = try_ready!(write.poll());
+                    let send = try_ready!(write.poll());
                     mem::replace(
                         &mut self.state,
                         SendResponseState::SendingBody(SendBody::new(

@@ -228,6 +228,7 @@ fn handle_request(
 
             sender
                 .send_response_trailers(response, trailer)
+                .unwrap()
                 .map_err(|e| format_err!("failed to send response: {:?}", e))
         })
 }
