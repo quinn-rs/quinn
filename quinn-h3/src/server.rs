@@ -1,8 +1,10 @@
 use std::mem;
 use std::net::ToSocketAddrs;
 
-use futures::task;
-use futures::{try_ready, Async, Future, Poll, Stream};
+use futures::{
+    future::{Either, IntoFuture},
+    task, try_ready, Async, Future, Poll, Stream,
+};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
@@ -10,7 +12,7 @@ use slog::{self, o, Logger};
 use tokio_io::io::{Shutdown, WriteAll};
 
 use crate::{
-    body::{Body, RecvBody, SendBody},
+    body::{Body, BodyWriter, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::{DecodeHeaders, SendHeaders},
@@ -220,25 +222,69 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn send_response<T: Into<Body>>(
-        self,
-        response: Response<T>,
-    ) -> Result<SendResponse, Error> {
-        SendResponse::new(response, self.send, self.stream_id, self.conn)
+    pub fn response<T>(self, response: Response<T>) -> RespBuilder<T> {
+        RespBuilder {
+            response,
+            sender: self,
+            trailers: None,
+        }
+    }
+}
+
+pub struct RespBuilder<T> {
+    sender: Sender,
+    response: Response<T>,
+    trailers: Option<HeaderMap>,
+}
+
+impl<T> RespBuilder<T>
+where
+    T: Into<Body>,
+{
+    pub fn trailers(mut self, trailers: HeaderMap) -> Self {
+        self.trailers = Some(trailers);
+        self
     }
 
-    pub fn send_response_trailers<T: Into<Body>>(
-        self,
-        response: Response<T>,
-        trailer: HeaderMap,
-    ) -> Result<SendResponse, Error> {
-        SendResponse::with_trailers(
-            response,
-            Some(trailer),
-            self.send,
-            self.stream_id,
-            self.conn,
-        )
+    pub fn send(self) -> Result<SendResponse, Error> {
+        let Sender {
+            send,
+            stream_id,
+            conn,
+        } = self.sender;
+        SendResponse::new(self.response, self.trailers, send, stream_id, conn)
+    }
+
+    pub fn stream(self) -> impl Future<Item = BodyWriter, Error = Error> {
+        let Sender {
+            send,
+            stream_id,
+            conn,
+        } = self.sender;
+
+        let (
+            response::Parts {
+                status, headers, ..
+            },
+            body,
+        ) = self.response.into_parts();
+
+        let trailers = self.trailers;
+
+        match SendHeaders::new(Header::response(status, headers), &conn, send, stream_id) {
+            Err(e) => Either::A(Err(e).into_future()),
+            Ok(f) => Either::B(f.and_then(move |send| {
+                let writer = BodyWriter::new(send, conn, stream_id, trailers);
+                match body.into() {
+                    Body::Buf(b) => Either::A(
+                        tokio_io::io::write_all(writer, b)
+                            .map_err(Into::into)
+                            .and_then(|(writer, _)| Ok(writer).into_future()),
+                    ),
+                    Body::None => Either::B(Ok(writer).into_future()),
+                }
+            })),
+        }
     }
 }
 
@@ -259,15 +305,6 @@ pub struct SendResponse {
 
 impl SendResponse {
     fn new<T: Into<Body>>(
-        response: Response<T>,
-        send: SendStream,
-        stream_id: StreamId,
-        conn: ConnectionRef,
-    ) -> Result<Self, Error> {
-        Self::with_trailers(response, None, send, stream_id, conn)
-    }
-
-    fn with_trailers<T: Into<Body>>(
         response: Response<T>,
         trailers: Option<HeaderMap>,
         send: SendStream,

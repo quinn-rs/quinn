@@ -214,10 +214,9 @@ fn handle_request(
             }
         })
         .and_then(move |_| {
-            let body = "r".repeat(1024 * 800);
             let response = Response::builder()
                 .status(StatusCode::OK)
-                .body(body.as_str())
+                .body("first part of body")
                 .expect("failed to build response");
 
             let mut trailer = HeaderMap::with_capacity(2);
@@ -227,9 +226,21 @@ fn handle_request(
             );
 
             sender
-                .send_response_trailers(response, trailer)
-                .unwrap()
-                .map_err(|e| format_err!("failed to send response: {:?}", e))
+                .response(response)
+                .trailers(trailer)
+                .stream()
+                .map_err(|e| format_err!("failed to send response headers: {:?}", e))
+                .and_then(|writer| {
+                    let body = "r".repeat(1024);
+                    tokio::io::write_all(writer, body)
+                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
+                })
+                .and_then(|(writer, _size)| {
+                    writer
+                        .close()
+                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
+                })
+                .and_then(|_| futures::future::ok(()))
         })
 }
 
