@@ -289,7 +289,9 @@ fn client(
                 HeaderValue::from_str("trailer").expect("trailer value"),
             );
 
-            conn.send_request_trailers(request, trailer)
+            conn.request(request)
+                .trailers(trailer)
+                .send()
                 .map_err(|e| format_err!("send request: {}", e))
                 .and_then(|response| {
                     println!("received response: {:?}", response);
