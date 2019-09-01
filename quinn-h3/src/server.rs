@@ -246,13 +246,16 @@ where
         self
     }
 
-    pub fn send(self) -> Result<SendResponse, Error> {
+    pub fn send(self) -> impl Future<Item = (), Error = Error> {
         let Sender {
             send,
             stream_id,
             conn,
         } = self.sender;
-        SendResponse::new(self.response, self.trailers, send, stream_id, conn)
+        match SendResponse::new(self.response, self.trailers, send, stream_id, conn) {
+            Err(e) => Either::A(Err(e).into_future()),
+            Ok(f) => Either::B(f),
+        }
     }
 
     pub fn stream(self) -> impl Future<Item = BodyWriter, Error = Error> {
