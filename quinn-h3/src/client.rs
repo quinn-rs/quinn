@@ -85,21 +85,12 @@ impl Client {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    pub fn send_request<T: Into<Body>>(&self, request: Request<T>) -> SendRequest {
-        SendRequest::new(request, None, self.0.quic.open_bi(), self.0.clone())
-    }
-
-    pub fn send_request_trailers<T: Into<Body>>(
-        &self,
-        request: Request<T>,
-        trailers: HeaderMap,
-    ) -> SendRequest {
-        SendRequest::new(
+    pub fn request<T: Into<Body>>(&self, request: Request<T>) -> ReqBuilder<T> {
+        ReqBuilder {
             request,
-            Some(trailers),
-            self.0.quic.open_bi(),
-            self.0.clone(),
-        )
+            trailers: None,
+            conn: self.0.clone(),
+        }
     }
 }
 
@@ -126,6 +117,31 @@ impl Future for Connecting {
             ConnectionDriver::new(conn_ref.clone(), streams, self.log.clone()),
             Connection(conn_ref),
         )))
+    }
+}
+
+pub struct ReqBuilder<T> {
+    conn: ConnectionRef,
+    request: Request<T>,
+    trailers: Option<HeaderMap>,
+}
+
+impl<T> ReqBuilder<T>
+where
+    T: Into<Body>,
+{
+    pub fn trailers(mut self, trailers: HeaderMap) -> Self {
+        self.trailers = Some(trailers);
+        self
+    }
+
+    pub fn send(self) -> SendRequest {
+        SendRequest::new(
+            self.request,
+            self.trailers,
+            self.conn.quic.open_bi(),
+            self.conn,
+        )
     }
 }
 
