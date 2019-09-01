@@ -321,7 +321,13 @@ impl io::Read for BodyReader {
 
         match self.recv.poll() {
             Err(err) => Err(io::Error::new(ErrorKind::Other, Error::from(err))),
-            Ok(Async::NotReady) => Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")),
+            Ok(Async::NotReady) => {
+                if size > 0 {
+                    Ok(size)
+                } else {
+                    Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked"))
+                }
+            }
             Ok(Async::Ready(r)) => match r {
                 None => Ok(size),
                 Some(HttpFrame::Data(mut d)) => {
