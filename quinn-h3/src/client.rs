@@ -7,13 +7,13 @@ use http::{request::Parts, HeaderMap, Request, Response};
 use quinn::{Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
-use tokio_io::io::{Shutdown, WriteAll};
+use tokio_io::io::Shutdown;
 
 use crate::{
     body::{Body, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
-    headers::DecodeHeaders,
+    headers::{DecodeHeaders, SendHeaders},
     proto::{frame::HttpFrame, headers::Header},
     try_take, Error, Settings,
 };
@@ -131,9 +131,9 @@ impl Future for Connecting {
 
 enum SendRequestState {
     Opening(OpenBi),
-    Sending(WriteAll<SendStream, Vec<u8>>),
+    Sending(SendHeaders),
     SendingBody(SendBody),
-    SendingTrailers(WriteAll<SendStream, Vec<u8>>),
+    SendingTrailers(SendHeaders),
     Sent(Shutdown<SendStream>),
     Receiving(FrameStream),
     Decoding(DecodeHeaders),
@@ -206,20 +206,15 @@ impl Future for SendRequest {
                     let (send, recv) = try_ready!(o.poll());
                     self.recv = Some(FrameDecoder::stream(recv));
                     self.stream_id = Some(send.id());
-
-                    let header_block = {
-                        let conn = &mut self.conn.h3.lock().unwrap().inner;
-                        let header = try_take(&mut self.header, "header none")?;
-                        conn.encode_header(send.id(), header)?
-                    };
-                    let mut encoded_header = vec![];
-                    header_block.encode(&mut encoded_header);
-
-                    let send = tokio_io::io::write_all(send, encoded_header);
-                    self.state = SendRequestState::Sending(send);
+                    self.state = SendRequestState::Sending(SendHeaders::new(
+                        try_take(&mut self.header, "header none")?,
+                        &self.conn,
+                        send,
+                        self.stream_id.unwrap(),
+                    )?);
                 }
                 SendRequestState::Sending(ref mut send) => {
-                    let (send, _) = try_ready!(send.poll());
+                    let send = try_ready!(send.poll());
                     self.state = match self.body.take() {
                         None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
                         Some(b) => SendRequestState::SendingBody(SendBody::new(send, b)),
@@ -229,20 +224,16 @@ impl Future for SendRequest {
                     let send = try_ready!(send_body.poll());
                     self.state = match self.trailers.take() {
                         None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
-                        Some(t) => {
-                            let block = {
-                                let conn = &mut self.conn.h3.lock().unwrap().inner;
-                                conn.encode_header(send.id(), t)?
-                            };
-                            let mut encoded_header = vec![];
-                            block.encode(&mut encoded_header);
-                            let write = tokio_io::io::write_all(send, encoded_header);
-                            SendRequestState::SendingTrailers(write)
-                        }
+                        Some(t) => SendRequestState::SendingTrailers(SendHeaders::new(
+                            t,
+                            &self.conn,
+                            send,
+                            self.stream_id.unwrap(),
+                        )?),
                     }
                 }
                 SendRequestState::SendingTrailers(ref mut send_trailers) => {
-                    let (send, _) = try_ready!(send_trailers.poll());
+                    let send = try_ready!(send_trailers.poll());
                     self.state = SendRequestState::Sent(tokio_io::io::shutdown(send));
                 }
                 SendRequestState::Sent(ref mut shut) => {
