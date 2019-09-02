@@ -654,7 +654,7 @@ where
                     .space_mut(pn_space)
                     .sent_packets
                     .remove(&packet)
-                    .unwrap();
+                    .unwrap(); // safe: lost_packets is populated just above
                 self.in_flight.remove(&info);
                 self.space_mut(pn_space).pending += info.retransmits;
             }
