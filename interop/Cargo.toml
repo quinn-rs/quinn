@@ -10,7 +10,7 @@ quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
 slog-term = "2"
 bytes = "0.4.7"
-structopt = "0.2.7"
+structopt = "0.3.0"
 tokio = "0.1.6"
 tokio-current-thread = "0.1"
 tokio-reactor = "0.1"
