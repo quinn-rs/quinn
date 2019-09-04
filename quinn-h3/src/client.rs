@@ -2,15 +2,18 @@ use std::mem;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 
-use futures::{try_ready, Async, Future, Poll, Stream};
-use http::{request::Parts, HeaderMap, Request, Response};
+use futures::{
+    future::{Either, IntoFuture},
+    try_ready, Async, Future, Poll, Stream,
+};
+use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
 use tokio_io::io::Shutdown;
 
 use crate::{
-    body::{Body, RecvBody, SendBody},
+    body::{Body, BodyWriter, RecvBody, SendBody},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::{DecodeHeaders, SendHeaders},
@@ -143,6 +146,48 @@ where
             self.conn,
         )
     }
+
+    pub fn stream(self) -> impl Future<Item = (BodyWriter, RecvResponse), Error = Error> {
+        let (
+            request::Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            body,
+        ) = self.request.into_parts();
+
+        let (conn, trailers) = (self.conn, self.trailers);
+
+        conn.quic
+            .open_bi()
+            .map_err(Into::into)
+            .and_then(move |(send, recv)| {
+                let stream_id = send.id();
+                let send_headers = SendHeaders::new(
+                    Header::request(method, uri, headers),
+                    &conn,
+                    send,
+                    stream_id,
+                );
+                match send_headers {
+                    Err(e) => Either::A(Err(e).into_future()),
+                    Ok(f) => Either::B(f.and_then(move |send| {
+                        let writer = BodyWriter::new(send, conn.clone(), stream_id, trailers);
+                        let recv = RecvResponse::new(FrameDecoder::stream(recv), conn, stream_id);
+                        match body.into() {
+                            Body::Buf(b) => Either::A(
+                                tokio_io::io::write_all(writer, b)
+                                    .map_err(Into::into)
+                                    .and_then(move |(writer, _)| Ok((writer, recv)).into_future()),
+                            ),
+                            Body::None => Either::B(Ok((writer, recv)).into_future()),
+                        }
+                    })),
+                }
+            })
+    }
 }
 
 enum SendRequestState {
@@ -175,7 +220,7 @@ impl SendRequest {
         conn: ConnectionRef,
     ) -> Self {
         let (
-            Parts {
+            request::Parts {
                 method,
                 uri,
                 headers,
@@ -280,6 +325,76 @@ impl Future for SendRequest {
                     }
                 }
                 _ => return Err(Error::Poll),
+            }
+        }
+    }
+}
+
+pub struct RecvResponse {
+    state: RecvResponseState,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+    recv: Option<FrameStream>,
+}
+
+enum RecvResponseState {
+    Receiving(FrameStream),
+    Decoding(DecodeHeaders),
+    Finished,
+}
+
+impl RecvResponse {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        Self {
+            conn,
+            stream_id,
+            recv: None,
+            state: RecvResponseState::Receiving(recv),
+        }
+    }
+}
+
+impl Future for RecvResponse {
+    type Item = Response<RecvBody>;
+    type Error = crate::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.state {
+            RecvResponseState::Finished => {
+                Err(crate::Error::Internal("recv response polled after finish"))
+            }
+            RecvResponseState::Receiving(ref mut recv) => match try_ready!(recv.poll()) {
+                None => return Err(Error::peer("received an empty response")),
+                Some(f) => match f {
+                    HttpFrame::Headers(h) => {
+                        let decode = DecodeHeaders::new(h, self.conn.clone(), self.stream_id);
+                        self.recv = match mem::replace(
+                            &mut self.state,
+                            RecvResponseState::Decoding(decode),
+                        ) {
+                            RecvResponseState::Receiving(r) => Some(r),
+                            _ => unreachable!(),
+                        };
+                        Ok(Async::NotReady)
+                    }
+                    _ => return Err(Error::peer("first frame is not headers")),
+                },
+            },
+            RecvResponseState::Decoding(ref mut decode) => {
+                let headers = try_ready!(decode.poll());
+                let response = build_response(
+                    headers,
+                    self.conn.clone(),
+                    self.recv.take().unwrap(),
+                    self.stream_id,
+                );
+                match response {
+                    Err(e) => Err(e).into(),
+                    Ok(r) => {
+                        self.state = RecvResponseState::Finished;
+                        Ok(Async::Ready(r))
+                    }
+                }
             }
         }
     }

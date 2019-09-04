@@ -199,7 +199,7 @@ fn handle_request(
     tokio::io::read_to_end(body.into_reader(), content)
         .map_err(|e| format_err!("failed to receive response body: {:?}", e))
         .and_then(move |(reader, content)| {
-            println!("server received body: {:?}", content);
+            println!("server received body len: {:?}", content.len());
 
             match reader.trailers() {
                 None => Either::A(futures::future::ok(())),
@@ -291,31 +291,50 @@ fn client(
 
             conn.request(request)
                 .trailers(trailer)
-                .send()
-                .map_err(|e| format_err!("send request: {}", e))
-                .and_then(|response| {
-                    println!("received response: {:?}", response);
-                    let (_, body) = response.into_parts();
-                    let buf = Vec::with_capacity(1024 * 10); // 10K
-                    tokio_io::io::read_to_end(body.into_reader(), buf)
+                .stream()
+                .map_err(|e| format_err!("send request failed: {}", e))
+                .and_then(|(send_body, response)| {
+                    let response_fut = response
                         .map_err(|e| format_err!("receive response failed: {}", e))
-                        .and_then(|(reader, data)| {
-                            println!("received body len = {}", data.len());
-                            if let Some(decode_trailers) = reader.trailers() {
-                                return Either::A(
-                                    decode_trailers
-                                        .map_err(|e| format_err!("decode trailers failed: {}", e))
-                                        .and_then(|trailers| {
-                                            println!(
-                                                "received trailers: {:?}",
-                                                trailers.into_fields()
-                                            );
-                                            futures::future::ok(())
-                                        }),
-                                );
-                            }
-                            Either::B(futures::future::ok(()))
-                        })
+                        .and_then(|response| {
+                            println!("received response: {:?}", response);
+
+                            let (_, body) = response.into_parts();
+
+                            let buf = Vec::with_capacity(1024 * 10); // 10K
+                            tokio_io::io::read_to_end(body.into_reader(), buf)
+                                .map_err(|e| format_err!("receive body failed: {}", e))
+                                .and_then(|(reader, data)| {
+                                    println!("received body len = {}", data.len());
+                                    if let Some(decode_trailers) = reader.trailers() {
+                                        return Either::A(
+                                            decode_trailers
+                                                .map_err(|e| {
+                                                    format_err!("decode trailers failed: {}", e)
+                                                })
+                                                .and_then(|trailers| {
+                                                    println!(
+                                                        "received trailers: {:?}",
+                                                        trailers.into_fields()
+                                                    );
+                                                    futures::future::ok(())
+                                                }),
+                                        );
+                                    }
+                                    Either::B(futures::future::ok(()))
+                                })
+                        });
+
+                    let body = "r".repeat(1024);
+                    let send_body_fut = tokio::io::write_all(send_body, body)
+                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
+                        .and_then(|(writer, _size)| {
+                            writer
+                                .close()
+                                .map_err(|e| format_err!("failed to send response body: {:?}", e))
+                        });
+
+                    send_body_fut.join(response_fut).map(|_| ())
                 })
         });
 
