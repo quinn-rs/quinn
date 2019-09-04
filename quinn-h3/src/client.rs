@@ -196,18 +196,12 @@ impl SendRequest {
     }
 
     fn build_response(&mut self, header: Header) -> Result<Response<RecvBody>, Error> {
-        let (status, headers) = header.into_response_parts()?;
-        let mut response = Response::builder()
-            .status(status)
-            .version(http::version::Version::HTTP_3)
-            .body(RecvBody::new(
-                try_take(&mut self.recv, "recv is none")?,
-                self.conn.clone(),
-                try_take(&mut self.stream_id, "stream is none")?,
-            ))
-            .unwrap();
-        *response.headers_mut() = headers;
-        Ok(response)
+        build_response(
+            header,
+            self.conn.clone(),
+            try_take(&mut self.recv, "recv is none")?,
+            try_take(&mut self.stream_id, "stream is none")?,
+        )
     }
 }
 
@@ -289,4 +283,20 @@ impl Future for SendRequest {
             }
         }
     }
+}
+
+fn build_response(
+    header: Header,
+    conn: ConnectionRef,
+    recv: FrameStream,
+    stream_id: StreamId,
+) -> Result<Response<RecvBody>, Error> {
+    let (status, headers) = header.into_response_parts()?;
+    let mut response = Response::builder()
+        .status(status)
+        .version(http::version::Version::HTTP_3)
+        .body(RecvBody::new(recv, conn, stream_id))
+        .unwrap();
+    *response.headers_mut() = headers;
+    Ok(response)
 }
