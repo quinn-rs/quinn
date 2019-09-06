@@ -1,11 +1,12 @@
 use std::io;
 
-use bytes::BytesMut;
-use quinn::RecvStream;
+use bytes::{Bytes, BytesMut};
+use futures::{try_ready, Async, Future, Poll};
+use quinn::{RecvStream, SendStream, VarInt};
 use tokio_codec::{Decoder, FramedRead};
-use tokio_io::AsyncRead;
+use tokio_io::{io::WriteAll, AsyncRead};
 
-use super::proto::frame::{self, HttpFrame, PartialData};
+use super::proto::frame::{self, DataFrame, FrameHeader, HttpFrame, PartialData};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
@@ -70,7 +71,11 @@ impl Decoder for FrameDecoder {
                 src.advance(pos);
                 self.expected = None;
                 self.partial = Some(partial);
-                Ok(Some(HttpFrame::Data(frame)))
+                if frame.len() > 0 {
+                    Ok(Some(HttpFrame::Data(frame)))
+                } else {
+                    Ok(None)
+                }
             }
             Err(frame::Error::Incomplete(min)) => {
                 self.expected = Some(min);
@@ -81,6 +86,54 @@ impl Decoder for FrameDecoder {
                 src.advance(pos);
                 self.expected = None;
                 Ok(Some(frame))
+            }
+        }
+    }
+}
+
+pub struct WriteFrame {
+    state: WriteFrameState,
+    payload: Option<Bytes>,
+}
+
+enum WriteFrameState {
+    Header(WriteAll<SendStream, Bytes>),
+    Payload(WriteAll<SendStream, Bytes>),
+    Finished,
+}
+
+impl WriteFrame {
+    pub fn new(send: SendStream, frame: DataFrame) -> Self {
+        let mut buf = Vec::with_capacity(VarInt::MAX.size() * 2);
+        frame.encode_header(&mut buf);
+
+        Self {
+            state: WriteFrameState::Header(tokio_io::io::write_all(send, buf.into())),
+            payload: Some(frame.payload),
+        }
+    }
+}
+
+impl Future for WriteFrame {
+    type Item = SendStream;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.state {
+                WriteFrameState::Finished => panic!(),
+                WriteFrameState::Header(ref mut write) => {
+                    let (send, _) = try_ready!(write.poll());
+                    self.state = WriteFrameState::Payload(tokio_io::io::write_all(
+                        send,
+                        self.payload.take().unwrap(),
+                    ));
+                }
+                WriteFrameState::Payload(ref mut write) => {
+                    let (send, _) = try_ready!(write.poll());
+                    self.state = WriteFrameState::Finished;
+                    return Ok(Async::Ready(send));
+                }
             }
         }
     }

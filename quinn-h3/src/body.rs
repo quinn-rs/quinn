@@ -8,12 +8,12 @@ use bytes::{Bytes, BytesMut};
 use futures::{future::Either, try_ready, Async, Future, IntoFuture, Poll, Stream};
 use http::HeaderMap;
 use quinn::SendStream;
-use quinn_proto::{StreamId, VarInt};
-use tokio_io::{io::WriteAll, AsyncRead, AsyncWrite};
+use quinn_proto::StreamId;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::{
     connection::ConnectionRef,
-    frame::FrameStream,
+    frame::{FrameStream, WriteFrame},
     headers::{DecodeHeaders, SendHeaders},
     proto::{
         frame::{DataFrame, HeadersFrame, HttpFrame},
@@ -63,7 +63,7 @@ impl SendBody {
 
 pub enum SendBodyState {
     Initial,
-    SendingBuf(WriteAll<SendStream, Bytes>),
+    SendingBuf(WriteFrame),
     Finished,
 }
 
@@ -77,18 +77,17 @@ impl Future for SendBody {
                     Body::None => return Ok(Async::Ready(try_take(&mut self.send, "send")?)),
                     Body::Buf(b) => {
                         let send = try_take(&mut self.send, "SendBody stream")?;
-
-                        let mut buf = Vec::new();
-                        DataFrame { payload: b }.encode(&mut buf); // TODO unecessary copy
-
                         mem::replace(
                             &mut self.state,
-                            SendBodyState::SendingBuf(tokio_io::io::write_all(send, buf.into())),
+                            SendBodyState::SendingBuf(WriteFrame::new(
+                                send,
+                                DataFrame { payload: b.into() },
+                            )),
                         );
                     }
                 },
                 SendBodyState::SendingBuf(ref mut b) => {
-                    let (send, _) = try_ready!(b.poll());
+                    let send = try_ready!(b.poll());
                     mem::replace(&mut self.state, SendBodyState::Finished);
                     return Ok(Async::Ready(send));
                 }
@@ -352,8 +351,8 @@ impl io::Read for BodyReader {
 }
 
 pub struct BodyWriter {
-    send: SendStream,
-    frame: Option<Bytes>,
+    state: BodyWriterState,
+    send: Option<SendStream>,
     conn: ConnectionRef,
     stream_id: StreamId,
     trailers: Option<HeaderMap>,
@@ -367,64 +366,92 @@ impl BodyWriter {
         trailers: Option<HeaderMap>,
     ) -> Self {
         Self {
-            send,
+            state: BodyWriterState::Idle,
+            send: Some(send),
             conn,
             stream_id,
             trailers,
-            frame: None,
         }
     }
 
-    pub fn trailers(self, trailers: HeaderMap) -> impl Future<Item = (), Error = Error> {
-        match SendHeaders::new(
-            Header::trailer(trailers),
-            &self.conn,
-            self.send,
-            self.stream_id,
-        ) {
+    pub fn trailers(mut self, trailers: HeaderMap) -> impl Future<Item = (), Error = Error> {
+        match self.state {
+            BodyWriterState::Idle => {
+                let send = self.send.take().expect("send is none");
+                Self::_trailers(trailers, &self.conn, send, self.stream_id)
+            }
+            _ => panic!("cannot send trailers while not in idle state"),
+        }
+    }
+
+    pub fn close(mut self) -> impl Future<Item = (), Error = Error> {
+        match (self.trailers.take(), self.state) {
+            (Some(t), BodyWriterState::Idle) => {
+                let send = self.send.take().expect("send is none");
+                Either::A(Self::_trailers(t, &self.conn, send, self.stream_id))
+            }
+            (None, BodyWriterState::Idle) => Either::B(
+                tokio_io::io::shutdown(self.send.take().unwrap())
+                    .map_err(Into::into)
+                    .map(|_| ()),
+            ),
+            _ => panic!("cannot close while not in idle state"),
+        }
+    }
+
+    fn _trailers(
+        trailers: HeaderMap,
+        conn: &ConnectionRef,
+        send: SendStream,
+        stream_id: StreamId,
+    ) -> impl Future<Item = (), Error = Error> {
+        match SendHeaders::new(Header::trailer(trailers), conn, send, stream_id) {
             Err(e) => Either::A(Err(e).into_future()),
             Ok(f) => Either::B(
                 f.and_then(|send| tokio_io::io::shutdown(send).map_err(Into::into).map(|_| ())),
             ),
         }
     }
+}
 
-    pub fn close(mut self) -> impl Future<Item = (), Error = Error> {
-        match self.trailers.take() {
-            Some(t) => Either::A(self.trailers(t)),
-            None => Either::B(
-                tokio_io::io::shutdown(self.send)
-                    .map_err(Into::into)
-                    .map(|_| ()),
-            ),
-        }
-    }
+enum BodyWriterState {
+    Idle,
+    Writing(WriteFrame),
+    Finished,
 }
 
 impl io::Write for BodyWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.frame.is_none() {
-            let mut encoded = Vec::with_capacity(buf.len() + 2 * VarInt::MAX.size());
-            DataFrame {
-                payload: Bytes::from(buf),
-            }
-            .encode(&mut encoded);
-            self.frame = Some(encoded.into())
-        }
-
-        let frame = self.frame.as_mut().unwrap();
-        match self.send.poll_write(frame) {
-            Ok(Async::Ready(n)) => {
-                frame.advance(n);
-                if frame.is_empty() {
-                    self.frame = None;
-                    Ok(buf.len())
-                } else {
-                    Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked"))
+        loop {
+            match self.state {
+                BodyWriterState::Finished => panic!(),
+                BodyWriterState::Idle => {
+                    let frame = DataFrame {
+                        payload: buf.into(),
+                    };
+                    let send = self.send.take().expect("send is none");
+                    mem::replace(
+                        &mut self.state,
+                        BodyWriterState::Writing(WriteFrame::new(send, frame)),
+                    );
                 }
+                BodyWriterState::Writing(ref mut write) => match write.poll() {
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("{:?}", e),
+                        ))
+                    }
+                    Ok(Async::Ready(send)) => {
+                        self.send = Some(send);
+                        mem::replace(&mut self.state, BodyWriterState::Idle);
+                        return Ok(buf.len());
+                    }
+                    Ok(Async::NotReady) => {
+                        return Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked"));
+                    }
+                },
             }
-            Ok(Async::NotReady) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream blocked")),
-            Err(e) => Err(e.into()),
         }
     }
 
@@ -435,6 +462,17 @@ impl io::Write for BodyWriter {
 
 impl AsyncWrite for BodyWriter {
     fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.send.poll_finish().map_err(Into::into)
+        match self.state {
+            BodyWriterState::Finished => Ok(Async::Ready(())),
+            BodyWriterState::Idle => {
+                self.state = BodyWriterState::Finished;
+                self.send.take().expect("send is none").shutdown()
+            }
+            BodyWriterState::Writing(ref mut write) => {
+                let mut send = try_ready!(write.poll());
+                self.state = BodyWriterState::Finished;
+                send.shutdown()
+            }
+        }
     }
 }
