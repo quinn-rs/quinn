@@ -328,10 +328,10 @@ fn client(
                     let body = "r".repeat(1024);
                     let send_body_fut = tokio::io::write_all(send_body, body)
                         .map_err(|e| format_err!("failed to send response body: {:?}", e))
-                        .and_then(|(writer, _size)| {
+                        .and_then(|(writer, _body)| {
                             writer
                                 .close()
-                                .map_err(|e| format_err!("failed to send response body: {:?}", e))
+                                .map_err(|e| format_err!("failed to close request stream: {:?}", e))
                         });
 
                     send_body_fut.join(response_fut).map(|_| ())

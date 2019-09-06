@@ -97,7 +97,7 @@ frame_types! {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Type(u64);
+pub(crate) struct Type(u64);
 
 impl Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
@@ -108,7 +108,7 @@ impl Codec for Type {
     }
 }
 
-trait FrameHeader {
+pub(crate) trait FrameHeader {
     fn len(&self) -> usize;
     const TYPE: Type;
     fn encode_header<T: BufMut>(&self, buf: &mut T) {
