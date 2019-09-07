@@ -46,7 +46,7 @@ impl Assembler {
         // return directly, indicating whether the chunk can be discarded.
         if chunk.offset > self.offset {
             return false;
-        } else if (chunk.offset + chunk.bytes.len() as u64) < self.offset {
+        } else if (chunk.offset + chunk.bytes.len() as u64) <= self.offset {
             return true;
         }
 
