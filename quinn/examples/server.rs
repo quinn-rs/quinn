@@ -5,7 +5,6 @@ extern crate slog;
 
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::{ascii, fs, io, str};
 
@@ -13,7 +12,7 @@ use failure::{Error, ResultExt};
 use futures::{StreamExt, TryFutureExt};
 use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::Runtime;
 
 mod common;
 
@@ -124,7 +123,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
-    let root = Rc::<Path>::from(options.root);
+    let root = Arc::<Path>::from(options.root);
     if !root.exists() {
         bail!("root path does not exist");
     }
@@ -135,12 +134,12 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         (driver, incoming)
     };
 
-    let mut runtime = Runtime::new()?;
+    let runtime = Runtime::new()?;
     runtime.spawn(async move {
         while let Some(conn) = incoming.next().await {
             info!(log, "connection incoming");
             let log2 = log.clone();
-            tokio::runtime::current_thread::spawn(
+            tokio::spawn(
                 handle_connection(root.clone(), log.clone(), conn).unwrap_or_else(move |e| {
                     error!(log2, "connection failed: {reason}", reason = e.to_string())
                 }),
@@ -152,7 +151,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(root: Rc<Path>, log: Logger, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting) -> Result<()> {
     let quinn::NewConnection {
         driver,
         connection,
@@ -165,7 +164,7 @@ async fn handle_connection(root: Rc<Path>, log: Logger, conn: quinn::Connecting)
           "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
 
     // We ignore errors from the driver because they'll be reported by the `streams` handler anyway.
-    tokio::runtime::current_thread::spawn(driver.unwrap_or_else(|_| ()));
+    tokio::spawn(driver.unwrap_or_else(|_| ()));
 
     // Each stream initiated by the client constitutes a new request.
     while let Some(stream) = streams.next().await {
@@ -180,7 +179,7 @@ async fn handle_connection(root: Rc<Path>, log: Logger, conn: quinn::Connecting)
             Ok(s) => s,
         };
         let log2 = log.clone();
-        tokio::runtime::current_thread::spawn(
+        tokio::spawn(
             handle_request(root.clone(), log.clone(), stream).unwrap_or_else(move |e| {
                 error!(log2, "request failed: {reason}", reason = e.to_string())
             }),
@@ -189,7 +188,7 @@ async fn handle_connection(root: Rc<Path>, log: Logger, conn: quinn::Connecting)
     Ok(())
 }
 
-async fn handle_request(root: Rc<Path>, log: Logger, stream: quinn::NewStream) -> Result<()> {
+async fn handle_request(root: Arc<Path>, log: Logger, stream: quinn::NewStream) -> Result<()> {
     let (mut send, recv) = stream.unwrap_bi();
 
     let req = recv
