@@ -7,7 +7,6 @@ use futures::{ready, Future, Poll, Stream};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
-use slog::{self, o, Logger};
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},
@@ -23,7 +22,6 @@ use crate::{
 
 pub struct Builder {
     endpoint: EndpointBuilder,
-    log: Option<Logger>,
     settings: Settings,
 }
 
@@ -31,14 +29,8 @@ impl Builder {
     pub fn new(endpoint: EndpointBuilder) -> Self {
         Self {
             endpoint,
-            log: None,
             settings: Settings::default(),
         }
-    }
-
-    pub fn logger(&mut self, log: Logger) -> &mut Self {
-        self.log = Some(log);
-        self
     }
 
     pub fn settings(&mut self, settings: Settings) -> &mut Self {
@@ -57,9 +49,6 @@ impl Builder {
             IncomingConnection {
                 incoming,
                 settings: self.settings.clone(),
-                log: self
-                    .log
-                    .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
             },
         ))
     }
@@ -68,7 +57,6 @@ impl Builder {
 pub struct Server;
 
 pub struct IncomingConnection {
-    log: Logger,
     incoming: quinn::Incoming,
     settings: Settings,
 }
@@ -80,7 +68,6 @@ impl Stream for IncomingConnection {
         Poll::Ready(
             ready!(Pin::new(&mut self.incoming).poll_next(cx)).map(|c| Connecting {
                 connecting: c,
-                log: self.log.clone(),
                 settings: self.settings.clone(),
             }),
         )
@@ -89,7 +76,6 @@ impl Stream for IncomingConnection {
 
 pub struct Connecting {
     connecting: quinn::Connecting,
-    log: Logger,
     settings: Settings,
 }
 
@@ -100,13 +86,13 @@ impl Future for Connecting {
         let quinn::NewConnection {
             driver,
             connection,
-            streams,
+            bi_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new(conn_ref.clone(), streams, self.log.clone()),
+            ConnectionDriver::new(conn_ref.clone(), bi_streams),
             IncomingRequest(conn_ref),
         )))
     }

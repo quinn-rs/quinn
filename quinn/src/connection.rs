@@ -14,7 +14,7 @@ use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, Time
 use slog::Logger;
 use tokio_timer::{delay, Delay};
 
-use crate::streams::{NewStream, RecvStream, SendStream, WriteError};
+use crate::streams::{RecvStream, SendStream, WriteError};
 use crate::{ConnectionEvent, EndpointEvent, VarInt};
 
 /// In-progress connection attempt future
@@ -102,8 +102,10 @@ pub struct NewConnection {
     pub driver: ConnectionDriver,
     /// Handle for interacting with the connection
     pub connection: Connection,
-    /// Streams initiated by the peer, in the order they were opened
-    pub streams: IncomingStreams,
+    /// Unidirectional streams initiated by the peer, in the order they were opened
+    pub uni_streams: IncomingUniStreams,
+    /// Bidirectional streams initiated by the peer, in the order they were opened
+    pub bi_streams: IncomingBiStreams,
     /// Leave room for future extensions
     _non_exhaustive: (),
 }
@@ -113,7 +115,8 @@ impl NewConnection {
         Self {
             driver: ConnectionDriver(conn.clone()),
             connection: Connection(conn.clone()),
-            streams: IncomingStreams(conn),
+            uni_streams: IncomingUniStreams(conn.clone()),
+            bi_streams: IncomingBiStreams(conn),
             _non_exhaustive: (),
         }
     }
@@ -168,9 +171,9 @@ impl Future for ConnectionDriver {
 
 /// A QUIC connection.
 ///
-/// If all references to a connection (including every clone of the `Connection` handle, `IncomingStreams`,
-/// and the various stream types) other than the `ConnectionDriver` have been dropped, the
-/// the connection will be automatically closed with an `error_code` of 0 and an empty
+/// If all references to a connection (including every clone of the `Connection` handle, streams of
+/// incoming streams, and the various stream types) other than the `ConnectionDriver` have been
+/// dropped, the the connection will be automatically closed with an `error_code` of 0 and an empty
 /// `reason`. You can also close the connection explicitly by calling `Connection::close()`.
 ///
 /// May be cloned to obtain another handle to the same connection.
@@ -278,7 +281,7 @@ impl Connection {
     }
 }
 
-/// A stream of QUIC streams initiated by a remote peer.
+/// A stream of unidirectional QUIC streams initiated by a remote peer.
 ///
 /// Incoming streams are *always* opened in the same order that the peer created them, but data can
 /// be delivered to open streams in any order. This allows meaning to be assigned to the sequence in
@@ -288,30 +291,49 @@ impl Connection {
 /// Processing streams in the order they're opened will produce head-of-line blocking. For best
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
-pub struct IncomingStreams(ConnectionRef);
+pub struct IncomingUniStreams(ConnectionRef);
 
-impl futures::Stream for IncomingStreams {
-    type Item = Result<NewStream, ConnectionError>;
+impl futures::Stream for IncomingUniStreams {
+    type Item = Result<RecvStream, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
-        if let Some(x) = conn.inner.accept() {
+        if let Some(x) = conn.inner.accept(Dir::Uni) {
             mem::drop(conn); // Release the lock so clone can take it
-            let stream = if x.dir() == Dir::Uni {
-                NewStream::Uni(RecvStream::new(self.0.clone(), x, false))
-            } else {
-                NewStream::Bi(
-                    SendStream::new(self.0.clone(), x, false),
-                    RecvStream::new(self.0.clone(), x, false),
-                )
-            };
-            Poll::Ready(Some(Ok(stream)))
+            Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
             Poll::Ready(None)
         } else if let Some(ref e) = conn.error {
             Poll::Ready(Some(Err(e.clone())))
         } else {
-            conn.incoming_streams_reader = Some(cx.waker().clone());
+            conn.incoming_uni_streams_reader = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+/// A stream of bidirectional QUIC streams initiated by a remote peer.
+///
+/// See `IncomingUniStreams` for information about incoming streams in general.
+pub struct IncomingBiStreams(ConnectionRef);
+
+impl futures::Stream for IncomingBiStreams {
+    type Item = Result<(SendStream, RecvStream), ConnectionError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut conn = self.0.lock().unwrap();
+        if let Some(x) = conn.inner.accept(Dir::Bi) {
+            mem::drop(conn); // Release the lock so clone can take it
+            Poll::Ready(Some(Ok((
+                SendStream::new(self.0.clone(), x, false),
+                RecvStream::new(self.0.clone(), x, false),
+            ))))
+        } else if let Some(ConnectionError::LocallyClosed) = conn.error {
+            Poll::Ready(None)
+        } else if let Some(ref e) = conn.error {
+            Poll::Ready(Some(Err(e.clone())))
+        } else {
+            conn.incoming_bi_streams_reader = Some(cx.waker().clone());
             Poll::Pending
         }
     }
@@ -388,7 +410,8 @@ impl ConnectionRef {
             blocked_readers: FnvHashMap::default(),
             uni_opening: VecDeque::new(),
             bi_opening: VecDeque::new(),
-            incoming_streams_reader: None,
+            incoming_uni_streams_reader: None,
+            incoming_bi_streams_reader: None,
             finishing: FnvHashMap::default(),
             error: None,
             ref_count: 0,
@@ -444,7 +467,8 @@ pub struct ConnectionInner {
     pub(crate) blocked_readers: FnvHashMap<StreamId, Waker>,
     uni_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
     bi_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
-    incoming_streams_reader: Option<Waker>,
+    incoming_uni_streams_reader: Option<Waker>,
+    incoming_bi_streams_reader: Option<Waker>,
     pub(crate) finishing: FnvHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
@@ -510,8 +534,13 @@ impl ConnectionInner {
                         writer.wake();
                     }
                 }
-                StreamOpened => {
-                    if let Some(x) = self.incoming_streams_reader.take() {
+                StreamOpened { dir: Dir::Uni } => {
+                    if let Some(x) = self.incoming_uni_streams_reader.take() {
+                        x.wake();
+                    }
+                }
+                StreamOpened { dir: Dir::Bi } => {
+                    if let Some(x) = self.incoming_bi_streams_reader.take() {
                         x.wake();
                     }
                 }
@@ -620,7 +649,10 @@ impl ConnectionInner {
         for x in self.bi_opening.drain(..) {
             let _ = x.send(Err(reason.clone()));
         }
-        if let Some(x) = self.incoming_streams_reader.take() {
+        if let Some(x) = self.incoming_uni_streams_reader.take() {
+            x.wake();
+        }
+        if let Some(x) = self.incoming_bi_streams_reader.take() {
             x.wake();
         }
         for (_, x) in self.finishing.drain() {

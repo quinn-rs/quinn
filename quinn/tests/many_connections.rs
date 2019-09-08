@@ -43,7 +43,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
             let shared = shared2.clone();
             let task = new_conn
-                .streams
+                .uni_streams
                 .try_for_each(move |stream| {
                     let conn = conn.clone();
                     read_from_peer(stream).map(move |_| {
@@ -114,8 +114,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     }
 }
 
-async fn read_from_peer(stream: quinn::NewStream) -> Result<(), quinn::ConnectionError> {
-    match stream.unwrap_uni().read_to_end(1024 * 1024 * 5).await {
+async fn read_from_peer(stream: quinn::RecvStream) -> Result<(), quinn::ConnectionError> {
+    match stream.read_to_end(1024 * 1024 * 5).await {
         Ok(data) => {
             assert!(hash_correct(&data));
             Ok(())

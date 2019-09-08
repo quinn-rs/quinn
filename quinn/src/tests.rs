@@ -8,7 +8,7 @@ use slog::{o, Drain, Logger, KV};
 use tokio;
 
 use super::{
-    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewConnection, NewStream,
+    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewConnection, RecvStream, SendStream,
     ServerConfigBuilder,
 };
 
@@ -168,13 +168,12 @@ fn read_after_close() {
         tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         tokio::timer::delay(Instant::now() + Duration::from_millis(100)).await;
         let stream = new_conn
-            .streams
+            .uni_streams
             .next()
             .await
             .expect("incoming streams")
             .expect("missing stream");
         let msg = stream
-            .unwrap_uni()
             .read_to_end(usize::max_value())
             .await
             .expect("read_to_end");
@@ -221,11 +220,10 @@ fn zero_rtt() {
         tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         tokio::runtime::current_thread::spawn(
             new_conn
-                .streams
+                .uni_streams
                 .map_err(|_| ())
                 .try_for_each(|x| {
-                    x.unwrap_uni()
-                        .read_to_end(usize::max_value())
+                    x.read_to_end(usize::max_value())
                         .map_err(|_| ())
                         .map_ok(|msg| {
                             assert_eq!(msg, MSG);
@@ -247,7 +245,7 @@ fn zero_rtt() {
     runtime.block_on(async {
         let NewConnection {
             driver,
-            mut streams,
+            mut uni_streams,
             ..
         } = endpoint
             .connect(&endpoint.local_addr().unwrap(), "localhost")
@@ -261,12 +259,11 @@ fn zero_rtt() {
         tokio::runtime::current_thread::spawn(async move {
             // Buy time for the driver to process the server's NewSessionTicket
             tokio::timer::delay(Instant::now() + Duration::from_millis(100)).await;
-            let stream = streams
+            let stream = uni_streams
                 .next()
                 .await
                 .expect("incoming streams")
-                .expect("missing stream")
-                .unwrap_uni();
+                .expect("missing stream");
             let msg = stream
                 .read_to_end(usize::max_value())
                 .await
@@ -279,7 +276,7 @@ fn zero_rtt() {
     let NewConnection {
         connection,
         driver,
-        mut streams,
+        mut uni_streams,
         ..
     } = endpoint
         .connect(&endpoint.local_addr().unwrap(), "localhost")
@@ -302,12 +299,11 @@ fn zero_rtt() {
     drop(connection);
     runtime.spawn(driver.unwrap_or_else(|_| ()));
     runtime.block_on(async move {
-        let stream = streams
+        let stream = uni_streams
             .next()
             .await
             .expect("incoming streams")
-            .expect("missing stream")
-            .unwrap_uni();
+            .expect("missing stream");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
@@ -381,7 +377,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             let new_conn = incoming.await.unwrap();
             tokio::spawn(
                 new_conn
-                    .streams
+                    .bi_streams
                     .take_while(|x| future::ready(x.is_ok()))
                     .for_each(|s| echo(s.unwrap())),
             );
@@ -411,8 +407,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     runtime.run().unwrap();
 }
 
-async fn echo(stream: NewStream) {
-    let (mut send, recv) = stream.unwrap_bi();
+async fn echo((mut send, recv): (SendStream, RecvStream)) {
     let data = recv
         .read_to_end(usize::max_value())
         .await

@@ -6,7 +6,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Benchmark, Criterion
 use futures::{StreamExt, TryFutureExt};
 use tokio;
 
-use quinn::{ClientConfigBuilder, Endpoint, NewStream, ReadError, RecvStream, ServerConfigBuilder};
+use quinn::{ClientConfigBuilder, Endpoint, ReadError, RecvStream, ServerConfigBuilder};
 
 criterion_group!(benches, throughput);
 criterion_main!(benches);
@@ -47,12 +47,8 @@ fn throughput(c: &mut Criterion) {
                     .driver
                     .unwrap_or_else(|e| ignore_timeout("server connection driver", e)),
             );
-            while let Some(stream) = new_conn.streams.next().await {
-                if let NewStream::Uni(recv) = stream.unwrap() {
-                    read_all(recv).await.unwrap();
-                } else {
-                    unreachable!("only benchmarking uni streams")
-                }
+            while let Some(Ok(stream)) = new_conn.uni_streams.next().await {
+                read_all(stream).await.unwrap();
             }
         }
     });

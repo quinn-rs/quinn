@@ -155,7 +155,7 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
     let quinn::NewConnection {
         driver,
         connection,
-        mut streams,
+        mut bi_streams,
         ..
     } = conn.await?;
     info!(log, "connection established";
@@ -167,7 +167,7 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
     tokio::spawn(driver.unwrap_or_else(|_| ()));
 
     // Each stream initiated by the client constitutes a new request.
-    while let Some(stream) = streams.next().await {
+    while let Some(stream) = bi_streams.next().await {
         let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                 info!(log, "connection closed");
@@ -188,9 +188,11 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
     Ok(())
 }
 
-async fn handle_request(root: Arc<Path>, log: Logger, stream: quinn::NewStream) -> Result<()> {
-    let (mut send, recv) = stream.unwrap_bi();
-
+async fn handle_request(
+    root: Arc<Path>,
+    log: Logger,
+    (mut send, recv): (quinn::SendStream, quinn::RecvStream),
+) -> Result<()> {
     let req = recv
         .read_to_end(64 * 1024)
         .await

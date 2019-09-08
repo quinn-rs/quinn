@@ -4,8 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use futures::{Future, Poll, Stream};
-use quinn::{NewStream, RecvStream, SendStream};
-use slog::{info, Logger};
+use quinn::{RecvStream, SendStream};
 
 use crate::{
     proto::connection::{Connection, Error as ProtoError},
@@ -14,17 +13,12 @@ use crate::{
 
 pub struct ConnectionDriver {
     conn: ConnectionRef,
-    incoming: quinn::IncomingStreams,
-    log: Logger,
+    incoming: quinn::IncomingBiStreams,
 }
 
 impl ConnectionDriver {
-    pub(crate) fn new(conn: ConnectionRef, incoming: quinn::IncomingStreams, log: Logger) -> Self {
-        Self {
-            conn,
-            incoming,
-            log,
-        }
+    pub(crate) fn new(conn: ConnectionRef, incoming: quinn::IncomingBiStreams) -> Self {
+        Self { conn, incoming }
     }
 }
 
@@ -34,10 +28,7 @@ impl Future for ConnectionDriver {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match Pin::new(&mut self.incoming).poll_next(cx)? {
             Poll::Ready(None) => return Poll::Ready(Ok(())),
-            Poll::Ready(Some(NewStream::Uni(_recv))) => {
-                info!(self.log, "incoming uni stream ignored");
-            }
-            Poll::Ready(Some(NewStream::Bi(send, recv))) => {
+            Poll::Ready(Some((send, recv))) => {
                 let mut conn = self.conn.h3.lock().unwrap();
                 conn.requests.push_back((send, recv));
                 if let Some(t) = conn.requests_task.take() {

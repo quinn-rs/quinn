@@ -7,7 +7,6 @@ use futures::{ready, stream::Stream, Future, Poll};
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, OpenBi};
 use quinn_proto::StreamId;
-use slog::{self, o, Logger};
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},
@@ -23,21 +22,14 @@ use crate::{
 
 #[derive(Clone, Debug, Default)]
 pub struct Builder {
-    log: Option<Logger>,
     settings: Settings,
 }
 
 impl Builder {
     pub fn new() -> Self {
         Self {
-            log: None,
             settings: Settings::default(),
         }
-    }
-
-    pub fn logger(&mut self, log: Logger) -> &mut Self {
-        self.log = Some(log);
-        self
     }
 
     pub fn settings(&mut self, settings: Settings) -> &mut Self {
@@ -49,16 +41,12 @@ impl Builder {
         Client {
             endpoint: endpoint,
             settings: self.settings,
-            log: self
-                .log
-                .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
         }
     }
 }
 
 pub struct Client {
     endpoint: Endpoint,
-    log: Logger,
     settings: Settings,
 }
 
@@ -69,7 +57,6 @@ impl Client {
         server_name: &str,
     ) -> Result<Connecting, quinn::ConnectError> {
         Ok(Connecting {
-            log: self.log.clone(),
             settings: self.settings.clone(),
             connecting: self.endpoint.connect(addr, server_name)?,
         })
@@ -96,7 +83,6 @@ impl Connection {
 
 pub struct Connecting {
     connecting: quinn::Connecting,
-    log: Logger,
     settings: Settings,
 }
 
@@ -107,13 +93,13 @@ impl Future for Connecting {
         let quinn::NewConnection {
             driver,
             connection,
-            streams,
+            bi_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new(conn_ref.clone(), streams, self.log.clone()),
+            ConnectionDriver::new(conn_ref.clone(), bi_streams),
             Connection(conn_ref),
         )))
     }
