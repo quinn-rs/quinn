@@ -198,10 +198,7 @@ fn finish_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
@@ -231,10 +228,7 @@ fn reset_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
@@ -262,10 +256,7 @@ fn stop_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
@@ -314,10 +305,7 @@ fn congestion() {
     let (client_ch, _) = pair.connect();
 
     let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     loop {
         match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
             Ok(n) => {
@@ -373,10 +361,7 @@ fn zero_rtt_happypath() {
     info!(pair.log, "resuming session");
     let client_ch = pair.begin_connect(config.clone());
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
@@ -431,10 +416,7 @@ fn zero_rtt_rejection() {
     info!(pair.log, "resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
@@ -445,10 +427,7 @@ fn zero_rtt_rejection() {
         Some(Event::Connected)
     );
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
-    let s2 = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s2 = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(s, s2);
     assert_eq!(
         pair.server_conn_mut(server_conn).read_unordered(s2),
@@ -474,10 +453,10 @@ fn stream_id_backpressure() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .open(Directionality::Uni)
+        .open(Dir::Uni)
         .expect("couldn't open first stream");
     assert_eq!(
-        pair.client_conn_mut(client_ch).open(Directionality::Uni),
+        pair.client_conn_mut(client_ch).open(Dir::Uni),
         None,
         "only one stream is permitted at a time"
     );
@@ -499,9 +478,7 @@ fn stream_id_backpressure() {
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::StreamAvailable {
-            directionality: Directionality::Uni
-        })
+        Some(Event::StreamAvailable { dir: Dir::Uni })
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 
@@ -511,7 +488,7 @@ fn stream_id_backpressure() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .open(Directionality::Uni)
+        .open(Dir::Uni)
         .expect("didn't get stream id budget");
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
@@ -534,7 +511,7 @@ fn key_update() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .open(Directionality::Bi)
+        .open(Dir::Bi)
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"hello1";
@@ -578,7 +555,7 @@ fn key_update_reordered() {
         .connections
         .get_mut(&client_ch)
         .unwrap()
-        .open(Directionality::Bi)
+        .open(Dir::Bi)
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"1";
@@ -778,10 +755,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut buf = [0; 4096];
 
     // Stream reset before read
-    let s = pair
-        .client_conn_mut(client_conn)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     assert_eq!(
         pair.client_conn_mut(client_conn).write(s, &msg),
         Ok(window_size)
@@ -802,10 +776,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     );
 
     // Happy path
-    let s = pair
-        .client_conn_mut(client_conn)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     assert_eq!(
         pair.client_conn_mut(client_conn).write(s, &msg),
         Ok(window_size)
@@ -897,10 +868,7 @@ fn conn_flow_control() {
 fn stop_opens_bidi() {
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
-    let s = pair
-        .client_conn_mut(client_conn)
-        .open(Directionality::Bi)
-        .unwrap();
+    let s = pair.client_conn_mut(client_conn).open(Dir::Bi).unwrap();
     const ERROR: VarInt = VarInt(42);
     pair.client
         .connections
@@ -929,14 +897,8 @@ fn stop_opens_bidi() {
 fn implicit_open() {
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
-    let s1 = pair
-        .client_conn_mut(client_conn)
-        .open(Directionality::Uni)
-        .unwrap();
-    let s2 = pair
-        .client_conn_mut(client_conn)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s1 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
+    let s2 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     pair.client_conn_mut(client_conn)
         .write(s2, b"hello")
         .unwrap();
@@ -1007,10 +969,7 @@ fn finish_stream_flow_control_reordered() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
@@ -1057,10 +1016,7 @@ fn handshake_1rtt_handling() {
     pair.client.delay_outbound();
 
     // Send some 1-RTT data which will be received first.
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.client_conn_mut(client_ch).finish(s).unwrap();
@@ -1083,10 +1039,7 @@ fn stop_before_finish() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
@@ -1109,10 +1062,7 @@ fn stop_during_finish() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
-        .client_conn_mut(client_ch)
-        .open(Directionality::Uni)
-        .unwrap();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();

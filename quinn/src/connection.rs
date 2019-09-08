@@ -10,9 +10,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::task::{self, Task};
 use futures::Stream as FuturesStream;
 use futures::{Async, Future, Poll};
-use proto::{
-    ConnectionError, ConnectionHandle, ConnectionId, Directionality, StreamId, TimerUpdate,
-};
+use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
 use slog::Logger;
 use tokio_timer::Delay;
 
@@ -187,7 +185,7 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
-            if let Some(x) = conn.inner.open(Directionality::Uni) {
+            if let Some(x) = conn.inner.open(Dir::Uni) {
                 let _ = send.send(Ok((
                     x,
                     conn.inner.side().is_client() && conn.inner.is_handshaking(),
@@ -213,7 +211,7 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
-            if let Some(x) = conn.inner.open(Directionality::Bi) {
+            if let Some(x) = conn.inner.open(Dir::Bi) {
                 let _ = send.send(Ok((
                     x,
                     conn.inner.side().is_client() && conn.inner.is_handshaking(),
@@ -293,7 +291,7 @@ impl FuturesStream for IncomingStreams {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept() {
             mem::drop(conn); // Release the lock so clone can take it
-            let stream = if x.directionality() == Directionality::Uni {
+            let stream = if x.dir() == Dir::Uni {
                 NewStream::Uni(RecvStream::new(self.0.clone(), x, false))
             } else {
                 NewStream::Bi(
@@ -526,13 +524,13 @@ impl ConnectionInner {
                         reader.notify();
                     }
                 }
-                StreamAvailable { directionality } => {
-                    let queue = match directionality {
-                        Directionality::Uni => &mut self.uni_opening,
-                        Directionality::Bi => &mut self.bi_opening,
+                StreamAvailable { dir } => {
+                    let queue = match dir {
+                        Dir::Uni => &mut self.uni_opening,
+                        Dir::Bi => &mut self.bi_opening,
                     };
                     while let Some(connection) = queue.pop_front() {
-                        if let Some(id) = self.inner.open(directionality) {
+                        if let Some(id) = self.inner.open(dir) {
                             let _ = connection.send(Ok((id, self.inner.is_handshaking())));
                         } else {
                             queue.push_front(connection);
