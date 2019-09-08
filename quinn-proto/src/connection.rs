@@ -27,8 +27,8 @@ use crate::streams::{self, FinishError, ReadError, Streams, UnknownStream, Write
 use crate::timer::{Timer, TimerKind, TimerTable};
 use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Directionality, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
+    frame, Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };
 
@@ -852,7 +852,7 @@ where
     /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
     fn reset_inner(&mut self, stream_id: StreamId, error_code: VarInt, stopped: bool) {
         assert!(
-            stream_id.directionality() == Directionality::Bi || stream_id.initiator() == self.side,
+            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
         );
 
@@ -1690,7 +1690,7 @@ where
                     }
                 }
                 Frame::MaxStreamData { id, offset } => {
-                    if id.initiator() != self.side && id.directionality() == Directionality::Uni {
+                    if id.initiator() != self.side && id.dir() == Dir::Uni {
                         debug!(
                             self.log,
                             "got MAX_STREAM_DATA on recv-only {stream}",
@@ -1721,20 +1721,16 @@ where
                     }
                     self.on_stream_frame(false, id);
                 }
-                Frame::MaxStreams {
-                    directionality,
-                    count,
-                } => {
+                Frame::MaxStreams { dir, count } => {
                     if count > MAX_STREAM_COUNT {
                         return Err(TransportError::STREAM_LIMIT_ERROR(
                             "unrepresentable stream limit",
                         ));
                     }
-                    let current = &mut self.streams.max[directionality as usize];
+                    let current = &mut self.streams.max[dir as usize];
                     if count > *current {
                         *current = count;
-                        self.events
-                            .push_back(Event::StreamAvailable { directionality });
+                        self.events.push_back(Event::StreamAvailable { dir });
                     }
                 }
                 Frame::ResetStream(frame::ResetStream {
@@ -1784,7 +1780,7 @@ where
                     debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
                 }
                 Frame::StreamDataBlocked { id, offset } => {
-                    if id.initiator() == self.side && id.directionality() == Directionality::Uni {
+                    if id.initiator() == self.side && id.dir() == Dir::Uni {
                         debug!(
                             self.log,
                             "got STREAM_DATA_BLOCKED on send-only {stream}",
@@ -1796,15 +1792,17 @@ where
                     }
                     debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
                 }
-                Frame::StreamsBlocked {
-                    directionality,
-                    limit,
-                } => {
-                    debug!(self.log, "peer claims to be blocked opening more than {limit} {directionality} streams", limit=limit, directionality=directionality);
+                Frame::StreamsBlocked { dir, limit } => {
+                    debug!(
+                        self.log,
+                        "peer claims to be blocked opening more than {limit} {dir} streams",
+                        limit = limit,
+                        dir = dir
+                    );
                 }
                 Frame::StopSending(frame::StopSending { id, error_code }) => {
                     if id.initiator() != self.side {
-                        if id.directionality() == Directionality::Uni {
+                        if id.dir() == Dir::Uni {
                             debug!(
                                 self.log,
                                 "got STOP_SENDING on recv-only {stream}",
@@ -1930,7 +1928,7 @@ where
             }
             return;
         }
-        let next = &mut self.streams.next_remote[stream.directionality() as usize];
+        let next = &mut self.streams.next_remote[stream.dir() as usize];
         if stream.index() >= *next {
             *next = stream.index() + 1;
             self.stream_opened = true;
@@ -2419,18 +2417,18 @@ where
         if space.pending.max_uni_stream_id && buf.len() + 9 < max_size {
             space.pending.max_uni_stream_id = false;
             sent.max_uni_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote[Directionality::Uni as usize]);
+            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote[Dir::Uni as usize]);
             buf.write(frame::Type::MAX_STREAMS_UNI);
-            buf.write_var(self.streams.max_remote[Directionality::Uni as usize]);
+            buf.write_var(self.streams.max_remote[Dir::Uni as usize]);
         }
 
         // MAX_STREAMS_BIDI
         if space.pending.max_bi_stream_id && buf.len() + 9 < max_size {
             space.pending.max_bi_stream_id = false;
             sent.max_bi_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote[Directionality::Bi as usize] - 1);
+            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote[Dir::Bi as usize] - 1);
             buf.write(frame::Type::MAX_STREAMS_BIDI);
-            buf.write_var(self.streams.max_remote[Directionality::Bi as usize]);
+            buf.write_var(self.streams.max_remote[Dir::Bi as usize]);
         }
 
         // NEW_CONNECTION_ID
@@ -2557,11 +2555,11 @@ where
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.streams.max[Directionality::Bi as usize] = params.initial_max_streams_bidi;
-        self.streams.max[Directionality::Uni as usize] = params.initial_max_streams_uni;
+        self.streams.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
+        self.streams.max[Dir::Uni as usize] = params.initial_max_streams_uni;
         self.max_data = params.initial_max_data as u64;
-        for i in 0..self.streams.max_remote[Directionality::Bi as usize] {
-            let id = StreamId::new(!self.side, Directionality::Bi, i as u64);
+        for i in 0..self.streams.max_remote[Dir::Bi as usize] {
+            let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.streams.send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
@@ -2576,12 +2574,12 @@ where
     /// Open a single stream if possible
     ///
     /// Returns `None` if the streams in the given direction are currently exhausted.
-    pub fn open(&mut self, dir: Directionality) -> Option<StreamId> {
+    pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
         let id = self.streams.open(self.side, dir)?;
         // TODO: Queue STREAM_ID_BLOCKED if None
         self.streams.send_mut(id).unwrap().max_data = match dir {
-            Directionality::Uni => self.params.initial_max_stream_data_uni,
-            Directionality::Bi => self.params.initial_max_stream_data_bidi_remote,
+            Dir::Uni => self.params.initial_max_stream_data_uni,
+            Dir::Bi => self.params.initial_max_stream_data_bidi_remote,
         } as u64;
         Some(id)
     }
@@ -2594,13 +2592,13 @@ where
     }
 
     /// Permit an additional remote `ty` stream.
-    fn alloc_remote_stream(&mut self, dir: Directionality) {
+    fn alloc_remote_stream(&mut self, dir: Dir) {
         let space = &mut self.spaces[SpaceId::Data as usize];
         match dir {
-            Directionality::Bi => {
+            Dir::Bi => {
                 space.pending.max_bi_stream_id = true;
             }
-            Directionality::Uni => {
+            Dir::Uni => {
                 space.pending.max_uni_stream_id = true;
             }
         }
@@ -2611,8 +2609,11 @@ where
     ///
     /// Returns `None` if there are no new incoming streams for this connection.
     pub fn accept(&mut self) -> Option<StreamId> {
-        let id = self.streams.accept(self.side)?;
-        self.alloc_remote_stream(id.directionality());
+        let id = self
+            .streams
+            .accept(self.side, Dir::Uni)
+            .or_else(|| self.streams.accept(self.side, Dir::Bi))?;
+        self.alloc_remote_stream(id.dir());
         Some(id)
     }
 
@@ -2662,7 +2663,7 @@ where
     /// Signal to the peer that it should stop sending on the given recv stream
     pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
-            id.directionality() == Directionality::Bi || id.initiator() != self.side,
+            id.dir() == Dir::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
         let stream = self
@@ -2802,7 +2803,7 @@ where
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
-        assert!(stream.directionality() == Directionality::Bi || stream.initiator() == self.side);
+        assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
         if self.state.is_closed() {
             trace!(self.log, "write blocked; connection draining"; "stream" => stream.0);
             return Err(WriteError::Blocked);
@@ -3365,7 +3366,7 @@ pub enum Event {
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {
         /// On which direction streams are newly available
-        directionality: Directionality,
+        dir: Dir,
     },
 }
 

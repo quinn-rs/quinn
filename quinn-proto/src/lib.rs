@@ -136,22 +136,22 @@ impl slog::Value for Side {
 
 /// Whether a stream communicates data in both directions or only from the initiator
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum Directionality {
+pub enum Dir {
     /// Data flows in both directions
     Bi = 0,
     /// Data flows only from the stream's initiator
     Uni = 1,
 }
 
-impl Directionality {
+impl Dir {
     fn iter() -> impl Iterator<Item = Self> {
-        [Directionality::Bi, Directionality::Uni].iter().cloned()
+        [Dir::Bi, Dir::Uni].iter().cloned()
     }
 }
 
-impl fmt::Display for Directionality {
+impl fmt::Display for Dir {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use self::Directionality::*;
+        use self::Dir::*;
         f.pad(match *self {
             Bi => "bidirectional",
             Uni => "unidirectional",
@@ -159,7 +159,7 @@ impl fmt::Display for Directionality {
     }
 }
 
-impl slog::Value for Directionality {
+impl slog::Value for Dir {
     fn serialize(
         &self,
         _: &slog::Record<'_>,
@@ -180,15 +180,15 @@ impl fmt::Display for StreamId {
             Side::Client => "client",
             Side::Server => "server",
         };
-        let directionality = match self.directionality() {
-            Directionality::Uni => "uni",
-            Directionality::Bi => "bi",
+        let dir = match self.dir() {
+            Dir::Uni => "uni",
+            Dir::Bi => "bi",
         };
         write!(
             f,
             "{} {}directional stream {}",
             initiator,
-            directionality,
+            dir,
             self.index()
         )
     }
@@ -206,7 +206,7 @@ impl slog::Value for StreamId {
 }
 
 impl StreamId {
-    pub(crate) fn new(initiator: Side, dir: Directionality, index: u64) -> Self {
+    pub(crate) fn new(initiator: Side, dir: Dir, index: u64) -> Self {
         StreamId(index << 2 | (dir as u64) << 1 | initiator as u64)
     }
     /// Which side of a connection initiated the stream
@@ -218,11 +218,11 @@ impl StreamId {
         }
     }
     /// Which directions data flows in
-    pub fn directionality(self) -> Directionality {
+    pub fn dir(self) -> Dir {
         if self.0 & 0x2 == 0 {
-            Directionality::Bi
+            Dir::Bi
         } else {
-            Directionality::Uni
+            Dir::Uni
         }
     }
     /// Distinguishes streams of the same initiator and directionality

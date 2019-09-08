@@ -8,7 +8,7 @@ use slog::Logger;
 use crate::assembler::Assembler;
 use crate::frame;
 use crate::range_set::RangeSet;
-use crate::{Directionality, Side, StreamId, TransportError, VarInt};
+use crate::{Dir, Side, StreamId, TransportError, VarInt};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
@@ -37,7 +37,7 @@ impl Streams {
             next_reported_remote: [0, 0],
         };
 
-        for dir in Directionality::iter() {
+        for dir in Dir::iter() {
             for i in 0..this.max_remote[dir as usize] {
                 this.insert(true, StreamId::new(!side, dir, i));
             }
@@ -46,7 +46,7 @@ impl Streams {
         this
     }
 
-    pub fn open(&mut self, side: Side, dir: Directionality) -> Option<StreamId> {
+    pub fn open(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
         if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
@@ -57,36 +57,27 @@ impl Streams {
         Some(id)
     }
 
-    pub fn alloc_remote_stream(&mut self, side: Side, dir: Directionality) {
+    pub fn alloc_remote_stream(&mut self, side: Side, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!side, dir, self.max_remote[dir as usize] - 1);
         self.insert(true, id);
     }
 
-    pub fn accept(&mut self, side: Side) -> Option<StreamId> {
-        if self.next_remote[Directionality::Uni as usize]
-            > self.next_reported_remote[Directionality::Uni as usize]
-        {
-            let x = self.next_reported_remote[Directionality::Uni as usize];
-            self.next_reported_remote[Directionality::Uni as usize] = x + 1;
-            Some(StreamId::new(!side, Directionality::Uni, x))
-        } else if self.next_remote[Directionality::Bi as usize]
-            > self.next_reported_remote[Directionality::Bi as usize]
-        {
-            let x = self.next_reported_remote[Directionality::Bi as usize];
-            self.next_reported_remote[Directionality::Bi as usize] = x + 1;
-            Some(StreamId::new(!side, Directionality::Bi, x))
-        } else {
-            None
+    pub fn accept(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
+        if self.next_remote[dir as usize] == self.next_reported_remote[dir as usize] {
+            return None;
         }
+        let x = self.next_reported_remote[dir as usize];
+        self.next_reported_remote[dir as usize] = x + 1;
+        Some(StreamId::new(!side, dir, x))
     }
 
     pub fn zero_rtt_rejected(&mut self, side: Side) {
         // Revert to initial state for outgoing streams
-        for dir in Directionality::iter() {
+        for dir in Dir::iter() {
             for i in 0..self.next[dir as usize] {
                 self.send.remove(&StreamId::new(side, dir, i)).unwrap();
-                if let Directionality::Bi = dir {
+                if let Dir::Bi = dir {
                     self.recv.remove(&StreamId::new(side, dir, i)).unwrap();
                 }
             }
@@ -143,21 +134,21 @@ impl Streams {
         id: StreamId,
     ) -> Result<Option<&mut Recv>, TransportError> {
         if side == id.initiator() {
-            match id.directionality() {
-                Directionality::Uni => {
+            match id.dir() {
+                Dir::Uni => {
                     return Err(TransportError::STREAM_STATE_ERROR(
                         "illegal operation on send-only stream",
                     ));
                 }
-                Directionality::Bi if id.index() >= self.next[Directionality::Bi as usize] => {
+                Dir::Bi if id.index() >= self.next[Dir::Bi as usize] => {
                     return Err(TransportError::STREAM_STATE_ERROR(
                         "operation on unopened stream",
                     ));
                 }
-                Directionality::Bi => {}
+                Dir::Bi => {}
             };
         } else {
-            let limit = self.max_remote[id.directionality() as usize];
+            let limit = self.max_remote[id.dir() as usize];
             if id.index() >= limit {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
@@ -197,11 +188,11 @@ impl Streams {
 
     /// Whether a locally initiated stream has never been open
     pub fn is_local_unopened(&self, id: StreamId) -> bool {
-        id.index() >= self.next[id.directionality() as usize]
+        id.index() >= self.next[id.dir() as usize]
     }
 
     fn insert(&mut self, remote: bool, id: StreamId) {
-        let bi = id.directionality() == Directionality::Bi;
+        let bi = id.dir() == Dir::Bi;
         if bi || !remote {
             assert!(self.send.insert(id, Send::new()).is_none());
         }

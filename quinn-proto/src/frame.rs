@@ -7,8 +7,8 @@ use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
 use crate::range_set::RangeSet;
 use crate::shared::{EcnCodepoint, ResetToken};
 use crate::{
-    ConnectionId, Directionality, StreamId, TransportError, TransportErrorCode, VarInt,
-    MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    ConnectionId, Dir, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE,
+    RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -128,41 +128,20 @@ pub enum Frame {
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken {
-        token: Bytes,
-    },
+    NewToken { token: Bytes },
     Stream(Stream),
     MaxData(u64),
-    MaxStreamData {
-        id: StreamId,
-        offset: u64,
-    },
-    MaxStreams {
-        directionality: Directionality,
-        count: u64,
-    },
-    DataBlocked {
-        offset: u64,
-    },
-    StreamDataBlocked {
-        id: StreamId,
-        offset: u64,
-    },
-    StreamsBlocked {
-        directionality: Directionality,
-        limit: u64,
-    },
+    MaxStreamData { id: StreamId, offset: u64 },
+    MaxStreams { dir: Dir, count: u64 },
+    DataBlocked { offset: u64 },
+    StreamDataBlocked { id: StreamId, offset: u64 },
+    StreamsBlocked { dir: Dir, limit: u64 },
     NewConnectionId(NewConnectionId),
-    RetireConnectionId {
-        sequence: u64,
-    },
+    RetireConnectionId { sequence: u64 },
     PathChallenge(u64),
     PathResponse(u64),
     Close(Close),
-    Invalid {
-        ty: Type,
-        reason: &'static str,
-    },
+    Invalid { ty: Type, reason: &'static str },
 }
 
 impl Frame {
@@ -175,25 +154,13 @@ impl Frame {
             Close(self::Close::Application(_)) => Type::APPLICATION_CLOSE,
             MaxData(_) => Type::MAX_DATA,
             MaxStreamData { .. } => Type::MAX_STREAM_DATA,
-            MaxStreams {
-                directionality: Directionality::Bi,
-                ..
-            } => Type::MAX_STREAMS_BIDI,
-            MaxStreams {
-                directionality: Directionality::Uni,
-                ..
-            } => Type::MAX_STREAMS_UNI,
+            MaxStreams { dir: Dir::Bi, .. } => Type::MAX_STREAMS_BIDI,
+            MaxStreams { dir: Dir::Uni, .. } => Type::MAX_STREAMS_UNI,
             Ping => Type::PING,
             DataBlocked { .. } => Type::DATA_BLOCKED,
             StreamDataBlocked { .. } => Type::STREAM_DATA_BLOCKED,
-            StreamsBlocked {
-                directionality: Directionality::Bi,
-                ..
-            } => Type::STREAMS_BLOCKED_BIDI,
-            StreamsBlocked {
-                directionality: Directionality::Uni,
-                ..
-            } => Type::STREAMS_BLOCKED_UNI,
+            StreamsBlocked { dir: Dir::Bi, .. } => Type::STREAMS_BLOCKED_BIDI,
+            StreamsBlocked { dir: Dir::Uni, .. } => Type::STREAMS_BLOCKED_UNI,
             StopSending { .. } => Type::STOP_SENDING,
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
@@ -561,11 +528,11 @@ impl Iter {
                 offset: self.bytes.get_var()?,
             },
             Type::MAX_STREAMS_BIDI => Frame::MaxStreams {
-                directionality: Directionality::Bi,
+                dir: Dir::Bi,
                 count: self.bytes.get_var()?,
             },
             Type::MAX_STREAMS_UNI => Frame::MaxStreams {
-                directionality: Directionality::Uni,
+                dir: Dir::Uni,
                 count: self.bytes.get_var()?,
             },
             Type::PING => Frame::Ping,
@@ -577,11 +544,11 @@ impl Iter {
                 offset: self.bytes.get_var()?,
             },
             Type::STREAMS_BLOCKED_BIDI => Frame::StreamsBlocked {
-                directionality: Directionality::Bi,
+                dir: Dir::Bi,
                 limit: self.bytes.get_var()?,
             },
             Type::STREAMS_BLOCKED_UNI => Frame::StreamsBlocked {
-                directionality: Directionality::Uni,
+                dir: Dir::Uni,
                 limit: self.bytes.get_var()?,
             },
             Type::STOP_SENDING => Frame::StopSending(StopSending {
