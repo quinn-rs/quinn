@@ -99,8 +99,9 @@ where
     prev_crypto: Option<PrevCrypto<S::Keys>>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
-    /// Whether the remote endpoint has opened any streams the application doesn't know about yet
-    stream_opened: bool,
+    /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
+    /// per directionality
+    stream_opened: [bool; 2],
     accepted_0rtt: bool,
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
@@ -229,7 +230,7 @@ where
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             path_challenge: None,
-            stream_opened: false,
+            stream_opened: [false, false],
             accepted_0rtt: false,
             permit_idle_reset: true,
             idle_timeout: config.idle_timeout,
@@ -293,8 +294,9 @@ where
     /// - an incoming packet is handled, or
     /// - the idle timer expires
     pub fn poll(&mut self) -> Option<Event> {
-        if mem::replace(&mut self.stream_opened, false) {
-            return Some(Event::StreamOpened);
+        for dir in Dir::iter().filter(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
+        {
+            return Some(Event::StreamOpened { dir });
         }
 
         if let Some(x) = self.events.pop_front() {
@@ -1983,7 +1985,7 @@ where
         let next = &mut self.streams.next_remote[stream.dir() as usize];
         if stream.index() >= *next {
             *next = stream.index() + 1;
-            self.stream_opened = true;
+            self.stream_opened[stream.dir() as usize] = true;
         } else if notify_readable {
             self.events.push_back(Event::StreamReadable { stream });
         }
@@ -2678,14 +2680,11 @@ where
         self.streams.alloc_remote_stream(self.side, dir);
     }
 
-    /// Accept a remotely initiated stream if possible
+    /// Accept a remotely initiated stream of a certain directionality, if possible
     ///
     /// Returns `None` if there are no new incoming streams for this connection.
-    pub fn accept(&mut self) -> Option<StreamId> {
-        let id = self
-            .streams
-            .accept(self.side, Dir::Uni)
-            .or_else(|| self.streams.accept(self.side, Dir::Bi))?;
+    pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
+        let id = self.streams.accept(self.side, dir)?;
         self.alloc_remote_stream(id.dir());
         Some(id)
     }
@@ -3408,8 +3407,11 @@ pub enum Event {
         /// Reason that the connection was closed
         reason: ConnectionError,
     },
-    /// One or more new streams has been opened and is readable
-    StreamOpened,
+    /// One or more new streams has been opened
+    StreamOpened {
+        /// Directionality for which streams have been opened
+        dir: Dir,
+    },
     /// An existing stream has data or errors waiting to be read
     StreamReadable {
         /// Which stream is now readable
@@ -3429,7 +3431,7 @@ pub enum Event {
     },
     /// At least one new stream of a certain directionality may be opened
     StreamAvailable {
-        /// On which direction streams are newly available
+        /// Directionality for which streams are newly available
         dir: Dir,
     },
 }

@@ -64,7 +64,8 @@ pub use crate::builders::{
 
 mod connection;
 pub use connection::{
-    Connecting, Connection, ConnectionDriver, IncomingStreams, NewConnection, OpenBi, OpenUni,
+    Connecting, Connection, ConnectionDriver, IncomingBiStreams, IncomingUniStreams, NewConnection,
+    OpenBi, OpenUni,
 };
 
 mod endpoint;
@@ -72,8 +73,8 @@ pub use endpoint::{Endpoint, EndpointDriver, Incoming};
 
 mod streams;
 pub use streams::{
-    NewStream, Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream,
-    SendStream, WriteError,
+    Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream, SendStream,
+    WriteError,
 };
 
 #[cfg(test)]
