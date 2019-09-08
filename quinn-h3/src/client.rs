@@ -88,8 +88,8 @@ impl Client {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    pub fn request<T: Into<Body>>(&self, request: Request<T>) -> ReqBuilder<T> {
-        ReqBuilder {
+    pub fn request<T: Into<Body>>(&self, request: Request<T>) -> RequestBuilder<T> {
+        RequestBuilder {
             request,
             trailers: None,
             conn: self.0.clone(),
@@ -123,13 +123,13 @@ impl Future for Connecting {
     }
 }
 
-pub struct ReqBuilder<T> {
+pub struct RequestBuilder<T> {
     conn: ConnectionRef,
     request: Request<T>,
     trailers: Option<HeaderMap>,
 }
 
-impl<T> ReqBuilder<T>
+impl<T> RequestBuilder<T>
 where
     T: Into<Body>,
 {
