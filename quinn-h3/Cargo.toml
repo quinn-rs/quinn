@@ -51,3 +51,9 @@ url = "2"
 
 [[example]]
 name = "h3"
+
+[[example]]
+name = "simple_server"
+
+[[example]]
+name = "simple_client"
