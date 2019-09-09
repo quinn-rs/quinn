@@ -372,11 +372,8 @@ impl Future for RecvResponse {
                 Some(f) => match f {
                     HttpFrame::Headers(h) => {
                         let decode = DecodeHeaders::new(h, self.conn.clone(), self.stream_id);
-                        self.recv = match mem::replace(
-                            &mut self.state,
-                            RecvResponseState::Decoding(decode),
-                        ) {
-                            RecvResponseState::Receiving(r) => Some(r),
+                        match mem::replace(&mut self.state, RecvResponseState::Decoding(decode)) {
+                            RecvResponseState::Receiving(r) => self.recv = Some(r),
                             _ => unreachable!(),
                         };
                         Ok(Async::NotReady)
