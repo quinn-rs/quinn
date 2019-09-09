@@ -1,15 +1,13 @@
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
-use std::{fmt, fs, io};
 
-use failure::{bail, format_err, Error, Fail, ResultExt};
+use failure::{format_err, Error};
 use futures::{future::Either, Future, Stream};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
-use slog::{info, o, Drain, Logger};
+use slog::{o, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::current_thread::{self, Runtime};
 use url::Url;
@@ -24,72 +22,29 @@ use quinn_h3::{
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
-type Result<T> = std::result::Result<T, Error>;
-
-pub struct PrettyErr<'a>(&'a dyn Fail);
-impl<'a> fmt::Display for PrettyErr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)?;
-        let mut x: &dyn Fail = self.0;
-        while let Some(cause) = x.cause() {
-            f.write_str(": ")?;
-            fmt::Display::fmt(&cause, f)?;
-            x = cause;
-        }
-        Ok(())
-    }
-}
-
-pub trait ErrorExt {
-    fn pretty(&self) -> PrettyErr<'_>;
-}
-
-impl ErrorExt for Error {
-    fn pretty(&self) -> PrettyErr<'_> {
-        PrettyErr(self.as_fail())
-    }
-}
+mod shared;
+use shared::{build_certs, logger, Result};
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3")]
 struct Opt {
-    #[structopt(short = "s", long = "server")]
-    server: bool,
     #[structopt(default_value = "http://127.0.0.1:4433/Cargo.toml")]
     url: Url,
-    /// directory to serve files from
-    #[structopt(parse(from_os_str), default_value = ".")]
-    root: PathBuf,
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
-    /// Enable stateless retries
-    #[structopt(long = "stateless-retry")]
-    stateless_retry: bool,
     /// Address to listen on
     #[structopt(long = "listen", default_value = "0.0.0.0:4433")]
     listen: SocketAddr,
-    /// Custom certificate authority to trust, in DER format
-    #[structopt(parse(from_os_str), long = "ca")]
-    ca: Option<PathBuf>,
-    /// Simulate NAT rebinding after connecting
-    #[structopt(long = "rebind")]
-    rebind: bool,
 }
 
 fn main() {
     let opt = Opt::from_args();
-    let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator)
-        .use_original_order()
-        .build()
-        .fuse();
-    let log = Logger::root(drain, o!("h3" => ""));
-
-    let certs = build_certs(log.clone(), opt.clone()).expect("failed to build certs");
+    let log = logger("h3".into());
+    let certs = build_certs(log.clone(), &opt.key, &opt.cert).expect("failed to build certs");
 
     let mut runtime = Runtime::new().expect("runtime failed");
     let server = server(
@@ -133,20 +88,11 @@ fn server(
     };
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(&[quinn_h3::ALPN]);
-
-    if options.stateless_retry {
-        server_config.use_stateless_retry(true);
-    }
     server_config.certificate(certs.0, certs.1)?;
 
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
-
-    let root = Rc::new(options.root);
-    if !root.exists() {
-        bail!("root path does not exist");
-    }
 
     let server = ServerBuilder::new(endpoint);
 
@@ -339,43 +285,4 @@ fn client(
         });
 
     Ok((endpoint_driver, Box::new(fut)))
-}
-
-fn build_certs(log: Logger, options: Opt) -> Result<(CertificateChain, Certificate, PrivateKey)> {
-    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
-        let key = fs::read(key_path).context("failed to read private key")?;
-        let key = quinn::PrivateKey::from_der(&key)?;
-        let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
-        let cert = quinn::Certificate::from_der(&cert_chain)?;
-        let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
-        Ok((cert_chain, cert, key))
-    } else {
-        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
-        let path = dirs.data_local_dir();
-        let cert_path = path.join("cert.der");
-        let key_path = path.join("key.der");
-        let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
-            Ok(x) => x,
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "generating self-signed certificate");
-                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-                let key = cert.serialize_private_key_der();
-                let cert = cert.serialize_der().unwrap();
-                fs::create_dir_all(&path).context("failed to create certificate directory")?;
-                fs::write(&cert_path, &cert).context("failed to write certificate")?;
-                fs::write(&key_path, &key).context("failed to write private key")?;
-                (cert, key)
-            }
-            Err(e) => {
-                bail!("failed to read certificate: {}", e);
-            }
-        };
-        let key = quinn::PrivateKey::from_der(&key)?;
-        let cert = quinn::Certificate::from_der(&cert)?;
-        Ok((
-            quinn::CertificateChain::from_certs(vec![cert.clone()]),
-            cert,
-            key,
-        ))
-    }
 }
