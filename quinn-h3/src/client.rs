@@ -95,6 +95,10 @@ impl Connection {
             conn: self.0.clone(),
         }
     }
+
+    pub fn close(self, error_code: u32, reason: &[u8]) {
+        self.0.quic.close(error_code.into(), reason);
+    }
 }
 
 pub struct Connecting {

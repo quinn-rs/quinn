@@ -33,7 +33,7 @@ impl Future for ConnectionDriver {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.incoming.poll()? {
-            Async::Ready(None) => return Err(Error::peer("incoming requests closed")),
+            Async::Ready(None) => return Ok(Async::Ready(())),
             Async::Ready(Some(NewStream::Uni(_recv))) => {
                 info!(self.log, "incoming uni stream ignored");
             }
