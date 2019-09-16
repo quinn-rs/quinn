@@ -35,5 +35,5 @@ webpki = { version = "0.21", optional = true }
 [dev-dependencies]
 assert_matches = "1.1"
 hex-literal = "0.2.0"
-rcgen = "0.6"
+rcgen = "0.7"
 #slog = { version = "2.2", features = ["max_level_trace"] } # For debugging
