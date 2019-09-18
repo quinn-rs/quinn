@@ -1906,7 +1906,10 @@ where
             }
         }
 
-        if remote != self.remote && !is_probing_packet {
+        if remote != self.remote
+            && !is_probing_packet
+            && number == self.space(SpaceId::Data).rx_packet
+        {
             debug_assert!(
                 self.server_config
                     .as_ref()
