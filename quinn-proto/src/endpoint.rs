@@ -319,12 +319,12 @@ where
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
-        const MIN_PADDING_LEN: usize = 25;
+        const MIN_PADDING_LEN: usize = 5;
 
         // Prevent amplification attacks and reset loops by ensuring we pad to at most 1 byte
         // smaller than the inciting packet.
         let max_padding_len = match inciting_dgram_len.checked_sub(RESET_TOKEN_SIZE) {
-            Some(headroom) if headroom > MIN_PADDING_LEN => headroom,
+            Some(headroom) if headroom > MIN_PADDING_LEN => headroom - 1,
             _ => {
                 debug!(self.log, "ignoring unexpected {len} byte packet: not larger than minimum stateless reset size", len=inciting_dgram_len);
                 return;
@@ -338,7 +338,13 @@ where
             remote = remote,
         );
         let mut buf = Vec::<u8>::new();
-        let padding_len = self.rng.gen_range(MIN_PADDING_LEN, max_padding_len);
+        // Resets with at least this much padding can't possibly be distinguished from real packets
+        const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
+        let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
+            max_padding_len
+        } else {
+            self.rng.gen_range(IDEAL_MIN_PADDING_LEN, max_padding_len)
+        };
         buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
