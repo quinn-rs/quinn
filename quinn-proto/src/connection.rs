@@ -1676,6 +1676,11 @@ where
                             token,
                         });
                     }
+                    if remote == self.remote {
+                        // PATH_CHALLENGE on active path, possible off-path packet forwarding
+                        // attack. Send a non-probing packet to recover the active path.
+                        self.ping();
+                    }
                 }
                 Frame::PathResponse(token) => {
                     if self.path_challenge != Some(token) || remote != self.remote {
