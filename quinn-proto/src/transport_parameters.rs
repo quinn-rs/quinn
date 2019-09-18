@@ -43,7 +43,7 @@ macro_rules! make_struct {
         pub struct TransportParameters {
             $(pub $name : u64,)*
 
-            pub disable_migration: bool,
+            pub disable_active_migration: bool,
 
             // Server-only
             pub original_connection_id: Option<ConnectionId>,
@@ -57,7 +57,7 @@ macro_rules! make_struct {
                 Self {
                     $($name: $default,)*
 
-                    disable_migration: false,
+                    disable_active_migration: false,
 
                     original_connection_id: None,
                     stateless_reset_token: None,
@@ -84,7 +84,7 @@ impl TransportParameters {
             initial_max_stream_data_uni: config.stream_receive_window,
             idle_timeout: config.idle_timeout,
             max_ack_delay: TIMER_GRANULARITY.as_millis() as u64,
-            disable_migration: server_config.map_or(false, |c| !c.migration),
+            disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: REM_CID_COUNT,
             ..Self::default()
         }
@@ -208,7 +208,7 @@ impl TransportParameters {
             buf.put_slice(x);
         }
 
-        if self.disable_migration {
+        if self.disable_active_migration {
             buf.write::<u16>(0x000c);
             buf.write::<u16>(0);
         }
@@ -275,10 +275,10 @@ impl TransportParameters {
                     params.stateless_reset_token = Some(tok.into());
                 }
                 0x000c => {
-                    if len != 0 || params.disable_migration {
+                    if len != 0 || params.disable_active_migration {
                         return Err(Error::Malformed);
                     }
-                    params.disable_migration = true;
+                    params.disable_active_migration = true;
                 }
                 0x000d => {
                     if params.preferred_address.is_some() {
