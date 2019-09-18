@@ -2575,6 +2575,9 @@ where
     ///
     /// Returns `None` if the streams in the given direction are currently exhausted.
     pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
+        if self.state.is_closed() {
+            return None;
+        }
         let id = self.streams.open(self.side, dir)?;
         // TODO: Queue STREAM_ID_BLOCKED if None
         self.streams.send_mut(id).unwrap().max_data = match dir {

@@ -185,7 +185,9 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
-            if let Some(x) = conn.inner.open(Dir::Uni) {
+            if let Some(ref e) = conn.error {
+                let _ = send.send(Err(e.clone()));
+            } else if let Some(x) = conn.inner.open(Dir::Uni) {
                 let _ = send.send(Ok((
                     x,
                     conn.inner.side().is_client() && conn.inner.is_handshaking(),
@@ -211,7 +213,9 @@ impl Connection {
         let (send, recv) = oneshot::channel();
         {
             let mut conn = self.0.lock().unwrap();
-            if let Some(x) = conn.inner.open(Dir::Bi) {
+            if let Some(ref e) = conn.error {
+                let _ = send.send(Err(e.clone()));
+            } else if let Some(x) = conn.inner.open(Dir::Bi) {
                 let _ = send.send(Ok((
                     x,
                     conn.inner.side().is_client() && conn.inner.is_handshaking(),
