@@ -3194,17 +3194,14 @@ mod state {
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
 
-/// Encoding of I/O operations to emit on upcoming `poll_io` calls
+/// Encoding of I/O operations to emit on upcoming `poll_*` calls
 #[derive(Debug)]
 struct IoQueue {
     /// Number of probe packets to transmit
     probes: u8,
     /// Whether to transmit a close packet
     close: bool,
-    /// Changes to the loss detection, idle, and close timers, in that order
-    ///
-    /// Note that this ordering exactly matches the values of the `Timer` enum for convenient
-    /// indexing.
+    /// Changes to timers
     timers: TimerTable<Option<TimerSetting>>,
 }
 
