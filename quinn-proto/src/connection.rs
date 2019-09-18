@@ -1107,10 +1107,15 @@ where
                 first_decode,
                 remaining,
             } => {
-                if remote != self.remote && self.side.is_client() {
+                // If this packet could initiate a migration and we're a client or a server that
+                // forbids migration, drop the datagram. This could be relaxed to heuristically
+                // permit NAT-rebinding-like migration.
+                if remote != self.remote
+                    && self.server_config.as_ref().map_or(true, |x| !x.migration)
+                {
                     trace!(
                         self.log,
-                        "discarding packet from unknown server {address}",
+                        "discarding packet from unrecognized peer {address}",
                         address = format!("{}", remote)
                     );
                     return;
@@ -1902,13 +1907,13 @@ where
         }
 
         if remote != self.remote && !is_probing_packet {
-            let server_config = self
-                .server_config
-                .as_ref()
-                .expect("packets from unknown remote should be dropped by clients");
-            if !server_config.migration {
-                return Err(TransportError::INVALID_MIGRATION(""));
-            }
+            debug_assert!(
+                self.server_config
+                    .as_ref()
+                    .expect("packets from unknown remote should be dropped by clients")
+                    .migration,
+                "migration-initiating packets should have been dropped immediately"
+            );
             self.migrate(now, remote);
             // Break linkability, if possible
             if let Some(cid) = self.rem_cids.pop() {

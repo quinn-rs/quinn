@@ -142,6 +142,5 @@ errors! {
     TRANSPORT_PARAMETER_ERROR(0x8) "received transport parameters that were badly formatted, included an invalid value, was absent even though it is mandatory, was present though it is forbidden, or is otherwise in error";
     VERSION_NEGOTIATION_ERROR(0x9) "received transport parameters that contained version negotiation parameters that disagreed with the version negotiation that was performed, constituting a potential version downgrade attack";
     PROTOCOL_VIOLATION(0xA) "detected an error with protocol compliance that was not covered by more specific error codes";
-    INVALID_MIGRATION(0xC) "migrated to a different address when the endpoint had disabled migration";
     CRYPTO_BUFFER_EXCEEDED(0xD) "received more data in CRYPTO frames than can be buffered";
 }
