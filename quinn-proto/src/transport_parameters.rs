@@ -196,6 +196,10 @@ impl TransportParameters {
         }
         apply_params!(write_params);
 
+        // Add a reserved parameter to keep people on their toes
+        buf.write::<u16>(31 * 5 + 27);
+        buf.write::<u16>(0);
+
         if let Some(ref x) = self.original_connection_id {
             buf.write::<u16>(0x0000);
             buf.write::<u16>(x.len() as u16);
