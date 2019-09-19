@@ -443,6 +443,32 @@ fn zero_rtt_rejection() {
 }
 
 #[test]
+fn alpn_success() {
+    let mut server_config = server_config();
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into(), "bar".into(), "baz".into()]);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let mut client_config = client_config();
+    Arc::get_mut(&mut client_config.crypto)
+        .unwrap()
+        .set_protocols(&["bar".into(), "quux".into(), "corge".into()]);
+
+    // Establish normal connection
+    let client_conn = pair.begin_connect(client_config.clone());
+    pair.drive();
+    let server_conn = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(server_conn).poll(),
+        Some(Event::Connected)
+    );
+    assert_eq!(
+        pair.client_conn_mut(client_conn).protocol(),
+        Some(&b"bar"[..])
+    );
+}
+
+#[test]
 fn stream_id_backpressure() {
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
