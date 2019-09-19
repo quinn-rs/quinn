@@ -54,8 +54,8 @@ where
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
     rem_cid_seq: u64,
-    remote: SocketAddr,
-    prev_remote: Option<SocketAddr>,
+    path: PathData,
+    prev_path: Option<PathData>,
     state: State,
     side: Side,
     mtu: u16,
@@ -130,21 +130,15 @@ where
     time_of_last_sent_ack_eliciting_packet: Instant,
     /// The time the most recently sent handshake packet was sent.
     time_of_last_sent_crypto_packet: Instant,
-    rtt: RttEstimator,
 
     //
     // Congestion Control
     //
     /// Summary statistics of packets that have been sent, but not yet acked or deemed lost
     in_flight: InFlight,
-    /// Maximum number of bytes in flight that may be sent.
-    congestion_window: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
     /// after this time is acknowledged, QUIC exits recovery.
     recovery_start_time: Instant,
-    /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
-    /// slow start and the window grows by the number of bytes acknowledged.
-    ssthresh: u64,
     /// Explicit congestion notification (ECN) counters
     ecn_counters: frame::EcnCounts,
     /// Whether we're enabling ECN on outgoing packets
@@ -204,8 +198,13 @@ where
             rem_cid,
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
-            remote,
-            prev_remote: None,
+            path: PathData {
+                remote,
+                rtt: RttEstimator::new(),
+                congestion_window: config.initial_window,
+                ssthresh: u64::max_value(),
+            },
+            prev_path: None,
             side,
             state,
             mtu: MIN_MTU,
@@ -246,12 +245,9 @@ where
             pto_count: 0,
             time_of_last_sent_ack_eliciting_packet: now,
             time_of_last_sent_crypto_packet: now,
-            rtt: RttEstimator::new(),
 
             in_flight: InFlight::new(),
-            congestion_window: config.initial_window,
             recovery_start_time: now,
-            ssthresh: u64::max_value(),
             ecn_counters: frame::EcnCounts::ZERO,
             sending_ecn: true,
             receiving_ecn: false,
@@ -390,7 +386,7 @@ where
                     )
                 };
                 let rtt = instant_saturating_sub(now, info.time_sent);
-                self.rtt.update(delay, rtt);
+                self.path.rtt.update(delay, rtt);
             }
         }
 
@@ -484,13 +480,14 @@ where
             // Congestion control
             // Do not increase congestion window in recovery period or while migrating.
             if !self.in_recovery(info.time_sent) && !self.migrating() {
-                if self.congestion_window < self.ssthresh {
+                if self.path.congestion_window < self.path.ssthresh {
                     // Slow start.
-                    self.congestion_window += u64::from(info.size);
+                    self.path.congestion_window += u64::from(info.size);
                 } else {
                     // Congestion avoidance.
-                    self.congestion_window += self.config.max_datagram_size * u64::from(info.size)
-                        / self.congestion_window;
+                    self.path.congestion_window += self.config.max_datagram_size
+                        * u64::from(info.size)
+                        / self.path.congestion_window;
                 }
             }
         }
@@ -562,8 +559,8 @@ where
                 debug!(self.log, "path validation failed");
                 self.path_challenge = None;
                 self.path_challenge_pending = false;
-                if let Some(prev) = self.prev_remote.take() {
-                    self.remote = prev;
+                if let Some(prev) = self.prev_path.take() {
+                    self.path = prev;
                 }
             }
         }
@@ -616,9 +613,10 @@ where
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
         let mut lost_packets = Vec::<u64>::new();
         let rtt = self
+            .path
             .rtt
             .smoothed
-            .map_or(self.rtt.latest, |x| cmp::max(x, self.rtt.latest));
+            .map_or(self.path.rtt.latest, |x| cmp::max(x, self.path.rtt.latest));
         let rtt = cmp::max(rtt, TIMER_GRANULARITY);
         let loss_delay = rtt + ((rtt * u32::from(self.config.time_threshold)) / 65536);
 
@@ -670,7 +668,7 @@ where
             if lost_ack_eliciting {
                 self.congestion_event(now, largest_lost_sent);
                 if in_persistent_congestion {
-                    self.congestion_window = self.config.minimum_window;
+                    self.path.congestion_window = self.config.minimum_window;
                 }
             }
         }
@@ -684,10 +682,11 @@ where
         }
         self.recovery_start_time = now;
         // *= factor
-        self.congestion_window =
-            (self.congestion_window * u64::from(self.config.loss_reduction_factor)) >> 16;
-        self.congestion_window = cmp::max(self.congestion_window, self.config.minimum_window);
-        self.ssthresh = self.congestion_window;
+        self.path.congestion_window =
+            (self.path.congestion_window * u64::from(self.config.loss_reduction_factor)) >> 16;
+        self.path.congestion_window =
+            cmp::max(self.path.congestion_window, self.config.minimum_window);
+        self.path.ssthresh = self.path.congestion_window;
     }
 
     fn in_recovery(&self, sent_time: Instant) -> bool {
@@ -710,6 +709,7 @@ where
         if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
             // Handshake retransmission timer.
             let timeout = 2 * self
+                .path
                 .rtt
                 .smoothed
                 .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
@@ -738,10 +738,11 @@ where
     /// Probe Timeout
     fn pto(&self) -> Duration {
         let rtt = self
+            .path
             .rtt
             .smoothed
             .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
-        rtt + cmp::max(4 * self.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
+        rtt + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
     }
 
     fn on_packet_authenticated(
@@ -1110,7 +1111,7 @@ where
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
-                if remote != self.remote
+                if remote != self.path.remote
                     && self.server_config.as_ref().map_or(true, |x| !x.migration)
                 {
                     trace!(
@@ -1319,7 +1320,7 @@ where
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(_) = self.state {
-            self.io.close = remote == self.remote;
+            self.io.close = remote == self.path.remote;
         }
     }
 
@@ -1676,14 +1677,14 @@ where
                             token,
                         });
                     }
-                    if remote == self.remote {
+                    if remote == self.path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
                         self.ping();
                     }
                 }
                 Frame::PathResponse(token) => {
-                    if self.path_challenge != Some(token) || remote != self.remote {
+                    if self.path_challenge != Some(token) || remote != self.path.remote {
                         continue;
                     }
                     trace!(self.log, "path validated");
@@ -1911,7 +1912,7 @@ where
             }
         }
 
-        if remote != self.remote
+        if remote != self.path.remote
             && !is_probing_packet
             && number == self.space(SpaceId::Data).rx_packet
         {
@@ -1961,17 +1962,32 @@ where
             "migration initiated from {remote}",
             remote = remote
         );
-        if remote.ip() != self.remote.ip() {
-            // Reset rtt/congestion state for new path. Note that the congestion window will not
-            // grow until validation terminates. Helps mitigate amplification attacks performed by
-            // spoofing source addresses.
-            self.rtt = RttEstimator::new();
-            self.congestion_window = self.config.initial_window;
-            self.ssthresh = u64::max_value();
-        }
-        // Don't clobber the original remote if the current one hasn't been validated yet
+        // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
+        let preserve_stats = remote.is_ipv4() && remote.ip() == self.path.remote.ip();
+        // Note that the congestion window will not grow until validation terminates. Helps mitigate
+        // amplification attacks performed by spoofing source addresses.
+        let new_path = PathData {
+            remote,
+            rtt: if preserve_stats {
+                self.path.rtt
+            } else {
+                RttEstimator::new()
+            },
+            congestion_window: if preserve_stats {
+                self.path.congestion_window
+            } else {
+                self.config.initial_window
+            },
+            ssthresh: if preserve_stats {
+                self.path.ssthresh
+            } else {
+                u64::max_value()
+            },
+        };
+        let prev = Some(mem::replace(&mut self.path, new_path));
+        // Don't clobber the original path if the previous one hasn't been validated yet
         if !self.migrating() {
-            self.prev_remote = Some(mem::replace(&mut self.remote, remote));
+            self.prev_path = prev;
         }
 
         // Initiate path validation
@@ -2247,7 +2263,7 @@ where
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
         Some(Transmit {
-            destination: self.remote,
+            destination: self.path.remote,
             contents: buf.into(),
             ecn: if self.sending_ecn {
                 Some(EcnCodepoint::ECT0)
@@ -2709,7 +2725,10 @@ where
 
     fn congestion_blocked(&self) -> bool {
         if let State::Established = self.state {
-            self.congestion_window.saturating_sub(self.in_flight.bytes) < u64::from(self.mtu)
+            self.path
+                .congestion_window
+                .saturating_sub(self.in_flight.bytes)
+                < u64::from(self.mtu)
         } else {
             false
         }
@@ -2947,7 +2966,7 @@ where
 
     /// The latest socket address for this connection's peer
     pub fn remote(&self) -> SocketAddr {
-        self.remote
+        self.path.remote
     }
 
     /// The ALPN protocol negotiated during this connection's handshake
@@ -2965,7 +2984,9 @@ where
     /// Number of bytes worth of non-ack-only packets that may be sent
     #[cfg(test)]
     pub(crate) fn congestion_state(&self) -> u64 {
-        self.congestion_window.saturating_sub(self.in_flight.bytes)
+        self.path
+            .congestion_window
+            .saturating_sub(self.in_flight.bytes)
     }
 
     /// The name a client supplied via SNI
@@ -3310,6 +3331,7 @@ impl InFlight {
     }
 }
 
+#[derive(Copy, Clone)]
 struct RttEstimator {
     /// The most recent RTT measurement made when receiving an ack for a previously unacked packet
     latest: Duration,
@@ -3419,3 +3441,14 @@ const ACK_DELAY_EXPONENT: u8 = 3;
 const MAX_BACKOFF_EXPONENT: u32 = 16;
 // Minimal remaining size to allow packet coalescing
 const MIN_PACKET_SPACE: usize = 40;
+
+/// Description of a particular network path
+struct PathData {
+    remote: SocketAddr,
+    rtt: RttEstimator,
+    /// Maximum number of bytes in flight that may be sent.
+    congestion_window: u64,
+    /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
+    /// slow start and the window grows by the number of bytes acknowledged.
+    ssthresh: u64,
+}
