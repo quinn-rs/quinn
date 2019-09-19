@@ -1378,6 +1378,16 @@ where
                             data: client_hello,
                         });
 
+                        // Retransmit all 0-RTT data
+                        let zero_rtt = mem::replace(
+                            &mut self.space_mut(SpaceId::Data).sent_packets,
+                            BTreeMap::new(),
+                        );
+                        for (_, info) in zero_rtt {
+                            self.in_flight.remove(&info);
+                            self.space_mut(SpaceId::Data).pending += info.retransmits;
+                        }
+
                         self.state = State::Handshake(state::Handshake {
                             token: Some(packet.payload.into()),
                             rem_cid_set: false,
