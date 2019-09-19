@@ -2175,7 +2175,7 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(now, space_id, &mut buf))
+                Some(self.populate_packet(space_id, &mut buf))
             };
 
             let space = &mut self.spaces[space_id as usize];
@@ -2273,12 +2273,7 @@ where
         })
     }
 
-    fn populate_packet(
-        &mut self,
-        now: Instant,
-        space_id: SpaceId,
-        buf: &mut Vec<u8>,
-    ) -> (Retransmits, RangeSet) {
+    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> (Retransmits, RangeSet) {
         let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
@@ -2310,15 +2305,13 @@ where
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            let delay = (instant_saturating_sub(now, space.rx_packet_time).as_micros()
-                >> ACK_DELAY_EXPONENT) as u64;
-            trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>(), "delay" => delay);
+            trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>());
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
             } else {
                 None
             };
-            frame::Ack::encode(delay, &space.pending_acks, ecn, buf);
+            frame::Ack::encode(0, &space.pending_acks, ecn, buf);
             space.pending_acks.clone()
         } else {
             RangeSet::new()
@@ -3435,8 +3428,6 @@ fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
     }
 }
 
-/// Value used in ACKs we transmit
-const ACK_DELAY_EXPONENT: u8 = 3;
 // Prevents overflow and improves behavior in extreme circumstances
 const MAX_BACKOFF_EXPONENT: u32 = 16;
 // Minimal remaining size to allow packet coalescing
