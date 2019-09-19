@@ -1969,7 +1969,10 @@ where
             self.congestion_window = self.config.initial_window;
             self.ssthresh = u64::max_value();
         }
-        self.prev_remote = Some(mem::replace(&mut self.remote, remote));
+        // Don't clobber the original remote if the current one hasn't been validated yet
+        if !self.migrating() {
+            self.prev_remote = Some(mem::replace(&mut self.remote, remote));
+        }
 
         // Initiate path validation
         self.io.timer_start(
