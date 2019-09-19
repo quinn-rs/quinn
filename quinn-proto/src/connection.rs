@@ -482,8 +482,8 @@ where
         self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
-            // Do not increase congestion window in recovery period.
-            if !self.in_recovery(info.time_sent) {
+            // Do not increase congestion window in recovery period or while migrating.
+            if !self.in_recovery(info.time_sent) && !self.migrating() {
                 if self.congestion_window < self.ssthresh {
                     // Slow start.
                     self.congestion_window += u64::from(info.size);
@@ -1950,6 +1950,11 @@ where
         }
     }
 
+    /// Whether a migration has been initiated and the new path has not yet been validated
+    fn migrating(&self) -> bool {
+        self.path_challenge.is_some()
+    }
+
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
         trace!(
             self.log,
@@ -1957,7 +1962,9 @@ where
             remote = remote
         );
         if remote.ip() != self.remote.ip() {
-            // Reset rtt/congestion state for new path
+            // Reset rtt/congestion state for new path. Note that the congestion window will not
+            // grow until validation terminates. Helps mitigate amplification attacks performed by
+            // spoofing source addresses.
             self.rtt = RttEstimator::new();
             self.congestion_window = self.config.initial_window;
             self.ssthresh = u64::max_value();
