@@ -385,7 +385,7 @@ fn zero_rtt_rejection() {
     let mut server_config = server_config();
     Arc::get_mut(&mut server_config.crypto)
         .unwrap()
-        .set_protocols(&["foo".into()]);
+        .set_protocols(&["foo".into(), "bar".into()]);
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut client_config = client_config();
     Arc::get_mut(&mut client_config.crypto)
