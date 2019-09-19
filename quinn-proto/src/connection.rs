@@ -141,8 +141,6 @@ where
     recovery_start_time: Instant,
     /// Explicit congestion notification (ECN) counters
     ecn_counters: frame::EcnCounts,
-    /// Whether we're enabling ECN on outgoing packets
-    sending_ecn: bool,
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
     remote_validated: bool,
@@ -203,6 +201,7 @@ where
                 rtt: RttEstimator::new(),
                 congestion_window: config.initial_window,
                 ssthresh: u64::max_value(),
+                sending_ecn: true,
             },
             prev_path: None,
             side,
@@ -249,7 +248,6 @@ where
             in_flight: InFlight::new(),
             recovery_start_time: now,
             ecn_counters: frame::EcnCounts::ZERO,
-            sending_ecn: true,
             receiving_ecn: false,
             remote_validated,
             total_recvd: 0,
@@ -421,7 +419,7 @@ where
         self.pto_count = 0;
 
         // Explicit congestion notification
-        if self.sending_ecn {
+        if self.path.sending_ecn {
             if let Some(ecn) = ack.ecn {
                 // We only examine ECN counters from ACKs that we are certain we received in transmit
                 // order, allowing us to compute an increase in ECN counts to compare against the number
@@ -434,7 +432,7 @@ where
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
                 debug!(self.log, "ECN not acknowledged by peer");
-                self.sending_ecn = false;
+                self.path.sending_ecn = false;
             }
         }
 
@@ -463,7 +461,10 @@ where
                     "halting ECN due to verification failure: {error}",
                     error = e
                 );
-                self.sending_ecn = false;
+                self.path.sending_ecn = false;
+                // Wipe out the existing value because it might be garbage and could interfere with
+                // future attempts to use ECN on new paths.
+                self.space_mut(space).ecn_feedback = frame::EcnCounts::ZERO;
             }
             Ok(false) => {}
             Ok(true) => {
@@ -1963,26 +1964,28 @@ where
             remote = remote
         );
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
-        let preserve_stats = remote.is_ipv4() && remote.ip() == self.path.remote.ip();
+        let maybe_rebinding = remote.is_ipv4() && remote.ip() == self.path.remote.ip();
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
         // amplification attacks performed by spoofing source addresses.
         let new_path = PathData {
             remote,
-            rtt: if preserve_stats {
+            rtt: if maybe_rebinding {
                 self.path.rtt
             } else {
                 RttEstimator::new()
             },
-            congestion_window: if preserve_stats {
+            congestion_window: if maybe_rebinding {
                 self.path.congestion_window
             } else {
                 self.config.initial_window
             },
-            ssthresh: if preserve_stats {
+            ssthresh: if maybe_rebinding {
                 self.path.ssthresh
             } else {
                 u64::max_value()
             },
+            // Try ECN on the new path if it's probably not the same as an old broken path.
+            sending_ecn: self.path.sending_ecn || !maybe_rebinding,
         };
         let prev = Some(mem::replace(&mut self.path, new_path));
         // Don't clobber the original path if the previous one hasn't been validated yet
@@ -2265,7 +2268,7 @@ where
         Some(Transmit {
             destination: self.path.remote,
             contents: buf.into(),
-            ecn: if self.sending_ecn {
+            ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::ECT0)
             } else {
                 None
@@ -2998,7 +3001,7 @@ where
     /// Whether explicit congestion notification is in use on outgoing packets.
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
-        self.sending_ecn
+        self.path.sending_ecn
     }
 
     fn max_ack_delay(&self) -> Duration {
@@ -3442,4 +3445,6 @@ struct PathData {
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
+    /// Whether we're enabling ECN on outgoing packets
+    sending_ecn: bool,
 }
