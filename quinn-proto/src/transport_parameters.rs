@@ -7,7 +7,7 @@ use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
 use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
     crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT,
-    RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -83,7 +83,7 @@ impl TransportParameters {
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
             idle_timeout: config.idle_timeout,
-            max_ack_delay: TIMER_GRANULARITY.as_millis() as u64,
+            max_ack_delay: 0,
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: REM_CID_COUNT,
             ..Self::default()
