@@ -1917,6 +1917,9 @@ where
                     }
                 }
                 Frame::NewToken { .. } => {
+                    if self.side.is_server() {
+                        return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
+                    }
                     trace!(self.log, "got new token");
                     // TODO: Cache, or perhaps forward to user?
                 }
