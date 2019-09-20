@@ -79,4 +79,4 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
 }
 
 #[allow(unused)]
-pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-20", b"hq-22"];
+pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-23"];
