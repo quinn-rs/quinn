@@ -738,12 +738,12 @@ where
 
     /// Probe Timeout
     fn pto(&self) -> Duration {
-        let rtt = self
-            .path
-            .rtt
-            .smoothed
-            .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
-        rtt + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
+        match self.path.rtt.smoothed {
+            None => 2 * Duration::from_micros(self.config.initial_rtt),
+            Some(srtt) => {
+                srtt + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
+            }
+        }
     }
 
     fn on_packet_authenticated(

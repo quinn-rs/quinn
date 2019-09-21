@@ -141,7 +141,7 @@ impl Default for TransportConfig {
             packet_threshold: 3,
             time_threshold: 0x2000, // 1/8
             delayed_ack_timeout: 25 * 1000,
-            initial_rtt: EXPECTED_RTT as u64 * 1000,
+            initial_rtt: 500 * 1000, // 500ms per spec, intentionally distinct from EXPECTED_RTT
 
             max_datagram_size: MAX_DATAGRAM_SIZE,
             initial_window: cmp::min(
