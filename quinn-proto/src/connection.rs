@@ -373,21 +373,6 @@ where
             }
         };
 
-        if let Some(info) = self.space(space).sent_packets.get(&ack.largest) {
-            if info.ack_eliciting {
-                let delay = if space != SpaceId::Data {
-                    Duration::from_micros(0)
-                } else {
-                    cmp::min(
-                        self.max_ack_delay(),
-                        Duration::from_micros(ack.delay << self.params.ack_delay_exponent),
-                    )
-                };
-                let rtt = instant_saturating_sub(now, info.time_sent);
-                self.path.rtt.update(delay, rtt);
-            }
-        }
-
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let newly_acked = ack
             .iter()
@@ -397,11 +382,26 @@ where
             return Ok(());
         }
 
+        let mut ack_eliciting_acked = false;
         for &packet in &newly_acked {
             if let Some(info) = self.space_mut(space).sent_packets.remove(&packet) {
                 self.space_mut(space).pending_acks.subtract(&info.acks);
+                ack_eliciting_acked |= info.ack_eliciting;
                 self.on_packet_acked(info);
             }
+        }
+
+        if new_largest && ack_eliciting_acked {
+            let ack_delay = if space != SpaceId::Data {
+                Duration::from_micros(0)
+            } else {
+                cmp::min(
+                    self.max_ack_delay(),
+                    Duration::from_micros(ack.delay << self.params.ack_delay_exponent),
+                )
+            };
+            let rtt = instant_saturating_sub(now, self.space(space).largest_acked_packet_sent);
+            self.path.rtt.update(ack_delay, rtt);
         }
 
         if self.space(SpaceId::Handshake).crypto.is_some()
