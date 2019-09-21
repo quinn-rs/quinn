@@ -921,6 +921,10 @@ where
             false,
         );
         self.process_early_payload(now, packet)?;
+        if self.space(SpaceId::Initial).crypto_stream.offset() == 0 {
+            debug!(self.log, "dropping Initial with no CRYPTO data");
+            return Ok(());
+        }
         if self.state.is_closed() {
             return Ok(());
         }
