@@ -14,7 +14,8 @@ use super::{
 
 #[test]
 fn handshake_timeout() {
-    let client = Endpoint::builder();
+    let mut client = Endpoint::builder();
+    client.logger(logger());
     let (client_driver, client, _) = client
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -26,6 +27,7 @@ fn handshake_timeout() {
     const IDLE_TIMEOUT: u64 = 1_000;
     client_config.transport = Arc::new(crate::TransportConfig {
         idle_timeout: IDLE_TIMEOUT,
+        initial_rtt: 10_000, // Ensure initial PTO doesn't influence the timeout significantly
         ..Default::default()
     });
 
