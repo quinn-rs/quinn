@@ -105,7 +105,7 @@ pub struct NewConnection {
     /// Streams initiated by the peer, in the order they were opened
     pub streams: IncomingStreams,
     /// Leave room for future extensions
-    _non_exhaustive: (),
+    pub(crate) _non_exhaustive: (),
 }
 
 impl NewConnection {

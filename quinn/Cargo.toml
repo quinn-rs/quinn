@@ -33,8 +33,13 @@ slog = "2.1"
 tokio-net = { version = "0.2.0-alpha.5", default-features = false }
 tokio-timer = "0.3.0-alpha.5"
 tokio-io = "0.2.0-alpha.5"
+tokio-executor = { version = "0.2.0-alpha.5", optional = true }
 webpki = "0.21"
 webpki-roots = "0.17"
+
+[features]
+default = ["simple"]
+simple = ["tokio-executor"]
 
 [dev-dependencies]
 crc = "1.8.1"
