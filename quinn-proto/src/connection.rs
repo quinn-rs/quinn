@@ -128,8 +128,8 @@ where
     pto_count: u32,
     /// The time the most recently sent retransmittable packet was sent.
     time_of_last_sent_ack_eliciting_packet: Instant,
-    /// The time the most recently sent handshake packet was sent.
-    time_of_last_sent_crypto_packet: Instant,
+    /// Number of tail loss probes to send
+    loss_probes: u32,
 
     //
     // Congestion Control
@@ -243,7 +243,7 @@ where
             crypto_count: 0,
             pto_count: 0,
             time_of_last_sent_ack_eliciting_packet: now,
-            time_of_last_sent_crypto_packet: now,
+            loss_probes: 0,
 
             in_flight: InFlight::new(),
             recovery_start_time: now,
@@ -318,7 +318,6 @@ where
     ) {
         let SentPacket {
             size,
-            is_crypto_packet,
             ack_eliciting,
             ..
         } = packet;
@@ -335,9 +334,6 @@ where
                     self.reset_idle_timeout(now);
                 }
                 self.permit_idle_reset = false;
-            }
-            if is_crypto_packet {
-                self.time_of_last_sent_crypto_packet = now;
             }
             self.set_loss_detection_timer();
         }
@@ -587,28 +583,56 @@ where
         if let Some((_, pn_space)) = self.earliest_loss_time() {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space);
-        } else if self.in_flight.crypto != 0 {
-            trace!(self.log, "retransmitting handshake packets");
-            for &space_id in [SpaceId::Initial, SpaceId::Handshake].iter() {
-                let space = self.space_mut(space_id);
-                for packet in space.sent_packets.values_mut() {
-                    space
-                        .pending
-                        .crypto
-                        .extend(packet.retransmits.crypto.drain(..));
+            self.set_loss_detection_timer();
+            return;
+        }
+
+        trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes, "count" => self.pto_count);
+        // Send two probes to improve odds of getting through under lossy conditions
+        self.loss_probes = self.loss_probes.saturating_add(2);
+        self.pto_count = self.pto_count.saturating_add(1);
+        self.set_loss_detection_timer();
+    }
+
+    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
+    ///
+    /// Probes are sent similarly to normal packets when an expect ACK has not arrived. We never
+    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
+    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
+    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
+    /// when the congestion window is filled with lost tail packets.
+    ///
+    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
+    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
+    /// in-flight data either, we're probably a client guarding against a handshake
+    /// anti-amplification deadlock and we just make something up.
+    fn ensure_probe_queued(&mut self) {
+        // Retransmit the data of the oldest in-flight packet
+        for space in &mut self.spaces {
+            if !space.pending.is_empty() {
+                // There's real data to send here, no need to make something up
+                return;
+            }
+            for packet in space.sent_packets.values_mut() {
+                if !packet.retransmits.is_empty() {
+                    dbg!(&packet.retransmits);
+                    // Remove retransmitted data from the old packet so we don't end up retransmitting
+                    // it *again* even if the copy we're sending now gets acknowledged.
+                    space.pending += mem::replace(&mut packet.retransmits, Retransmits::default());
+                    return;
                 }
             }
-            self.crypto_count = self.crypto_count.saturating_add(1);
-        } else if self.state.is_handshake() && self.side.is_client() {
-            trace!(self.log, "sending anti-deadlock handshake packet");
-            self.io.probes += 1;
-            self.crypto_count = self.crypto_count.saturating_add(1);
-        } else {
-            trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes);
-            self.io.probes += 2;
-            self.pto_count = self.pto_count.saturating_add(1);
         }
-        self.set_loss_detection_timer();
+        if self.space(SpaceId::Data).crypto.is_none() {
+            // Hack around weird rule pending https://github.com/quicwg/base-drafts/pull/3035
+            let space = self.space_mut(self.highest_space);
+            space.pending.crypto.push_back(frame::Crypto {
+                offset: space.crypto_offset,
+                data: Bytes::new(),
+            });
+            return;
+        }
+        self.ping();
     }
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
@@ -700,6 +724,16 @@ where
             .min_by_key(|&(time, _)| time)
     }
 
+    fn peer_not_awaiting_address_validation(&self) -> bool {
+        if self.side.is_server() {
+            return true;
+        }
+        self.space(SpaceId::Handshake)
+            .largest_acked_packet
+            .is_some()
+            || self.space(SpaceId::Data).largest_acked_packet.is_some()
+    }
+
     fn set_loss_detection_timer(&mut self) {
         if let Some((loss_time, _)) = self.earliest_loss_time() {
             // Time threshold loss detection.
@@ -707,23 +741,9 @@ where
             return;
         }
 
-        if self.in_flight.crypto != 0 || (self.state.is_handshake() && self.side.is_client()) {
-            // Handshake retransmission timer.
-            let timeout = 2 * self
-                .path
-                .rtt
-                .smoothed
-                .unwrap_or_else(|| Duration::from_micros(self.config.initial_rtt));
-            let timeout = cmp::max(timeout, TIMER_GRANULARITY)
-                * 2u32.pow(cmp::min(self.crypto_count, MAX_BACKOFF_EXPONENT));
-            self.io.timer_start(
-                TimerKind::LossDetection,
-                self.time_of_last_sent_crypto_packet + timeout,
-            );
-            return;
-        }
-
-        if self.in_flight.ack_eliciting == 0 {
+        // Don't arm timer if there are no ack-eliciting packets
+        // in flight and the handshake is complete.
+        if self.in_flight.ack_eliciting == 0 && self.peer_not_awaiting_address_validation() {
             self.io.timer_stop(TimerKind::LossDetection);
             return;
         }
@@ -2059,6 +2079,12 @@ where
             return None;
         }
 
+        if self.loss_probes != 0 {
+            // If we need to send a probe, make sure we have something to send.
+            self.ensure_probe_queued();
+        }
+
+        // Select the set of spaces that have data to send so we can try to coalesce them
         let (spaces, close) = match self.state {
             State::Drained => {
                 return None;
@@ -2074,7 +2100,6 @@ where
                 SpaceId::iter()
                     .filter(|&x| {
                         (self.space(x).crypto.is_some() && self.space(x).can_send())
-                            || (x == self.highest_space && self.io.probes != 0)
                             || (x == SpaceId::Data
                                 && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
                                     || (self.zero_rtt_crypto.is_some()
@@ -2095,11 +2120,11 @@ where
         };
 
         for space_id in spaces {
-            let probe = !close && self.io.probes != 0;
             let mut ack_only = self.space(space_id).pending.is_empty();
             if space_id == SpaceId::Data {
                 ack_only &= self.path_response.is_none();
-                if !probe && !ack_only && self.congestion_blocked() {
+                // Tail loss probes must not be blocked by congestion, or a deadlock could arise
+                if !ack_only && self.loss_probes == 0 && self.congestion_blocked() {
                     continue;
                 }
             }
@@ -2107,8 +2132,8 @@ where
             //
             // From here on, we've determined that a packet will definitely be sent.
             //
+            self.loss_probes = self.loss_probes.saturating_sub(1);
 
-            self.io.probes = self.io.probes.saturating_sub(1);
             if self.spaces[SpaceId::Initial as usize].crypto.is_some()
                 && space_id == SpaceId::Handshake
                 && self.side.is_client()
@@ -2167,12 +2192,6 @@ where
             };
             let partial_encode = header.encode(&mut buf);
             coalesce = coalesce && !header.is_short();
-
-            if probe && ack_only && header.is_1rtt() {
-                // Nothing ack-eliciting to send, so we need to make something up
-                self.ping_pending = true;
-            }
-            ack_only &= !self.ping_pending;
 
             let sent = if close {
                 trace!(self.log, "sending CONNECTION_CLOSE");
@@ -2263,7 +2282,6 @@ where
                         } else {
                             0
                         },
-                        is_crypto_packet: space_id != SpaceId::Data && !sent.crypto.is_empty(),
                         ack_eliciting: !ack_only,
                         retransmits: sent,
                     },
@@ -3241,8 +3259,6 @@ const MAX_ACK_BLOCKS: usize = 64;
 /// Encoding of I/O operations to emit on upcoming `poll_*` calls
 #[derive(Debug)]
 struct IoQueue {
-    /// Number of probe packets to transmit
-    probes: u8,
     /// Whether to transmit a close packet
     close: bool,
     /// Changes to timers
@@ -3252,7 +3268,6 @@ struct IoQueue {
 impl IoQueue {
     fn new() -> Self {
         Self {
-            probes: 0,
             close: false,
             timers: Default::default(),
         }
@@ -3311,8 +3326,6 @@ struct InFlight {
     /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
     /// count towards this to ensure congestion control does not impede congestion feedback.
     bytes: u64,
-    /// Number of unacknowledged Initial or Handshake packets bearing CRYPTO frames
-    crypto: u64,
     /// Number of packets in flight containing frames other than ACK and PADDING
     ///
     /// This can be 0 even when bytes is not 0 because PADDING frames cause a packet to be
@@ -3325,21 +3338,18 @@ impl InFlight {
     pub fn new() -> Self {
         Self {
             bytes: 0,
-            crypto: 0,
             ack_eliciting: 0,
         }
     }
 
     fn insert(&mut self, packet: &SentPacket) {
         self.bytes += u64::from(packet.size);
-        self.crypto += u64::from(packet.is_crypto_packet);
         self.ack_eliciting += u64::from(packet.ack_eliciting);
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
     fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
-        self.crypto -= u64::from(packet.is_crypto_packet);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }
 }

@@ -155,10 +155,6 @@ pub struct SentPacket {
     pub size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub ack_eliciting: bool,
-    /// Whether the packet contains cryptographic handshake messages critical to the completion of
-    /// the QUIC handshake.
-    // FIXME: Implied by retransmits + space
-    pub is_crypto_packet: bool,
     pub acks: RangeSet,
     pub retransmits: Retransmits,
 }
