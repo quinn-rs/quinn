@@ -1113,3 +1113,34 @@ fn stop_during_finish() {
         Some(Event::StreamFinished { stream, stop_reason: Some(ERROR) }) if stream == s
     );
 }
+
+// Ensure we can recover from loss of tail packets when the congestion window is full
+#[test]
+fn congested_tail_loss() {
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+
+    let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    loop {
+        match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
+            Ok(n) => {
+                assert!(n <= 1024);
+                pair.drive_client();
+            }
+            Err(WriteError::Blocked) => {
+                break;
+            }
+            Err(e) => {
+                panic!("unexpected write error: {}", e);
+            }
+        }
+    }
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+    pair.drive();
+    assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
+    pair.client_conn_mut(client_ch)
+        .write(s, &[42; 1024])
+        .unwrap();
+}
