@@ -2755,14 +2755,10 @@ where
     }
 
     fn congestion_blocked(&self) -> bool {
-        if let State::Established = self.state {
-            self.path
-                .congestion_window
-                .saturating_sub(self.in_flight.bytes)
-                < u64::from(self.mtu)
-        } else {
-            false
-        }
+        self.path
+            .congestion_window
+            .saturating_sub(self.in_flight.bytes)
+            < u64::from(self.mtu)
     }
 
     fn blocked(&self) -> bool {
