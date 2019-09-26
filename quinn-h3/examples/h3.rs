@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use failure::{format_err, Error};
-use futures::{future::Either, Future, Stream};
+use futures::{StreamExt, TryFutureExt};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
 use slog::{o, Logger};
 use structopt::{self, StructOpt};
-use tokio::runtime::current_thread::{self, Runtime};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
 
 use quinn::ConnectionDriver as QuicDriver;
@@ -17,13 +17,14 @@ use quinn_h3::{
     self,
     body::RecvBody,
     client::Builder as ClientBuilder,
+    client::Client,
     connection::ConnectionDriver,
     server::{Builder as ServerBuilder, IncomingRequest, Sender},
 };
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
 mod shared;
-use shared::{build_certs, logger, Result};
+use shared::{build_certs, logger};
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3")]
@@ -41,44 +42,55 @@ struct Opt {
     listen: SocketAddr,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
     let log = logger("h3".into());
     let certs = build_certs(log.clone(), &opt.key, &opt.cert).expect("failed to build certs");
 
-    let mut runtime = Runtime::new().expect("runtime failed");
     let server = server(
         log.new(o!("server" => "")),
         opt.clone(),
-        &mut runtime,
         (certs.0.clone(), certs.2.clone()),
     )
-    .expect("server failed");
+    .expect("init server failed");
 
-    let (driver, client) =
-        client(log.new(o!("client" => "")), opt, certs.1).expect("client failed");
+    let (client, client_driver) =
+        build_client(log.new(o!("client" => "")), certs.1).expect("build client failed");
 
-    runtime.spawn(driver.map_err(|_| println!("client driver failed:")));
-    runtime.spawn(server.map_err(|e| println!("server driver failed: {:?}", e)));
-    runtime
-        .block_on(
-            client
-                .and_then(|_| {
-                    println!("client finished");
-                    futures::future::ok(())
-                })
-                .map_err(|e| println!("client failed: {:?}", e)),
-        )
-        .expect("block on server failed");
+    tokio::spawn(async move {
+        println!("server running");
+        if let Err(e) = server.await {
+            eprintln!("h3 server error: {}", e)
+        }
+        println!("server finished");
+    });
+
+    tokio::spawn(async move {
+        if let Err(e) = client_driver.await {
+            eprintln!("h3 client dirver error: {}", e)
+        }
+    });
+
+    let remote = (opt.url.host_str().unwrap(), opt.url.port().unwrap_or(4433))
+        .to_socket_addrs()
+        .expect("invalid address")
+        .next()
+        .expect("couldn't resolve to an address");
+
+    match client_request(client, &remote).await {
+        Ok(_) => println!("client finished"),
+        Err(e) => println!("client failed: {:?}", e),
+    }
+
     ::std::process::exit(0);
 }
 
 fn server(
     log: Logger,
     options: Opt,
-    runtime: &mut Runtime,
     certs: (CertificateChain, PrivateKey),
-) -> Result<quinn::EndpointDriver> {
+) -> Result<quinn::EndpointDriver, Error> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 513,
@@ -96,111 +108,94 @@ fn server(
 
     let server = ServerBuilder::new(endpoint);
 
-    let (endpoint_driver, incoming) = {
+    let (endpoint_driver, mut incoming) = {
         let (driver, _server, incoming) = server.bind(options.listen)?;
-        println!("server listening");
         (driver, incoming)
     };
 
-    runtime.spawn(incoming.for_each(|connecting| {
-        println!("server received connection");
-        connecting
-            .map_err(|e| eprintln!("connecting failed: {}", e))
-            .and_then(|connection| {
-                println!("received connection");
-                handle_connection(connection).map_err(|e| eprintln!("connecting failed: {}", e))
-            })
-    }));
+    tokio::spawn(async move {
+        println!("server listening");
+        while let Some(connecting) = incoming.next().await {
+            println!("server received connection");
+            let connection = connecting
+                .await
+                .map_err(|e| format_err!("accept failed: {:?}", e))
+                .expect("server failed");
+            println!("received connection");
+            handle_connection(connection).await
+        }
+    });
+
     Ok(endpoint_driver)
 }
 
-fn handle_connection(
-    conn: (QuicDriver, ConnectionDriver, IncomingRequest),
-) -> impl Future<Item = (), Error = Error> {
-    let (quic_driver, driver, incoming) = conn;
+async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)) {
+    let (quic_driver, h3_driver, mut incoming) = conn;
+    tokio::spawn(async move {
+        if let Err(e) = h3_driver.await {
+            eprintln!("h3 server error: {}", e)
+        }
+    });
 
-    current_thread::spawn(
-        incoming
-            .map_err(|e| format_err!("incoming error: {}", e))
-            .for_each(|request| {
-                request
-                    .map_err(|e| format_err!("recv request: {}", e))
-                    .and_then(|(req, send)| handle_request(req, send))
-            })
-            .map_err(|e| eprintln!("server error: {}", e)),
-    );
+    tokio::spawn(async move {
+        while let Some(request) = incoming.next().await {
+            let (req, send) = request.await.expect("receiving request failed");
+            handle_request(req, send)
+                .await
+                .expect("handling request failed");
+        }
+    });
 
-    current_thread::spawn(quic_driver.map_err(|e| eprintln!("quic server error: {}", e)));
-    current_thread::spawn(driver.map_err(|e| eprintln!("h3 server error: {}", e)));
-    futures::future::ok(())
+    if let Err(e) = quic_driver.await {
+        eprintln!("quic server error: {}", e)
+    }
 }
 
-fn handle_request(
-    request: Request<RecvBody>,
-    sender: Sender,
-) -> impl Future<Item = (), Error = Error> {
+async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<(), Error> {
     println!("received request: {:?}", request);
     let (_, body) = request.into_parts();
-    let content = Vec::with_capacity(1024);
-    tokio::io::read_to_end(body.into_reader(), content)
-        .map_err(|e| format_err!("failed to receive response body: {:?}", e))
-        .and_then(move |(reader, content)| {
-            println!("server received body len: {:?}", content.len());
+    let (content, trailers) = body
+        .read_to_end(1024, 10 * 1024)
+        .await
+        .map_err(|e| format_err!("receive body failed: {:?}", e))?;
 
-            match reader.trailers() {
-                None => Either::A(futures::future::ok(())),
-                Some(decode_trailers) => Either::B(
-                    decode_trailers
-                        .map_err(|e| format_err!("decode trailers failed: {}", e))
-                        .and_then(move |trailers| {
-                            println!("received trailers: {:?}", trailers.into_fields());
-                            futures::future::ok(())
-                        }),
-                ),
-            }
-        })
-        .and_then(move |_| {
-            let response = Response::builder()
-                .status(StatusCode::OK)
-                .body("first part of body")
-                .expect("failed to build response");
+    if let Some(content) = content {
+        println!("server received body len: {:?}", content.len());
+    }
+    if let Some(trailers) = trailers {
+        println!("received trailers: {:?}", trailers);
+    }
 
-            let mut trailer = HeaderMap::with_capacity(2);
-            trailer.append(
-                "response",
-                HeaderValue::from_str("trailer").expect("trailer value"),
-            );
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .body(())
+        .expect("failed to build response");
 
-            sender
-                .response(response)
-                .trailers(trailer)
-                .stream()
-                .map_err(|e| format_err!("failed to send response headers: {:?}", e))
-                .and_then(|writer| {
-                    let body = "r".repeat(1024);
-                    tokio::io::write_all(writer, body)
-                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
-                })
-                .and_then(|(writer, _size)| {
-                    writer
-                        .close()
-                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
-                })
-                .and_then(|_| futures::future::ok(()))
-        })
+    let mut trailer = HeaderMap::with_capacity(2);
+    trailer.append(
+        "response",
+        HeaderValue::from_str("trailer").expect("trailer value"),
+    );
+
+    let mut writer = sender
+        .response(response)
+        .trailers(trailer)
+        .stream()
+        .await
+        .map_err(|e| format_err!("receive response failed: {:?}", e))?;
+
+    let response_body = "r".repeat(1024);
+    println!("sending body");
+    writer.write_all(response_body.as_bytes()).await?;
+    println!("sent body");
+    writer
+        .close()
+        .map_err(|e| format_err!("close failed: {:?}", e))
+        .await?;
+    Ok(())
 }
 
-fn client(
-    log: Logger,
-    options: Opt,
-    cert: Certificate,
-) -> Result<(quinn::EndpointDriver, impl Future<Item = (), Error = Error>)> {
-    let url = options.url;
-    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
-        .to_socket_addrs()?
-        .next()
-        .ok_or(format_err!("couldn't resolve to an address"))?;
-
+fn build_client(log: Logger, cert: Certificate) -> Result<(Client, quinn::EndpointDriver), Error> {
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(&[quinn_h3::ALPN]);
@@ -208,81 +203,82 @@ fn client(
 
     client_config.add_certificate_authority(cert)?;
     endpoint.default_client_config(client_config.build());
-    let builder = ClientBuilder::new(endpoint);
 
-    let (endpoint_driver, client) = builder.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
+    Ok((
+        ClientBuilder::new().endpoint(endpoint.clone()),
+        endpoint_driver,
+    ))
+}
 
+async fn client_request(client: Client, remote: &SocketAddr) -> Result<(), Error> {
     let start = Instant::now();
-    let fut = client
+    let (quic_driver, h3_driver, conn) = client
         .connect(&remote, "localhost")?
-        .map_err(|e| format_err!("failed to connect: {}", e))
-        .and_then(move |(quic_driver, driver, conn)| {
-            eprintln!("client connected at {:?}", start.elapsed());
+        .await
+        .map_err(|e| format_err!("failed ot connect: {:?}", e))?;
+    eprintln!("client connected at {:?}", start.elapsed());
 
-            current_thread::spawn(quic_driver.map_err(|e| eprintln!("quic server error: {}", e)));
-            current_thread::spawn(driver.map_err(|e| eprintln!("h3 server error: {}", e)));
+    tokio::spawn(async move {
+        if let Err(e) = h3_driver.await {
+            eprintln!("h3 client error: {}", e)
+        }
+    });
 
-            let request = Request::builder()
-                .method(Method::POST)
-                .uri("/hello")
-                .header("foo", "bar")
-                .body("request body")
-                .expect("failed to build request");
+    tokio::spawn(async move {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/hello")
+            .header("foo", "bar")
+            .body("request body")
+            .expect("failed to build request");
 
-            let mut trailer = HeaderMap::with_capacity(2);
-            trailer.append(
-                "request",
-                HeaderValue::from_str("trailer").expect("trailer value"),
-            );
+        let mut trailer = HeaderMap::with_capacity(2);
+        trailer.append(
+            "request",
+            HeaderValue::from_str("trailer").expect("trailer value"),
+        );
 
-            conn.request(request)
-                .trailers(trailer)
-                .stream()
-                .map_err(|e| format_err!("send request failed: {}", e))
-                .and_then(|(send_body, response)| {
-                    let response_fut = response
-                        .map_err(|e| format_err!("receive response failed: {}", e))
-                        .and_then(|response| {
-                            println!("received response: {:?}", response);
+        let (mut send_body, response) = conn
+            .request(request)
+            .stream()
+            .await
+            .expect("send request failed");
 
-                            let (_, body) = response.into_parts();
+        let request_body = "c".repeat(1024);
+        send_body
+            .write_all(request_body.as_bytes())
+            .await
+            .expect("failed to send body");
+        send_body
+            .trailers(trailer)
+            .await
+            .expect("failed end request");
 
-                            let buf = Vec::with_capacity(1024 * 10); // 10K
-                            tokio_io::io::read_to_end(body.into_reader(), buf)
-                                .map_err(|e| format_err!("receive body failed: {}", e))
-                                .and_then(|(reader, data)| {
-                                    println!("received body len = {}", data.len());
-                                    if let Some(decode_trailers) = reader.trailers() {
-                                        return Either::A(
-                                            decode_trailers
-                                                .map_err(|e| {
-                                                    format_err!("decode trailers failed: {}", e)
-                                                })
-                                                .and_then(|trailers| {
-                                                    println!(
-                                                        "received trailers: {:?}",
-                                                        trailers.into_fields()
-                                                    );
-                                                    futures::future::ok(())
-                                                }),
-                                        );
-                                    }
-                                    Either::B(futures::future::ok(()))
-                                })
-                        });
+        let (response, body) = response
+            .await
+            .expect("receive response failed")
+            .into_parts();
+        println!("client received response: {:?}", response);
 
-                    let body = "r".repeat(1024);
-                    let send_body_fut = tokio::io::write_all(send_body, body)
-                        .map_err(|e| format_err!("failed to send response body: {:?}", e))
-                        .and_then(|(writer, _body)| {
-                            writer
-                                .close()
-                                .map_err(|e| format_err!("failed to close request stream: {:?}", e))
-                        });
+        let mut data = Vec::with_capacity(1024);
+        let mut reader = body.into_reader();
+        reader
+            .read_to_end(&mut data)
+            .await
+            .expect("read body failed");
+        println!("client received body len = {}", data.len());
 
-                    send_body_fut.join(response_fut).map(|_| ())
-                })
-        });
+        if let Some(decode_trailers) = reader.trailers() {
+            let trailers = decode_trailers.await.expect("decode trailers failed");
+            println!("client received trailers: {:?}", trailers.into_fields());
+        }
 
-    Ok((endpoint_driver, Box::new(fut)))
+        conn.close();
+    });
+
+    if let Err(e) = quic_driver.await {
+        eprintln!("quic client error: {}", e)
+    }
+    Ok(())
 }

@@ -1,12 +1,12 @@
-use std::io;
+use std::{io, mem, pin::Pin, task::Context};
 
 use bytes::{Bytes, BytesMut};
-use futures::{try_ready, Async, Future, Poll};
+use futures::{io::AsyncWrite, ready, Future, Poll};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio_codec::{Decoder, FramedRead};
-use tokio_io::{io::WriteAll, AsyncRead};
+use tokio_io::AsyncRead;
 
-use super::proto::frame::{self, DataFrame, FrameHeader, HttpFrame, PartialData};
+use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
@@ -97,42 +97,55 @@ pub struct WriteFrame {
 }
 
 enum WriteFrameState {
-    Header(WriteAll<SendStream, Bytes>),
-    Payload(WriteAll<SendStream, Bytes>),
+    Header(SendStream, Bytes),
+    Payload(SendStream, Bytes),
     Finished,
 }
 
 impl WriteFrame {
-    pub fn new(send: SendStream, frame: DataFrame) -> Self {
+    pub(crate) fn new<T>(send: SendStream, frame: T) -> Self
+    where
+        T: FrameHeader + IntoPayload,
+    {
         let mut buf = Vec::with_capacity(VarInt::MAX.size() * 2);
         frame.encode_header(&mut buf);
 
         Self {
-            state: WriteFrameState::Header(tokio_io::io::write_all(send, buf.into())),
-            payload: Some(frame.payload),
+            payload: Some(frame.into_payload()),
+            state: WriteFrameState::Header(send, buf.into()),
         }
     }
 }
 
 impl Future for WriteFrame {
-    type Item = SendStream;
-    type Error = io::Error;
+    type Output = Result<SendStream, io::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
-                WriteFrameState::Finished => panic!(),
-                WriteFrameState::Header(ref mut write) => {
-                    let (send, _) = try_ready!(write.poll());
-                    self.state = WriteFrameState::Payload(tokio_io::io::write_all(
-                        send,
-                        self.payload.take().unwrap(),
-                    ));
+                WriteFrameState::Finished => panic!("polled after finished"),
+                WriteFrameState::Header(ref mut send, ref mut h) => {
+                    let wrote = ready!(Pin::new(send).poll_write(cx, h))?;
+                    h.advance(wrote);
+                    if h.is_empty() {
+                        self.state = match mem::replace(&mut self.state, WriteFrameState::Finished)
+                        {
+                            WriteFrameState::Header(s, _) => {
+                                WriteFrameState::Payload(s, self.payload.take().unwrap())
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
                 }
-                WriteFrameState::Payload(ref mut write) => {
-                    let (send, _) = try_ready!(write.poll());
+                WriteFrameState::Payload(ref mut send, ref mut p) => {
+                    let wrote = ready!(Pin::new(send).poll_write(cx, p))?;
+                    p.advance(wrote);
+                    let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
+                        WriteFrameState::Payload(s, _) => s,
+                        _ => unreachable!(),
+                    };
                     self.state = WriteFrameState::Finished;
-                    return Ok(Async::Ready(send));
+                    return Poll::Ready(Ok(send));
                 }
             }
         }

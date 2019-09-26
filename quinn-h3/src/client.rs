@@ -1,37 +1,35 @@
 use std::mem;
 use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
+use std::pin::Pin;
+use std::task::Context;
 
-use futures::{
-    future::{Either, IntoFuture},
-    try_ready, Async, Future, Poll, Stream,
-};
+use futures::{ready, stream::Stream, Future, Poll};
 use http::{request, HeaderMap, Request, Response};
-use quinn::{Endpoint, EndpointBuilder, EndpointDriver, EndpointError, OpenBi, SendStream};
+use quinn::{Endpoint, OpenBi};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
-use tokio_io::io::Shutdown;
 
 use crate::{
-    body::{Body, BodyWriter, RecvBody, SendBody},
+    body::{Body, BodyWriter, RecvBody},
     connection::{ConnectionDriver, ConnectionRef},
-    frame::{FrameDecoder, FrameStream},
+    frame::{FrameDecoder, FrameStream, WriteFrame},
     headers::{DecodeHeaders, SendHeaders},
-    proto::{frame::HttpFrame, headers::Header},
-    try_take, Error, Settings,
+    proto::{
+        frame::{DataFrame, HttpFrame},
+        headers::Header,
+    },
+    try_take, Error, ErrorCode, Settings,
 };
 
 #[derive(Clone, Debug, Default)]
 pub struct Builder {
-    endpoint: EndpointBuilder,
     log: Option<Logger>,
     settings: Settings,
 }
 
 impl Builder {
-    pub fn new(endpoint: EndpointBuilder) -> Self {
+    pub fn new() -> Self {
         Self {
-            endpoint,
             log: None,
             settings: Settings::default(),
         }
@@ -47,21 +45,14 @@ impl Builder {
         self
     }
 
-    pub fn bind<T: ToSocketAddrs>(
-        self,
-        addr: T,
-    ) -> Result<(EndpointDriver, Client), EndpointError> {
-        let (endpoint_driver, endpoint, _) = self.endpoint.bind(addr)?;
-        Ok((
-            endpoint_driver,
-            Client {
-                endpoint,
-                settings: self.settings,
-                log: self
-                    .log
-                    .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
-            },
-        ))
+    pub fn endpoint(self, endpoint: Endpoint) -> Client {
+        Client {
+            endpoint: endpoint,
+            settings: self.settings,
+            log: self
+                .log
+                .unwrap_or_else(|| Logger::root(slog::Discard, o!())),
+        }
     }
 }
 
@@ -96,8 +87,10 @@ impl Connection {
         }
     }
 
-    pub fn close(self, error_code: u32, reason: &[u8]) {
-        self.0.quic.close(error_code.into(), reason);
+    pub fn close(self) {
+        self.0
+            .quic
+            .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
     }
 }
 
@@ -108,18 +101,17 @@ pub struct Connecting {
 }
 
 impl Future for Connecting {
-    type Item = (quinn::ConnectionDriver, ConnectionDriver, Connection);
-    type Error = Error;
+    type Output = Result<(quinn::ConnectionDriver, ConnectionDriver, Connection), Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let quinn::NewConnection {
             driver,
             connection,
             streams,
             ..
-        } = try_ready!(self.connecting.poll());
+        } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
-        Ok(Async::Ready((
+        Poll::Ready(Ok((
             driver,
             ConnectionDriver::new(conn_ref.clone(), streams, self.log.clone()),
             Connection(conn_ref),
@@ -151,7 +143,7 @@ where
         )
     }
 
-    pub fn stream(self) -> impl Future<Item = (BodyWriter, RecvResponse), Error = Error> {
+    pub async fn stream(self) -> Result<(BodyWriter, RecvResponse), Error> {
         let (
             request::Parts {
                 method,
@@ -161,48 +153,39 @@ where
             },
             body,
         ) = self.request.into_parts();
-
         let (conn, trailers) = (self.conn, self.trailers);
+        let (send, recv) = conn.quic.open_bi().await?;
 
-        conn.quic
-            .open_bi()
-            .map_err(Into::into)
-            .and_then(move |(send, recv)| {
-                let stream_id = send.id();
-                let send_headers = SendHeaders::new(
-                    Header::request(method, uri, headers),
-                    &conn,
-                    send,
-                    stream_id,
-                );
-                match send_headers {
-                    Err(e) => Either::A(Err(e).into_future()),
-                    Ok(f) => Either::B(f.and_then(move |send| {
-                        let writer = BodyWriter::new(send, conn.clone(), stream_id, trailers);
-                        let recv = RecvResponse::new(FrameDecoder::stream(recv), conn, stream_id);
-                        match body.into() {
-                            Body::Buf(b) => Either::A(
-                                tokio_io::io::write_all(writer, b)
-                                    .map_err(Into::into)
-                                    .and_then(move |(writer, _)| Ok((writer, recv)).into_future()),
-                            ),
-                            Body::None => Either::B(Ok((writer, recv)).into_future()),
-                        }
-                    })),
-                }
-            })
+        let stream_id = send.id();
+        let send = SendHeaders::new(
+            Header::request(method, uri, headers),
+            &conn,
+            send,
+            stream_id,
+        )?
+        .await?;
+
+        let recv = RecvResponse::new(FrameDecoder::stream(recv), conn.clone(), stream_id);
+        match body.into() {
+            Body::Buf(payload) => {
+                let send = WriteFrame::new(send, DataFrame { payload }).await?;
+                Ok((BodyWriter::new(send, conn, stream_id, trailers), recv))
+            }
+            Body::None => Ok((
+                BodyWriter::new(send, conn.clone(), stream_id, trailers),
+                recv,
+            )),
+        }
     }
 }
 
 enum SendRequestState {
     Opening(OpenBi),
     Sending(SendHeaders),
-    SendingBody(SendBody),
+    SendingBody(WriteFrame),
     SendingTrailers(SendHeaders),
-    Sent(Shutdown<SendStream>),
     Receiving(FrameStream),
     Decoding(DecodeHeaders),
-    Ready(Header),
     Finished,
 }
 
@@ -255,14 +238,13 @@ impl SendRequest {
 }
 
 impl Future for SendRequest {
-    type Item = Response<RecvBody>;
-    type Error = Error;
+    type Output = Result<Response<RecvBody>, Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
                 SendRequestState::Opening(ref mut o) => {
-                    let (send, recv) = try_ready!(o.poll());
+                    let (send, recv) = ready!(Pin::new(o).poll(cx))?;
                     self.recv = Some(FrameDecoder::stream(recv));
                     self.stream_id = Some(send.id());
                     self.state = SendRequestState::Sending(SendHeaders::new(
@@ -273,62 +255,67 @@ impl Future for SendRequest {
                     )?);
                 }
                 SendRequestState::Sending(ref mut send) => {
-                    let send = try_ready!(send.poll());
+                    let send = ready!(Pin::new(send).poll(cx))?;
                     self.state = match self.body.take() {
-                        None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
-                        Some(b) => SendRequestState::SendingBody(SendBody::new(send, b)),
+                        Some(Body::Buf(payload)) => SendRequestState::SendingBody(WriteFrame::new(
+                            send,
+                            DataFrame { payload },
+                        )),
+                        _ => {
+                            let recv = try_take(&mut self.recv, "Invalid receive state")?;
+                            SendRequestState::Receiving(recv)
+                        }
                     };
                 }
                 SendRequestState::SendingBody(ref mut send_body) => {
-                    let send = try_ready!(send_body.poll());
+                    let send = ready!(Pin::new(send_body).poll(cx))?;
                     self.state = match self.trailers.take() {
-                        None => SendRequestState::Sent(tokio_io::io::shutdown(send)),
+                        None => {
+                            let recv = try_take(&mut self.recv, "Invalid receive state")?;
+                            SendRequestState::Receiving(recv)
+                        }
                         Some(t) => SendRequestState::SendingTrailers(SendHeaders::new(
                             t,
                             &self.conn,
                             send,
-                            self.stream_id.unwrap(),
+                            self.stream_id
+                                .ok_or_else(|| Error::Internal("stream_id is none"))?,
                         )?),
                     }
                 }
                 SendRequestState::SendingTrailers(ref mut send_trailers) => {
-                    let send = try_ready!(send_trailers.poll());
-                    self.state = SendRequestState::Sent(tokio_io::io::shutdown(send));
-                }
-                SendRequestState::Sent(ref mut shut) => {
-                    try_ready!(shut.poll());
+                    let _ = ready!(Pin::new(send_trailers).poll(cx))?; // send dropped
                     let recv = try_take(&mut self.recv, "Invalid receive state")?;
                     self.state = SendRequestState::Receiving(recv);
                 }
-                SendRequestState::Receiving(ref mut frames) => match try_ready!(frames.poll()) {
-                    None => return Err(Error::peer("received an empty response")),
-                    Some(f) => match f {
-                        HttpFrame::Headers(h) => {
-                            let stream_id =
-                                self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
-                            let decode = DecodeHeaders::new(h, self.conn.clone(), stream_id);
-                            match mem::replace(&mut self.state, SendRequestState::Decoding(decode))
-                            {
-                                SendRequestState::Receiving(frames) => self.recv = Some(frames),
-                                _ => unreachable!(),
-                            };
-                        }
-                        _ => return Err(Error::peer("first frame is not headers")),
-                    },
-                },
-                SendRequestState::Decoding(ref mut decode) => {
-                    let header = try_ready!(decode.poll());
-                    self.state = SendRequestState::Ready(header);
-                }
-                SendRequestState::Ready(_) => {
-                    match mem::replace(&mut self.state, SendRequestState::Finished) {
-                        SendRequestState::Ready(h) => {
-                            return Ok(Async::Ready(self.build_response(h)?));
-                        }
-                        _ => unreachable!(),
+                SendRequestState::Receiving(ref mut frames) => {
+                    match ready!(Pin::new(frames).poll_next(cx)) {
+                        None => return Poll::Ready(Err(Error::peer("received an empty response"))),
+                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
+                        Some(Ok(f)) => match f {
+                            HttpFrame::Headers(h) => {
+                                let stream_id =
+                                    self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
+                                let decode = DecodeHeaders::new(h, self.conn.clone(), stream_id);
+                                if let SendRequestState::Receiving(frames) = mem::replace(
+                                    &mut self.state,
+                                    SendRequestState::Decoding(decode),
+                                ) {
+                                    self.recv = Some(frames);
+                                };
+                            }
+                            _ => {
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                            }
+                        },
                     }
                 }
-                _ => return Err(Error::Poll),
+                SendRequestState::Decoding(ref mut decode) => {
+                    let header = ready!(Pin::new(decode).poll(cx))?;
+                    self.state = SendRequestState::Finished;
+                    return Poll::Ready(Ok(self.build_response(header)?));
+                }
+                _ => return Poll::Ready(Err(Error::Poll)),
             }
         }
     }
@@ -359,41 +346,52 @@ impl RecvResponse {
 }
 
 impl Future for RecvResponse {
-    type Item = Response<RecvBody>;
-    type Error = crate::Error;
+    type Output = Result<Response<RecvBody>, crate::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.state {
-            RecvResponseState::Finished => {
-                Err(crate::Error::Internal("recv response polled after finish"))
-            }
-            RecvResponseState::Receiving(ref mut recv) => match try_ready!(recv.poll()) {
-                None => return Err(Error::peer("received an empty response")),
-                Some(f) => match f {
-                    HttpFrame::Headers(h) => {
-                        let decode = DecodeHeaders::new(h, self.conn.clone(), self.stream_id);
-                        match mem::replace(&mut self.state, RecvResponseState::Decoding(decode)) {
-                            RecvResponseState::Receiving(r) => self.recv = Some(r),
-                            _ => unreachable!(),
-                        };
-                        Ok(Async::NotReady)
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            match self.state {
+                RecvResponseState::Finished => {
+                    return Poll::Ready(Err(crate::Error::Internal(
+                        "recv response polled after finish",
+                    )))
+                }
+                RecvResponseState::Receiving(ref mut recv) => {
+                    match ready!(Pin::new(recv).poll_next(cx)) {
+                        None => return Poll::Ready(Err(Error::peer("received an empty response"))),
+                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
+                        Some(Ok(f)) => match f {
+                            HttpFrame::Headers(h) => {
+                                let decode =
+                                    DecodeHeaders::new(h, self.conn.clone(), self.stream_id);
+                                match mem::replace(
+                                    &mut self.state,
+                                    RecvResponseState::Decoding(decode),
+                                ) {
+                                    RecvResponseState::Receiving(r) => self.recv = Some(r),
+                                    _ => unreachable!(),
+                                };
+                            }
+                            _ => {
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                            }
+                        },
                     }
-                    _ => return Err(Error::peer("first frame is not headers")),
-                },
-            },
-            RecvResponseState::Decoding(ref mut decode) => {
-                let headers = try_ready!(decode.poll());
-                let response = build_response(
-                    headers,
-                    self.conn.clone(),
-                    self.recv.take().unwrap(),
-                    self.stream_id,
-                );
-                match response {
-                    Err(e) => Err(e).into(),
-                    Ok(r) => {
-                        self.state = RecvResponseState::Finished;
-                        Ok(Async::Ready(r))
+                }
+                RecvResponseState::Decoding(ref mut decode) => {
+                    let headers = ready!(Pin::new(decode).poll(cx))?;
+                    let response = build_response(
+                        headers,
+                        self.conn.clone(),
+                        self.recv.take().unwrap(),
+                        self.stream_id,
+                    );
+                    match response {
+                        Err(e) => return Poll::Ready(Err(e).into()),
+                        Ok(r) => {
+                            self.state = RecvResponseState::Finished;
+                            return Poll::Ready(Ok(r));
+                        }
                     }
                 }
             }

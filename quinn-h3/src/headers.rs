@@ -1,10 +1,13 @@
-use futures::{try_ready, Async, Future, Poll};
+use std::pin::Pin;
+use std::task::Context;
+
+use futures::{Future, Poll};
 use quinn::SendStream;
 use quinn_proto::StreamId;
-use tokio_io::io::WriteAll;
 
 use crate::{
     connection::ConnectionRef,
+    frame::WriteFrame,
     proto::{frame::HeadersFrame, headers::Header},
     Error,
 };
@@ -26,12 +29,11 @@ impl DecodeHeaders {
 }
 
 impl Future for DecodeHeaders {
-    type Item = Header;
-    type Error = crate::Error;
+    type Output = Result<Header, Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         match self.frame {
-            None => Err(crate::Error::Internal("frame none")),
+            None => Poll::Ready(Err(crate::Error::Internal("frame none"))),
             Some(ref frame) => {
                 let result = self
                     .conn
@@ -42,16 +44,18 @@ impl Future for DecodeHeaders {
                     .decode_header(self.stream_id, frame);
 
                 match result {
-                    Ok(None) => Ok(Async::NotReady),
-                    Ok(Some(decoded)) => Ok(Async::Ready(decoded)),
-                    Err(e) => Err(Error::peer(format!("decoding header failed: {:?}", e))),
+                    Ok(None) => Poll::Pending,
+                    Ok(Some(decoded)) => Poll::Ready(Ok(decoded)),
+                    Err(e) => {
+                        Poll::Ready(Err(Error::peer(format!("decoding header failed: {:?}", e))))
+                    }
                 }
             }
         }
     }
 }
 
-pub(crate) struct SendHeaders(WriteAll<SendStream, Vec<u8>>);
+pub(crate) struct SendHeaders(WriteFrame);
 
 impl SendHeaders {
     pub fn new(
@@ -60,24 +64,19 @@ impl SendHeaders {
         send: SendStream,
         stream_id: StreamId,
     ) -> Result<Self, Error> {
-        let block = {
+        let frame = {
             let conn = &mut conn.h3.lock().unwrap().inner;
             conn.encode_header(stream_id, header)?
         };
 
-        let mut encoded = Vec::new();
-        block.encode(&mut encoded);
-
-        Ok(Self(tokio_io::io::write_all(send, encoded)))
+        Ok(Self(WriteFrame::new(send, frame)))
     }
 }
 
-impl Future for SendHeaders {
-    type Item = SendStream;
-    type Error = Error;
+impl<'a> Future for SendHeaders {
+    type Output = Result<SendStream, Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (send, _) = try_ready!(self.0.poll());
-        Ok(Async::Ready(send))
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        Pin::new(&mut self.0).poll(cx).map_err(Into::into)
     }
 }

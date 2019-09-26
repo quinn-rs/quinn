@@ -26,15 +26,17 @@ travis-ci = { repository = "djc/quinn" }
 bitlab = "0.8.1"
 bytes = "0.4.7"
 err-derive = "0.1.5"
-futures = "0.1.21"
+futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
 lazy_static = "1"
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
-slog = "2.1"
+# slog = { version = "2.1", features = ["max_level_trace", "release_max_level_warn"]}
+slog = { version = "2.1" }
 string = "0.2"
-tokio-io = "0.1"
-tokio-codec = "0.1"
+tokio = "0.2.0-alpha.5"
+tokio-io = "0.2.0-alpha.5"
+tokio-codec = "0.2.0-alpha.5"
 
 [dev-dependencies]
 assert_matches = "1.1"
@@ -45,15 +47,13 @@ rand = "0.7.0"
 rcgen = "0.7"
 slog-term = "2"
 structopt = "0.3.0"
-tokio = "0.1.6"
-tokio-current-thread = "0.1"
 url = "2"
 
 [[example]]
 name = "h3"
 
-[[example]]
-name = "simple_server"
+# [[example]]
+# name = "simple_server"
 
-[[example]]
-name = "simple_client"
+# [[example]]
+# name = "simple_client"

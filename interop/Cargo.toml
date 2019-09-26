@@ -7,8 +7,9 @@ default-run = "main"
 
 [dependencies]
 quinn = { path = "../quinn" }
-#quinn-h3 = { path = "../quinn-h3" }
+quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
+http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
 slog-term = "2"
 bytes = "0.4.7"
 structopt = "0.3.0"

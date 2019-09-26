@@ -1,22 +1,23 @@
 use std::mem;
 use std::net::ToSocketAddrs;
+use std::pin::Pin;
+use std::task::Context;
 
-use futures::{
-    future::{Either, IntoFuture},
-    task, try_ready, Async, Future, Poll, Stream,
-};
+use futures::{ready, Future, Poll, Stream};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
 use slog::{self, o, Logger};
-use tokio_io::io::Shutdown;
 
 use crate::{
-    body::{Body, BodyWriter, RecvBody, SendBody},
+    body::{Body, BodyWriter, RecvBody},
     connection::{ConnectionDriver, ConnectionRef},
-    frame::{FrameDecoder, FrameStream},
+    frame::{FrameDecoder, FrameStream, WriteFrame},
     headers::{DecodeHeaders, SendHeaders},
-    proto::{frame::HttpFrame, headers::Header},
+    proto::{
+        frame::{DataFrame, HttpFrame},
+        headers::Header,
+    },
     try_take, Error, Settings,
 };
 
@@ -74,16 +75,15 @@ pub struct IncomingConnection {
 
 impl Stream for IncomingConnection {
     type Item = Connecting;
-    type Error = ();
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        Ok(Async::Ready(match try_ready!(self.incoming.poll()) {
-            None => None,
-            Some(connecting) => Some(Connecting {
-                connecting,
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        Poll::Ready(
+            ready!(Pin::new(&mut self.incoming).poll_next(cx)).map(|c| Connecting {
+                connecting: c,
                 log: self.log.clone(),
                 settings: self.settings.clone(),
             }),
-        }))
+        )
     }
 }
 
@@ -94,18 +94,17 @@ pub struct Connecting {
 }
 
 impl Future for Connecting {
-    type Item = (quinn::ConnectionDriver, ConnectionDriver, IncomingRequest);
-    type Error = crate::Error;
+    type Output = Result<(quinn::ConnectionDriver, ConnectionDriver, IncomingRequest), Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let quinn::NewConnection {
             driver,
             connection,
             streams,
             ..
-        } = try_ready!(self.connecting.poll());
+        } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
-        Ok(Async::Ready((
+        Poll::Ready(Ok((
             driver,
             ConnectionDriver::new(conn_ref.clone(), streams, self.log.clone()),
             IncomingRequest(conn_ref),
@@ -117,24 +116,19 @@ pub struct IncomingRequest(ConnectionRef);
 
 impl Stream for IncomingRequest {
     type Item = RecvRequest;
-    type Error = Error;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let (send, recv) = {
             let conn = &mut self.0.h3.lock().unwrap();
             match conn.requests.pop_front() {
                 Some(s) => s,
                 None => {
-                    conn.requests_task = Some(task::current());
-                    return Ok(Async::NotReady);
+                    conn.requests_task = Some(cx.waker().clone());
+                    return Poll::Pending;
                 }
             }
         };
-        Ok(Async::Ready(Some(RecvRequest::new(
-            recv,
-            send,
-            self.0.clone(),
-        ))))
+        Poll::Ready(Some(RecvRequest::new(recv, send, self.0.clone())))
     }
 }
 
@@ -179,28 +173,33 @@ impl RecvRequest {
 }
 
 impl Future for RecvRequest {
-    type Item = (Request<RecvBody>, Sender);
-    type Error = Error;
+    type Output = Result<(Request<RecvBody>, Sender), Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
-                RecvRequestState::Receiving(ref mut frames, _) => match try_ready!(frames.poll()) {
-                    None => return Err(Error::peer("received an empty request")),
-                    Some(HttpFrame::Headers(f)) => {
-                        let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
-                        match mem::replace(&mut self.state, RecvRequestState::Decoding(decode)) {
-                            RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),
-                            _ => unreachable!("Invalid state"),
+                RecvRequestState::Receiving(ref mut frames, _) => {
+                    match ready!(Pin::new(frames).poll_next(cx)) {
+                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
+                        None => return Poll::Ready(Err(Error::peer("received an empty request"))),
+                        Some(Ok(HttpFrame::Headers(f))) => {
+                            let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
+                            match mem::replace(&mut self.state, RecvRequestState::Decoding(decode))
+                            {
+                                RecvRequestState::Receiving(f, s) => self.streams = Some((f, s)),
+                                _ => unreachable!("Invalid state"),
+                            }
+                        }
+                        Some(Ok(_)) => {
+                            return Poll::Ready(Err(Error::peer("first frame is not headers")))
                         }
                     }
-                    Some(_) => return Err(Error::peer("first frame is not headers")),
-                },
+                }
                 RecvRequestState::Decoding(ref mut decode) => {
-                    let header = try_ready!(decode.poll());
+                    let header = ready!(Pin::new(decode).poll(cx))?;
                     self.state = RecvRequestState::Ready;
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
-                    return Ok(Async::Ready((
+                    return Poll::Ready(Ok((
                         self.build_request(header, recv)?,
                         Sender {
                             send,
@@ -209,7 +208,9 @@ impl Future for RecvRequest {
                         },
                     )));
                 }
-                RecvRequestState::Ready => return Err(Error::peer("polled after ready")),
+                RecvRequestState::Ready => {
+                    return Poll::Ready(Err(Error::peer("polled after ready")));
+                }
             };
         }
     }
@@ -246,19 +247,17 @@ where
         self
     }
 
-    pub fn send(self) -> impl Future<Item = (), Error = Error> {
+    pub async fn send(self) -> Result<(), Error> {
         let Sender {
             send,
             stream_id,
             conn,
         } = self.sender;
-        match SendResponse::new(self.response, self.trailers, send, stream_id, conn) {
-            Err(e) => Either::A(Err(e).into_future()),
-            Ok(f) => Either::B(f),
-        }
+        SendResponse::new(self.response, self.trailers, send, stream_id, conn)?.await?;
+        Ok(())
     }
 
-    pub fn stream(self) -> impl Future<Item = BodyWriter, Error = Error> {
+    pub async fn stream(self) -> Result<BodyWriter, Error> {
         let Sender {
             send,
             stream_id,
@@ -274,28 +273,21 @@ where
 
         let trailers = self.trailers;
 
-        match SendHeaders::new(Header::response(status, headers), &conn, send, stream_id) {
-            Err(e) => Either::A(Err(e).into_future()),
-            Ok(f) => Either::B(f.and_then(move |send| {
-                let writer = BodyWriter::new(send, conn, stream_id, trailers);
-                match body.into() {
-                    Body::Buf(b) => Either::A(
-                        tokio_io::io::write_all(writer, b)
-                            .map_err(Into::into)
-                            .and_then(|(writer, _)| Ok(writer).into_future()),
-                    ),
-                    Body::None => Either::B(Ok(writer).into_future()),
-                }
-            })),
-        }
+        let send =
+            SendHeaders::new(Header::response(status, headers), &conn, send, stream_id)?.await?;
+        let send = match body.into() {
+            Body::None => send,
+            Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
+        };
+        Ok(BodyWriter::new(send, conn, stream_id, trailers))
     }
 }
 
 enum SendResponseState {
     SendingHeader(SendHeaders),
-    SendingBody(SendBody),
+    SendingBody(WriteFrame),
     SendingTrailers(SendHeaders),
-    Closing(Shutdown<SendStream>),
+    Finished,
 }
 
 pub struct SendResponse {
@@ -336,45 +328,48 @@ impl SendResponse {
 }
 
 impl Future for SendResponse {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<(), Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
+                SendResponseState::Finished => panic!("polled after finished"),
+                SendResponseState::SendingTrailers(ref mut write) => {
+                    ready!(Pin::new(write).poll(cx))?; // drop send
+                    self.state = SendResponseState::Finished;
+                    return Poll::Ready(Ok(()));
+                }
                 SendResponseState::SendingHeader(ref mut write) => {
-                    let send = try_ready!(write.poll());
-                    mem::replace(
-                        &mut self.state,
-                        SendResponseState::SendingBody(SendBody::new(
-                            send,
-                            try_take(&mut self.body, "send body data")?,
-                        )),
-                    );
+                    let send = ready!(Pin::new(write).poll(cx))?;
+                    match self.body.take() {
+                        Some(Body::Buf(payload)) => {
+                            self.state = SendResponseState::SendingBody(WriteFrame::new(
+                                send,
+                                DataFrame { payload },
+                            ));
+                        }
+                        _ => {
+                            self.state = SendResponseState::Finished;
+                            return Poll::Ready(Ok(()));
+                        }
+                    };
                 }
                 SendResponseState::SendingBody(ref mut body) => {
-                    let send = try_ready!(body.poll());
-                    let state = match self.trailer.take() {
-                        None => SendResponseState::Closing(tokio_io::io::shutdown(send)),
-                        Some(trailer) => SendResponseState::SendingTrailers(SendHeaders::new(
-                            trailer,
-                            &self.conn,
-                            send,
-                            self.stream_id,
-                        )?),
+                    let send = ready!(Pin::new(body).poll(cx))?;
+                    match self.trailer.take() {
+                        None => {
+                            self.state = SendResponseState::Finished;
+                            return Poll::Ready(Ok(()));
+                        }
+                        Some(trailer) => {
+                            self.state = SendResponseState::SendingTrailers(SendHeaders::new(
+                                trailer,
+                                &self.conn,
+                                send,
+                                self.stream_id,
+                            )?);
+                        }
                     };
-                    mem::replace(&mut self.state, state);
-                }
-                SendResponseState::SendingTrailers(ref mut write) => {
-                    let send = try_ready!(write.poll());
-                    mem::replace(
-                        &mut self.state,
-                        SendResponseState::Closing(tokio_io::io::shutdown(send)),
-                    );
-                }
-                SendResponseState::Closing(ref mut shut) => {
-                    let _ = try_ready!(shut.poll());
-                    return Ok(Async::Ready(()));
                 }
             }
         }
