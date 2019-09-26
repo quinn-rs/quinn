@@ -117,6 +117,10 @@ pub(crate) trait FrameHeader {
     }
 }
 
+pub(crate) trait IntoPayload {
+    fn into_payload(self) -> Bytes;
+}
+
 #[derive(Debug, PartialEq)]
 pub struct DataFrame {
     pub payload: Bytes,
@@ -133,6 +137,12 @@ impl FrameHeader for DataFrame {
     const TYPE: Type = Type::DATA;
     fn len(&self) -> usize {
         self.payload.as_ref().len()
+    }
+}
+
+impl IntoPayload for DataFrame {
+    fn into_payload(self) -> Bytes {
+        self.payload
     }
 }
 
@@ -190,6 +200,12 @@ impl HeadersFrame {
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
         buf.put(&self.encoded);
+    }
+}
+
+impl IntoPayload for HeadersFrame {
+    fn into_payload(self) -> Bytes {
+        self.encoded
     }
 }
 

@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Waker};
 
-use futures::task::Task;
-use futures::{Async, Future, Poll, Stream};
+use futures::{Future, Poll, Stream};
 use quinn::{NewStream, RecvStream, SendStream};
 use slog::{info, Logger};
 
@@ -28,33 +29,32 @@ impl ConnectionDriver {
 }
 
 impl Future for ConnectionDriver {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<(), Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.incoming.poll()? {
-            Async::Ready(None) => return Ok(Async::Ready(())),
-            Async::Ready(Some(NewStream::Uni(_recv))) => {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match Pin::new(&mut self.incoming).poll_next(cx)? {
+            Poll::Ready(None) => return Poll::Ready(Ok(())),
+            Poll::Ready(Some(NewStream::Uni(_recv))) => {
                 info!(self.log, "incoming uni stream ignored");
             }
-            Async::Ready(Some(NewStream::Bi(send, recv))) => {
+            Poll::Ready(Some(NewStream::Bi(send, recv))) => {
                 let mut conn = self.conn.h3.lock().unwrap();
                 conn.requests.push_back((send, recv));
-                if let Some(ref t) = conn.requests_task {
-                    t.notify();
+                if let Some(t) = conn.requests_task.take() {
+                    t.wake();
                 }
             }
             _ => (),
         }
 
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }
 
 pub(crate) struct ConnectionInner {
     pub inner: Connection,
     pub requests: VecDeque<(SendStream, RecvStream)>,
-    pub requests_task: Option<Task>,
+    pub requests_task: Option<Waker>,
 }
 
 #[derive(Clone)]

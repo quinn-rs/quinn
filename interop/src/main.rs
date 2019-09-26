@@ -8,10 +8,6 @@ use tokio::runtime::current_thread::Runtime;
 
 // use bytes::{Bytes, BytesMut};
 use failure::{format_err, Error};
-// use quinn_h3::proto::{
-//     frame::{HeadersFrame, HttpFrame, SettingsFrame},
-//     StreamType,
-// };
 use slog::{info, o, warn, Drain, Logger};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -80,7 +76,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut runtime = Runtime::new()?;
 
     let state = Arc::new(Mutex::new(State::default()));
-    let protocols = vec![b"hq-20"[..].into(), b"hq-22"[..].into()];
+    let protocols = vec![
+        b"hq-20"[..].into(),
+        b"hq-22"[..].into(),
+        quinn_h3::ALPN.into(),
+    ];
 
     let mut builder = quinn::Endpoint::builder();
     let mut tls_config = rustls::ClientConfig::new();
@@ -265,60 +265,30 @@ fn run(log: Logger, options: Opt) -> Result<()> {
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
     });
 
-    // let mut h3_tls_config = rustls::ClientConfig::new();
-    // h3_tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
-    // h3_tls_config
-    //     .dangerous()
-    //     .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
-    // h3_tls_config.alpn_protocols = protocols;
-    // let h3_client_config = quinn::ClientConfig {
-    //     crypto: quinn::crypto::rustls::ClientConfig::new(h3_tls_config),
-    //     transport: client_config.transport.clone(),
-    //     ..Default::default()
-    // };
+    runtime.spawn({
+        let state = state.clone();
+        let h3_client = quinn_h3::client::Builder::new().endpoint(endpoint);
+        async move {
+            let (quic_driver, h3_driver, conn) = h3_client
+                .connect(&remote, &host)?
+                .await
+                .map_err(|e| format_err!("h3 failed to connect: {}", e))?;
 
-    // let mut h3 = false;
-    // println!("trying h3");
-    // let result = runtime.block_on(
-    //     endpoint
-    //         .connect_with(h3_client_config, &remote, host)?
-    //         .map_err(|e| format_err!("failed to connect: {}", e))
-    //         .and_then(|(conn_driver, conn, _)| {
-    //             tokio_current_thread::spawn(
-    //                 conn_driver.map_err(|e| eprintln!("connection lost: {}", e)),
-    //             );
-    //             let control_stream = conn.open_uni();
-    //             let control_fut = control_stream
-    //                 .map_err(|e| format_err!("failed to open control stream: {}", e))
-    //                 .and_then(move |stream| {
-    //                     let mut buf = BytesMut::new();
-    //                     StreamType::CONTROL.encode(&mut buf);
-    //                     HttpFrame::Settings(SettingsFrame::default()).encode(&mut buf);
-    //                     tokio::io::write_all(stream, buf)
-    //                         .map_err(|e| format_err!("failed to send Settings frame: {}", e))
-    //                         .and_then(move |(_, _)| futures::future::ok(()))
-    //                 });
+            tokio::runtime::current_thread::spawn(h3_driver.unwrap_or_else(|_| ()));
+            tokio::runtime::current_thread::spawn(quic_driver.unwrap_or_else(|_| ()));
 
-    //             let req_stream = conn.open_bi();
-    //             let req_fut = req_stream
-    //                 .map_err(|e| format_err!("failed to open request stream: {}", e))
-    //                 .and_then(|(req_send, req_recv)| h3_get(req_send, req_recv))
-    //                 .map(move |data| {
-    //                     println!(
-    //                         "read {} bytes: \n\n{}\n\n closing",
-    //                         data.len(),
-    //                         String::from_utf8_lossy(&data)
-    //                     );
-    //                     conn.close(0, b"done");
-    //                 });
-    //             control_fut.and_then(|_| req_fut).map(|_| h3 = true)
-    //         }),
-    // );
-    // if let Err(e) = result {
-    //     println!("failure: {}", e);
-    // }
+            h3_get(&conn)
+                .await
+                .map_err(|e| format_err!("h3 request failed: {}", e))?;
+            conn.close();
 
-    drop(endpoint);
+            state.lock().unwrap().h3 = true;
+
+            Ok(())
+        }
+            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
+    });
+
     runtime.run().unwrap();
     let state = state.lock().unwrap();
 
@@ -354,66 +324,24 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     Ok(())
 }
+const H3_INITIAL_CAPACITY: usize = 256;
+const H3_MAX_LEN: usize = 256 * 1024;
 
-// fn h3_get(
-//     send: quinn::SendStream,
-//     recv: quinn::RecvStream,
-// ) -> impl Future<Item = Bytes, Error = Error> {
-//     let header = [
-//         (":method", "GET"),
-//         (":path", "/"),
-//         ("user-agent", "quinn interop tool"),
-//     ]
-//     .iter()
-//     .map(|(k, v)| qpack::HeaderField::new(*k, *v));
+async fn h3_get(conn: &quinn_h3::client::Connection) -> Result<()> {
+    let (_, body) = conn
+        .request(
+            http::Request::builder()
+                .method(http::Method::GET)
+                .uri("/")
+                .body(())?,
+        )
+        .send()
+        .await?
+        .into_parts();
 
-//     let mut table = qpack::DynamicTable::new();
-//     table
-//         .inserter()
-//         .set_max_mem_size(0)
-//         .expect("set dynamic table size");
-
-//     let mut block = BytesMut::new();
-//     let mut enc = BytesMut::new();
-//     qpack::encode(&mut table.encoder(0), &mut block, &mut enc, header).expect("encoder failed");
-
-//     let mut buf = BytesMut::new();
-//     HttpFrame::Headers(HeadersFrame {
-//         encoded: block.into(),
-//     })
-//     .encode(&mut buf);
-
-//     tokio::io::write_all(send, buf)
-//         .map_err(|e| format_err!("failed to send Request frame: {}", e))
-//         .and_then(|(_, _)| {
-//             recv.read_to_end(usize::max_value())
-//                 .map_err(|e| format_err!("failed to send Request frame: {}", e))
-//         })
-//         .and_then(move |data| h3_resp(&table, data))
-// }
-
-// fn h3_resp(table: &qpack::DynamicTable, data: Vec<u8>) -> Result<Bytes> {
-//     let mut cur = std::io::Cursor::new(data);
-//     match HttpFrame::decode(&mut cur) {
-//         Ok(HttpFrame::Headers(text)) => {
-//             let mut resp_block = std::io::Cursor::new(&text.encoded);
-//             match qpack::decode_header(table, &mut resp_block) {
-//                 Ok(_) => (),
-//                 Err(e) => return Err(format_err!("failed to decode response header {}", e)),
-//             }
-//         }
-//         Ok(f) => {
-//             return Err(format_err!("response frame bad type {:?}", f));
-//         }
-//         Err(e) => return Err(format_err!("failed to decode response frame {:?}", e)),
-//     }
-
-//     match HttpFrame::decode(&mut cur) {
-//         Ok(HttpFrame::Data(text)) => Ok(text.payload),
-//         Ok(f) => Err(format_err!("response frame bad type {:?}", f)),
-//         Err(e) => Err(format_err!("failed to decode response frame {:?}", e)),
-//     }
-// }
+    body.read_to_end(H3_INITIAL_CAPACITY, H3_MAX_LEN).await?;
+    Ok(())
+}
 
 async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> {
     let (mut send, recv) = stream;
