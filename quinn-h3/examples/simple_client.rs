@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("failed to ad cert");
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
     tokio::spawn(async move {
         if let Err(e) = endpoint_driver.await {
             eprintln!("quic client error: {}", e)

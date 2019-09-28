@@ -97,7 +97,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
     let mut runtime = Runtime::new()?;
     runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 

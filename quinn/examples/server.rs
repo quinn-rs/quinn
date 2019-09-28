@@ -129,7 +129,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
 
     let (endpoint_driver, mut incoming) = {
-        let (driver, endpoint, incoming) = endpoint.bind(options.listen)?;
+        let (driver, endpoint, incoming) = endpoint.bind(&options.listen)?;
         info!(log, "listening on {}", endpoint.local_addr()?);
         (driver, incoming)
     };

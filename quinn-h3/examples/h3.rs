@@ -109,7 +109,7 @@ fn server(
     let server = ServerBuilder::new(endpoint);
 
     let (endpoint_driver, mut incoming) = {
-        let (driver, _server, incoming) = server.bind(options.listen)?;
+        let (driver, _server, incoming) = server.bind(&options.listen)?;
         (driver, incoming)
     };
 
@@ -204,7 +204,7 @@ fn build_client(log: Logger, cert: Certificate) -> Result<(Client, quinn::Endpoi
     client_config.add_certificate_authority(cert)?;
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint_driver, endpoint, _) = endpoint.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
     Ok((
         ClientBuilder::new().endpoint(endpoint.clone()),
         endpoint_driver,

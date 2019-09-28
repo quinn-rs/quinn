@@ -23,7 +23,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let (cfg, listener_cert) = configure_listener();
     let mut ep_builder = quinn::Endpoint::builder();
     ep_builder.listen(cfg);
-    let (driver, endpoint, incoming_conns) = unwrap!(ep_builder.bind(&("127.0.0.1", 0)));
+    let (driver, endpoint, incoming_conns) =
+        unwrap!(ep_builder.bind(&"127.0.0.1:0".parse().unwrap()));
     runtime.spawn(driver.unwrap_or_else(|e| panic!("Listener IO error: {}", e)));
     let listener_addr = unwrap!(endpoint.local_addr());
 

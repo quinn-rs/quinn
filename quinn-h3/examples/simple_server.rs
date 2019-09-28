@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = ServerBuilder::new(endpoint);
 
     let (endpoint_driver, mut incoming) = {
-        let (driver, _server, incoming) = server.bind(opt.listen).expect("bind failed");
+        let (driver, _server, incoming) = server.bind(&opt.listen).expect("bind failed");
         (driver, incoming)
     };
 
