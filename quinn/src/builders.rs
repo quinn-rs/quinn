@@ -113,12 +113,6 @@ pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
     #[error(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
-    /// An error configuring TLS.
-    #[error(display = "failed to set up TLS: {}", _0)]
-    Tls(TLSError),
-    /// Errors relating to web PKI infrastructure
-    #[error(display = "webpki failed: {:?}", _0)]
-    WebPki(webpki::Error),
     /// An error in the Quinn transport configuration
     #[error(display = "configuration error: {:?}", _0)]
     Config(proto::ConfigError),
@@ -127,12 +121,6 @@ pub enum EndpointError {
 impl From<proto::ConfigError> for EndpointError {
     fn from(x: proto::ConfigError) -> Self {
         EndpointError::Config(x)
-    }
-}
-
-impl From<webpki::Error> for EndpointError {
-    fn from(e: webpki::Error) -> Self {
-        EndpointError::WebPki(e)
     }
 }
 
@@ -217,7 +205,7 @@ impl ClientConfigBuilder {
     pub fn add_certificate_authority(
         &mut self,
         cert: Certificate,
-    ) -> Result<&mut Self, EndpointError> {
+    ) -> Result<&mut Self, webpki::Error> {
         self.config.crypto.add_certificate_authority(cert)?;
         Ok(self)
     }
