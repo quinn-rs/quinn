@@ -1,4 +1,4 @@
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 
 use futures::TryFutureExt;
@@ -46,8 +46,176 @@ fn main() {
     ::std::process::exit(code);
 }
 
-#[derive(Default)]
 struct State {
+    endpoint: quinn::Endpoint,
+    client_config: quinn::ClientConfig,
+    remote: SocketAddr,
+    host: String,
+    log: Logger,
+    options: Opt,
+    results: Arc<Mutex<Results>>,
+}
+
+impl State {
+    async fn core(self: Arc<Self>) -> Result<()> {
+        let new_conn = self
+            .endpoint
+            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .await
+            .map_err(|e| format_err!("failed to connect: {}", e))?;
+        self.results.lock().unwrap().handshake = true;
+        let results = self.results.clone();
+        tokio::runtime::current_thread::spawn(
+            new_conn
+                .driver
+                .map_ok(move |()| {
+                    results.lock().unwrap().close = true;
+                })
+                .unwrap_or_else(|_| ()),
+        );
+        let stream = new_conn
+            .connection
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        get(stream)
+            .await
+            .map_err(|e| format_err!("simple request failed: {}", e))?;
+        self.results.lock().unwrap().stream_data = true;
+        new_conn.connection.close(0u32.into(), b"done");
+
+        self.results.lock().unwrap().saw_cert = false;
+        let conn = match self
+            .endpoint
+            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .into_0rtt()
+        {
+            Ok(new_conn) => {
+                tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                let stream = new_conn
+                    .connection
+                    .open_bi()
+                    .await
+                    .map_err(|e| format_err!("failed to open 0-RTT stream: {}", e))?;
+                get(stream)
+                    .await
+                    .map_err(|e| format_err!("0-RTT request failed: {}", e))?;
+                self.results.lock().unwrap().zero_rtt = true;
+                new_conn.connection
+            }
+            Err(conn) => {
+                info!(self.log, "0-RTT unsupported");
+                let new_conn = conn
+                    .await
+                    .map_err(|e| format_err!("failed to connect: {}", e))?;
+                tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                new_conn.connection
+            }
+        };
+        {
+            let mut results = self.results.lock().unwrap();
+            results.resumption = !results.saw_cert;
+        }
+        conn.close(0u32.into(), b"done");
+
+        Ok(())
+    }
+
+    async fn key_update(self: Arc<Self>) -> Result<()> {
+        let new_conn = self
+            .endpoint
+            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .await
+            .map_err(|e| format_err!("failed to connect: {}", e))?;
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        let conn = new_conn.connection;
+        // Make sure some traffic has gone both ways before the key update
+        let stream = conn
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        get(stream).await?;
+        conn.force_key_update();
+        let stream = conn
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        get(stream).await?;
+        self.results.lock().unwrap().key_update = true;
+        conn.close(0u32.into(), b"done");
+        Ok(())
+    }
+
+    async fn retry(self: Arc<Self>) -> Result<()> {
+        let mut remote = self.remote;
+        remote.set_port(self.options.retry_port);
+
+        let new_conn = self
+            .endpoint
+            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .await
+            .map_err(|e| format_err!("failed to connect: {}", e))?;
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        let stream = new_conn
+            .connection
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        get(stream).await?;
+        self.results.lock().unwrap().retry = true;
+        new_conn.connection.close(0u32.into(), b"done");
+        Ok(())
+    }
+
+    async fn rebind(self: Arc<Self>) -> Result<()> {
+        let mut builder = quinn::Endpoint::builder();
+        builder.logger(self.log.clone());
+        let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
+        tokio::runtime::current_thread::spawn(
+            endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
+        );
+
+        let new_conn = endpoint
+            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .await
+            .map_err(|e| format_err!("failed to connect: {}", e))?;
+        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+        endpoint.rebind(socket, &tokio_net::driver::Handle::default())?;
+        let stream = new_conn
+            .connection
+            .open_bi()
+            .await
+            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+        get(stream).await?;
+        self.results.lock().unwrap().rebinding = true;
+        new_conn.connection.close(0u32.into(), b"done");
+        Ok(())
+    }
+
+    async fn h3(self: Arc<Self>) -> Result<()> {
+        let h3_client = quinn_h3::client::Builder::new().endpoint(self.endpoint.clone());
+        let (quic_driver, h3_driver, conn) = h3_client
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| format_err!("h3 failed to connect: {}", e))?;
+
+        tokio::runtime::current_thread::spawn(h3_driver.unwrap_or_else(|_| ()));
+        tokio::runtime::current_thread::spawn(quic_driver.unwrap_or_else(|_| ()));
+
+        h3_get(&conn)
+            .await
+            .map_err(|e| format_err!("h3 request failed: {}", e))?;
+        conn.close();
+
+        self.results.lock().unwrap().h3 = true;
+
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Results {
     saw_cert: bool,
     handshake: bool,
     stream_data: bool,
@@ -71,16 +239,11 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         warn!(log, "invalid hostname, using \"example.com\"");
         "example.com"
     };
-    let host: Arc<str> = Arc::from(host);
 
     let mut runtime = Runtime::new()?;
 
-    let state = Arc::new(Mutex::new(State::default()));
-    let protocols = vec![
-        b"hq-20"[..].into(),
-        b"hq-22"[..].into(),
-        quinn_h3::ALPN.into(),
-    ];
+    let results = Arc::new(Mutex::new(Results::default()));
+    let protocols = vec![b"hq-23"[..].into(), quinn_h3::ALPN.into()];
 
     let mut builder = quinn::Endpoint::builder();
     let mut tls_config = rustls::ClientConfig::new();
@@ -88,7 +251,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     tls_config.enable_early_data = true;
     tls_config
         .dangerous()
-        .set_certificate_verifier(Arc::new(InteropVerifier(state.clone())));
+        .set_certificate_verifier(Arc::new(InteropVerifier(results.clone())));
     tls_config.alpn_protocols = protocols.clone();
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -106,217 +269,81 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
     runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
-    runtime.spawn({
-        let endpoint = endpoint.clone();
-        let state = state.clone();
-        let config = client_config.clone();
-        let host = host.clone();
-        let log = log.clone();
-        async move {
-            let new_conn = endpoint
-                .connect_with(config.clone(), &remote, &host)?
-                .await
-                .map_err(|e| format_err!("failed to connect: {}", e))?;
-            state.lock().unwrap().handshake = true;
-            let state2 = state.clone();
-            tokio::runtime::current_thread::spawn(
-                new_conn
-                    .driver
-                    .map_ok(move |()| {
-                        state2.lock().unwrap().close = true;
-                    })
-                    .unwrap_or_else(|_| ()),
-            );
-            let stream = new_conn
-                .connection
-                .open_bi()
-                .await
-                .map_err(|e| format_err!("failed to open stream: {}", e))?;
-            get(stream)
-                .await
-                .map_err(|e| format_err!("simple request failed: {}", e))?;
-            state.lock().unwrap().stream_data = true;
-            new_conn.connection.close(0u32.into(), b"done");
-
-            state.lock().unwrap().saw_cert = false;
-            let conn = match endpoint.connect_with(config, &remote, &host)?.into_0rtt() {
-                Ok(new_conn) => {
-                    tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-                    let stream = new_conn
-                        .connection
-                        .open_bi()
-                        .await
-                        .map_err(|e| format_err!("failed to open 0-RTT stream: {}", e))?;
-                    get(stream)
-                        .await
-                        .map_err(|e| format_err!("0-RTT request failed: {}", e))?;
-                    state.lock().unwrap().zero_rtt = true;
-                    new_conn.connection
-                }
-                Err(conn) => {
-                    info!(log, "0-RTT unsupported");
-                    let new_conn = conn
-                        .await
-                        .map_err(|e| format_err!("failed to connect: {}", e))?;
-                    tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-                    new_conn.connection
-                }
-            };
-            {
-                let mut state = state.lock().unwrap();
-                state.resumption = !state.saw_cert;
-            }
-            conn.close(0u32.into(), b"done");
-
-            Ok(())
-        }
-            .unwrap_or_else(|e: Error| eprintln!("{}", e))
+    let state = Arc::new(State {
+        endpoint,
+        client_config,
+        remote,
+        host: host.into(),
+        log,
+        options,
+        results,
     });
 
-    runtime.spawn({
-        let endpoint = endpoint.clone();
-        let state = state.clone();
-        let config = client_config.clone();
-        let host = host.clone();
-        async move {
-            let new_conn = endpoint
-                .connect_with(config.clone(), &remote, &host)?
-                .await
-                .map_err(|e| format_err!("failed to connect: {}", e))?;
-            tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-            let conn = new_conn.connection;
-            // Make sure some traffic has gone both ways before the key update
-            let stream = conn
-                .open_bi()
-                .await
-                .map_err(|e| format_err!("failed to open stream: {}", e))?;
-            get(stream).await?;
-            conn.force_key_update();
-            let stream = conn
-                .open_bi()
-                .await
-                .map_err(|e| format_err!("failed to open stream: {}", e))?;
-            get(stream).await?;
-            state.lock().unwrap().key_update = true;
-            conn.close(0u32.into(), b"done");
-            Ok(())
-        }
-            .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e))
-    });
+    runtime.spawn(
+        state
+            .clone()
+            .core()
+            .unwrap_or_else(|e: Error| eprintln!("core functionality failed: {}", e)),
+    );
 
-    {
-        // Dedicated endpoint so rebinding doesn't interfere with other connections' handshakes
-        let mut builder = quinn::Endpoint::builder();
-        builder.logger(log.clone());
-        let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
-        runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
-        runtime.spawn({
-            let state = state.clone();
-            let config = client_config.clone();
-            let host = host.clone();
-            async move {
-                let new_conn = endpoint
-                    .connect_with(config.clone(), &remote, &host)?
-                    .await
-                    .map_err(|e| format_err!("failed to connect: {}", e))?;
-                tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-                let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-                endpoint.rebind(socket, &tokio_net::driver::Handle::default())?;
-                let stream = new_conn
-                    .connection
-                    .open_bi()
-                    .await
-                    .map_err(|e| format_err!("failed to open stream: {}", e))?;
-                get(stream).await?;
-                state.lock().unwrap().rebinding = true;
-                new_conn.connection.close(0u32.into(), b"done");
-                Ok(())
-            }
-                .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e))
-        });
-    }
+    runtime.spawn(
+        state
+            .clone()
+            .key_update()
+            .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e)),
+    );
 
-    runtime.spawn({
-        let endpoint = endpoint.clone();
-        let state = state.clone();
-        let config = client_config.clone();
-        let remote = format!("{}:{}", options.host, options.retry_port)
-            .to_socket_addrs()?
-            .next()
-            .unwrap();
-        let host = host.clone();
+    runtime.spawn(
+        state
+            .clone()
+            .rebind()
+            .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e)),
+    );
 
-        async move {
-            let new_conn = endpoint
-                .connect_with(config.clone(), &remote, &host)?
-                .await
-                .map_err(|e| format_err!("failed to connect: {}", e))?;
-            tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-            let stream = new_conn
-                .connection
-                .open_bi()
-                .await
-                .map_err(|e| format_err!("failed to open stream: {}", e))?;
-            get(stream).await?;
-            state.lock().unwrap().retry = true;
-            new_conn.connection.close(0u32.into(), b"done");
-            Ok(())
-        }
-            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
-    });
+    runtime.spawn(
+        state
+            .clone()
+            .retry()
+            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
+    );
 
-    runtime.spawn({
-        let state = state.clone();
-        let h3_client = quinn_h3::client::Builder::new().endpoint(endpoint);
-        async move {
-            let (quic_driver, h3_driver, conn) = h3_client
-                .connect(&remote, &host)?
-                .await
-                .map_err(|e| format_err!("h3 failed to connect: {}", e))?;
+    runtime.spawn(
+        state
+            .clone()
+            .h3()
+            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
+    );
 
-            tokio::runtime::current_thread::spawn(h3_driver.unwrap_or_else(|_| ()));
-            tokio::runtime::current_thread::spawn(quic_driver.unwrap_or_else(|_| ()));
-
-            h3_get(&conn)
-                .await
-                .map_err(|e| format_err!("h3 request failed: {}", e))?;
-            conn.close();
-
-            state.lock().unwrap().h3 = true;
-
-            Ok(())
-        }
-            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
-    });
-
+    let results = state.results.clone();
+    drop(state); // Ensure the drivers will shut down once idle
     runtime.run().unwrap();
-    let state = state.lock().unwrap();
 
-    if state.handshake {
+    let r = results.lock().unwrap();
+    if r.handshake {
         print!("VH");
     }
-    if state.stream_data {
+    if r.stream_data {
         print!("D");
     }
-    if state.close {
+    if r.close {
         print!("C");
     }
-    if state.resumption {
+    if r.resumption {
         print!("R");
     }
-    if state.zero_rtt {
+    if r.zero_rtt {
         print!("Z");
     }
-    if state.retry {
+    if r.retry {
         print!("S");
     }
-    if state.rebinding {
+    if r.rebinding {
         print!("B");
     }
-    if state.key_update {
+    if r.key_update {
         print!("U");
     }
-    if state.h3 {
+    if r.h3 {
         print!("3");
     }
 
@@ -358,7 +385,7 @@ async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> 
     Ok(response)
 }
 
-struct InteropVerifier(Arc<Mutex<State>>);
+struct InteropVerifier(Arc<Mutex<Results>>);
 impl rustls::ServerCertVerifier for InteropVerifier {
     fn verify_server_cert(
         &self,
