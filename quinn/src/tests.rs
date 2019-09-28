@@ -17,7 +17,7 @@ fn handshake_timeout() {
     let mut client = Endpoint::builder();
     client.logger(logger());
     let (client_driver, client, _) = client
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -57,7 +57,7 @@ fn handshake_timeout() {
 fn drop_endpoint() {
     let endpoint = Endpoint::builder();
     let (driver, endpoint, _) = endpoint
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
@@ -88,7 +88,7 @@ fn drop_endpoint() {
 fn drop_endpoint_driver() {
     let endpoint = Endpoint::builder();
     let (_, endpoint, _) = endpoint
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
     assert!(endpoint
@@ -103,7 +103,7 @@ fn drop_endpoint_driver() {
 fn close_endpoint() {
     let endpoint = Endpoint::builder();
     let (_driver, endpoint, incoming) = endpoint
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
@@ -131,7 +131,7 @@ fn close_endpoint() {
 fn local_addr() {
     let port = 56987;
     let (_, ep, _) = Endpoint::builder()
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
         .expect("Could not bind to localhost");
     assert_eq!(
         port,
@@ -204,7 +204,7 @@ fn endpoint() -> (Logger, EndpointDriver, Endpoint, Incoming) {
     endpoint.logger(log.new(o!("side" => "Server")));
 
     let (x, y, z) = endpoint
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
     (log, x, y, z)
 }
@@ -372,7 +372,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         let mut client = Endpoint::builder();
         client.logger(log.new(o!("side" => "Client")));
         client.default_client_config(client_config.build());
-        let (client_driver, client, _) = client.bind(client_addr).unwrap();
+        let (client_driver, client, _) = client.bind(&client_addr).unwrap();
 
         runtime.spawn(server_driver.unwrap_or_else(|e| panic!("server driver failed: {}", e)));
         runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client driver failed: {}", e)));

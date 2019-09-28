@@ -1,5 +1,5 @@
 use std::mem;
-use std::net::ToSocketAddrs;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::Context;
 
@@ -46,9 +46,9 @@ impl Builder {
         self
     }
 
-    pub fn bind<T: ToSocketAddrs>(
+    pub fn bind(
         self,
-        addr: T,
+        addr: &SocketAddr,
     ) -> Result<(EndpointDriver, Server, IncomingConnection), EndpointError> {
         let (endpoint_driver, _endpoint, incoming) = self.endpoint.bind(addr)?;
         Ok((

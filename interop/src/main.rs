@@ -170,7 +170,7 @@ impl State {
     async fn rebind(self: Arc<Self>) -> Result<()> {
         let mut builder = quinn::Endpoint::builder();
         builder.logger(self.log.clone());
-        let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
+        let (endpoint_driver, endpoint, _) = builder.bind(&"[::]:0".parse().unwrap())?;
         tokio::runtime::current_thread::spawn(
             endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
         );
@@ -266,7 +266,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     };
 
     builder.logger(log.clone());
-    let (endpoint_driver, endpoint, _) = builder.bind("[::]:0")?;
+    let (endpoint_driver, endpoint, _) = builder.bind(&"[::]:0".parse().unwrap())?;
     runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {

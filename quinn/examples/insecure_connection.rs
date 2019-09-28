@@ -56,7 +56,7 @@ fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<dyn Err
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
 
-    let (driver, endpoint, _) = endpoint_builder.bind("0.0.0.0:0")?;
+    let (driver, endpoint, _) = endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap())?;
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
 
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));

@@ -1,5 +1,5 @@
 use std::io;
-use std::net::ToSocketAddrs;
+use std::net::SocketAddr;
 use std::str;
 use std::sync::Arc;
 
@@ -33,9 +33,9 @@ impl EndpointBuilder {
     }
 
     /// Build an endpoint bound to `addr`.
-    pub fn bind<T: ToSocketAddrs>(
+    pub fn bind(
         self,
-        addr: T,
+        addr: &SocketAddr,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)

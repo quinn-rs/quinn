@@ -31,7 +31,7 @@ fn throughput(c: &mut Criterion) {
     let mut client = Endpoint::builder();
     client.default_client_config(client_config.build());
     let (client_driver, client, _) = client
-        .bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
+        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
