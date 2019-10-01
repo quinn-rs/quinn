@@ -1,11 +1,12 @@
-use bytes::BufMut;
-use quinn_proto::coding::BufMutExt;
+use bytes::{Buf, BufMut};
+use quinn_proto::coding::{BufExt, BufMutExt, UnexpectedEnd};
 
 pub mod connection;
 pub mod frame;
 pub mod headers;
 
-pub struct StreamType(u64);
+#[derive(Debug, PartialEq, Eq)]
+pub struct StreamType(pub u64);
 
 macro_rules! stream_types {
     {$($name:ident = $val:expr,)*} => {
@@ -25,5 +26,9 @@ stream_types! {
 impl StreamType {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write_var(self.0);
+    }
+
+    pub fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
+        Ok(StreamType(buf.get_var()?))
     }
 }

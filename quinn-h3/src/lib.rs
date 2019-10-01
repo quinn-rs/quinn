@@ -20,6 +20,7 @@ pub mod qpack;
 pub mod server;
 
 mod frame;
+mod streams;
 
 use err_derive::Error;
 use quinn::VarInt;
@@ -55,6 +56,8 @@ pub enum Error {
     Internal(&'static str),
     #[error(display = "Incorrect peer behavior: {}", _0)]
     Peer(String),
+    #[error(display = "unknown stream type {}", _0)]
+    UnknownStream(u64),
     #[error(display = "IO error: {}", _0)]
     Io(std::io::Error),
     #[error(display = "Overflow max data size")]
