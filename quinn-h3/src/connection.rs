@@ -8,7 +8,10 @@ use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 
 use crate::{
     frame::FrameStream,
-    proto::connection::{Connection, Error as ProtoError},
+    proto::{
+        connection::{Connection, Error as ProtoError},
+        frame::HttpFrame,
+    },
     streams::{NewUni, RecvUni},
     Error, ErrorCode, Settings,
 };
@@ -23,10 +26,7 @@ pub struct ConnectionDriver {
 }
 
 impl ConnectionDriver {
-    pub(crate) fn new_client(
-        conn: ConnectionRef,
-        incoming_uni: IncomingUniStreams,
-    ) -> Self {
+    pub(crate) fn new_client(conn: ConnectionRef, incoming_uni: IncomingUniStreams) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             incoming_bi: None,
@@ -160,6 +160,7 @@ impl Future for ConnectionDriver {
         }
 
         self.poll_pending_uni(cx);
+        self.poll_control(cx);
 
         Poll::Pending
     }
