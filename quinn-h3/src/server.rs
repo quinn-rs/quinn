@@ -87,12 +87,13 @@ impl Future for Connecting {
             driver,
             connection,
             bi_streams,
+            uni_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new(conn_ref.clone(), bi_streams),
+            ConnectionDriver::new(conn_ref.clone(), uni_streams, bi_streams),
             IncomingRequest(conn_ref),
         )))
     }

@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub enum NewUni {
-    Control(ControlStream),
+    Control(FrameStream),
     Push(PushStream),
     Encoder(RecvStream),
     Decoder(RecvStream),
@@ -23,7 +23,7 @@ impl TryFrom<(StreamType, RecvStream)> for NewUni {
     fn try_from(value: (StreamType, RecvStream)) -> Result<Self, Self::Error> {
         let (ty, recv) = value;
         Ok(match ty {
-            StreamType::CONTROL => NewUni::Control(ControlStream(FrameDecoder::stream(recv))),
+            StreamType::CONTROL => NewUni::Control(FrameDecoder::stream(recv)),
             StreamType::PUSH => NewUni::Push(PushStream(FrameDecoder::stream(recv))),
             StreamType::ENCODER => NewUni::Encoder(recv),
             StreamType::DECODER => NewUni::Decoder(recv),
@@ -76,7 +76,5 @@ impl Future for RecvUni {
         }
     }
 }
-
-pub struct ControlStream(FrameStream);
 
 pub struct PushStream(FrameStream);
