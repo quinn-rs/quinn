@@ -25,24 +25,9 @@ mod streams;
 use err_derive::Error;
 use quinn::VarInt;
 
-#[derive(Clone, Debug)]
-pub struct Settings {
-    pub max_header_list_size: u64,
-    pub num_placeholders: u64,
-    pub qpack_max_table_capacity: u64,
-    pub qpack_blocked_streams: u64,
-}
+use proto::frame::SettingsFrame;
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            max_header_list_size: u64::max_value(),
-            num_placeholders: 0,
-            qpack_max_table_capacity: 0,
-            qpack_blocked_streams: 0,
-        }
-    }
-}
+pub type Settings = SettingsFrame;
 
 #[derive(Debug, Error)]
 pub enum Error {

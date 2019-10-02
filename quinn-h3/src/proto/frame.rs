@@ -333,7 +333,7 @@ impl FrameHeader for PriorityFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SettingsFrame {
     pub num_placeholders: u64,
     pub max_header_list_size: u64,
