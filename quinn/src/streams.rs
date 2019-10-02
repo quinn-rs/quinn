@@ -5,7 +5,7 @@ use std::str;
 use bytes::Bytes;
 use err_derive::Error;
 use futures::channel::oneshot;
-use futures::io::{AsyncRead, AsyncWrite, Initializer};
+use futures::io::{AsyncRead, AsyncWrite};
 use futures::task::Context;
 use futures::{ready, Future, FutureExt, Poll};
 use proto::{ConnectionError, StreamId};
@@ -420,10 +420,6 @@ impl AsyncRead for RecvStream {
                 None => 0,
             },
         ))
-    }
-
-    unsafe fn initializer(&self) -> Initializer {
-        Initializer::nop()
     }
 }
 
