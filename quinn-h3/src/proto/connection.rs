@@ -72,6 +72,14 @@ impl Connection {
             }
         }
     }
+
+    pub fn remote_settings(&self) -> &Option<Settings> {
+        &self.remote_settings
+    }
+
+    pub fn set_remote_settings(&mut self, settings: Settings) {
+        self.remote_settings = Some(settings);
+    }
 }
 
 impl Default for Connection {

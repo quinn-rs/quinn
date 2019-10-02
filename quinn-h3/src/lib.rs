@@ -139,3 +139,18 @@ impl From<ErrorCode> for VarInt {
         error.0.into()
     }
 }
+
+impl From<frame::Error> for (ErrorCode, String) {
+    fn from(err: frame::Error) -> Self {
+        match err {
+            frame::Error::Io(e) => (
+                ErrorCode::GENERAL_PROTOCOL_ERROR,
+                format!("IO Error: {:?}", e),
+            ),
+            frame::Error::Proto(e) => (
+                ErrorCode::FRAME_ERROR,
+                format!("Parse frame error: {:?}", e),
+            ),
+        }
+    }
+}
