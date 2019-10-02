@@ -44,9 +44,6 @@ impl Connecting {
     /// intercepted by a man-in-the-middle. If this occurs, the handshake will not complete
     /// successfully.
     ///
-    /// Once [`Connection::is_handshaking`] returns false, further transmissions are unaffected by
-    /// these weaknesses.
-    ///
     /// # Errors
     ///
     /// Outgoing connections are only 0-RTT-capable when a cryptographic session ticket cached from

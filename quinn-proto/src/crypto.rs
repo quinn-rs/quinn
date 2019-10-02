@@ -52,7 +52,7 @@ pub trait Session: Sized {
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
 
-    /// Returns true when the handshake has completed
+    /// Returns `true` until the connection is fully established.
     fn is_handshaking(&self) -> bool;
 
     /// Read bytes of handshake data
