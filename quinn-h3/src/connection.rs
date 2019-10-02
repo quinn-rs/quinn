@@ -15,7 +15,7 @@ use crate::{
 
 pub struct ConnectionDriver {
     conn: ConnectionRef,
-    incoming_bi: IncomingBiStreams,
+    incoming_bi: Option<IncomingBiStreams>,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     control: Option<FrameStream>,
@@ -23,17 +23,31 @@ pub struct ConnectionDriver {
 }
 
 impl ConnectionDriver {
-    pub(crate) fn new(
+    pub(crate) fn new_client(
+        conn: ConnectionRef,
+        incoming_uni: IncomingUniStreams,
+    ) -> Self {
+        Self {
+            pending_uni: VecDeque::with_capacity(10),
+            incoming_bi: None,
+            control: None,
+            error: None,
+            conn,
+            incoming_uni,
+        }
+    }
+
+    pub(crate) fn new_server(
         conn: ConnectionRef,
         incoming_uni: IncomingUniStreams,
         incoming_bi: IncomingBiStreams,
     ) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
+            incoming_bi: Some(incoming_bi),
             control: None,
             error: None,
             conn,
-            incoming_bi,
             incoming_uni,
         }
     }
@@ -135,11 +149,13 @@ impl Future for ConnectionDriver {
             self.pending_uni.push_back(Some(RecvUni::new(recv)));
         }
 
-        if let Poll::Ready(Some((send, recv))) = Pin::new(&mut self.incoming_bi).poll_next(cx)? {
-            let mut conn = self.conn.h3.lock().unwrap();
-            conn.requests.push_back((send, recv));
-            if let Some(t) = conn.requests_task.take() {
-                t.wake();
+        if let Some(ref mut incoming_bi) = self.incoming_bi {
+            if let Poll::Ready(Some((send, recv))) = Pin::new(incoming_bi).poll_next(cx)? {
+                let mut conn = self.conn.h3.lock().unwrap();
+                conn.requests.push_back((send, recv));
+                if let Some(t) = conn.requests_task.take() {
+                    t.wake();
+                }
             }
         }
 
