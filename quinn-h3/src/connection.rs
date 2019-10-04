@@ -21,7 +21,7 @@ use crate::{
 pub struct ConnectionDriver {
     conn: ConnectionRef,
     side: Side,
-    incoming_bi: Option<IncomingBiStreams>,
+    incoming_bi: IncomingBiStreams,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     control: Option<FrameStream>,
@@ -29,16 +29,19 @@ pub struct ConnectionDriver {
 }
 
 impl ConnectionDriver {
-    pub(crate) fn new_client(conn: ConnectionRef, incoming_uni: IncomingUniStreams) -> Self {
+    pub(crate) fn new_client(
+        conn: ConnectionRef,
+        incoming_uni: IncomingUniStreams,
+        incoming_bi: IncomingBiStreams,
+    ) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
             side: Side::Client,
-            incoming_bi: None,
             control: None,
-            error: None,
             conn,
             incoming_uni,
+            incoming_bi,
         }
     }
 
@@ -50,11 +53,11 @@ impl ConnectionDriver {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
-            incoming_bi: Some(incoming_bi),
             side: Side::Server,
             control: None,
             conn,
             incoming_uni,
+            incoming_bi,
         }
     }
 
@@ -164,12 +167,20 @@ impl Future for ConnectionDriver {
         self.poll_pending_uni(cx);
         self.poll_control(cx);
 
-        if let Some(ref mut incoming_bi) = self.incoming_bi {
-            if let Poll::Ready(Some((send, recv))) = Pin::new(incoming_bi).poll_next(cx)? {
-                let mut conn = self.conn.h3.lock().unwrap();
-                conn.requests.push_back((send, recv));
-                if let Some(t) = conn.requests_task.take() {
-                    t.wake();
+        if let Poll::Ready(Some((mut send, mut recv))) =
+            Pin::new(&mut self.incoming_bi).poll_next(cx)?
+        {
+            match self.side {
+                Side::Client => self.set_error(
+                    ErrorCode::STREAM_CREATION_ERROR,
+                    "client does not accept bidirectional streams",
+                ),
+                Side::Server => {
+                    let mut conn = self.conn.h3.lock().unwrap();
+                    conn.requests.push_back((send, recv));
+                    if let Some(t) = conn.requests_task.take() {
+                        t.wake();
+                    }
                 }
             }
         }
