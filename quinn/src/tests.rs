@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fmt, io, str};
 
-use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{future, FutureExt, StreamExt, TryFutureExt};
 use slog::{o, Drain, Logger, KV};
 use tokio;
 
@@ -216,31 +216,24 @@ fn zero_rtt() {
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(incoming.take(2).for_each(|incoming| {
-        let new_conn = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
-        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-        tokio::runtime::current_thread::spawn(
-            new_conn
-                .uni_streams
-                .map_err(|_| ())
-                .try_for_each(|x| {
-                    x.read_to_end(usize::max_value())
-                        .map_err(|_| ())
-                        .map_ok(|msg| {
-                            assert_eq!(msg, MSG);
-                        })
-                })
-                .unwrap_or_else(|_| ()),
-        );
-        new_conn
-            .connection
-            .open_uni()
-            .unwrap_or_else(|e| panic!("open_uni: {}", e))
-            .then(|mut s| {
-                async move {
-                    s.write_all(MSG).await.expect("write");
-                    s.finish().await.expect("finish");
+        async {
+            let NewConnection {
+                driver,
+                mut uni_streams,
+                connection,
+                ..
+            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+            tokio::runtime::current_thread::spawn(driver.unwrap_or_else(|_| ()));
+            tokio::runtime::current_thread::spawn(async move {
+                while let Some(Ok(x)) = uni_streams.next().await {
+                    let msg = x.read_to_end(usize::max_value()).await.unwrap();
+                    assert_eq!(msg, MSG);
                 }
-            })
+            });
+            let mut s = connection.open_uni().await.expect("open_uni");
+            s.write_all(MSG).await.expect("write");
+            s.finish().await.expect("finish");
+        }
     }));
     runtime.block_on(async {
         let NewConnection {
@@ -284,19 +277,11 @@ fn zero_rtt() {
         .into_0rtt()
         .ok()
         .expect("missing 0-RTT keys");
-    runtime.spawn(
-        connection
-            .open_uni()
-            .unwrap_or_else(|e| panic!("0-RTT open_uni: {}", e))
-            .then(|mut s| {
-                async move {
-                    s.write_all(MSG).await.expect("0-RTT write");
-                    s.finish().await.expect("0-RTT finish");
-                }
-            }),
-    );
-    // The connection won't implicitly close if we could still open new streams
-    drop(connection);
+    runtime.spawn(async move {
+        let mut s = connection.open_uni().await.expect("0-RTT open uni");
+        s.write_all(MSG).await.expect("0-RTT write");
+        s.finish().await.expect("0-RTT finish");
+    });
     runtime.spawn(driver.unwrap_or_else(|_| ()));
     runtime.block_on(async move {
         let stream = uni_streams
