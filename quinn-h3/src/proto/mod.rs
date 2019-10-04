@@ -1,5 +1,8 @@
-use bytes::{Buf, BufMut};
-use quinn_proto::coding::{BufExt, BufMutExt, UnexpectedEnd};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use quinn_proto::{
+    coding::{BufExt, BufMutExt, UnexpectedEnd},
+    VarInt,
+};
 
 pub mod connection;
 pub mod frame;
@@ -30,5 +33,12 @@ impl StreamType {
 
     pub fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(StreamType(buf.get_var()?))
+    }
+
+    pub fn encoded(&self) -> Bytes {
+        let var_int = VarInt::from(self.0 as u32);
+        let mut buf = BytesMut::with_capacity(var_int.size());
+        self.encode(&mut buf);
+        buf.freeze()
     }
 }

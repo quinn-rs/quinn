@@ -353,7 +353,7 @@ impl Default for SettingsFrame {
 }
 
 impl SettingsFrame {
-    fn encode<T: BufMut>(&self, buf: &mut T) {
+    pub fn encode<T: BufMut>(&self, buf: &mut T) {
         self.encode_header(buf);
         SettingId::NUM_PLACEHOLDERS.encode(buf);
         buf.write_var(self.num_placeholders);
