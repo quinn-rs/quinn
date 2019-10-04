@@ -28,6 +28,8 @@ impl EndpointBuilder {
     pub fn new(config: EndpointConfig) -> Self {
         Self {
             config,
+            // Pull in this crate's defaults rather than proto's
+            client_config: ClientConfigBuilder::default().build(),
             ..Self::default()
         }
     }
