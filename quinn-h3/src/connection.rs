@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
+use bytes::Bytes;
 use futures::{Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::Side;
@@ -25,7 +26,6 @@ pub struct ConnectionDriver {
     pending_uni: VecDeque<Option<RecvUni>>,
     control: Option<FrameStream>,
     send_control: SendControlStream,
-    error: Option<(ErrorCode, String)>,
 }
 
 impl ConnectionDriver {
@@ -53,14 +53,13 @@ impl ConnectionDriver {
             incoming_bi: Some(incoming_bi),
             side: Side::Server,
             control: None,
-            error: None,
             conn,
             incoming_uni,
         }
     }
 
-    fn set_error(&mut self, code: ErrorCode, msg: String) {
-        self.error = Some((code, msg.into()));
+    fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
+        self.conn.quic.close(code.into(), &reason.into());
     }
 
     fn poll_pending_uni(&mut self, cx: &mut Context) {
@@ -93,7 +92,7 @@ impl ConnectionDriver {
                         Some(_) => {
                             self.set_error(
                                 ErrorCode::STREAM_CREATION_ERROR,
-                                "control stream already open".into(),
+                                "control stream already open",
                             );
                         }
                     },
@@ -113,7 +112,7 @@ impl ConnectionDriver {
 
         match Pin::new(&mut control).poll_next(cx) {
             Poll::Ready(None) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control closed".into())
+                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control closed")
             }
             Poll::Ready(Some(Err(e))) => {
                 let (code, msg) = e.into();
@@ -137,11 +136,11 @@ impl ConnectionDriver {
                     (false, Side::Server, HttpFrame::CancelPush(_))
                     | (false, Side::Server, HttpFrame::MaxPushId(_))
                     | (false, Side::Client, HttpFrame::Goaway(_)) => {
-                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings".into())
+                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings")
                     }
                     _ => self.set_error(
                         ErrorCode::FRAME_UNEXPECTED,
-                        "unexpected frame type on control stream".into(),
+                        "unexpected frame type on control stream",
                     ),
                 }
             }
@@ -155,7 +154,7 @@ impl Future for ConnectionDriver {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if let Poll::Ready(Err(_err)) = Pin::new(&mut self.send_control).poll(cx) {
-            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "TODO".into());
+            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control stream closed");
         }
 
         if let Poll::Ready(Some(recv)) = Pin::new(&mut self.incoming_uni).poll_next(cx)? {
