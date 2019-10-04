@@ -90,7 +90,7 @@ impl State {
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .into_0rtt()
         {
-            Ok(new_conn) => {
+            Ok((new_conn, _)) => {
                 tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 let stream = new_conn
                     .connection

@@ -37,6 +37,8 @@ impl Connecting {
     /// for reducing start-up latency by beginning transmission of application data without waiting
     /// for the handshake's cryptographic security guarantees to be established.
     ///
+    /// When the `ZeroRttAccepted` future completes, the connection has been fully established.
+    ///
     /// # Security
     ///
     /// On outgoing connections, this enables transmission of 0-RTT data, which might be vulnerable
@@ -56,14 +58,20 @@ impl Connecting {
     /// ticket is found, `self` is returned unmodified.
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
-    pub fn into_0rtt(mut self) -> Result<NewConnection, Self> {
+    pub fn into_0rtt(mut self) -> Result<(NewConnection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
-        let conn = (self.0.as_mut().unwrap().0).lock().unwrap();
+        let mut conn = (self.0.as_mut().unwrap().0).lock().unwrap();
         if conn.inner.has_0rtt() || conn.inner.side().is_server() {
+            let (send, recv) = oneshot::channel();
+            if conn.connected {
+                send.send(true).unwrap();
+            } else {
+                conn.on_connected = Some(send);
+            }
             drop(conn);
             let ConnectionDriver(conn) = self.0.take().unwrap();
-            Ok(NewConnection::new(conn))
+            Ok((NewConnection::new(conn), ZeroRttAccepted(recv)))
         } else {
             drop(conn);
             Err(self)
@@ -93,6 +101,19 @@ impl Future for Connecting {
         } else {
             Poll::Pending
         }
+    }
+}
+
+/// Future that completes when a connection is fully established
+///
+/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
+/// value is meaningless.
+pub struct ZeroRttAccepted(oneshot::Receiver<bool>);
+
+impl Future for ZeroRttAccepted {
+    type Output = bool;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx).map(|x| x.unwrap_or(false))
     }
 }
 
@@ -534,6 +555,7 @@ impl ConnectionRef {
             inner: conn,
             driver: None,
             handle,
+            on_connected: None,
             connected: false,
             timers: Default::default(),
             conn_events,
@@ -593,6 +615,7 @@ pub struct ConnectionInner {
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
     handle: ConnectionHandle,
+    on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
     timers: proto::TimerTable<Option<Delay>>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
@@ -661,6 +684,10 @@ impl ConnectionInner {
             match event {
                 Connected { .. } => {
                     self.connected = true;
+                    if let Some(x) = self.on_connected.take() {
+                        // We don't care if the on-connected future was dropped
+                        let _ = x.send(self.inner.accepted_0rtt());
+                    }
                 }
                 ConnectionLost { reason } => {
                     self.terminate(reason);
@@ -806,6 +833,9 @@ impl ConnectionInner {
             let _ = x.send(Some(WriteError::ConnectionClosed(reason.clone())));
         }
         self.send_datagram_blocked.wake();
+        if let Some(x) = self.on_connected.take() {
+            let _ = x.send(false);
+        }
     }
 
     fn close(&mut self, error_code: VarInt, reason: Bytes) {
