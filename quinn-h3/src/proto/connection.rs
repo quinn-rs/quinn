@@ -1,4 +1,4 @@
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
 
@@ -15,6 +15,7 @@ pub struct Connection {
     encoder_table: DynamicTable,
     pending_encoder: BytesMut,
     pending_decoder: BytesMut,
+    pending_control: BytesMut,
 }
 
 impl Connection {
@@ -25,10 +26,14 @@ impl Connection {
             .inserter()
             .set_max_mem_size(settings.qpack_max_table_capacity as usize)?;
 
+        let mut pending_control = BytesMut::with_capacity(128);
+        settings.encode(&mut pending_control);
+
         Ok(Self {
             local_settings: settings,
             remote_settings: None,
             decoder_table,
+            pending_control: pending_control,
             encoder_table: DynamicTable::new(),
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),
@@ -80,6 +85,13 @@ impl Connection {
     pub fn set_remote_settings(&mut self, settings: Settings) {
         self.remote_settings = Some(settings);
     }
+
+    pub fn pending_control(&mut self) -> Option<Bytes> {
+        if self.pending_control.is_empty() {
+            return None;
+        }
+        Some(self.pending_control.take().freeze())
+    }
 }
 
 impl Default for Connection {
@@ -91,6 +103,7 @@ impl Default for Connection {
             encoder_table: DynamicTable::new(),
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),
+            pending_control: BytesMut::with_capacity(128),
         }
     }
 }

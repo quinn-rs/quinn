@@ -1,11 +1,15 @@
 use std::{convert::TryFrom, io, mem, pin::Pin, task::Context};
 
-use bytes::BytesMut;
-use futures::{io::AsyncRead, ready, Future, Poll};
-use quinn::RecvStream;
+use bytes::Bytes;
+use futures::{
+    io::{AsyncRead, AsyncWrite},
+    ready, Future, Poll,
+};
+use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;
 
 use crate::{
+    connection::ConnectionRef,
     frame::{FrameDecoder, FrameStream},
     proto::StreamType,
     Error,
@@ -78,3 +82,58 @@ impl Future for RecvUni {
 }
 
 pub struct PushStream(FrameStream);
+
+pub struct SendControlStream {
+    conn: ConnectionRef,
+    state: SendControlStreamState,
+    send: Option<SendStream>,
+}
+
+impl SendControlStream {
+    pub(super) fn new(conn: ConnectionRef) -> Self {
+        Self {
+            state: SendControlStreamState::Opening(conn.quic.open_uni()),
+            send: None,
+            conn,
+        }
+    }
+}
+
+enum SendControlStreamState {
+    Opening(OpenUni),
+    Idle,
+    Sending(SendStream, Bytes),
+}
+
+impl Future for SendControlStream {
+    type Output = Result<(), Error>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            match self.state {
+                SendControlStreamState::Opening(ref mut o) => {
+                    let send = ready!(Pin::new(o).poll(cx))?;
+                    self.state =
+                        SendControlStreamState::Sending(send, StreamType::CONTROL.encoded());
+                }
+                SendControlStreamState::Idle => {
+                    let pending = self.conn.h3.lock().unwrap().inner.pending_control();
+                    if let Some(data) = pending {
+                        self.state =
+                            SendControlStreamState::Sending(self.send.take().unwrap(), data);
+                    }
+                    return Poll::Pending;
+                }
+                SendControlStreamState::Sending(ref mut send, ref mut data) => {
+                    let wrote = ready!(Pin::new(send).poll_write(cx, &data))?;
+                    data.advance(wrote);
+                    if data.is_empty() {
+                        match mem::replace(&mut self.state, SendControlStreamState::Idle) {
+                            SendControlStreamState::Sending(send, _) => self.send = Some(send),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

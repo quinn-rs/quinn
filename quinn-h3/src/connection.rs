@@ -12,7 +12,7 @@ use crate::{
         connection::{Connection, Error as ProtoError},
         frame::HttpFrame,
     },
-    streams::{NewUni, RecvUni},
+    streams::{NewUni, RecvUni, SendControlStream},
     Error, ErrorCode, Settings,
 };
 
@@ -22,6 +22,7 @@ pub struct ConnectionDriver {
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     control: Option<FrameStream>,
+    send_control: SendControlStream,
     error: Option<(ErrorCode, String)>,
 }
 
@@ -29,6 +30,7 @@ impl ConnectionDriver {
     pub(crate) fn new_client(conn: ConnectionRef, incoming_uni: IncomingUniStreams) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
+            send_control: SendControlStream::new(conn.clone()),
             incoming_bi: None,
             control: None,
             error: None,
@@ -44,6 +46,7 @@ impl ConnectionDriver {
     ) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
+            send_control: SendControlStream::new(conn.clone()),
             incoming_bi: Some(incoming_bi),
             control: None,
             error: None,
@@ -145,9 +148,16 @@ impl Future for ConnectionDriver {
     type Output = Result<(), Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        if let Poll::Ready(Err(_err)) = Pin::new(&mut self.send_control).poll(cx) {
+            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "TODO".into());
+        }
+
         if let Poll::Ready(Some(recv)) = Pin::new(&mut self.incoming_uni).poll_next(cx)? {
             self.pending_uni.push_back(Some(RecvUni::new(recv)));
         }
+
+        self.poll_pending_uni(cx);
+        self.poll_control(cx);
 
         if let Some(ref mut incoming_bi) = self.incoming_bi {
             if let Poll::Ready(Some((send, recv))) = Pin::new(incoming_bi).poll_next(cx)? {
@@ -158,9 +168,6 @@ impl Future for ConnectionDriver {
                 }
             }
         }
-
-        self.poll_pending_uni(cx);
-        self.poll_control(cx);
 
         Poll::Pending
     }
