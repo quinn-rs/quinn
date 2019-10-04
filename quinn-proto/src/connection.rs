@@ -627,7 +627,6 @@ where
             }
             for packet in space.sent_packets.values_mut() {
                 if !packet.retransmits.is_empty() {
-                    dbg!(&packet.retransmits);
                     // Remove retransmitted data from the old packet so we don't end up retransmitting
                     // it *again* even if the copy we're sending now gets acknowledged.
                     space.pending += mem::replace(&mut packet.retransmits, Retransmits::default());
