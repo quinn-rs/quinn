@@ -222,7 +222,7 @@ fn zero_rtt() {
                 mut uni_streams,
                 connection,
                 ..
-            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
             tokio::runtime::current_thread::spawn(driver.unwrap_or_else(|_| ()));
             tokio::runtime::current_thread::spawn(async move {
                 while let Some(Ok(x)) = uni_streams.next().await {
@@ -266,17 +266,21 @@ fn zero_rtt() {
         driver.unwrap_or_else(|_| ()).await
     });
     info!(log, "initial connection complete");
-    let NewConnection {
-        connection,
-        driver,
-        mut uni_streams,
-        ..
-    } = endpoint
+    let (
+        NewConnection {
+            connection,
+            driver,
+            mut uni_streams,
+            ..
+        },
+        zero_rtt,
+    ) = endpoint
         .connect(&endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .ok()
         .expect("missing 0-RTT keys");
+    // Send something before the driver starts to ensure it's 0-RTT
     runtime.spawn(async move {
         let mut s = connection.open_uni().await.expect("0-RTT open uni");
         s.write_all(MSG).await.expect("0-RTT write");
@@ -294,6 +298,7 @@ fn zero_rtt() {
             .await
             .expect("read_to_end");
         assert_eq!(msg, MSG);
+        assert_eq!(zero_rtt.await, true);
     });
 
     // The endpoint driver won't finish if we could still create new connections
