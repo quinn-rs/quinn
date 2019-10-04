@@ -5,6 +5,7 @@ use std::task::{Context, Waker};
 
 use futures::{Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
+use quinn_proto::Side;
 
 use crate::{
     frame::FrameStream,
@@ -18,6 +19,7 @@ use crate::{
 
 pub struct ConnectionDriver {
     conn: ConnectionRef,
+    side: Side,
     incoming_bi: Option<IncomingBiStreams>,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
@@ -31,6 +33,7 @@ impl ConnectionDriver {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
+            side: Side::Client,
             incoming_bi: None,
             control: None,
             error: None,
@@ -48,6 +51,7 @@ impl ConnectionDriver {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
             incoming_bi: Some(incoming_bi),
+            side: Side::Server,
             control: None,
             error: None,
             conn,
@@ -119,24 +123,26 @@ impl ConnectionDriver {
                 let conn = &mut self.conn.h3;
                 let has_remote_settings = conn.lock().unwrap().inner.remote_settings().is_some();
 
-                match (has_remote_settings, frame) {
-                    (_, HttpFrame::Settings(s)) => {
+                match (has_remote_settings, self.side, frame) {
+                    (_, _, HttpFrame::Settings(s)) => {
                         conn.lock().unwrap().inner.set_remote_settings(s);
                     }
-                    (true, HttpFrame::Goaway(_)) => println!("GOAWAY frame ignored"),
-                    (true, HttpFrame::CancelPush(_)) => println!("CANCEL_PUSH frame ignored"),
-                    (true, HttpFrame::MaxPushId(_)) => println!("MAX_PUSH_ID frame ignored"),
-                    (_, frame) => match frame {
-                        HttpFrame::CancelPush(_)
-                        | HttpFrame::Goaway(_)
-                        | HttpFrame::MaxPushId(_) => {
-                            self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings".into())
-                        }
-                        _ => self.set_error(
-                            ErrorCode::FRAME_UNEXPECTED,
-                            "unexpected frame type on control stream".into(),
-                        ),
-                    },
+                    (true, Side::Client, HttpFrame::Goaway(_)) => println!("GOAWAY frame ignored"),
+                    (true, Side::Server, HttpFrame::CancelPush(_)) => {
+                        println!("CANCEL_PUSH frame ignored")
+                    }
+                    (true, Side::Server, HttpFrame::MaxPushId(_)) => {
+                        println!("MAX_PUSH_ID frame ignored")
+                    }
+                    (false, Side::Server, HttpFrame::CancelPush(_))
+                    | (false, Side::Server, HttpFrame::MaxPushId(_))
+                    | (false, Side::Client, HttpFrame::Goaway(_)) => {
+                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings".into())
+                    }
+                    _ => self.set_error(
+                        ErrorCode::FRAME_UNEXPECTED,
+                        "unexpected frame type on control stream".into(),
+                    ),
                 }
             }
             Poll::Pending => (),
