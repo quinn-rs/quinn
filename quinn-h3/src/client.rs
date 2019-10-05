@@ -176,6 +176,7 @@ enum SendRequestState {
     SendingTrailers(SendHeaders),
     Receiving(FrameStream),
     Decoding(DecodeHeaders),
+    Aborted,
     Finished,
 }
 
@@ -196,6 +197,18 @@ impl SendRequest {
         open_bi: OpenBi,
         conn: ConnectionRef,
     ) -> Self {
+        if conn.h3.lock().unwrap().inner.is_closing() {
+            return Self {
+                conn,
+                header: None,
+                body: None,
+                stream_id: None,
+                recv: None,
+                state: SendRequestState::Aborted,
+                trailers: trailers.map(Header::trailer),
+            };
+        }
+
         let (
             request::Parts {
                 method,
@@ -233,6 +246,7 @@ impl Future for SendRequest {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
+                SendRequestState::Aborted => return Poll::Ready(Err(Error::Aborted)),
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = ready!(Pin::new(o).poll(cx))?;
 

@@ -1,3 +1,4 @@
+use quinn_proto::StreamId;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -129,7 +130,9 @@ impl ConnectionDriver {
                     (_, _, HttpFrame::Settings(s)) => {
                         conn.lock().unwrap().inner.set_remote_settings(s);
                     }
-                    (true, Side::Client, HttpFrame::Goaway(_)) => println!("GOAWAY frame ignored"),
+                    (true, Side::Client, HttpFrame::Goaway(id)) => {
+                        self.conn.h3.lock().unwrap().inner.leave(StreamId(id));
+                    }
                     (true, Side::Server, HttpFrame::CancelPush(_)) => {
                         println!("CANCEL_PUSH frame ignored")
                     }
@@ -177,13 +180,24 @@ impl Future for ConnectionDriver {
                 ),
                 Side::Server => {
                     let mut conn = self.conn.h3.lock().unwrap();
-                    conn.requests.push_back((send, recv));
-                    if let Some(t) = conn.requests_task.take() {
-                        t.wake();
-                    conn.inner.request_initiated(send.id());
+                    if !conn.inner.is_closing() {
+                        conn.inner.request_initiated(send.id());
+                        conn.requests.push_back((send, recv));
+                        if let Some(t) = conn.requests_task.take() {
+                            t.wake();
+                        }
                     }
                 }
             }
+        }
+
+        let (is_closing, requests_in_flight) = {
+            let conn = &self.conn.h3.lock().unwrap().inner;
+            (conn.is_closing(), conn.requests_in_flight())
+        };
+
+        if is_closing && requests_in_flight == 0 {
+            return Poll::Ready(Ok(()));
         }
 
         Poll::Pending

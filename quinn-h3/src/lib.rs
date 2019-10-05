@@ -31,6 +31,8 @@ pub type Settings = SettingsFrame;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error(display = "Connection is closing, resquest aborted")]
+    Aborted,
     #[error(display = "H3 protocol error: {:?}", _0)]
     Proto(proto::connection::Error),
     #[error(display = "QUIC protocol error: {}", _0)]

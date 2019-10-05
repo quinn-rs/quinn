@@ -4,7 +4,7 @@ use bytes::{Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
 
-use crate::proto::frame::HeadersFrame;
+use crate::proto::frame::{HeadersFrame, HttpFrame};
 use crate::proto::headers::{self, Header};
 use crate::qpack::{self, DecoderError, DynamicTable, EncoderError, HeaderField};
 use crate::Settings;
@@ -19,6 +19,7 @@ pub struct Connection {
     pending_decoder: BytesMut,
     pending_control: BytesMut,
     requests_in_flight: VecDeque<StreamId>,
+    go_away: bool,
 }
 
 impl Connection {
@@ -41,6 +42,7 @@ impl Connection {
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),
             requests_in_flight: VecDeque::with_capacity(32),
+            go_away: false,
         })
     }
 
@@ -104,10 +106,30 @@ impl Connection {
     }
 
     pub fn request_finished(&mut self, id: StreamId) {
-        println!("Stream finished: {:?}", id);
         if !self.go_away {
             self.requests_in_flight.push_back(id);
         }
+    }
+
+    pub fn requests_in_flight(&self) -> usize {
+        self.requests_in_flight.len()
+    }
+
+    pub fn go_away(&mut self) {
+        if !self.go_away {
+            self.go_away = true;
+            let id = self.requests_in_flight.back().map(|i| i.0).unwrap_or(0) + 1;
+            HttpFrame::Goaway(id).encode(&mut self.pending_control);
+        }
+    }
+
+    pub fn leave(&mut self, id: StreamId) {
+        self.go_away = true;
+        self.requests_in_flight.retain(|i| i.0 <= id.0);
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.go_away
     }
 }
 
@@ -122,6 +144,7 @@ impl Default for Connection {
             pending_decoder: BytesMut::with_capacity(2048),
             pending_control: BytesMut::with_capacity(128),
             requests_in_flight: VecDeque::with_capacity(32),
+            go_away: false,
         }
     }
 }
