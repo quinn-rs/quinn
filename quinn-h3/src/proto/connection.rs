@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use bytes::{Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
@@ -16,6 +18,7 @@ pub struct Connection {
     pending_encoder: BytesMut,
     pending_decoder: BytesMut,
     pending_control: BytesMut,
+    requests_in_flight: VecDeque<StreamId>,
 }
 
 impl Connection {
@@ -37,6 +40,7 @@ impl Connection {
             encoder_table: DynamicTable::new(),
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),
+            requests_in_flight: VecDeque::with_capacity(32),
         })
     }
 
@@ -92,6 +96,19 @@ impl Connection {
         }
         Some(self.pending_control.take().freeze())
     }
+
+    pub fn request_initiated(&mut self, id: StreamId) {
+        if !self.go_away {
+            self.requests_in_flight.push_back(id);
+        }
+    }
+
+    pub fn request_finished(&mut self, id: StreamId) {
+        println!("Stream finished: {:?}", id);
+        if !self.go_away {
+            self.requests_in_flight.push_back(id);
+        }
+    }
 }
 
 impl Default for Connection {
@@ -104,6 +121,7 @@ impl Default for Connection {
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),
             pending_control: BytesMut::with_capacity(128),
+            requests_in_flight: VecDeque::with_capacity(32),
         }
     }
 }

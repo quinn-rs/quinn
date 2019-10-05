@@ -180,6 +180,7 @@ impl Future for ConnectionDriver {
                     conn.requests.push_back((send, recv));
                     if let Some(t) = conn.requests_task.take() {
                         t.wake();
+                    conn.inner.request_initiated(send.id());
                     }
                 }
             }
