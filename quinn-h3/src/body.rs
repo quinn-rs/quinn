@@ -57,27 +57,42 @@ pub struct RecvBody {
     recv: FrameStream,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
+#[must_use = "body must be read or canceled"] // else, request might never be finished
 impl RecvBody {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         RecvBody {
             conn,
             stream_id,
             recv,
+            finish_request,
         }
     }
 
     pub fn read_to_end(self, capacity: usize, size_limit: usize) -> ReadToEnd {
-        ReadToEnd::new(self.recv, capacity, size_limit, self.conn, self.stream_id)
+        ReadToEnd::new(
+            self.recv,
+            capacity,
+            size_limit,
+            self.conn,
+            self.stream_id,
+            self.finish_request,
+        )
     }
 
     pub fn into_reader(self) -> BodyReader {
-        BodyReader::new(self.recv, self.conn, self.stream_id)
+        BodyReader::new(self.recv, self.conn, self.stream_id, self.finish_request)
     }
 
     pub fn into_stream(self) -> RecvBodyStream {
-        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+        RecvBodyStream::new(self.recv, self.conn, self.stream_id, self.finish_request)
     }
 }
 
@@ -92,6 +107,7 @@ pub struct ReadToEnd {
     body: Option<Bytes>,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
 impl ReadToEnd {
@@ -101,12 +117,14 @@ impl ReadToEnd {
         size_limit: usize,
         conn: ConnectionRef,
         stream_id: StreamId,
+        finish_request: bool,
     ) -> Self {
         Self {
             conn,
             stream_id,
             body: None,
             state: RecvBodyState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
+            finish_request,
         }
     }
 }
@@ -172,19 +190,39 @@ impl Future for ReadToEnd {
     }
 }
 
+impl Drop for ReadToEnd {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+}
+
 pub struct RecvBodyStream {
     recv: FrameStream,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
 impl RecvBodyStream {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         RecvBodyStream {
             recv,
             conn,
             stream_id,
+            finish_request,
             trailers: None,
         }
     }
@@ -193,9 +231,12 @@ impl RecvBodyStream {
         self.trailers.is_some()
     }
 
-    pub fn trailers(self) -> Option<DecodeHeaders> {
-        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
-        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    pub fn trailers(mut self) -> Option<DecodeHeaders> {
+        let trailers = self.trailers.take();
+        let Self {
+            conn, stream_id, ..
+        } = &self;
+        trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
     }
 }
 
@@ -216,22 +257,42 @@ impl Stream for RecvBodyStream {
     }
 }
 
+impl Drop for RecvBodyStream {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+}
+
 pub struct BodyReader {
     recv: FrameStream,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
     buf: Option<Bytes>,
+    finish_request: bool,
 }
 
 impl BodyReader {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         BodyReader {
             recv,
             conn,
             stream_id,
             trailers: None,
             buf: None,
+            finish_request,
         }
     }
 
@@ -254,9 +315,12 @@ impl BodyReader {
         self.buf = Some(buf)
     }
 
-    pub fn trailers(self) -> Option<DecodeHeaders> {
-        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
-        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    pub fn trailers(&mut self) -> Option<DecodeHeaders> {
+        let trailers = self.trailers.take();
+        let Self {
+            conn, stream_id, ..
+        } = &self;
+        trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
     }
 }
 
@@ -316,11 +380,25 @@ impl tokio_io::AsyncRead for BodyReader {
     }
 }
 
+impl Drop for BodyReader {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+}
+
 pub struct BodyWriter {
     state: BodyWriterState,
     conn: ConnectionRef,
     stream_id: StreamId,
     trailers: Option<HeaderMap>,
+    finish_request: bool,
 }
 
 impl BodyWriter {
@@ -329,17 +407,19 @@ impl BodyWriter {
         conn: ConnectionRef,
         stream_id: StreamId,
         trailers: Option<HeaderMap>,
+        finish_request: bool,
     ) -> Self {
         Self {
             conn,
             stream_id,
             trailers,
             state: BodyWriterState::Idle(send),
+            finish_request,
         }
     }
 
-    pub async fn trailers(self, trailers: HeaderMap) -> Result<(), Error> {
-        match self.state {
+    pub async fn trailers(mut self, trailers: HeaderMap) -> Result<(), Error> {
+        match mem::replace(&mut self.state, BodyWriterState::Finished) {
             BodyWriterState::Idle(send) => {
                 Self::_trailers(trailers, &self.conn, send, self.stream_id).await
             }
@@ -348,7 +428,10 @@ impl BodyWriter {
     }
 
     pub async fn close(mut self) -> Result<(), Error> {
-        match (self.trailers.take(), self.state) {
+        let trailers = self.trailers.take();
+        let state = mem::replace(&mut self.state, BodyWriterState::Finished);
+
+        match (trailers, state) {
             (Some(t), BodyWriterState::Idle(send)) => {
                 Self::_trailers(t, &self.conn, send, self.stream_id).await
             }
@@ -452,5 +535,18 @@ impl tokio_io::AsyncWrite for BodyWriter {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         AsyncWrite::poll_close(self, cx)
+    }
+}
+
+impl Drop for BodyWriter {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
     }
 }

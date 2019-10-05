@@ -152,7 +152,12 @@ impl RecvRequest {
             .method(method)
             .uri(uri)
             .version(http::version::Version::HTTP_3)
-            .body(RecvBody::new(recv, self.conn.clone(), self.stream_id))
+            .body(RecvBody::new(
+                recv,
+                self.conn.clone(),
+                self.stream_id,
+                false,
+            ))
             .unwrap();
         *request.headers_mut() = headers;
         Ok(request)
@@ -266,7 +271,7 @@ where
             Body::None => send,
             Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
         };
-        Ok(BodyWriter::new(send, conn, stream_id, trailers))
+        Ok(BodyWriter::new(send, conn, stream_id, trailers, true))
     }
 }
 
@@ -360,5 +365,16 @@ impl Future for SendResponse {
                 }
             }
         }
+    }
+}
+
+impl Drop for SendResponse {
+    fn drop(&mut self) {
+        self.conn
+            .h3
+            .lock()
+            .unwrap()
+            .inner
+            .request_finished(self.stream_id);
     }
 }

@@ -156,10 +156,13 @@ where
         match body.into() {
             Body::Buf(payload) => {
                 let send = WriteFrame::new(send, DataFrame { payload }).await?;
-                Ok((BodyWriter::new(send, conn, stream_id, trailers), recv))
+                Ok((
+                    BodyWriter::new(send, conn, stream_id, trailers, false),
+                    recv,
+                ))
             }
             Body::None => Ok((
-                BodyWriter::new(send, conn.clone(), stream_id, trailers),
+                BodyWriter::new(send, conn.clone(), stream_id, trailers, false),
                 recv,
             )),
         }
@@ -232,6 +235,14 @@ impl Future for SendRequest {
             match self.state {
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = ready!(Pin::new(o).poll(cx))?;
+
+                    self.conn
+                        .h3
+                        .lock()
+                        .unwrap()
+                        .inner
+                        .request_initiated(send.id());
+
                     self.recv = Some(FrameDecoder::stream(recv));
                     self.stream_id = Some(send.id());
                     self.state = SendRequestState::Sending(SendHeaders::new(
@@ -396,7 +407,7 @@ fn build_response(
     let mut response = Response::builder()
         .status(status)
         .version(http::version::Version::HTTP_3)
-        .body(RecvBody::new(recv, conn, stream_id))
+        .body(RecvBody::new(recv, conn, stream_id, true))
         .unwrap();
     *response.headers_mut() = headers;
     Ok(response)
