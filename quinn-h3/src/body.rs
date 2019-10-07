@@ -104,7 +104,7 @@ impl fmt::Debug for RecvBody {
 }
 
 pub struct ReadToEnd {
-    state: RecvBodyState,
+    state: ReadToEndState,
     body: Option<Bytes>,
     conn: ConnectionRef,
     stream_id: StreamId,
@@ -124,13 +124,13 @@ impl ReadToEnd {
             conn,
             stream_id,
             body: None,
-            state: RecvBodyState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
+            state: ReadToEndState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
             finish_request,
         }
     }
 }
 
-enum RecvBodyState {
+enum ReadToEndState {
     Receiving(FrameStream, BytesMut, usize),
     Decoding(DecodeHeaders),
     Finished,
@@ -142,7 +142,7 @@ impl Future for ReadToEnd {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
-                RecvBodyState::Receiving(ref mut recv, ref mut body, size_limit) => {
+                ReadToEndState::Receiving(ref mut recv, ref mut body, size_limit) => {
                     match ready!(Pin::new(recv).poll_next(cx)) {
                         Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         Some(Ok(HttpFrame::Data(d))) => {
@@ -156,17 +156,17 @@ impl Future for ReadToEnd {
                                 DecodeHeaders::new(t, self.conn.clone(), self.stream_id);
                             let old_state = mem::replace(
                                 &mut self.state,
-                                RecvBodyState::Decoding(decode_trailer),
+                                ReadToEndState::Decoding(decode_trailer),
                             );
                             match old_state {
-                                RecvBodyState::Receiving(_, b, _) => self.body = Some(b.into()),
+                                ReadToEndState::Receiving(_, b, _) => self.body = Some(b.into()),
                                 _ => unreachable!(),
                             };
                         }
                         None => {
-                            let body = match mem::replace(&mut self.state, RecvBodyState::Finished)
+                            let body = match mem::replace(&mut self.state, ReadToEndState::Finished)
                             {
-                                RecvBodyState::Receiving(_, b, _) => match b.len() {
+                                ReadToEndState::Receiving(_, b, _) => match b.len() {
                                     0 => None,
                                     _ => Some(b.into()),
                                 },
@@ -182,8 +182,8 @@ impl Future for ReadToEnd {
                                 ),
                                 Err(e) => (e.code(), Poll::Ready(Err(e.into()))),
                             };
-                            match mem::replace(&mut self.state, RecvBodyState::Finished) {
-                                RecvBodyState::Receiving(recv, _, _) => {
+                            match mem::replace(&mut self.state, ReadToEndState::Finished) {
+                                ReadToEndState::Receiving(recv, _, _) => {
                                     recv.reset(err_code);
                                 }
                                 _ => unreachable!(),
@@ -192,9 +192,9 @@ impl Future for ReadToEnd {
                         }
                     }
                 }
-                RecvBodyState::Decoding(ref mut trailer) => {
+                ReadToEndState::Decoding(ref mut trailer) => {
                     let trailer = ready!(Pin::new(trailer).poll(cx))?;
-                    self.state = RecvBodyState::Finished;
+                    self.state = ReadToEndState::Finished;
                     return Poll::Ready(Ok((
                         Some(try_take(&mut self.body, "body absent")?),
                         Some(trailer.into_fields()),
