@@ -122,7 +122,7 @@ impl Stream for IncomingRequest {
 enum RecvRequestState {
     Receiving(FrameStream, SendStream),
     Decoding(DecodeHeaders),
-    Ready,
+    Finished,
 }
 
 pub struct RecvRequest {
@@ -189,7 +189,7 @@ impl Future for RecvRequest {
                 }
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
-                    self.state = RecvRequestState::Ready;
+                    self.state = RecvRequestState::Finished;
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
                     return Poll::Ready(Ok((
                         self.build_request(header, recv)?,
@@ -200,7 +200,7 @@ impl Future for RecvRequest {
                         },
                     )));
                 }
-                RecvRequestState::Ready => {
+                RecvRequestState::Finished => {
                     return Poll::Ready(Err(Error::peer("polled after ready")));
                 }
             };
