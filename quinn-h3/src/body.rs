@@ -27,7 +27,8 @@ use crate::{
         frame::{DataFrame, HeadersFrame, HttpFrame},
         headers::Header,
     },
-    try_take, Error,
+    streams::Reset,
+    try_take, Error, ErrorCode,
 };
 
 pub enum Body {
@@ -173,7 +174,22 @@ impl Future for ReadToEnd {
                             };
                             return Poll::Ready(Ok((body, None)));
                         }
-                        _ => return Poll::Ready(Err(Error::peer("invalid frame type in data"))),
+                        Some(x) => {
+                            let (err_code, error) = match x {
+                                Ok(_) => (
+                                    ErrorCode::FRAME_UNEXPECTED,
+                                    Poll::Ready(Err(Error::peer("invalid frame type in data"))),
+                                ),
+                                Err(e) => (e.code(), Poll::Ready(Err(e.into()))),
+                            };
+                            match mem::replace(&mut self.state, RecvBodyState::Finished) {
+                                RecvBodyState::Receiving(recv, _, _) => {
+                                    recv.reset(err_code);
+                                }
+                                _ => unreachable!(),
+                            };
+                            return error;
+                        }
                     }
                 }
                 RecvBodyState::Decoding(ref mut trailer) => {
@@ -204,7 +220,7 @@ impl Drop for ReadToEnd {
 }
 
 pub struct RecvBodyStream {
-    recv: FrameStream,
+    recv: Option<FrameStream>,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
@@ -219,10 +235,10 @@ impl RecvBodyStream {
         finish_request: bool,
     ) -> Self {
         RecvBodyStream {
-            recv,
             conn,
             stream_id,
             finish_request,
+            recv: Some(recv),
             trailers: None,
         }
     }
@@ -244,15 +260,22 @@ impl Stream for RecvBodyStream {
     type Item = Result<Bytes, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match ready!(Pin::new(&mut self.recv).poll_next(cx)) {
+        let res = ready!(Pin::new(&mut self.recv.as_mut().unwrap()).poll_next(cx));
+        match res {
             None => Poll::Ready(None),
-            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             Some(Ok(HttpFrame::Data(d))) => Poll::Ready(Some(Ok(d.payload))),
             Some(Ok(HttpFrame::Headers(d))) => {
                 self.trailers = Some(d);
                 Poll::Ready(None)
             }
-            _ => Poll::Ready(Some(Err(Error::peer("invalid frame type in data")))),
+            Some(Ok(_)) => {
+                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                Poll::Ready(Some(Err(Error::peer("invalid frame type in data"))))
+            }
+            Some(Err(e)) => {
+                self.recv.take().unwrap().reset(e.code());
+                Poll::Ready(Some(Err(e.into())))
+            }
         }
     }
 }
@@ -271,7 +294,7 @@ impl Drop for RecvBodyStream {
 }
 
 pub struct BodyReader {
-    recv: FrameStream,
+    recv: Option<FrameStream>,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
@@ -287,12 +310,12 @@ impl BodyReader {
         finish_request: bool,
     ) -> Self {
         BodyReader {
-            recv,
             conn,
             stream_id,
-            trailers: None,
-            buf: None,
             finish_request,
+            buf: None,
+            trailers: None,
+            recv: Some(recv),
         }
     }
 
@@ -335,7 +358,8 @@ impl AsyncRead for BodyReader {
             return Poll::Ready(Ok(size));
         }
 
-        match Pin::new(&mut self.recv).poll_next(cx) {
+        match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
+            Poll::Ready(None) => Poll::Ready(Ok(size)),
             Poll::Pending => {
                 if size > 0 {
                     Poll::Ready(Ok(size))
@@ -343,29 +367,32 @@ impl AsyncRead for BodyReader {
                     Poll::Ready(Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")))
                 }
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(io::Error::new(
-                ErrorKind::Other,
-                format!("read error: {:?}", e),
-            ))),
-            Poll::Ready(None) => Poll::Ready(Ok(size)),
-            Poll::Ready(Some(Ok(r))) => match r {
-                HttpFrame::Data(mut d) => {
-                    if d.payload.len() >= buf.len() - size {
-                        let tail = d.payload.split_off(buf.len() - size);
-                        self.buf_put(tail);
-                    }
-                    buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
-                    Poll::Ready(Ok(size + d.payload.len()))
+            Poll::Ready(Some(Err(e))) => {
+                self.recv.take().unwrap().reset(e.code());
+                Poll::Ready(Err(io::Error::new(
+                    ErrorKind::Other,
+                    format!("read error: {:?}", e),
+                )))
+            }
+            Poll::Ready(Some(Ok(HttpFrame::Data(mut d)))) => {
+                if d.payload.len() >= buf.len() - size {
+                    let tail = d.payload.split_off(buf.len() - size);
+                    self.buf_put(tail);
                 }
-                HttpFrame::Headers(d) => {
-                    self.trailers = Some(d);
-                    Poll::Ready(Ok(size))
-                }
-                _ => Poll::Ready(Err(io::Error::new(
+                buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
+                Poll::Ready(Ok(size + d.payload.len()))
+            }
+            Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
+                self.trailers = Some(d);
+                Poll::Ready(Ok(size))
+            }
+            Poll::Ready(Some(Ok(_))) => {
+                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                Poll::Ready(Err(io::Error::new(
                     ErrorKind::InvalidData,
                     "received an invalid frame type",
-                ))),
-            },
+                )))
+            }
         }
     }
 }

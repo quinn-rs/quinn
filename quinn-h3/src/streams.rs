@@ -12,7 +12,7 @@ use crate::{
     connection::ConnectionRef,
     frame::{FrameDecoder, FrameStream},
     proto::StreamType,
-    Error,
+    Error, ErrorCode,
 };
 
 pub enum NewUni {
@@ -136,4 +136,8 @@ impl Future for SendControlStream {
             }
         }
     }
+}
+
+pub trait Reset {
+    fn reset(self, code: ErrorCode);
 }

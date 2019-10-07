@@ -17,6 +17,7 @@ use crate::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
     },
+    streams::Reset,
     try_take, Error, ErrorCode, Settings,
 };
 
@@ -314,10 +315,16 @@ impl Future for SendRequest {
                                     SendRequestState::Decoding(decode),
                                 ) {
                                     self.recv = Some(frames);
-                                };
+                                }
                             }
                             _ => {
-                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                                match mem::replace(&mut self.state, SendRequestState::Finished) {
+                                    SendRequestState::Receiving(recv) => {
+                                        recv.reset(ErrorCode::FRAME_UNEXPECTED)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")));
                             }
                         },
                     }
@@ -385,7 +392,14 @@ impl Future for RecvResponse {
                                 };
                             }
                             _ => {
-                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                                match mem::replace(&mut self.state, RecvResponseState::Finished) {
+                                    RecvResponseState::Receiving(recv) => {
+                                        recv.reset(ErrorCode::FRAME_UNEXPECTED);
+                                    }
+                                    _ => unreachable!(),
+                                }
+
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")));
                             }
                         },
                     }
