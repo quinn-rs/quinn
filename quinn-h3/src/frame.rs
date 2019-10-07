@@ -7,8 +7,15 @@ use tokio_codec::{Decoder, FramedRead};
 use tokio_io::AsyncRead;
 
 use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
+use crate::{streams::Reset, ErrorCode};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
+
+impl Reset for FrameStream {
+    fn reset(self, error_code: ErrorCode) {
+        let _ = self.into_inner().stop(error_code.0.into());
+    }
+}
 
 #[derive(Default)]
 pub struct FrameDecoder {
@@ -156,6 +163,15 @@ impl Future for WriteFrame {
 pub enum Error {
     Proto(frame::Error),
     Io(io::Error),
+}
+
+impl Error {
+    pub fn code(&self) -> ErrorCode {
+        match self {
+            Error::Io(_) => ErrorCode::GENERAL_PROTOCOL_ERROR,
+            Error::Proto(_) => ErrorCode::FRAME_ERROR,
+        }
+    }
 }
 
 impl From<frame::Error> for Error {

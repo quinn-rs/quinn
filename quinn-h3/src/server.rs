@@ -17,7 +17,8 @@ use crate::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
     },
-    try_take, Error, Settings,
+    streams::Reset,
+    try_take, Error, ErrorCode, Settings,
 };
 
 pub struct Builder {
@@ -172,7 +173,6 @@ impl Future for RecvRequest {
             match self.state {
                 RecvRequestState::Receiving(ref mut frames, _) => {
                     match ready!(Pin::new(frames).poll_next(cx)) {
-                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         None => return Poll::Ready(Err(Error::peer("received an empty request"))),
                         Some(Ok(HttpFrame::Headers(f))) => {
                             let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
@@ -182,8 +182,19 @@ impl Future for RecvRequest {
                                 _ => unreachable!("Invalid state"),
                             }
                         }
-                        Some(Ok(_)) => {
-                            return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                        Some(x) => {
+                            let (code, error) = match x {
+                                Err(e) => (e.code(), e.into()),
+                                Ok(_) => (
+                                    ErrorCode::FRAME_UNEXPECTED,
+                                    Error::peer("first frame is not headers"),
+                                ),
+                            };
+                            match mem::replace(&mut self.state, RecvRequestState::Finished) {
+                                RecvRequestState::Receiving(recv, _) => recv.reset(code),
+                                _ => unreachable!(),
+                            }
+                            return Poll::Ready(Err(error));
                         }
                     }
                 }
