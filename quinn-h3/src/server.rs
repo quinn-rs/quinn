@@ -215,8 +215,8 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn response<T>(self, response: Response<T>) -> ResonsepBuilder<T> {
-        ResonsepBuilder {
+    pub fn response<T>(self, response: Response<T>) -> ResponseBuilder<T> {
+        ResponseBuilder {
             response,
             sender: self,
             trailers: None,
@@ -224,13 +224,13 @@ impl Sender {
     }
 }
 
-pub struct ResonsepBuilder<T> {
+pub struct ResponseBuilder<T> {
     sender: Sender,
     response: Response<T>,
     trailers: Option<HeaderMap>,
 }
 
-impl<T> ResonsepBuilder<T>
+impl<T> ResponseBuilder<T>
 where
     T: Into<Body>,
 {
