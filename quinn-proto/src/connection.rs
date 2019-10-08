@@ -3217,7 +3217,7 @@ pub enum ConnectionError {
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation.
     #[error(display = "{}", _0)]
-    TransportError(TransportError),
+    TransportError(#[source] TransportError),
     /// The peer's QUIC stack aborted the connection automatically.
     #[error(display = "aborted by peer: {}", reason)]
     ConnectionClosed {
@@ -3239,12 +3239,6 @@ pub enum ConnectionError {
     /// The local application closed the connection.
     #[error(display = "closed")]
     LocallyClosed,
-}
-
-impl From<TransportError> for ConnectionError {
-    fn from(x: TransportError) -> Self {
-        ConnectionError::TransportError(x)
-    }
 }
 
 impl From<Close> for ConnectionError {

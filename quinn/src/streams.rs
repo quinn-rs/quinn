@@ -396,16 +396,10 @@ impl Future for ReadToEnd {
 pub enum ReadToEndError {
     /// An error occurred during reading
     #[error(display = "read error")]
-    Read(ReadError),
+    Read(#[source] ReadError),
     /// The stream is larger than the user-supplied limit
     #[error(display = "stream too long")]
     TooLong,
-}
-
-impl From<ReadError> for ReadToEndError {
-    fn from(e: ReadError) -> ReadToEndError {
-        ReadToEndError::Read(e)
-    }
 }
 
 impl AsyncRead for RecvStream {
