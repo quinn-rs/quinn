@@ -40,18 +40,7 @@ impl coding::Codec for Type {
     }
 }
 
-impl slog::Value for Type {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
-}
-
-pub trait FrameStruct {
+pub(crate) trait FrameStruct {
     /// Smallest number of bytes this type of frame is guaranteed to fit within.
     const SIZE_BOUND: usize;
 }

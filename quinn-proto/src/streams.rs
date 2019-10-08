@@ -1,19 +1,18 @@
-use std::collections::hash_map;
+use std::collections::{hash_map, HashMap};
 
 use bytes::Bytes;
 use err_derive::Error;
-use fnv::FnvHashMap;
-use slog::Logger;
+use tracing::debug;
 
 use crate::assembler::Assembler;
 use crate::frame;
 use crate::range_set::RangeSet;
 use crate::{Dir, Side, StreamId, TransportError, VarInt};
 
-pub struct Streams {
+pub(crate) struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
-    send: FnvHashMap<StreamId, Send>,
-    recv: FnvHashMap<StreamId, Recv>,
+    send: HashMap<StreamId, Send>,
+    recv: HashMap<StreamId, Recv>,
     next: [u64; 2],
     // Locally initiated
     pub max: [u64; 2],
@@ -28,8 +27,8 @@ pub struct Streams {
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
         let mut this = Self {
-            send: FnvHashMap::default(),
-            recv: FnvHashMap::default(),
+            send: HashMap::default(),
+            recv: HashMap::default(),
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi, max_remote_uni],
@@ -203,16 +202,16 @@ impl Streams {
 }
 
 #[derive(Debug)]
-pub struct Send {
-    pub offset: u64,
-    pub max_data: u64,
-    pub state: SendState,
+pub(crate) struct Send {
+    pub(crate) offset: u64,
+    pub(crate) max_data: u64,
+    pub(crate) state: SendState,
     /// Number of bytes sent but unacked
-    pub bytes_in_flight: u64,
+    pub(crate) bytes_in_flight: u64,
 }
 
 impl Send {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             offset: 0,
             max_data: 0,
@@ -221,7 +220,7 @@ impl Send {
         }
     }
 
-    pub fn write_budget(&mut self) -> Result<u64, WriteError> {
+    pub(crate) fn write_budget(&mut self) -> Result<u64, WriteError> {
         if let Some(error_code) = self.take_stop_reason() {
             return Err(WriteError::Stopped { error_code });
         }
@@ -234,7 +233,7 @@ impl Send {
     }
 
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
             DataRecvd | ResetRecvd { stop_reason: None } => true,
@@ -242,7 +241,7 @@ impl Send {
         }
     }
 
-    pub fn finish(&mut self) -> Result<(), FinishError> {
+    pub(crate) fn finish(&mut self) -> Result<(), FinishError> {
         if self.state == SendState::Ready {
             self.state = SendState::DataSent;
             Ok(())
@@ -297,7 +296,7 @@ pub struct Recv {
 }
 
 impl Recv {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: RecvState::Recv { size: None },
             recvd: RangeSet::new(),
@@ -307,9 +306,8 @@ impl Recv {
         }
     }
 
-    pub fn ingest(
+    pub(crate) fn ingest(
         &mut self,
-        log: &Logger,
         frame: frame::Stream,
         received: u64,
         max_data: u64,
@@ -318,7 +316,7 @@ impl Recv {
         let end = frame.offset + frame.data.len() as u64;
         if let Some(final_offset) = self.final_offset() {
             if end > final_offset || (frame.fin && end != final_offset) {
-                debug!(log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                debug!(end, final_offset, "final offset error");
                 return Err(TransportError::FINAL_OFFSET_ERROR(""));
             }
         }
@@ -327,9 +325,7 @@ impl Recv {
         let new_bytes = end.saturating_sub(prev_end);
         let stream_max_data = self.bytes_read + receive_window;
         if end > stream_max_data || received + new_bytes > max_data {
-            debug!(log, "flow control error";
-                       "stream" => frame.id.0, "recvd" => received, "new bytes" => new_bytes,
-                       "max data" => max_data, "end" => end, "stream max data" => stream_max_data);
+            debug!(stream = %frame.id, received, new_bytes, max_data, end, stream_max_data, "flow control error");
             return Err(TransportError::FLOW_CONTROL_ERROR(""));
         }
 
@@ -353,7 +349,7 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+    pub(crate) fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         assert!(
             !self.unordered,
             "cannot perform ordered reads following unordered reads on a stream"
@@ -368,7 +364,7 @@ impl Recv {
         }
     }
 
-    pub fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+    pub(crate) fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
         self.unordered = true;
 
         // Return data we already have buffered, regardless of state
@@ -395,7 +391,7 @@ impl Recv {
         }
     }
 
-    pub fn receiving_unknown_size(&self) -> bool {
+    pub(crate) fn receiving_unknown_size(&self) -> bool {
         match self.state {
             RecvState::Recv { size: None } => true,
             _ => false,
@@ -403,7 +399,7 @@ impl Recv {
     }
 
     /// No more data expected from peer
-    pub fn is_finished(&self) -> bool {
+    pub(crate) fn is_finished(&self) -> bool {
         match self.state {
             RecvState::Recv { .. } => false,
             _ => true,
@@ -411,16 +407,16 @@ impl Recv {
     }
 
     /// All data read by application
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.state == self::RecvState::Closed
     }
 
     /// Offset after the largest byte received
-    pub fn limit(&self) -> u64 {
+    pub(crate) fn limit(&self) -> u64 {
         self.recvd.max().map_or(0, |x| x + 1)
     }
 
-    pub fn final_offset(&self) -> Option<u64> {
+    pub(crate) fn final_offset(&self) -> Option<u64> {
         match self.state {
             RecvState::Recv { size } => size,
             RecvState::ResetRecvd { size, .. } => Some(size),
@@ -429,7 +425,7 @@ impl Recv {
         }
     }
 
-    pub fn reset(&mut self, error_code: VarInt, final_offset: u64) {
+    pub(crate) fn reset(&mut self, error_code: VarInt, final_offset: u64) {
         if self.is_closed() {
             return;
         }
@@ -465,7 +461,7 @@ pub enum ReadError {
 /// `stop_reason` below should be set iff the stream was stopped and application has not yet been
 /// notified, as we never discard resources for a stream that has it set.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum SendState {
+pub(crate) enum SendState {
     Ready,
     DataSent,
     ResetSent { stop_reason: Option<VarInt> },
@@ -484,7 +480,7 @@ impl SendState {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum RecvState {
+pub(crate) enum RecvState {
     Recv { size: Option<u64> },
     DataRecvd { size: u64 },
     ResetRecvd { size: u64, error_code: VarInt },

@@ -16,7 +16,9 @@ use crate::{
     proto::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
+        ErrorCode,
     },
+    streams::Reset,
     try_take, Error, Settings,
 };
 
@@ -122,7 +124,7 @@ impl Stream for IncomingRequest {
 enum RecvRequestState {
     Receiving(FrameStream, SendStream),
     Decoding(DecodeHeaders),
-    Ready,
+    Finished,
 }
 
 pub struct RecvRequest {
@@ -152,10 +154,23 @@ impl RecvRequest {
             .method(method)
             .uri(uri)
             .version(http::version::Version::HTTP_3)
-            .body(RecvBody::new(recv, self.conn.clone(), self.stream_id))
+            .body(RecvBody::new(
+                recv,
+                self.conn.clone(),
+                self.stream_id,
+                false,
+            ))
             .unwrap();
         *request.headers_mut() = headers;
         Ok(request)
+    }
+
+    pub fn reject(mut self) {
+        let state = mem::replace(&mut self.state, RecvRequestState::Finished);
+        if let RecvRequestState::Receiving(recv, mut send) = state {
+            recv.reset(ErrorCode::REQUEST_REJECTED);
+            send.reset(ErrorCode::REQUEST_REJECTED.into());
+        }
     }
 }
 
@@ -167,7 +182,6 @@ impl Future for RecvRequest {
             match self.state {
                 RecvRequestState::Receiving(ref mut frames, _) => {
                     match ready!(Pin::new(frames).poll_next(cx)) {
-                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         None => return Poll::Ready(Err(Error::peer("received an empty request"))),
                         Some(Ok(HttpFrame::Headers(f))) => {
                             let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
@@ -177,14 +191,25 @@ impl Future for RecvRequest {
                                 _ => unreachable!("Invalid state"),
                             }
                         }
-                        Some(Ok(_)) => {
-                            return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                        Some(x) => {
+                            let (code, error) = match x {
+                                Err(e) => (e.code(), e.into()),
+                                Ok(_) => (
+                                    ErrorCode::FRAME_UNEXPECTED,
+                                    Error::peer("first frame is not headers"),
+                                ),
+                            };
+                            match mem::replace(&mut self.state, RecvRequestState::Finished) {
+                                RecvRequestState::Receiving(recv, _) => recv.reset(code),
+                                _ => unreachable!(),
+                            }
+                            return Poll::Ready(Err(error));
                         }
                     }
                 }
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
-                    self.state = RecvRequestState::Ready;
+                    self.state = RecvRequestState::Finished;
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
                     return Poll::Ready(Ok((
                         self.build_request(header, recv)?,
@@ -195,7 +220,7 @@ impl Future for RecvRequest {
                         },
                     )));
                 }
-                RecvRequestState::Ready => {
+                RecvRequestState::Finished => {
                     return Poll::Ready(Err(Error::peer("polled after ready")));
                 }
             };
@@ -210,22 +235,26 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn response<T>(self, response: Response<T>) -> ResonsepBuilder<T> {
-        ResonsepBuilder {
+    pub fn response<T>(self, response: Response<T>) -> ResponseBuilder<T> {
+        ResponseBuilder {
             response,
             sender: self,
             trailers: None,
         }
     }
+
+    pub fn cancel(mut self) {
+        self.send.reset(ErrorCode::REQUEST_REJECTED.into());
+    }
 }
 
-pub struct ResonsepBuilder<T> {
+pub struct ResponseBuilder<T> {
     sender: Sender,
     response: Response<T>,
     trailers: Option<HeaderMap>,
 }
 
-impl<T> ResonsepBuilder<T>
+impl<T> ResponseBuilder<T>
 where
     T: Into<Body>,
 {
@@ -266,7 +295,7 @@ where
             Body::None => send,
             Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
         };
-        Ok(BodyWriter::new(send, conn, stream_id, trailers))
+        Ok(BodyWriter::new(send, conn, stream_id, trailers, true))
     }
 }
 
@@ -311,6 +340,22 @@ impl SendResponse {
             body: Some(body.into()),
             trailer: trailers.map(Header::trailer),
         })
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, SendResponseState::Finished);
+        match state {
+            SendResponseState::SendingHeader(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendResponseState::SendingBody(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendResponseState::SendingTrailers(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
+        }
     }
 }
 
@@ -360,5 +405,16 @@ impl Future for SendResponse {
                 }
             }
         }
+    }
+}
+
+impl Drop for SendResponse {
+    fn drop(&mut self) {
+        self.conn
+            .h3
+            .lock()
+            .unwrap()
+            .inner
+            .request_finished(self.stream_id);
     }
 }

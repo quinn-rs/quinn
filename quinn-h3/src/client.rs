@@ -16,8 +16,10 @@ use crate::{
     proto::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
+        ErrorCode,
     },
-    try_take, Error, ErrorCode, Settings,
+    streams::Reset,
+    try_take, Error, Settings,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -94,12 +96,13 @@ impl Future for Connecting {
             driver,
             connection,
             uni_streams,
+            bi_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
         let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new_client(conn_ref.clone(), uni_streams),
+            ConnectionDriver::new_client(conn_ref.clone(), uni_streams, bi_streams),
             Connection(conn_ref),
         )))
     }
@@ -155,10 +158,13 @@ where
         match body.into() {
             Body::Buf(payload) => {
                 let send = WriteFrame::new(send, DataFrame { payload }).await?;
-                Ok((BodyWriter::new(send, conn, stream_id, trailers), recv))
+                Ok((
+                    BodyWriter::new(send, conn, stream_id, trailers, false),
+                    recv,
+                ))
             }
             Body::None => Ok((
-                BodyWriter::new(send, conn.clone(), stream_id, trailers),
+                BodyWriter::new(send, conn.clone(), stream_id, trailers, false),
                 recv,
             )),
         }
@@ -172,6 +178,7 @@ enum SendRequestState {
     SendingTrailers(SendHeaders),
     Receiving(FrameStream),
     Decoding(DecodeHeaders),
+    Aborted,
     Finished,
 }
 
@@ -192,6 +199,18 @@ impl SendRequest {
         open_bi: OpenBi,
         conn: ConnectionRef,
     ) -> Self {
+        if conn.h3.lock().unwrap().inner.is_closing() {
+            return Self {
+                conn,
+                header: None,
+                body: None,
+                stream_id: None,
+                recv: None,
+                state: SendRequestState::Aborted,
+                trailers: trailers.map(Header::trailer),
+            };
+        }
+
         let (
             request::Parts {
                 method,
@@ -221,6 +240,28 @@ impl SendRequest {
             try_take(&mut self.stream_id, "stream is none")?,
         )
     }
+
+    pub fn cancel(mut self) {
+        match self.state {
+            SendRequestState::Sending(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::SendingBody(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::SendingTrailers(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::Receiving(recv) => {
+                recv.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
+        }
+
+        if let Some(recv) = self.recv.take() {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
+    }
 }
 
 impl Future for SendRequest {
@@ -229,8 +270,17 @@ impl Future for SendRequest {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
+                SendRequestState::Aborted => return Poll::Ready(Err(Error::Aborted)),
                 SendRequestState::Opening(ref mut o) => {
                     let (send, recv) = ready!(Pin::new(o).poll(cx))?;
+
+                    self.conn
+                        .h3
+                        .lock()
+                        .unwrap()
+                        .inner
+                        .request_initiated(send.id());
+
                     self.recv = Some(FrameDecoder::stream(recv));
                     self.stream_id = Some(send.id());
                     self.state = SendRequestState::Sending(SendHeaders::new(
@@ -288,10 +338,16 @@ impl Future for SendRequest {
                                     SendRequestState::Decoding(decode),
                                 ) {
                                     self.recv = Some(frames);
-                                };
+                                }
                             }
                             _ => {
-                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                                match mem::replace(&mut self.state, SendRequestState::Finished) {
+                                    SendRequestState::Receiving(recv) => {
+                                        recv.reset(ErrorCode::FRAME_UNEXPECTED)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")));
                             }
                         },
                     }
@@ -329,6 +385,12 @@ impl RecvResponse {
             state: RecvResponseState::Receiving(recv),
         }
     }
+
+    pub fn cancel(self) {
+        if let RecvResponseState::Receiving(recv) = self.state {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
+    }
 }
 
 impl Future for RecvResponse {
@@ -359,7 +421,14 @@ impl Future for RecvResponse {
                                 };
                             }
                             _ => {
-                                return Poll::Ready(Err(Error::peer("first frame is not headers")))
+                                match mem::replace(&mut self.state, RecvResponseState::Finished) {
+                                    RecvResponseState::Receiving(recv) => {
+                                        recv.reset(ErrorCode::FRAME_UNEXPECTED);
+                                    }
+                                    _ => unreachable!(),
+                                }
+
+                                return Poll::Ready(Err(Error::peer("first frame is not headers")));
                             }
                         },
                     }
@@ -395,7 +464,7 @@ fn build_response(
     let mut response = Response::builder()
         .status(status)
         .version(http::version::Version::HTTP_3)
-        .body(RecvBody::new(recv, conn, stream_id))
+        .body(RecvBody::new(recv, conn, stream_id, true))
         .unwrap();
     *response.headers_mut() = headers;
     Ok(response)

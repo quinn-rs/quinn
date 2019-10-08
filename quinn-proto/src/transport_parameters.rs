@@ -89,7 +89,7 @@ impl TransportParameters {
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: REM_CID_COUNT,
             max_datagram_frame_size: config
-                .datagram_window
+                .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
             ..Self::default()
         }

@@ -11,7 +11,7 @@ use quinn_proto::VarInt;
 use crate::{
     connection::ConnectionRef,
     frame::{FrameDecoder, FrameStream},
-    proto::StreamType,
+    proto::{ErrorCode, StreamType},
     Error,
 };
 
@@ -136,4 +136,8 @@ impl Future for SendControlStream {
             }
         }
     }
+}
+
+pub trait Reset {
+    fn reset(self, code: ErrorCode);
 }

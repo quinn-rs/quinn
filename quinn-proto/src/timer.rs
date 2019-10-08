@@ -6,7 +6,7 @@ use std::slice;
 pub struct Timer(pub(crate) TimerKind);
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum TimerKind {
+pub(crate) enum TimerKind {
     /// When to send an ack-eliciting probe packet or declare unacked packets lost
     LossDetection = 0,
     /// When to close the connection after no activity
@@ -134,16 +134,5 @@ impl<T> Index<Timer> for TimerTable<T> {
 impl<T> IndexMut<Timer> for TimerTable<T> {
     fn index_mut(&mut self, index: Timer) -> &mut T {
         &mut self.data[index.0 as usize]
-    }
-}
-
-impl slog::Value for Timer {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self.0))
     }
 }

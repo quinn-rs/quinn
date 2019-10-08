@@ -1,7 +1,6 @@
 use std::fmt;
 
 use bytes::{Buf, BufMut};
-use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::frame;
@@ -30,6 +29,8 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl From<Code> for Error {
     fn from(x: Code) -> Self {
         Self {
@@ -37,17 +38,6 @@ impl From<Code> for Error {
             frame: None,
             reason: "".to_string(),
         }
-    }
-}
-
-impl slog::Value for Error {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 
@@ -116,17 +106,6 @@ macro_rules! errors {
                 f.write_str(x)
             }
         }
-    }
-}
-
-impl slog::Value for Code {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 

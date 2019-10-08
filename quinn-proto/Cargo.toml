@@ -22,18 +22,17 @@ tls-rustls = ["rustls", "webpki", "ring"]
 
 [dependencies]
 bytes = "0.4.7"
-err-derive = "0.1.5"
-fnv = "1.0.6"
+err-derive = "0.2"
 lazy_static = "1"
 rand = "0.7"
 ring = { version = "0.16.7", optional = true }
 rustls = { version = "0.16", features = ["quic"], optional = true }
 slab = "0.4"
-slog = "2.2"
+tracing = "0.1.10"
 webpki = { version = "0.21", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"
 hex-literal = "0.2.0"
 rcgen = "0.7"
-#slog = { version = "2.2", features = ["max_level_trace"] } # For debugging
+tracing-subscriber = "0.1.5"

@@ -1,22 +1,20 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Write};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{cmp, env, fmt, mem, str};
+use std::{cmp, env, mem, str};
 
-use fnv::FnvHashMap;
 use lazy_static::lazy_static;
 use rustls::KeyLogFile;
-use slog::{Drain, Logger, KV};
+use tracing::{info_span, trace};
 
 use super::*;
 use crate::crypto::rustls::{CertificateChain, PrivateKey};
 use crate::timer::TimerKind;
 
 pub struct Pair {
-    pub log: Logger,
     pub server: TestEndpoint,
     pub client: TestEndpoint,
     pub time: Instant,
@@ -29,14 +27,8 @@ pub struct Pair {
 
 impl Pair {
     pub fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
-        let log = logger();
-        let server = Endpoint::new(
-            log.new(o!("side" => "Server")),
-            endpoint_config.clone(),
-            Some(Arc::new(server_config)),
-        )
-        .unwrap();
-        let client = Endpoint::new(log.new(o!("side" => "Client")), endpoint_config, None).unwrap();
+        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config))).unwrap();
+        let client = Endpoint::new(endpoint_config, None).unwrap();
 
         let server_addr = SocketAddr::new(
             Ipv6Addr::LOCALHOST.into(),
@@ -47,9 +39,8 @@ impl Pair {
             CLIENT_PORTS.lock().unwrap().next().unwrap(),
         );
         Self {
-            log,
-            server: TestEndpoint::new(Side::Server, server, server_addr),
-            client: TestEndpoint::new(Side::Client, client, client_addr),
+            server: TestEndpoint::new(server, server_addr),
+            client: TestEndpoint::new(client, client_addr),
             time: Instant::now(),
             latency: Duration::new(0, 0),
             spins: 0,
@@ -71,14 +62,14 @@ impl Pair {
             Some(t) if Some(t) == client_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!(self.log, "advancing to {:?} for client", self.time);
+                    trace!("advancing to {:?} for client", self.time);
                 }
                 true
             }
             Some(t) if Some(t) == server_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!(self.log, "advancing to {:?} for server", self.time);
+                    trace!("advancing to {:?} for server", self.time);
                 }
                 true
             }
@@ -93,8 +84,9 @@ impl Pair {
     }
 
     pub fn drive_client(&mut self) {
-        trace!(self.log, "client running");
-        self.client.drive(&self.log, self.time, self.server.addr);
+        let span = info_span!("client");
+        let _guard = span.enter();
+        self.client.drive(self.time, self.server.addr);
         for x in self.client.outbound.drain(..) {
             if x.contents[0] & packet::LONG_HEADER_FORM == 0 {
                 let spin = x.contents[0] & packet::SPIN_BIT != 0;
@@ -113,8 +105,9 @@ impl Pair {
     }
 
     pub fn drive_server(&mut self) {
-        trace!(self.log, "server running");
-        self.server.drive(&self.log, self.time, self.client.addr);
+        let span = info_span!("server");
+        let _guard = span.enter();
+        self.server.drive(self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {
             if let Some(ref socket) = self.server.socket {
                 socket.send_to(&x.contents, x.destination).unwrap();
@@ -128,7 +121,7 @@ impl Pair {
     }
 
     pub fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
-        info!(self.log, "connecting");
+        info!("connecting");
         let client_ch = self.begin_connect(client_config());
         self.drive();
         let server_ch = self.server.assert_accept();
@@ -145,6 +138,8 @@ impl Pair {
 
     /// Just start connecting the client
     pub fn begin_connect(&mut self, config: ClientConfig) -> ConnectionHandle {
+        let span = info_span!("client");
+        let _guard = span.enter();
         let (client_ch, client_conn) = self
             .client
             .connect(config, self.server.addr, "localhost")
@@ -169,7 +164,6 @@ impl Default for Pair {
 }
 
 pub struct TestEndpoint {
-    side: Side,
     pub endpoint: Endpoint,
     pub addr: SocketAddr,
     socket: Option<UdpSocket>,
@@ -178,12 +172,12 @@ pub struct TestEndpoint {
     delayed: VecDeque<Transmit>,
     pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
     accepted: Option<ConnectionHandle>,
-    pub connections: FnvHashMap<ConnectionHandle, Connection>,
-    conn_events: FnvHashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    pub connections: HashMap<ConnectionHandle, Connection>,
+    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
 }
 
 impl TestEndpoint {
-    fn new(side: Side, endpoint: Endpoint, addr: SocketAddr) -> Self {
+    fn new(endpoint: Endpoint, addr: SocketAddr) -> Self {
         let socket = if env::var_os("SSLKEYLOGFILE").is_some() {
             let socket = UdpSocket::bind(addr).expect("failed to bind UDP socket");
             socket
@@ -194,7 +188,6 @@ impl TestEndpoint {
             None
         };
         Self {
-            side,
             endpoint,
             addr,
             socket,
@@ -203,12 +196,12 @@ impl TestEndpoint {
             delayed: VecDeque::new(),
             inbound: VecDeque::new(),
             accepted: None,
-            connections: FnvHashMap::default(),
-            conn_events: FnvHashMap::default(),
+            connections: HashMap::default(),
+            conn_events: HashMap::default(),
         }
     }
 
-    pub fn drive(&mut self, log: &Logger, now: Instant, remote: SocketAddr) {
+    pub fn drive(&mut self, now: Instant, remote: SocketAddr) {
         if let Some(ref socket) = self.socket {
             loop {
                 let mut buf = [0; 8192];
@@ -248,12 +241,7 @@ impl TestEndpoint {
             for (timer, setting) in &mut self.timers {
                 if let Some(time) = *setting {
                     if time <= now {
-                        trace!(
-                            log,
-                            "{side:?} {timer:?} timeout",
-                            side = self.side,
-                            timer = timer
-                        );
+                        trace!("{:?} timeout", timer);
                         *setting = None;
                         conn.handle_timeout(now, timer);
                     }
@@ -277,22 +265,11 @@ impl TestEndpoint {
             while let Some(x) = conn.poll_timers() {
                 self.timers[x.timer] = match x.update {
                     TimerSetting::Stop => {
-                        trace!(
-                            log,
-                            "{side:?} {timer:?} stop",
-                            side = self.side,
-                            timer = x.timer
-                        );
+                        trace!("{:?} stop", x.timer);
                         None
                     }
                     TimerSetting::Start(time) => {
-                        trace!(
-                            log,
-                            "{side:?} {timer:?} set to expire at {:?}",
-                            time,
-                            side = self.side,
-                            timer = x.timer,
-                        );
+                        trace!("{:?} set to expire at {:?}", x.timer, time);
                         Some(time)
                     }
                 };
@@ -351,40 +328,26 @@ impl ::std::ops::DerefMut for TestEndpoint {
     }
 }
 
-pub fn logger() -> Logger {
-    Logger::root(TestDrain.fuse(), o!())
+pub fn subscribe() -> tracing::subscriber::DefaultGuard {
+    let sub = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(|| TestWriter)
+        .finish();
+    tracing::subscriber::set_default(sub)
 }
 
-struct TestDrain;
+struct TestWriter;
 
-impl Drain for TestDrain {
-    type Ok = ();
-    type Err = io::Error;
-    fn log(&self, record: &slog::Record<'_>, values: &slog::OwnedKVList) -> Result<(), io::Error> {
-        let mut vals = Vec::new();
-        values.serialize(&record, &mut TestSerializer(&mut vals))?;
-        record
-            .kv()
-            .serialize(&record, &mut TestSerializer(&mut vals))?;
-        println!(
-            "{} {}{}",
-            record.level(),
-            record.msg(),
-            str::from_utf8(&vals).unwrap()
+impl Write for TestWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        print!(
+            "{}",
+            str::from_utf8(buf).expect("tried to log invalid UTF-8")
         );
-        Ok(())
+        Ok(buf.len())
     }
-}
-
-struct TestSerializer<'a, W>(&'a mut W);
-
-impl<'a, W> slog::Serializer for TestSerializer<'a, W>
-where
-    W: Write + 'a,
-{
-    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments<'_>) -> slog::Result {
-        write!(self.0, ", {}: {}", key, val).unwrap();
-        Ok(())
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
     }
 }
 

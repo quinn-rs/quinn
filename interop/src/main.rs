@@ -1,14 +1,11 @@
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 
+use failure::{format_err, Error};
 use futures::TryFutureExt;
-// use quinn_h3::qpack;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
-
-// use bytes::{Bytes, BytesMut};
-use failure::{format_err, Error};
-use slog::{info, o, warn, Drain, Logger};
+use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -29,14 +26,13 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
     let code = {
-        let decorator = slog_term::TermDecorator::new().stderr().build();
-        let drain = slog_term::FullFormat::new(decorator)
-            .use_original_order()
-            .build()
-            .fuse();
-        // We use a mutex-protected drain for simplicity; this tool is single-threaded anyway.
-        let drain = std::sync::Mutex::new(drain).fuse();
-        if let Err(e) = run(Logger::root(drain, o!()), opt) {
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::FmtSubscriber::builder()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .finish(),
+        )
+        .unwrap();
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -51,7 +47,6 @@ struct State {
     client_config: quinn::ClientConfig,
     remote: SocketAddr,
     host: String,
-    log: Logger,
     options: Opt,
     results: Arc<Mutex<Results>>,
 }
@@ -104,7 +99,7 @@ impl State {
                 new_conn.connection
             }
             Err(conn) => {
-                info!(self.log, "0-RTT unsupported");
+                info!("0-RTT unsupported");
                 let new_conn = conn
                     .await
                     .map_err(|e| format_err!("failed to connect: {}", e))?;
@@ -168,9 +163,8 @@ impl State {
     }
 
     async fn rebind(self: Arc<Self>) -> Result<()> {
-        let mut builder = quinn::Endpoint::builder();
-        builder.logger(self.log.clone());
-        let (endpoint_driver, endpoint, _) = builder.bind(&"[::]:0".parse().unwrap())?;
+        let (endpoint_driver, endpoint, _) =
+            quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
         tokio::runtime::current_thread::spawn(
             endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
         );
@@ -228,7 +222,7 @@ struct Results {
     h3: bool,
 }
 
-fn run(log: Logger, options: Opt) -> Result<()> {
+fn run(options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
         .next()
@@ -236,7 +230,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let host = if webpki::DNSNameRef::try_from_ascii_str(&options.host).is_ok() {
         &options.host
     } else {
-        warn!(log, "invalid hostname, using \"example.com\"");
+        warn!("invalid hostname, using \"example.com\"");
         "example.com"
     };
 
@@ -245,7 +239,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let results = Arc::new(Mutex::new(Results::default()));
     let protocols = vec![b"hq-23"[..].into(), quinn_h3::ALPN.into()];
 
-    let mut builder = quinn::Endpoint::builder();
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
     tls_config.enable_early_data = true;
@@ -256,17 +249,17 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     if options.keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-    let client_config = quinn::ClientConfig {
-        crypto: quinn::crypto::rustls::ClientConfig::new(tls_config),
-        transport: Arc::new(quinn::TransportConfig {
+
+    let mut client_config = quinn::ClientConfig::default();
+    client_config
+        .with_transport(quinn::TransportConfig {
             idle_timeout: 1_000,
             ..Default::default()
-        }),
-        ..Default::default()
-    };
+        })
+        .with_crypto(quinn::crypto::rustls::ClientConfig::new(tls_config));
 
-    builder.logger(log.clone());
-    let (endpoint_driver, endpoint, _) = builder.bind(&"[::]:0".parse().unwrap())?;
+    let (endpoint_driver, endpoint, _) =
+        quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
     runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
@@ -274,7 +267,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         client_config,
         remote,
         host: host.into(),
-        log,
         options,
         results,
     });

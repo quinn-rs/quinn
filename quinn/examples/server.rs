@@ -1,7 +1,5 @@
 #[macro_use]
 extern crate failure;
-#[macro_use]
-extern crate slog;
 
 use std::net::SocketAddr;
 use std::path::{self, Path, PathBuf};
@@ -10,9 +8,10 @@ use std::{ascii, fs, io, str};
 
 use failure::{Error, ResultExt};
 use futures::{StreamExt, TryFutureExt};
-use slog::{Drain, Logger};
 use structopt::{self, StructOpt};
 use tokio::runtime::Runtime;
+use tracing::{error, info, info_span};
+use tracing_futures::Instrument as _;
 
 mod common;
 
@@ -42,15 +41,15 @@ struct Opt {
 }
 
 fn main() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
     let opt = Opt::from_args();
     let code = {
-        let decorator = slog_term::TermDecorator::new().stderr().build();
-        let drain = slog_term::FullFormat::new(decorator)
-            .use_original_order()
-            .build();
-        // We use a mutex-protected drain for simplicity; this example is single-threaded anyway.
-        let drain = std::sync::Mutex::new(drain).fuse();
-        if let Err(e) = run(Logger::root(drain, o!()), opt) {
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -60,14 +59,13 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger, options: Opt) -> Result<()> {
-    let server_config = quinn::ServerConfig {
-        transport: Arc::new(quinn::TransportConfig {
-            stream_window_uni: 0,
-            ..Default::default()
-        }),
+fn run(options: Opt) -> Result<()> {
+    let mut server_config = quinn::ServerConfig::default();
+    server_config.with_transport(quinn::TransportConfig {
+        stream_window_uni: 0,
         ..Default::default()
-    };
+    });
+
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(common::ALPN_QUIC_HTTP);
 
@@ -101,7 +99,7 @@ fn run(log: Logger, options: Opt) -> Result<()> {
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
             Ok(x) => x,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "generating self-signed certificate");
+                info!("generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
                 let key = cert.serialize_private_key_der();
                 let cert = cert.serialize_der().unwrap();
@@ -120,7 +118,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     }
 
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
     let root = Arc::<Path>::from(options.root);
@@ -130,18 +127,17 @@ fn run(log: Logger, options: Opt) -> Result<()> {
 
     let (endpoint_driver, mut incoming) = {
         let (driver, endpoint, incoming) = endpoint.bind(&options.listen)?;
-        info!(log, "listening on {}", endpoint.local_addr()?);
+        info!("listening on {}", endpoint.local_addr()?);
         (driver, incoming)
     };
 
     let runtime = Runtime::new()?;
     runtime.spawn(async move {
         while let Some(conn) = incoming.next().await {
-            info!(log, "connection incoming");
-            let log2 = log.clone();
+            info!("connection incoming");
             tokio::spawn(
-                handle_connection(root.clone(), log.clone(), conn).unwrap_or_else(move |e| {
-                    error!(log2, "connection failed: {reason}", reason = e.to_string())
+                handle_connection(root.clone(), conn).unwrap_or_else(move |e| {
+                    error!("connection failed: {reason}", reason = e.to_string())
                 }),
             );
         }
@@ -151,17 +147,20 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<()> {
     let quinn::NewConnection {
         driver,
         connection,
         mut bi_streams,
         ..
     } = conn.await?;
-    info!(log, "connection established";
-          "remote_id" => %connection.remote_id(),
-          "address" => %connection.remote_address(),
-          "protocol" => connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
+    let span = info_span!(
+        "connection",
+        remote = %connection.remote_address(),
+        protocol = %connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
+    );
+    let _guard = span.enter();
+    info!("established");
 
     // We ignore errors from the driver because they'll be reported by the `streams` handler anyway.
     tokio::spawn(driver.unwrap_or_else(|_| ()));
@@ -170,7 +169,7 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
     while let Some(stream) = bi_streams.next().await {
         let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                info!(log, "connection closed");
+                info!("connection closed");
                 return Ok(());
             }
             Err(e) => {
@@ -178,11 +177,10 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
             }
             Ok(s) => s,
         };
-        let log2 = log.clone();
         tokio::spawn(
-            handle_request(root.clone(), log.clone(), stream).unwrap_or_else(move |e| {
-                error!(log2, "request failed: {reason}", reason = e.to_string())
-            }),
+            handle_request(root.clone(), stream)
+                .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
+                .instrument(info_span!("request")),
         );
     }
     Ok(())
@@ -190,7 +188,6 @@ async fn handle_connection(root: Arc<Path>, log: Logger, conn: quinn::Connecting
 
 async fn handle_request(
     root: Arc<Path>,
-    log: Logger,
     (mut send, recv): (quinn::SendStream, quinn::RecvStream),
 ) -> Result<()> {
     let req = recv
@@ -202,14 +199,10 @@ async fn handle_request(
         let part = ascii::escape_default(x).collect::<Vec<_>>();
         escaped.push_str(str::from_utf8(&part).unwrap());
     }
-    info!(log, "got request"; "content" => escaped);
+    info!(content = %escaped);
     // Execute the request
     let resp = process_get(&root, &req).unwrap_or_else(|e| {
-        error!(
-            log,
-            "failed to process request: {reason}",
-            reason = e.to_string()
-        );
+        error!("failed: {}", e);
         format!("failed to process request: {}\n", e)
             .into_bytes()
             .into()
@@ -222,7 +215,7 @@ async fn handle_request(
     send.finish()
         .await
         .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
-    info!(log, "request complete");
+    info!("complete");
     Ok(())
 }
 

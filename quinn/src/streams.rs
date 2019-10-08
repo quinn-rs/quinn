@@ -17,6 +17,7 @@ use crate::VarInt;
 ///
 /// If dropped, streams that haven't been explicitly `reset` will continue to (re)transmit
 /// previously written data until it has been fully acknowledged or the connection is closed.
+#[derive(Debug)]
 pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
@@ -191,6 +192,7 @@ impl Future for Finish<'_> {
 /// `stop(0)` is implicitly called on drop unless:
 /// - `ReadError::Finished` has been emitted, or
 /// - `stop` was called explicitly
+#[derive(Debug)]
 pub struct RecvStream {
     conn: ConnectionRef,
     stream: StreamId,
@@ -396,16 +398,10 @@ impl Future for ReadToEnd {
 pub enum ReadToEndError {
     /// An error occurred during reading
     #[error(display = "read error")]
-    Read(ReadError),
+    Read(#[source] ReadError),
     /// The stream is larger than the user-supplied limit
     #[error(display = "stream too long")]
     TooLong,
-}
-
-impl From<ReadError> for ReadToEndError {
-    fn from(e: ReadError) -> ReadToEndError {
-        ReadToEndError::Read(e)
-    }
 }
 
 impl AsyncRead for RecvStream {

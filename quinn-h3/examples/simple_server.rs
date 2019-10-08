@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use failure::{format_err, Error};
 use futures::StreamExt;
 use http::{Request, Response, StatusCode};
-use std::sync::Arc;
 use structopt::{self, StructOpt};
 
 use quinn::ConnectionDriver as QuicDriver;
@@ -16,7 +15,7 @@ use quinn_h3::{
 };
 
 mod shared;
-use shared::{build_certs, logger};
+use shared::build_certs;
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_server")]
@@ -35,17 +34,21 @@ struct Opt {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
     let opt = Opt::from_args();
-    let log = logger("h3".into());
-    let certs = build_certs(log.clone(), &opt.key, &opt.cert).expect("failed to build certs");
+    let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
 
-    let server_config = quinn::ServerConfig {
-        transport: Arc::new(quinn::TransportConfig {
-            stream_window_uni: 513,
-            ..Default::default()
-        }),
+    let mut server_config = quinn::ServerConfig::default();
+    server_config.with_transport(quinn::TransportConfig {
+        stream_window_uni: 513,
         ..Default::default()
-    };
+    });
+
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(&[quinn_h3::ALPN]);
     server_config
@@ -53,7 +56,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("failed to add cert");
 
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
     let server = ServerBuilder::new(endpoint);

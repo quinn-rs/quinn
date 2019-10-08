@@ -9,7 +9,7 @@ use url::Url;
 use quinn_h3::{self, client::Builder as ClientBuilder, client::Client};
 
 mod shared;
-use shared::{build_certs, logger};
+use shared::build_certs;
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_client")]
@@ -29,9 +29,14 @@ const MAX_LEN: usize = 256 * 1024;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
     let opt = Opt::from_args();
-    let log = logger("h3".into());
-    let certs = build_certs(log.clone(), &opt.key, &opt.cert).expect("failed to build certs");
+    let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
 
     let remote = (opt.url.host_str().unwrap(), opt.url.port().unwrap_or(4433))
         .to_socket_addrs()
@@ -41,7 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
-    endpoint.logger(log.clone());
 
     client_config.protocols(&[quinn_h3::ALPN]);
     client_config

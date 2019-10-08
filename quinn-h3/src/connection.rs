@@ -1,8 +1,10 @@
+use quinn_proto::StreamId;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
+use bytes::Bytes;
 use futures::{Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::Side;
@@ -12,33 +14,36 @@ use crate::{
     proto::{
         connection::{Connection, Error as ProtoError},
         frame::HttpFrame,
+        ErrorCode,
     },
     streams::{NewUni, RecvUni, SendControlStream},
-    Error, ErrorCode, Settings,
+    Error, Settings,
 };
 
 pub struct ConnectionDriver {
     conn: ConnectionRef,
     side: Side,
-    incoming_bi: Option<IncomingBiStreams>,
+    incoming_bi: IncomingBiStreams,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     control: Option<FrameStream>,
     send_control: SendControlStream,
-    error: Option<(ErrorCode, String)>,
 }
 
 impl ConnectionDriver {
-    pub(crate) fn new_client(conn: ConnectionRef, incoming_uni: IncomingUniStreams) -> Self {
+    pub(crate) fn new_client(
+        conn: ConnectionRef,
+        incoming_uni: IncomingUniStreams,
+        incoming_bi: IncomingBiStreams,
+    ) -> Self {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
             side: Side::Client,
-            incoming_bi: None,
             control: None,
-            error: None,
             conn,
             incoming_uni,
+            incoming_bi,
         }
     }
 
@@ -50,17 +55,16 @@ impl ConnectionDriver {
         Self {
             pending_uni: VecDeque::with_capacity(10),
             send_control: SendControlStream::new(conn.clone()),
-            incoming_bi: Some(incoming_bi),
             side: Side::Server,
             control: None,
-            error: None,
             conn,
             incoming_uni,
+            incoming_bi,
         }
     }
 
-    fn set_error(&mut self, code: ErrorCode, msg: String) {
-        self.error = Some((code, msg.into()));
+    fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
+        self.conn.quic.close(code.into(), &reason.into());
     }
 
     fn poll_pending_uni(&mut self, cx: &mut Context) {
@@ -93,7 +97,7 @@ impl ConnectionDriver {
                         Some(_) => {
                             self.set_error(
                                 ErrorCode::STREAM_CREATION_ERROR,
-                                "control stream already open".into(),
+                                "control stream already open",
                             );
                         }
                     },
@@ -113,7 +117,7 @@ impl ConnectionDriver {
 
         match Pin::new(&mut control).poll_next(cx) {
             Poll::Ready(None) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control closed".into())
+                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed")
             }
             Poll::Ready(Some(Err(e))) => {
                 let (code, msg) = e.into();
@@ -127,7 +131,9 @@ impl ConnectionDriver {
                     (_, _, HttpFrame::Settings(s)) => {
                         conn.lock().unwrap().inner.set_remote_settings(s);
                     }
-                    (true, Side::Client, HttpFrame::Goaway(_)) => println!("GOAWAY frame ignored"),
+                    (true, Side::Client, HttpFrame::Goaway(id)) => {
+                        self.conn.h3.lock().unwrap().inner.leave(StreamId(id));
+                    }
                     (true, Side::Server, HttpFrame::CancelPush(_)) => {
                         println!("CANCEL_PUSH frame ignored")
                     }
@@ -137,11 +143,11 @@ impl ConnectionDriver {
                     (false, Side::Server, HttpFrame::CancelPush(_))
                     | (false, Side::Server, HttpFrame::MaxPushId(_))
                     | (false, Side::Client, HttpFrame::Goaway(_)) => {
-                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings".into())
+                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings")
                     }
                     _ => self.set_error(
                         ErrorCode::FRAME_UNEXPECTED,
-                        "unexpected frame type on control stream".into(),
+                        "unexpected frame type on control stream",
                     ),
                 }
             }
@@ -155,7 +161,7 @@ impl Future for ConnectionDriver {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if let Poll::Ready(Err(_err)) = Pin::new(&mut self.send_control).poll(cx) {
-            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "TODO".into());
+            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control out stream");
         }
 
         if let Poll::Ready(Some(recv)) = Pin::new(&mut self.incoming_uni).poll_next(cx)? {
@@ -165,14 +171,37 @@ impl Future for ConnectionDriver {
         self.poll_pending_uni(cx);
         self.poll_control(cx);
 
-        if let Some(ref mut incoming_bi) = self.incoming_bi {
-            if let Poll::Ready(Some((send, recv))) = Pin::new(incoming_bi).poll_next(cx)? {
-                let mut conn = self.conn.h3.lock().unwrap();
-                conn.requests.push_back((send, recv));
-                if let Some(t) = conn.requests_task.take() {
-                    t.wake();
+        if let Poll::Ready(Some((mut send, mut recv))) =
+            Pin::new(&mut self.incoming_bi).poll_next(cx)?
+        {
+            match self.side {
+                Side::Client => self.set_error(
+                    ErrorCode::STREAM_CREATION_ERROR,
+                    "client does not accept bidirectional streams",
+                ),
+                Side::Server => {
+                    let mut conn = self.conn.h3.lock().unwrap();
+                    if conn.inner.is_closing() {
+                        send.reset(ErrorCode::REQUEST_REJECTED.into());
+                        let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
+                    } else {
+                        conn.inner.request_initiated(send.id());
+                        conn.requests.push_back((send, recv));
+                        if let Some(t) = conn.requests_task.take() {
+                            t.wake();
+                        }
+                    }
                 }
             }
+        }
+
+        let (is_closing, requests_in_flight) = {
+            let conn = &self.conn.h3.lock().unwrap().inner;
+            (conn.is_closing(), conn.requests_in_flight())
+        };
+
+        if is_closing && requests_in_flight == 0 {
+            return Poll::Ready(Ok(()));
         }
 
         Poll::Pending

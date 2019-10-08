@@ -1,13 +1,11 @@
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Instant;
 
 use failure::{format_err, Error};
 use futures::{StreamExt, TryFutureExt};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
-use slog::{o, Logger};
 use structopt::{self, StructOpt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
@@ -24,7 +22,7 @@ use quinn_h3::{
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
 mod shared;
-use shared::{build_certs, logger};
+use shared::build_certs;
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3")]
@@ -44,19 +42,19 @@ struct Opt {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let opt = Opt::from_args();
-    let log = logger("h3".into());
-    let certs = build_certs(log.clone(), &opt.key, &opt.cert).expect("failed to build certs");
-
-    let server = server(
-        log.new(o!("server" => "")),
-        opt.clone(),
-        (certs.0.clone(), certs.2.clone()),
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
     )
-    .expect("init server failed");
+    .unwrap();
+    let opt = Opt::from_args();
+    let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
 
-    let (client, client_driver) =
-        build_client(log.new(o!("client" => "")), certs.1).expect("build client failed");
+    let server =
+        server(opt.clone(), (certs.0.clone(), certs.2.clone())).expect("init server failed");
+
+    let (client, client_driver) = build_client(certs.1).expect("build client failed");
 
     tokio::spawn(async move {
         println!("server running");
@@ -87,23 +85,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn server(
-    log: Logger,
     options: Opt,
     certs: (CertificateChain, PrivateKey),
 ) -> Result<quinn::EndpointDriver, Error> {
-    let server_config = quinn::ServerConfig {
-        transport: Arc::new(quinn::TransportConfig {
-            stream_window_uni: 513,
-            ..Default::default()
-        }),
+    let mut server_config = quinn::ServerConfig::default();
+    server_config.with_transport(quinn::TransportConfig {
+        stream_window_uni: 513,
         ..Default::default()
-    };
+    });
+
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(&[quinn_h3::ALPN]);
     server_config.certificate(certs.0, certs.1)?;
 
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.logger(log.clone());
     endpoint.listen(server_config.build());
 
     let server = ServerBuilder::new(endpoint);
@@ -195,11 +190,10 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
     Ok(())
 }
 
-fn build_client(log: Logger, cert: Certificate) -> Result<(Client, quinn::EndpointDriver), Error> {
+fn build_client(cert: Certificate) -> Result<(Client, quinn::EndpointDriver), Error> {
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(&[quinn_h3::ALPN]);
-    endpoint.logger(log.clone());
 
     client_config.add_certificate_authority(cert)?;
     endpoint.default_client_config(client_config.build());

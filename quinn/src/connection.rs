@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -10,10 +10,10 @@ use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::channel::{mpsc, oneshot};
 use futures::task::{Context, Waker};
-use futures::{ready, Future, FutureExt, Poll, StreamExt};
+use futures::{Future, FutureExt, Poll, StreamExt};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
-use slog::Logger;
 use tokio_timer::{delay, Delay};
+use tracing::{info_span, trace};
 
 use crate::broadcast::{self, Broadcast};
 use crate::streams::{RecvStream, SendStream, WriteError};
@@ -117,6 +117,7 @@ impl Future for ZeroRttAccepted {
 /// Components of a newly established connection
 ///
 /// Ensure `driver` runs or the connection will not work.
+#[derive(Debug)]
 pub struct NewConnection {
     /// The future responsible for handling I/O on the connection
     pub driver: ConnectionDriver,
@@ -156,12 +157,16 @@ impl NewConnection {
 /// connection-related futures, this waits for the draining period to complete to ensure that
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
+#[derive(Debug)]
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
     type Output = Result<(), ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
+
+        let span = info_span!("drive", id = conn.handle.0);
+        let _guard = span.enter();
 
         loop {
             let now = Instant::now();
@@ -200,7 +205,7 @@ impl Future for ConnectionDriver {
 /// `reason`. You can also close the connection explicitly by calling `Connection::close()`.
 ///
 /// May be cloned to obtain another handle to the same connection.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Connection(ConnectionRef);
 
 impl Connection {
@@ -210,25 +215,9 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub fn open_uni(&self) -> OpenUni {
-        let (send, recv) = oneshot::channel();
-        {
-            let mut conn = self.0.lock().unwrap();
-            if let Some(ref e) = conn.error {
-                let _ = send.send(Err(e.clone()));
-            } else if let Some(x) = conn.inner.open(Dir::Uni) {
-                let _ = send.send(Ok((
-                    x,
-                    conn.inner.side().is_client() && conn.inner.is_handshaking(),
-                )));
-            } else {
-                conn.uni_opening.push_back(send);
-                // We don't notify the driver here because there's no way to ask the peer for more
-                // streams
-            }
-        }
         OpenUni {
-            recv,
             conn: self.0.clone(),
+            state: broadcast::State::default(),
         }
     }
 
@@ -238,25 +227,9 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub fn open_bi(&self) -> OpenBi {
-        let (send, recv) = oneshot::channel();
-        {
-            let mut conn = self.0.lock().unwrap();
-            if let Some(ref e) = conn.error {
-                let _ = send.send(Err(e.clone()));
-            } else if let Some(x) = conn.inner.open(Dir::Bi) {
-                let _ = send.send(Ok((
-                    x,
-                    conn.inner.side().is_client() && conn.inner.is_handshaking(),
-                )));
-            } else {
-                conn.bi_opening.push_back(send);
-                // We don't notify the driver here because there's no way to ask the peer for more
-                // streams
-            }
-        }
         OpenBi {
-            recv,
             conn: self.0.clone(),
+            state: broadcast::State::default(),
         }
     }
 
@@ -335,13 +308,6 @@ impl Connection {
     pub fn force_key_update(&self) {
         self.0.lock().unwrap().inner.initiate_key_update()
     }
-
-    /// Replace the diagnostic logger
-    pub fn set_logger(&self, log: Logger) {
-        let mut conn = self.0.lock().unwrap();
-        conn.log = log.clone();
-        conn.inner.set_logger(log);
-    }
 }
 
 /// A stream of unidirectional QUIC streams initiated by a remote peer.
@@ -354,6 +320,7 @@ impl Connection {
 /// Processing streams in the order they're opened will produce head-of-line blocking. For best
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
+#[derive(Debug)]
 pub struct IncomingUniStreams(ConnectionRef);
 
 impl futures::Stream for IncomingUniStreams {
@@ -362,6 +329,7 @@ impl futures::Stream for IncomingUniStreams {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Uni) {
+            conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
@@ -378,6 +346,7 @@ impl futures::Stream for IncomingUniStreams {
 /// A stream of bidirectional QUIC streams initiated by a remote peer.
 ///
 /// See `IncomingUniStreams` for information about incoming streams in general.
+#[derive(Debug)]
 pub struct IncomingBiStreams(ConnectionRef);
 
 impl futures::Stream for IncomingBiStreams {
@@ -386,6 +355,7 @@ impl futures::Stream for IncomingBiStreams {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Bi) {
+            conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok((
                 SendStream::new(self.0.clone(), x, false),
@@ -403,6 +373,7 @@ impl futures::Stream for IncomingBiStreams {
 }
 
 /// Stream of unordered, unreliable datagrams sent by the peer
+#[derive(Debug)]
 pub struct Datagrams(ConnectionRef);
 
 impl futures::Stream for Datagrams {
@@ -425,48 +396,54 @@ impl futures::Stream for Datagrams {
 
 /// A future that will resolve into an opened outgoing unidirectional stream
 pub struct OpenUni {
-    recv: oneshot::Receiver<Result<(StreamId, bool), ConnectionError>>,
     conn: ConnectionRef,
+    state: broadcast::State,
 }
 
 impl Future for OpenUni {
     type Output = Result<SendStream, ConnectionError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match ready!(self.recv.poll_unpin(cx)) {
-            Err(oneshot::Canceled) => unreachable!(
-                "oneshot sender won't be dropped while `self.conn` is keeping the \
-                 `ConnectionInner` alive"
-            ),
-            Ok(Err(c)) => Poll::Ready(Err(c)),
-            Ok(Ok((stream, is_0rtt))) => {
-                Poll::Ready(Ok(SendStream::new(self.conn.clone(), stream, is_0rtt)))
-            }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let mut conn = this.conn.lock().unwrap();
+        if let Some(ref e) = conn.error {
+            return Poll::Ready(Err(e.clone()));
         }
+        if let Some(id) = conn.inner.open(Dir::Uni) {
+            let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
+            drop(conn); // Release lock for clone
+            return Poll::Ready(Ok(SendStream::new(this.conn.clone(), id, is_0rtt)));
+        }
+        conn.uni_opening.register(cx, &mut this.state);
+        Poll::Pending
     }
 }
 
 /// A future that will resolve into an opened outgoing bidirectional stream
 pub struct OpenBi {
-    recv: oneshot::Receiver<Result<(StreamId, bool), ConnectionError>>,
     conn: ConnectionRef,
+    state: broadcast::State,
 }
 
 impl Future for OpenBi {
     type Output = Result<(SendStream, RecvStream), ConnectionError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match ready!(self.recv.poll_unpin(cx)) {
-            Err(oneshot::Canceled) => unreachable!(
-                "oneshot sender won't be dropped while `self.conn` is keeping the \
-                 `ConnectionInner` alive"
-            ),
-            Ok(Err(c)) => Poll::Ready(Err(c)),
-            Ok(Ok((stream, is_0rtt))) => Poll::Ready(Ok((
-                SendStream::new(self.conn.clone(), stream, is_0rtt),
-                RecvStream::new(self.conn.clone(), stream, is_0rtt),
-            ))),
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let mut conn = this.conn.lock().unwrap();
+        if let Some(ref e) = conn.error {
+            return Poll::Ready(Err(e.clone()));
         }
+        if let Some(id) = conn.inner.open(Dir::Bi) {
+            let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
+            drop(conn); // Release lock for clone
+            return Poll::Ready(Ok((
+                SendStream::new(this.conn.clone(), id, is_0rtt),
+                RecvStream::new(this.conn.clone(), id, is_0rtt),
+            )));
+        }
+        conn.bi_opening.register(cx, &mut this.state);
+        Poll::Pending
     }
 }
 
@@ -536,18 +513,17 @@ pub enum SendDatagramError {
     Disabled,
 }
 
+#[derive(Debug)]
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
     pub(crate) fn new(
-        log: Logger,
         handle: ConnectionHandle,
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
-            log,
             epoch: Instant::now(),
             inner: conn,
             driver: None,
@@ -559,8 +535,8 @@ impl ConnectionRef {
             endpoint_events,
             blocked_writers: FnvHashMap::default(),
             blocked_readers: FnvHashMap::default(),
-            uni_opening: VecDeque::new(),
-            bi_opening: VecDeque::new(),
+            uni_opening: Broadcast::new(),
+            bi_opening: Broadcast::new(),
             incoming_uni_streams_reader: None,
             incoming_bi_streams_reader: None,
             datagram_reader: None,
@@ -584,11 +560,7 @@ impl Drop for ConnectionRef {
         let conn = &mut *self.0.lock().unwrap();
         if let Some(x) = conn.ref_count.checked_sub(1) {
             conn.ref_count = x;
-            if x == 0
-                && !conn.inner.is_closed()
-                && conn.uni_opening.is_empty()
-                && conn.bi_opening.is_empty()
-            {
+            if x == 0 && !conn.inner.is_closed() {
                 // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
                 // not, we can't do any harm. If there were any streams being opened, then either
                 // the connection will be closed for an unrelated reason or a fresh reference will
@@ -607,7 +579,6 @@ impl std::ops::Deref for ConnectionRef {
 }
 
 pub struct ConnectionInner {
-    log: Logger,
     epoch: Instant,
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
@@ -619,8 +590,8 @@ pub struct ConnectionInner {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FnvHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FnvHashMap<StreamId, Waker>,
-    uni_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
-    bi_opening: VecDeque<oneshot::Sender<Result<(StreamId, bool), ConnectionError>>>,
+    uni_opening: Broadcast,
+    bi_opening: Broadcast,
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
@@ -715,18 +686,11 @@ impl ConnectionInner {
                     }
                 }
                 StreamAvailable { dir } => {
-                    let queue = match dir {
+                    let tasks = match dir {
                         Dir::Uni => &mut self.uni_opening,
                         Dir::Bi => &mut self.bi_opening,
                     };
-                    while let Some(connection) = queue.pop_front() {
-                        if let Some(id) = self.inner.open(dir) {
-                            let _ = connection.send(Ok((id, self.inner.is_handshaking())));
-                        } else {
-                            queue.push_front(connection);
-                            break;
-                        }
-                    }
+                    tasks.wake();
                 }
                 StreamFinished {
                     stream,
@@ -752,7 +716,7 @@ impl ConnectionInner {
                 match delay.poll_unpin(cx) {
                     Poll::Ready(()) => {
                         *slot = None;
-                        trace!(self.log, "{timer:?} timeout", timer = timer);
+                        trace!("{:?} timeout", timer);
                         self.inner.handle_timeout(now, timer);
                         // Timeout call may have queued sends
                         keep_going = true;
@@ -774,11 +738,11 @@ impl ConnectionInner {
                     update: proto::TimerSetting::Start(time),
                 } => match self.timers[timer] {
                     ref mut x @ None => {
-                        trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
+                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer start", timer);
                         *x = Some(delay(time));
                     }
                     Some(ref mut x) => {
-                        trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time.duration_since(self.epoch));
+                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer reset", timer);
                         x.reset(time);
                     }
                 },
@@ -787,7 +751,7 @@ impl ConnectionInner {
                     update: proto::TimerSetting::Stop,
                 } => {
                     if self.timers[timer].take().is_some() {
-                        trace!(self.log, "{timer:?} timer stop", timer = timer);
+                        trace!("{:?} timer stop", timer);
                     }
                 }
             }
@@ -811,12 +775,8 @@ impl ConnectionInner {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
-        for x in self.uni_opening.drain(..) {
-            let _ = x.send(Err(reason.clone()));
-        }
-        for x in self.bi_opening.drain(..) {
-            let _ = x.send(Err(reason.clone()));
-        }
+        self.uni_opening.wake();
+        self.bi_opening.wake();
         if let Some(x) = self.incoming_uni_streams_reader.take() {
             x.wake();
         }
@@ -882,5 +842,13 @@ impl Drop for ConnectionInner {
                 EndpointEvent::Proto(proto::EndpointEvent::drained()),
             ));
         }
+    }
+}
+
+impl fmt::Debug for ConnectionInner {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ConnectionInner")
+            .field("inner", &self.inner)
+            .finish()
     }
 }

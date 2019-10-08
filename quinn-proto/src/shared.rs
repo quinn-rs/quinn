@@ -6,7 +6,7 @@ use std::{cmp, fmt};
 use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
-use slog::Logger;
+use tracing::warn;
 
 use crate::packet::PartialDecode;
 use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
@@ -87,7 +87,7 @@ pub struct TransportConfig {
     /// The RTT used before an RTT sample is taken (μs)
     pub initial_rtt: u64,
 
-    /// The sender’s maximum payload size. Does not include UDP or IP overhead.
+    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
     ///
     /// Used for calculating initial and minimum congestion windows.
     pub max_datagram_size: u64,
@@ -118,12 +118,19 @@ pub struct TransportConfig {
     /// This allows passive observers to easily judge the round trip time of a connection, which can
     /// be useful for network administration but sacrifices a small amount of privacy.
     pub allow_spin: bool,
-    /// Maximum number of application datagram bytes to buffer, or None to disable datagrams
+    /// Maximum number of incoming application datagram bytes to buffer, or None to disable
+    /// datagrams
     ///
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
     /// exceeds this value, old datagrams are dropped until it is no longer exceeded.
-    pub datagram_window: Option<usize>,
+    pub datagram_receive_buffer_size: Option<usize>,
+    /// Maximum number of outgoing application datagram bytes to buffer
+    ///
+    /// While datagrams are sent ASAP, it is possible for an application to generate data faster
+    /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
+    /// memory that may be consumed in that case.
+    pub datagram_send_buffer_size: usize,
 }
 
 impl Default for TransportConfig {
@@ -160,13 +167,14 @@ impl Default for TransportConfig {
             keep_alive_interval: 0,
             crypto_buffer_size: 16 * 1024,
             allow_spin: true,
-            datagram_window: Some(STREAM_RWND as usize),
+            datagram_receive_buffer_size: Some(STREAM_RWND as usize),
+            datagram_send_buffer_size: 1 * 1024 * 1024,
         }
     }
 }
 
 impl TransportConfig {
-    pub(crate) fn validate(&self, log: &Logger) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if let Some((name, _)) = [
             ("stream_window_bidi", self.stream_window_bidi),
             ("stream_window_uni", self.stream_window_uni),
@@ -186,10 +194,8 @@ impl TransportConfig {
         }
         if self.idle_timeout != 0 && u64::from(self.keep_alive_interval) >= self.idle_timeout {
             warn!(
-                log,
                 "keep-alive interval {} is ineffective due to lower idle timeout {}",
-                self.keep_alive_interval,
-                self.idle_timeout
+                self.keep_alive_interval, self.idle_timeout
             );
         }
         Ok(())
@@ -202,15 +208,10 @@ impl TransportConfig {
 #[derive(Clone)]
 pub struct EndpointConfig {
     /// Length of connection IDs for the endpoint.
-    ///
-    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
-    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
-    /// responsible for making sure that the pool is large enough to cover the intended usage.
-    pub local_cid_len: usize,
-
+    pub(crate) local_cid_len: usize,
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
-    pub reset_key: Vec<u8>,
+    pub(crate) reset_key: Vec<u8>,
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -234,6 +235,7 @@ impl Default for EndpointConfig {
 }
 
 impl EndpointConfig {
+    /// Validate the entire configuration.
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if self.local_cid_len > MAX_CID_SIZE {
             return Err(ConfigError::IllegalValue(
@@ -241,6 +243,26 @@ impl EndpointConfig {
             ));
         }
         Ok(())
+    }
+
+    /// Set the local cid length.
+    ///
+    /// This is the length of connection IDs for the endpoint.
+    /// This must be either 0 or between 4 and 18 inclusive. The length of the local connection IDs
+    /// constrains the amount of simultaneous connections the endpoint can maintain. The API user is
+    /// responsible for making sure that the pool is large enough to cover the intended usage.
+    pub fn with_local_cid_len(&mut self, local_cid_len: usize) -> &mut Self {
+        self.local_cid_len = local_cid_len;
+        self
+    }
+
+    /// Set the reset key.
+    ///
+    /// This is the private key that is used to send authenticated connection resets to peers who were
+    /// communicating with a previous instance of this endpoint.
+    pub fn with_reset_key(&mut self, reset_key: Vec<u8>) -> &mut Self {
+        self.reset_key = reset_key;
+        self
     }
 }
 
@@ -253,31 +275,79 @@ where
 {
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,
+    /// Mutable TLS configuration used for incoming connections.
+    pub crypto: S::ServerConfig,
+    /// Whether clients have to prove ownership of an address before committing resources.
+    pub use_stateless_retry: bool,
+    /// Private key used to send authenticated connection resets to peers who were
+    /// communicating with a previous instance of this endpoint.
+    pub(crate) token_key: Vec<u8>,
+    /// The microseconds after a stateless retry token is going to be issued to consider it valid.
+    pub(crate) retry_token_lifetime: u64,
+    /// The maximal supported incoming connection buffer length.
+    pub(crate) accept_buffer: u32,
+    /// Whether clients are allowed to migrate to new addresses.
+    pub(crate) migration: bool,
+}
 
-    /// TLS configuration used for incoming connections.
+impl<S> ServerConfig<S>
+where
+    S: crypto::Session,
+{
+    /// Set transport configuration to use for incoming connections.
+    pub fn with_transport(&mut self, transport_config: TransportConfig) -> &mut Self {
+        self.transport = Arc::new(transport_config);
+        self
+    }
+
+    /// Set the TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: S::ServerConfig,
+    pub fn with_crypto(&mut self, crypto: S::ServerConfig) -> &mut Self {
+        self.crypto = crypto;
+        self
+    }
 
-    /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: Vec<u8>,
-    /// Whether to require clients to prove ownership of an address before committing resources.
+    /// Set the private key used to authenticate data included in handshake tokens.
+    pub fn with_token_key(&mut self, token_key: Vec<u8>) -> &mut Self {
+        self.token_key = token_key;
+        self
+    }
+
+    /// Set whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub use_stateless_retry: bool,
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub retry_token_lifetime: u64,
+    ///
+    /// This value is disabled by default.
+    pub fn with_stateless_retry(&mut self, enabled: bool) -> &mut Self {
+        self.use_stateless_retry = enabled;
+        self
+    }
 
-    /// Maximum number of incoming connections to buffer.
+    /// Set microseconds after a stateless retry token was issued for which it's considered valid.
+    pub fn with_retry_token_lifetime(&mut self, retry_token_lifetime: u64) -> &mut Self {
+        self.retry_token_lifetime = retry_token_lifetime;
+        self
+    }
+
+    /// Set the maximum number of incoming connections to buffer.
     ///
     /// Accepting a connection removes it from the buffer, so this does not need to be large.
-    pub accept_buffer: u32,
+    pub fn with_accept_buffer_len(&mut self, accept_buffer_len: u32) -> &mut Self {
+        self.accept_buffer = accept_buffer_len;
+        self
+    }
 
-    /// Whether to allow clients to migrate to new addresses
+    /// Set whether to allow clients to migrate to new addresses
     ///
     /// Improves behavior for clients that move between different internet connections or suffer NAT
-    /// rebinding. Enabled by default.
-    pub migration: bool,
+    /// rebinding.
+    ///
+    /// This value is enabled by default.
+    pub fn with_migration(&mut self, migration: bool) -> &mut Self {
+        self.migration = migration;
+        self
+    }
 }
 
 impl<S> fmt::Debug for ServerConfig<S>
@@ -349,14 +419,26 @@ where
 pub struct ClientConfig<C> {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
-
-    /// Cryptographic configuration to use
+    /// The TLS configuration.
     pub crypto: C,
+}
 
-    /// Diagnostic logger
+impl<C> ClientConfig<C> {
+    /// Set the transport configuration to use.
     ///
-    /// If unset, the endpoint's logger is used.
-    pub log: Option<Logger>,
+    /// Must be set to use TLS 1.3 only.
+    pub fn with_transport(&mut self, transport_config: TransportConfig) -> &mut Self {
+        self.transport = Arc::new(transport_config);
+        self
+    }
+
+    /// Set the TLS configuration used for incoming connections.
+    ///
+    /// Must be set to use TLS 1.3 only.
+    pub fn with_crypto(&mut self, crypto: C) -> &mut Self {
+        self.crypto = crypto;
+        self
+    }
 }
 
 /// Errors in the configuration of an endpoint
@@ -480,17 +562,6 @@ impl fmt::Display for ConnectionId {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())
-    }
-}
-
-impl slog::Value for ConnectionId {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{}", self))
     }
 }
 

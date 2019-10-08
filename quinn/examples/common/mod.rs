@@ -6,7 +6,6 @@ use quinn::{
 };
 use std::error::Error;
 use std::net::ToSocketAddrs;
-use std::sync::Arc;
 
 /// Constructs a QUIC endpoint configured for use a client only.
 ///
@@ -66,13 +65,12 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let priv_key = cert.serialize_private_key_der();
     let priv_key = PrivateKey::from_der(&priv_key)?;
 
-    let server_config = ServerConfig {
-        transport: Arc::new(TransportConfig {
-            stream_window_uni: 0,
-            ..Default::default()
-        }),
+    let mut server_config = ServerConfig::default();
+    server_config.with_transport(TransportConfig {
+        stream_window_uni: 0,
         ..Default::default()
-    };
+    });
+
     let mut cfg_builder = ServerConfigBuilder::new(server_config);
     let cert = Certificate::from_der(&cert_der)?;
     cfg_builder.certificate(CertificateChain::from_certs(vec![cert]), priv_key)?;

@@ -45,9 +45,6 @@
 //! encryption alone.
 #![warn(missing_docs)]
 
-#[macro_use]
-extern crate slog;
-
 mod broadcast;
 mod builders;
 mod platform;
@@ -81,6 +78,7 @@ pub use streams::{
 #[cfg(test)]
 mod tests;
 
+#[derive(Debug)]
 enum ConnectionEvent {
     Close {
         error_code: VarInt,
@@ -89,6 +87,7 @@ enum ConnectionEvent {
     Proto(proto::ConnectionEvent),
 }
 
+#[derive(Debug)]
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
     Transmit(proto::Transmit),

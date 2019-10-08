@@ -26,7 +26,9 @@ use crate::{
     proto::{
         frame::{DataFrame, HeadersFrame, HttpFrame},
         headers::Header,
+        ErrorCode,
     },
+    streams::Reset,
     try_take, Error,
 };
 
@@ -57,27 +59,54 @@ pub struct RecvBody {
     recv: FrameStream,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
+#[must_use = "body must be read or canceled"] // else, request might never be finished
 impl RecvBody {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         RecvBody {
             conn,
             stream_id,
             recv,
+            finish_request,
         }
     }
 
     pub fn read_to_end(self, capacity: usize, size_limit: usize) -> ReadToEnd {
-        ReadToEnd::new(self.recv, capacity, size_limit, self.conn, self.stream_id)
+        ReadToEnd::new(
+            self.recv,
+            capacity,
+            size_limit,
+            self.conn,
+            self.stream_id,
+            self.finish_request,
+        )
+    }
+
+    pub fn cancel(self) {
+        self.recv.reset(ErrorCode::REQUEST_CANCELLED);
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
     }
 
     pub fn into_reader(self) -> BodyReader {
-        BodyReader::new(self.recv, self.conn, self.stream_id)
+        BodyReader::new(self.recv, self.conn, self.stream_id, self.finish_request)
     }
 
     pub fn into_stream(self) -> RecvBodyStream {
-        RecvBodyStream::new(self.recv, self.conn, self.stream_id)
+        RecvBodyStream::new(self.recv, self.conn, self.stream_id, self.finish_request)
     }
 }
 
@@ -88,10 +117,11 @@ impl fmt::Debug for RecvBody {
 }
 
 pub struct ReadToEnd {
-    state: RecvBodyState,
+    state: ReadToEndState,
     body: Option<Bytes>,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
 impl ReadToEnd {
@@ -101,17 +131,29 @@ impl ReadToEnd {
         size_limit: usize,
         conn: ConnectionRef,
         stream_id: StreamId,
+        finish_request: bool,
     ) -> Self {
         Self {
             conn,
             stream_id,
             body: None,
-            state: RecvBodyState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
+            state: ReadToEndState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
+            finish_request,
+        }
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, ReadToEndState::Finished);
+        match state {
+            ReadToEndState::Receiving(recv, _, _) => {
+                recv.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
         }
     }
 }
 
-enum RecvBodyState {
+enum ReadToEndState {
     Receiving(FrameStream, BytesMut, usize),
     Decoding(DecodeHeaders),
     Finished,
@@ -123,7 +165,7 @@ impl Future for ReadToEnd {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
-                RecvBodyState::Receiving(ref mut recv, ref mut body, size_limit) => {
+                ReadToEndState::Receiving(ref mut recv, ref mut body, size_limit) => {
                     match ready!(Pin::new(recv).poll_next(cx)) {
                         Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         Some(Ok(HttpFrame::Data(d))) => {
@@ -137,17 +179,17 @@ impl Future for ReadToEnd {
                                 DecodeHeaders::new(t, self.conn.clone(), self.stream_id);
                             let old_state = mem::replace(
                                 &mut self.state,
-                                RecvBodyState::Decoding(decode_trailer),
+                                ReadToEndState::Decoding(decode_trailer),
                             );
                             match old_state {
-                                RecvBodyState::Receiving(_, b, _) => self.body = Some(b.into()),
+                                ReadToEndState::Receiving(_, b, _) => self.body = Some(b.into()),
                                 _ => unreachable!(),
                             };
                         }
                         None => {
-                            let body = match mem::replace(&mut self.state, RecvBodyState::Finished)
+                            let body = match mem::replace(&mut self.state, ReadToEndState::Finished)
                             {
-                                RecvBodyState::Receiving(_, b, _) => match b.len() {
+                                ReadToEndState::Receiving(_, b, _) => match b.len() {
                                     0 => None,
                                     _ => Some(b.into()),
                                 },
@@ -155,12 +197,27 @@ impl Future for ReadToEnd {
                             };
                             return Poll::Ready(Ok((body, None)));
                         }
-                        _ => return Poll::Ready(Err(Error::peer("invalid frame type in data"))),
+                        Some(x) => {
+                            let (err_code, error) = match x {
+                                Ok(_) => (
+                                    ErrorCode::FRAME_UNEXPECTED,
+                                    Poll::Ready(Err(Error::peer("invalid frame type in data"))),
+                                ),
+                                Err(e) => (e.code(), Poll::Ready(Err(e.into()))),
+                            };
+                            match mem::replace(&mut self.state, ReadToEndState::Finished) {
+                                ReadToEndState::Receiving(recv, _, _) => {
+                                    recv.reset(err_code);
+                                }
+                                _ => unreachable!(),
+                            };
+                            return error;
+                        }
                     }
                 }
-                RecvBodyState::Decoding(ref mut trailer) => {
+                ReadToEndState::Decoding(ref mut trailer) => {
                     let trailer = ready!(Pin::new(trailer).poll(cx))?;
-                    self.state = RecvBodyState::Finished;
+                    self.state = ReadToEndState::Finished;
                     return Poll::Ready(Ok((
                         Some(try_take(&mut self.body, "body absent")?),
                         Some(trailer.into_fields()),
@@ -172,19 +229,39 @@ impl Future for ReadToEnd {
     }
 }
 
+impl Drop for ReadToEnd {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+}
+
 pub struct RecvBodyStream {
-    recv: FrameStream,
+    recv: Option<FrameStream>,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
+    finish_request: bool,
 }
 
 impl RecvBodyStream {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         RecvBodyStream {
-            recv,
             conn,
             stream_id,
+            finish_request,
+            recv: Some(recv),
             trailers: None,
         }
     }
@@ -193,9 +270,19 @@ impl RecvBodyStream {
         self.trailers.is_some()
     }
 
-    pub fn trailers(self) -> Option<DecodeHeaders> {
-        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
-        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    pub fn trailers(mut self) -> Option<DecodeHeaders> {
+        let trailers = self.trailers.take();
+        let Self {
+            conn, stream_id, ..
+        } = &self;
+        trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
+    }
+
+    pub fn cancel(mut self) {
+        self.recv
+            .take()
+            .unwrap()
+            .reset(ErrorCode::REQUEST_CANCELLED);
     }
 }
 
@@ -203,35 +290,62 @@ impl Stream for RecvBodyStream {
     type Item = Result<Bytes, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match ready!(Pin::new(&mut self.recv).poll_next(cx)) {
+        let res = ready!(Pin::new(&mut self.recv.as_mut().unwrap()).poll_next(cx));
+        match res {
             None => Poll::Ready(None),
-            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             Some(Ok(HttpFrame::Data(d))) => Poll::Ready(Some(Ok(d.payload))),
             Some(Ok(HttpFrame::Headers(d))) => {
                 self.trailers = Some(d);
                 Poll::Ready(None)
             }
-            _ => Poll::Ready(Some(Err(Error::peer("invalid frame type in data")))),
+            Some(Ok(_)) => {
+                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                Poll::Ready(Some(Err(Error::peer("invalid frame type in data"))))
+            }
+            Some(Err(e)) => {
+                self.recv.take().unwrap().reset(e.code());
+                Poll::Ready(Some(Err(e.into())))
+            }
+        }
+    }
+}
+
+impl Drop for RecvBodyStream {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
         }
     }
 }
 
 pub struct BodyReader {
-    recv: FrameStream,
+    recv: Option<FrameStream>,
     trailers: Option<HeadersFrame>,
     conn: ConnectionRef,
     stream_id: StreamId,
     buf: Option<Bytes>,
+    finish_request: bool,
 }
 
 impl BodyReader {
-    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+    pub(crate) fn new(
+        recv: FrameStream,
+        conn: ConnectionRef,
+        stream_id: StreamId,
+        finish_request: bool,
+    ) -> Self {
         BodyReader {
-            recv,
             conn,
             stream_id,
-            trailers: None,
+            finish_request,
             buf: None,
+            trailers: None,
+            recv: Some(recv),
         }
     }
 
@@ -254,9 +368,18 @@ impl BodyReader {
         self.buf = Some(buf)
     }
 
-    pub fn trailers(self) -> Option<DecodeHeaders> {
-        let (trailers, conn, stream_id) = (self.trailers, self.conn, self.stream_id);
-        trailers.map(|t| DecodeHeaders::new(t, conn, stream_id))
+    pub fn trailers(&mut self) -> Option<DecodeHeaders> {
+        let trailers = self.trailers.take();
+        let Self {
+            conn, stream_id, ..
+        } = &self;
+        trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
+    }
+
+    pub fn cancel(mut self) {
+        if let Some(recv) = self.recv.take() {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
     }
 }
 
@@ -271,7 +394,8 @@ impl AsyncRead for BodyReader {
             return Poll::Ready(Ok(size));
         }
 
-        match Pin::new(&mut self.recv).poll_next(cx) {
+        match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
+            Poll::Ready(None) => Poll::Ready(Ok(size)),
             Poll::Pending => {
                 if size > 0 {
                     Poll::Ready(Ok(size))
@@ -279,29 +403,32 @@ impl AsyncRead for BodyReader {
                     Poll::Ready(Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")))
                 }
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(io::Error::new(
-                ErrorKind::Other,
-                format!("read error: {:?}", e),
-            ))),
-            Poll::Ready(None) => Poll::Ready(Ok(size)),
-            Poll::Ready(Some(Ok(r))) => match r {
-                HttpFrame::Data(mut d) => {
-                    if d.payload.len() >= buf.len() - size {
-                        let tail = d.payload.split_off(buf.len() - size);
-                        self.buf_put(tail);
-                    }
-                    buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
-                    Poll::Ready(Ok(size + d.payload.len()))
+            Poll::Ready(Some(Err(e))) => {
+                self.recv.take().unwrap().reset(e.code());
+                Poll::Ready(Err(io::Error::new(
+                    ErrorKind::Other,
+                    format!("read error: {:?}", e),
+                )))
+            }
+            Poll::Ready(Some(Ok(HttpFrame::Data(mut d)))) => {
+                if d.payload.len() >= buf.len() - size {
+                    let tail = d.payload.split_off(buf.len() - size);
+                    self.buf_put(tail);
                 }
-                HttpFrame::Headers(d) => {
-                    self.trailers = Some(d);
-                    Poll::Ready(Ok(size))
-                }
-                _ => Poll::Ready(Err(io::Error::new(
+                buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
+                Poll::Ready(Ok(size + d.payload.len()))
+            }
+            Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
+                self.trailers = Some(d);
+                Poll::Ready(Ok(size))
+            }
+            Poll::Ready(Some(Ok(_))) => {
+                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                Poll::Ready(Err(io::Error::new(
                     ErrorKind::InvalidData,
                     "received an invalid frame type",
-                ))),
-            },
+                )))
+            }
         }
     }
 }
@@ -316,11 +443,25 @@ impl tokio_io::AsyncRead for BodyReader {
     }
 }
 
+impl Drop for BodyReader {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+}
+
 pub struct BodyWriter {
     state: BodyWriterState,
     conn: ConnectionRef,
     stream_id: StreamId,
     trailers: Option<HeaderMap>,
+    finish_request: bool,
 }
 
 impl BodyWriter {
@@ -329,17 +470,19 @@ impl BodyWriter {
         conn: ConnectionRef,
         stream_id: StreamId,
         trailers: Option<HeaderMap>,
+        finish_request: bool,
     ) -> Self {
         Self {
             conn,
             stream_id,
             trailers,
             state: BodyWriterState::Idle(send),
+            finish_request,
         }
     }
 
-    pub async fn trailers(self, trailers: HeaderMap) -> Result<(), Error> {
-        match self.state {
+    pub async fn trailers(mut self, trailers: HeaderMap) -> Result<(), Error> {
+        match mem::replace(&mut self.state, BodyWriterState::Finished) {
             BodyWriterState::Idle(send) => {
                 Self::_trailers(trailers, &self.conn, send, self.stream_id).await
             }
@@ -348,12 +491,28 @@ impl BodyWriter {
     }
 
     pub async fn close(mut self) -> Result<(), Error> {
-        match (self.trailers.take(), self.state) {
+        let trailers = self.trailers.take();
+        let state = mem::replace(&mut self.state, BodyWriterState::Finished);
+
+        match (trailers, state) {
             (Some(t), BodyWriterState::Idle(send)) => {
                 Self::_trailers(t, &self.conn, send, self.stream_id).await
             }
             (None, BodyWriterState::Idle(mut send)) => send.finish().await.map_err(Into::into),
             _ => panic!("cannot close while not in idle state"),
+        }
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, BodyWriterState::Finished);
+        match state {
+            BodyWriterState::Idle(mut send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED.into());
+            }
+            BodyWriterState::Writing(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
         }
     }
 
@@ -452,5 +611,18 @@ impl tokio_io::AsyncWrite for BodyWriter {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
         AsyncWrite::poll_close(self, cx)
+    }
+}
+
+impl Drop for BodyWriter {
+    fn drop(&mut self) {
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
     }
 }

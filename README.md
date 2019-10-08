@@ -55,7 +55,7 @@ can require a larger UDP buffer than is configured by default in most
 environments. If you observe erratic latency and/or throughput over a stable
 network link, consider increasing the buffer sizes used. For example, you could
 adjust the `SO_SNDBUF` and `SO_RCVBUF` options of the UDP socket to be used
-before passing it in to Quinn. Note that some platforms (e.g. Linux) require
+before passing it into Quinn. Note that some platforms (e.g. Linux) require
 elevated privileges or modified system configuration for a process to increase
 its UDP buffer sizes.
 
@@ -68,7 +68,7 @@ this can be accomplished by using certificates from [Let's Encrypt][letsencrypt]
 for servers, and relying on the default configuration for clients.
 
 For some cases, including peer-to-peer, trust-on-first-use, deliberately
-insecure applications, or any case where servers are not identified by domain
+insecure applications, or any case where servers are not identified by a domain
 name, this isn't practical. Arbitrary certificate validation logic can be
 implemented by enabling the `dangerous_configuration` feature of `rustls` and
 constructing a Quinn `ClientConfig` with an overridden certificate verifier by
@@ -95,7 +95,7 @@ client will automatically find and trust it.
 ## Development
 
 The quinn-proto test suite uses simulated IO for reproducibility and to avoid
-long sleeps in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
+long periods of sleep in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
 environment variable is set, the tests will emit UDP packets for inspection
 using external protocol analyzers like Wireshark, and NSS-compatible key logs
 for the client side of each connection will be written to the path specified in
