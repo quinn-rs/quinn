@@ -835,13 +835,7 @@ pub enum ConnectError {
     InvalidDnsName(String),
     /// The transport configuration was invalid
     #[error(display = "transport configuration error: {}", _0)]
-    Config(ConfigError),
-}
-
-impl From<ConfigError> for ConnectError {
-    fn from(x: ConfigError) -> Self {
-        ConnectError::Config(x)
-    }
+    Config(#[source] ConfigError),
 }
 
 #[cfg(test)]

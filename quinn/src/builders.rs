@@ -117,13 +117,7 @@ pub enum EndpointError {
     Socket(io::Error),
     /// An error in the Quinn transport configuration
     #[error(display = "configuration error: {:?}", _0)]
-    Config(proto::ConfigError),
-}
-
-impl From<proto::ConfigError> for EndpointError {
-    fn from(x: proto::ConfigError) -> Self {
-        EndpointError::Config(x)
-    }
+    Config(#[source] proto::ConfigError),
 }
 
 /// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
