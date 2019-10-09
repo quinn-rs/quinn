@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{cmp, io, mem};
+use std::{cmp, io, mem, fmt};
 
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
@@ -3173,6 +3173,14 @@ where
         }
         self.data_sent = 0;
         self.blocked_streams.clear();
+    }
+}
+
+impl<S> fmt::Debug for Connection<S> where S: crypto::Session {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Connection")
+            .field("handshake_cid", &self.handshake_cid)
+            .finish()
     }
 }
 
