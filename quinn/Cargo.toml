@@ -22,7 +22,7 @@ azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" 
 [dependencies]
 bytes = "0.4.7"
 ct-logs = "0.6"
-err-derive = "0.1.5"
+err-derive = "0.2.0"
 fnv = "1.0.6"
 futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 libc = "0.2.49"

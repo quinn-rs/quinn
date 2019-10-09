@@ -25,7 +25,7 @@ travis-ci = { repository = "djc/quinn" }
 [dependencies]
 bitlab = "0.8.1"
 bytes = "0.4.7"
-err-derive = "0.1.5"
+err-derive = "0.2.0"
 futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 http = { git = "https://github.com/hyperium/http/", rev = "912534f1ef27d8a9050a4bd40d5ea0ee35136ea7" }
 lazy_static = "1"
