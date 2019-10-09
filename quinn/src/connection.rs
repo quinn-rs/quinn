@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -156,6 +157,7 @@ impl NewConnection {
 /// connection-related futures, this waits for the draining period to complete to ensure that
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
+#[derive(Debug)]
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
@@ -536,6 +538,7 @@ pub enum SendDatagramError {
     Disabled,
 }
 
+#[derive(Debug)]
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
@@ -882,5 +885,13 @@ impl Drop for ConnectionInner {
                 EndpointEvent::Proto(proto::EndpointEvent::drained()),
             ));
         }
+    }
+}
+
+impl fmt::Debug for ConnectionInner {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ConnectionInner")
+            .field("inner", &self.inner)
+            .finish()
     }
 }
