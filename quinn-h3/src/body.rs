@@ -88,6 +88,18 @@ impl RecvBody {
         )
     }
 
+    pub fn cancel(self) {
+        self.recv.reset(ErrorCode::REQUEST_CANCELLED);
+        if self.finish_request {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .inner
+                .request_finished(self.stream_id);
+        }
+    }
+
     pub fn into_reader(self) -> BodyReader {
         BodyReader::new(self.recv, self.conn, self.stream_id, self.finish_request)
     }
@@ -126,6 +138,16 @@ impl ReadToEnd {
             body: None,
             state: ReadToEndState::Receiving(recv, BytesMut::with_capacity(capacity), size_limit),
             finish_request,
+        }
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, ReadToEndState::Finished);
+        match state {
+            ReadToEndState::Receiving(recv, _, _) => {
+                recv.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
         }
     }
 }
@@ -254,6 +276,10 @@ impl RecvBodyStream {
         } = &self;
         trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
     }
+
+    pub fn cancel(mut self) {
+        self.recv.take().unwrap().reset(ErrorCode::REQUEST_CANCELLED);
+    }
 }
 
 impl Stream for RecvBodyStream {
@@ -344,6 +370,12 @@ impl BodyReader {
             conn, stream_id, ..
         } = &self;
         trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
+    }
+
+    pub fn cancel(mut self) {
+        if let Some(recv) = self.recv.take() {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
     }
 }
 
@@ -464,6 +496,19 @@ impl BodyWriter {
             }
             (None, BodyWriterState::Idle(mut send)) => send.finish().await.map_err(Into::into),
             _ => panic!("cannot close while not in idle state"),
+        }
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, BodyWriterState::Finished);
+        match state {
+            BodyWriterState::Idle(mut send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED.into());
+            }
+            BodyWriterState::Writing(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
         }
     }
 
