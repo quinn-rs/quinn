@@ -8,6 +8,8 @@ use bytes::Bytes;
 use err_derive::Error;
 use fnv::FnvHashMap;
 use futures::channel::{mpsc, oneshot};
+use futures::future::FusedFuture;
+use futures::stream::FusedStream;
 use futures::task::{Context, Waker};
 use futures::{Future, FutureExt, Poll, StreamExt};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
@@ -136,7 +138,7 @@ impl NewConnection {
         Self {
             driver: ConnectionDriver(conn.clone()),
             connection: Connection(conn.clone()),
-            uni_streams: IncomingUniStreams(conn.clone()),
+            uni_streams: IncomingUniStreams(Some(conn.clone())),
             bi_streams: IncomingBiStreams(conn.clone()),
             datagrams: Datagrams(conn),
             _non_exhaustive: (),
@@ -210,7 +212,7 @@ impl Connection {
     /// actually used.
     pub fn open_uni(&self) -> OpenUni {
         OpenUni {
-            conn: self.0.clone(),
+            conn: Some(self.0.clone()),
             state: broadcast::State::default(),
         }
     }
@@ -222,7 +224,7 @@ impl Connection {
     /// actually used.
     pub fn open_bi(&self) -> OpenBi {
         OpenBi {
-            conn: self.0.clone(),
+            conn: Some(self.0.clone()),
             state: broadcast::State::default(),
         }
     }
@@ -321,24 +323,38 @@ impl Connection {
 /// Processing streams in the order they're opened will produce head-of-line blocking. For best
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
-pub struct IncomingUniStreams(ConnectionRef);
+pub struct IncomingUniStreams(Option<ConnectionRef>);
 
 impl futures::Stream for IncomingUniStreams {
     type Item = Result<RecvStream, ConnectionError>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock().unwrap();
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut conn = self.0.as_ref().unwrap().lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Uni) {
             mem::drop(conn); // Release the lock so clone can take it
-            Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
+            Poll::Ready(Some(Ok(RecvStream::new(
+                self.0.as_ref().unwrap().clone(),
+                x,
+                false,
+            ))))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
+            drop(conn); // Release borrow
+            self.0 = None;
             Poll::Ready(None)
-        } else if let Some(ref e) = conn.error {
-            Poll::Ready(Some(Err(e.clone())))
+        } else if let Some(e) = conn.error.clone() {
+            drop(conn); // Release borrow
+            self.0 = None;
+            Poll::Ready(Some(Err(e)))
         } else {
             conn.incoming_uni_streams_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+
+impl FusedStream for IncomingUniStreams {
+    fn is_terminated(&self) -> bool {
+        self.0.is_none()
     }
 }
 
@@ -392,7 +408,7 @@ impl futures::Stream for Datagrams {
 
 /// A future that will resolve into an opened outgoing unidirectional stream
 pub struct OpenUni {
-    conn: ConnectionRef,
+    conn: Option<ConnectionRef>,
     state: broadcast::State,
 }
 
@@ -401,23 +417,29 @@ impl Future for OpenUni {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
+        let mut conn = this.conn.as_mut().unwrap().lock().unwrap();
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
         if let Some(id) = conn.inner.open(Dir::Uni) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-            drop(conn); // Release lock for clone
-            return Poll::Ready(Ok(SendStream::new(this.conn.clone(), id, is_0rtt)));
+            drop(conn); // Release borrow
+            return Poll::Ready(Ok(SendStream::new(this.conn.take().unwrap(), id, is_0rtt)));
         }
         conn.uni_opening.register(cx, &mut this.state);
         Poll::Pending
     }
 }
 
+impl FusedFuture for OpenUni {
+    fn is_terminated(&self) -> bool {
+        self.conn.is_none()
+    }
+}
+
 /// A future that will resolve into an opened outgoing bidirectional stream
 pub struct OpenBi {
-    conn: ConnectionRef,
+    conn: Option<ConnectionRef>,
     state: broadcast::State,
 }
 
@@ -426,20 +448,26 @@ impl Future for OpenBi {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
+        let mut conn = this.conn.as_mut().unwrap().lock().unwrap();
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
         if let Some(id) = conn.inner.open(Dir::Bi) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-            drop(conn); // Release lock for clone
+            drop(conn); // Release borrow
             return Poll::Ready(Ok((
-                SendStream::new(this.conn.clone(), id, is_0rtt),
-                RecvStream::new(this.conn.clone(), id, is_0rtt),
+                SendStream::new(this.conn.as_ref().unwrap().clone(), id, is_0rtt),
+                RecvStream::new(this.conn.take().unwrap(), id, is_0rtt),
             )));
         }
         conn.bi_opening.register(cx, &mut this.state);
         Poll::Pending
+    }
+}
+
+impl FusedFuture for OpenBi {
+    fn is_terminated(&self) -> bool {
+        self.conn.is_none()
     }
 }
 
