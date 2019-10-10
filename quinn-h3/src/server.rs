@@ -163,6 +163,14 @@ impl RecvRequest {
         *request.headers_mut() = headers;
         Ok(request)
     }
+
+    pub fn reject(mut self) {
+        let state = mem::replace(&mut self.state, RecvRequestState::Finished);
+        if let RecvRequestState::Receiving(recv, mut send) = state {
+            recv.reset(ErrorCode::REQUEST_REJECTED);
+            send.reset(ErrorCode::REQUEST_REJECTED.into());
+        }
+    }
 }
 
 impl Future for RecvRequest {
@@ -232,6 +240,10 @@ impl Sender {
             sender: self,
             trailers: None,
         }
+    }
+
+    pub fn cancel(mut self) {
+        self.send.reset(ErrorCode::REQUEST_REJECTED.into());
     }
 }
 
@@ -327,6 +339,22 @@ impl SendResponse {
             body: Some(body.into()),
             trailer: trailers.map(Header::trailer),
         })
+    }
+
+    pub fn cancel(mut self) {
+        let state = mem::replace(&mut self.state, SendResponseState::Finished);
+        match state {
+            SendResponseState::SendingHeader(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendResponseState::SendingBody(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendResponseState::SendingTrailers(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
+        }
     }
 }
 

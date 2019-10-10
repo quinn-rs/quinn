@@ -239,6 +239,28 @@ impl SendRequest {
             try_take(&mut self.stream_id, "stream is none")?,
         )
     }
+
+    pub fn cancel(mut self) {
+        match self.state {
+            SendRequestState::Sending(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::SendingBody(write) => {
+                write.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::SendingTrailers(send) => {
+                send.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            SendRequestState::Receiving(recv) => {
+                recv.reset(ErrorCode::REQUEST_CANCELLED);
+            }
+            _ => (),
+        }
+
+        if let Some(recv) = self.recv.take() {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
+    }
 }
 
 impl Future for SendRequest {
@@ -360,6 +382,12 @@ impl RecvResponse {
             stream_id,
             recv: None,
             state: RecvResponseState::Receiving(recv),
+        }
+    }
+
+    pub fn cancel(self) {
+        if let RecvResponseState::Receiving(recv) = self.state {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
         }
     }
 }

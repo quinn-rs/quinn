@@ -180,7 +180,10 @@ impl Future for ConnectionDriver {
                 ),
                 Side::Server => {
                     let mut conn = self.conn.h3.lock().unwrap();
-                    if !conn.inner.is_closing() {
+                    if conn.inner.is_closing() {
+                        send.reset(ErrorCode::REQUEST_REJECTED.into());
+                        let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
+                    } else {
                         conn.inner.request_initiated(send.id());
                         conn.requests.push_back((send, recv));
                         if let Some(t) = conn.requests_task.take() {

@@ -9,7 +9,7 @@ use crate::{
     connection::ConnectionRef,
     frame::WriteFrame,
     proto::{frame::HeadersFrame, headers::Header},
-    Error,
+    Error, ErrorCode,
 };
 
 pub struct DecodeHeaders {
@@ -70,6 +70,10 @@ impl SendHeaders {
         };
 
         Ok(Self(WriteFrame::new(send, frame)))
+    }
+
+    pub fn reset(self, err_code: ErrorCode) {
+        self.0.reset(err_code);
     }
 }
 

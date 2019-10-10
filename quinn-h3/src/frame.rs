@@ -122,6 +122,12 @@ impl WriteFrame {
             state: WriteFrameState::Header(send, buf.into()),
         }
     }
+
+    pub fn reset(self, err_code: ErrorCode) {
+        if let WriteFrameState::Header(mut s, _) | WriteFrameState::Payload(mut s, _) = self.state {
+            s.reset(err_code.into());
+        }
+    }
 }
 
 impl Future for WriteFrame {
