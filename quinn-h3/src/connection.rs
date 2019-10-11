@@ -14,9 +14,10 @@ use crate::{
     proto::{
         connection::{Connection, Error as ProtoError},
         frame::HttpFrame,
+        ErrorCode,
     },
     streams::{NewUni, RecvUni, SendControlStream},
-    Error, ErrorCode, Settings,
+    Error, Settings,
 };
 
 pub struct ConnectionDriver {

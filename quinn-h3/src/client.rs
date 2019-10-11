@@ -16,9 +16,10 @@ use crate::{
     proto::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
+        ErrorCode,
     },
     streams::Reset,
-    try_take, Error, ErrorCode, Settings,
+    try_take, Error, Settings,
 };
 
 #[derive(Clone, Debug, Default)]
