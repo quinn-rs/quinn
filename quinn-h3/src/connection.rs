@@ -116,7 +116,7 @@ impl ConnectionDriver {
 
         match Pin::new(&mut control).poll_next(cx) {
             Poll::Ready(None) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control closed")
+                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed")
             }
             Poll::Ready(Some(Err(e))) => {
                 let (code, msg) = e.into();
@@ -160,7 +160,7 @@ impl Future for ConnectionDriver {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if let Poll::Ready(Err(_err)) = Pin::new(&mut self.send_control).poll(cx) {
-            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control stream closed");
+            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control out stream");
         }
 
         if let Poll::Ready(Some(recv)) = Pin::new(&mut self.incoming_uni).poll_next(cx)? {
