@@ -7,7 +7,7 @@ use tokio_codec::{Decoder, FramedRead};
 use tokio_io::AsyncRead;
 
 use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
-use crate::{streams::Reset, ErrorCode};
+use crate::{proto::ErrorCode, streams::Reset};
 
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 

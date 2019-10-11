@@ -8,8 +8,8 @@ use quinn_proto::StreamId;
 use crate::{
     connection::ConnectionRef,
     frame::WriteFrame,
-    proto::{frame::HeadersFrame, headers::Header},
-    Error, ErrorCode,
+    proto::{frame::HeadersFrame, headers::Header, ErrorCode},
+    Error,
 };
 
 pub struct DecodeHeaders {

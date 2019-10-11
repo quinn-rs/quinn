@@ -26,9 +26,10 @@ use crate::{
     proto::{
         frame::{DataFrame, HeadersFrame, HttpFrame},
         headers::Header,
+        ErrorCode,
     },
     streams::Reset,
-    try_take, Error, ErrorCode,
+    try_take, Error,
 };
 
 pub enum Body {
@@ -278,7 +279,10 @@ impl RecvBodyStream {
     }
 
     pub fn cancel(mut self) {
-        self.recv.take().unwrap().reset(ErrorCode::REQUEST_CANCELLED);
+        self.recv
+            .take()
+            .unwrap()
+            .reset(ErrorCode::REQUEST_CANCELLED);
     }
 }
 

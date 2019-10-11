@@ -11,8 +11,8 @@ use quinn_proto::VarInt;
 use crate::{
     connection::ConnectionRef,
     frame::{FrameDecoder, FrameStream},
-    proto::StreamType,
-    Error, ErrorCode,
+    proto::{ErrorCode, StreamType},
+    Error,
 };
 
 pub enum NewUni {
