@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::iter;
 use std::net::SocketAddr;
 use std::ops::{Index, IndexMut};
@@ -671,6 +672,30 @@ where
     }
 }
 
+impl<S> fmt::Debug for Endpoint<S>
+where
+    S: crypto::Session,
+    S::ServerConfig: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("Endpoint<T>")
+            .field("log", &self.log)
+            .field("rng", &self.rng)
+            .field("transmits", &self.transmits)
+            .field("connection_ids_initial", &self.connection_ids_initial)
+            .field("connection_ids", &self.connection_ids)
+            .field("connection_remotes", &self.connection_remotes)
+            .field("connection_reset_tokens", &self.connection_reset_tokens)
+            .field("connections", &self.connections)
+            .field("config", &self.config)
+            .field("server_config", &self.server_config)
+            .field("incoming_handshakes", &self.incoming_handshakes)
+            .field("reject_new_connections", &self.reject_new_connections)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct ConnectionMeta {
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.

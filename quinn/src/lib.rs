@@ -81,6 +81,7 @@ pub use streams::{
 #[cfg(test)]
 mod tests;
 
+#[derive(Debug)]
 enum ConnectionEvent {
     Close {
         error_code: VarInt,
@@ -89,6 +90,7 @@ enum ConnectionEvent {
     Proto(proto::ConnectionEvent),
 }
 
+#[derive(Debug)]
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
     Transmit(proto::Transmit),
