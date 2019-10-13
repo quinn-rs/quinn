@@ -117,6 +117,7 @@ impl Future for ZeroRttAccepted {
 /// Components of a newly established connection
 ///
 /// Ensure `driver` runs or the connection will not work.
+#[derive(Debug)]
 pub struct NewConnection {
     /// The future responsible for handling I/O on the connection
     pub driver: ConnectionDriver,
@@ -201,7 +202,7 @@ impl Future for ConnectionDriver {
 /// `reason`. You can also close the connection explicitly by calling `Connection::close()`.
 ///
 /// May be cloned to obtain another handle to the same connection.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Connection(ConnectionRef);
 
 impl Connection {
@@ -323,6 +324,7 @@ impl Connection {
 /// Processing streams in the order they're opened will produce head-of-line blocking. For best
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
+#[derive(Debug)]
 pub struct IncomingUniStreams(ConnectionRef);
 
 impl futures::Stream for IncomingUniStreams {
@@ -347,6 +349,7 @@ impl futures::Stream for IncomingUniStreams {
 /// A stream of bidirectional QUIC streams initiated by a remote peer.
 ///
 /// See `IncomingUniStreams` for information about incoming streams in general.
+#[derive(Debug)]
 pub struct IncomingBiStreams(ConnectionRef);
 
 impl futures::Stream for IncomingBiStreams {
@@ -372,6 +375,7 @@ impl futures::Stream for IncomingBiStreams {
 }
 
 /// Stream of unordered, unreliable datagrams sent by the peer
+#[derive(Debug)]
 pub struct Datagrams(ConnectionRef);
 
 impl futures::Stream for Datagrams {

@@ -25,7 +25,7 @@ use crate::{ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND};
 /// client and server for different connections.
 ///
 /// May be cloned to obtain another handle to the same endpoint.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Endpoint {
     pub(crate) inner: EndpointRef,
     pub(crate) default_client_config: ClientConfig,
@@ -128,6 +128,7 @@ impl Endpoint {
 /// `EndpointDriver` futures terminate when the `Incoming` stream and all clones of the `Endpoint`
 /// have been dropped, or when an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
+#[derive(Debug)]
 pub struct EndpointDriver(pub(crate) EndpointRef);
 
 impl Future for EndpointDriver {
@@ -169,6 +170,7 @@ impl Drop for EndpointDriver {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct EndpointInner {
     log: Logger,
     socket: UdpSocket,
@@ -345,6 +347,7 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
 }
 
 /// Stream of incoming connections.
+#[derive(Debug)]
 pub struct Incoming(EndpointRef);
 
 impl Incoming {
@@ -383,6 +386,7 @@ impl Drop for Incoming {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
