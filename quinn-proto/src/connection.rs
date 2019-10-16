@@ -112,11 +112,13 @@ where
     /// Sequence number of the first remote CID that we haven't been asked to retire
     first_unretired_cid: u64,
 
+    // Queued non-retransmittable non-0-RTT data
+    ping_pending: bool,
+
     //
     // Queued non-retransmittable 1-RTT data
     //
     path_challenge_pending: bool,
-    ping_pending: bool,
     path_response: Option<PathResponse>,
 
     //
@@ -634,15 +636,9 @@ where
                 }
             }
         }
-        if self.space(SpaceId::Data).crypto.is_none() {
-            // Hack around weird rule pending https://github.com/quicwg/base-drafts/pull/3035
-            let space = self.space_mut(self.highest_space);
-            space.pending.crypto.push_back(frame::Crypto {
-                offset: space.crypto_offset,
-                data: Bytes::new(),
-            });
-            return;
-        }
+        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
+        // happen in rare cases during the handshake when the server becomes blocked by
+        // anti-amplification.
         self.ping();
     }
 
@@ -2132,7 +2128,8 @@ where
             _ => (
                 SpaceId::iter()
                     .filter(|&x| {
-                        (self.space(x).crypto.is_some() && self.space(x).can_send())
+                        (self.space(x).crypto.is_some()
+                            && (self.ping_pending || self.space(x).can_send()))
                             || (x == SpaceId::Data
                                 && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
                                     || (self.zero_rtt_crypto.is_some()
@@ -2364,10 +2361,9 @@ where
             .tag_len();
         let max_size = buf.capacity() - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
-        let is_1rtt = space_id == SpaceId::Data && space.crypto.is_some();
 
         // PING
-        if is_1rtt && mem::replace(&mut self.ping_pending, false) {
+        if mem::replace(&mut self.ping_pending, false) {
             trace!(self.log, "PING");
             buf.write(frame::Type::PING);
         }
@@ -3150,7 +3146,6 @@ where
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
         self.path_challenge_pending
-            || self.ping_pending
             || self.path_response.is_some()
             || !self.datagrams.outgoing.is_empty()
     }
