@@ -1,150 +1,157 @@
-use std::cell::RefCell;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::rc::Rc;
+use std::sync::Arc;
+use std::thread;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Benchmark, Criterion, Throughput};
-use futures::{StreamExt, TryFutureExt};
-use tokio;
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use futures::StreamExt;
+use slog::Drain;
+use tokio::runtime::current_thread::Runtime;
 
-use quinn::{ClientConfigBuilder, Endpoint, ReadError, RecvStream, ServerConfigBuilder};
+use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
 
 criterion_group!(benches, throughput);
 criterion_main!(benches);
 
 fn throughput(c: &mut Criterion) {
-    let mut server_config = ServerConfigBuilder::default();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
-    let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
-    server_config.certificate(cert_chain, key).unwrap();
-
-    let mut server = Endpoint::builder();
-    server.listen(server_config.build());
-    let server_sock = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
-    let server_addr = server_sock.local_addr().unwrap();
-    let (server_driver, _, mut server_incoming) = server.with_socket(server_sock).unwrap();
-
-    let mut client_config = ClientConfigBuilder::default();
-    client_config.add_certificate_authority(cert).unwrap();
-    client_config.enable_keylog();
-    let mut client = Endpoint::builder();
-    client.default_client_config(client_config.build());
-    let (client_driver, client, _) = client
-        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-        .unwrap();
-
-    let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
-    runtime.spawn(server_driver.unwrap_or_else(|e| panic!("server driver failed: {}", e)));
-    runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client driver failed: {}", e)));
-
-    let runtime = Rc::new(RefCell::new(runtime));
-    runtime.borrow_mut().spawn(async move {
-        while let Some(connecting) = server_incoming.next().await {
-            let mut new_conn = connecting.await.unwrap();
-            tokio::runtime::current_thread::spawn(
-                new_conn
-                    .driver
-                    .unwrap_or_else(|e| ignore_timeout("server connection driver", e)),
-            );
-            while let Some(Ok(stream)) = new_conn.uni_streams.next().await {
-                read_all(stream).await.unwrap();
-            }
-        }
-    });
-
-    let new_conn = runtime
-        .borrow_mut()
-        .block_on(client.connect(&server_addr, "localhost").unwrap())
-        .unwrap();
-    let driver = new_conn.driver;
-    let connection = new_conn.connection;
-
-    runtime
-        .borrow_mut()
-        .spawn(driver.unwrap_or_else(|e| ignore_timeout("client connection driver", e)));
+    let ctx = Context::new();
+    let mut group = c.benchmark_group("throughput");
+    {
+        let (addr, thread) = ctx.spawn_server();
+        let (client, mut runtime) = ctx.make_client(addr);
+        const DATA: &[u8] = &[0xAB; 128 * 1024];
+        group.throughput(Throughput::Bytes(DATA.len() as u64));
+        group.bench_function("large streams", |b| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let mut stream = client.open_uni().await.unwrap();
+                    stream.write_all(DATA).await.unwrap();
+                    stream.finish().await.unwrap();
+                });
+            })
+        });
+        drop(client);
+        runtime.run().unwrap();
+        thread.join().unwrap();
+    }
 
     {
-        const DATA: &[u8] = &[0xAB; 128 * 1024];
-        let runtime = runtime.clone();
-        c.bench(
-            "throughput",
-            Benchmark::new("128kB", move |b| {
-                b.iter_batched(
-                    || {
-                        runtime
-                            .borrow_mut()
-                            .block_on(connection.open_uni())
-                            .expect("failed opening stream")
-                    },
-                    |mut stream| {
-                        runtime.borrow_mut().block_on(async move {
-                            stream.write_all(DATA).await.expect("write failed");
-                            stream.finish().await.unwrap();
-                        })
-                    },
-                    BatchSize::PerIteration,
-                )
+        let (addr, thread) = ctx.spawn_server();
+        let (client, mut runtime) = ctx.make_client(addr);
+        const DATA: &[u8] = &[0xAB; 32];
+        group.throughput(Throughput::Elements(1));
+        group.bench_function("small streams", |b| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let mut stream = client.open_uni().await.unwrap();
+                    stream.write_all(DATA).await.unwrap();
+                    stream.finish().await.unwrap();
+                });
             })
-            .throughput(Throughput::Bytes(DATA.len() as u64)),
-        );
+        });
+        drop(client);
+        runtime.run().unwrap();
+        thread.join().unwrap();
     }
+    group.finish();
+}
 
-    /*
-        let (driver, connection, _) = runtime
-            .borrow_mut()
-            .block_on(client.connect(&server_addr, "localhost").unwrap())
-            .unwrap();
+struct Context {
+    server_config: quinn::ServerConfig,
+    client_config: quinn::ClientConfig,
+    log: slog::Logger,
+}
 
-        runtime
-            .borrow_mut()
-            .spawn(driver.map_err(|e| ignore_timeout("client connection driver", e)));
+impl Context {
+    fn new() -> Self {
+        let decorator = slog_term::TermDecorator::new().stderr().build();
+        let drain = slog_term::FullFormat::new(decorator)
+            .use_original_order()
+            .build()
+            .fuse();
+        let drain = std::sync::Mutex::new(drain).fuse();
+        let log = slog::Logger::root(drain, slog::o!());
 
-        {
-            const DATA: &[u8] = &[0xAB; 32];
-            let runtime = runtime.clone();
-            c.bench(
-                "throughput",
-                Benchmark::new("32B", move |b| {
-                    b.iter_batched(
-                        || {
-                            runtime
-                                .borrow_mut()
-                                .block_on(connection.open_uni())
-                                .expect("failed opening stream")
-                        },
-                        |stream| {
-                            runtime
-                                .borrow_mut()
-                                .block_on(
-                                    tokio::io::write_all(stream, DATA)
-                                        .map_err(|e| panic!("write to stream failed: {}", e))
-                                        .and_then(|(stream, _)| {
-                                            tokio::io::shutdown(stream).map_err(|e| {
-                                                panic!("send stream shutdown failed: {}", e)
-                                            })
-                                        }),
-                                )
-                                .expect("failed writing data")
-                        },
-                        BatchSize::PerIteration,
-                    )
-                })
-                .throughput(Throughput::Bytes(DATA.len() as u32)),
-            );
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+        let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+        let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
+
+        let server_config = quinn::ServerConfig {
+            transport: Arc::new(quinn::TransportConfig {
+                stream_window_uni: 1024,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut server_config = ServerConfigBuilder::new(server_config);
+        server_config.certificate(cert_chain, key).unwrap();
+
+        let mut client_config = ClientConfigBuilder::default();
+        client_config.add_certificate_authority(cert).unwrap();
+
+        Self {
+            server_config: server_config.build(),
+            client_config: client_config.build(),
+            log,
         }
-    */
-}
-
-fn ignore_timeout(ty: &'static str, e: quinn::ConnectionError) {
-    use quinn::ConnectionError::*;
-    match e {
-        TimedOut => (),
-        e => panic!("{} failed: {:?}", ty, e),
     }
-}
 
-async fn read_all(mut stream: RecvStream) -> Result<(), ReadError> {
-    while let Some(_) = stream.read_unordered().await? {}
-    Ok(())
+    pub fn spawn_server(&self) -> (SocketAddr, thread::JoinHandle<()>) {
+        let sock = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
+        let addr = sock.local_addr().unwrap();
+        let config = self.server_config.clone();
+        let log = self.log.new(slog::o!("side" => "Server"));
+        let handle = thread::spawn(move || {
+            let mut endpoint = Endpoint::builder();
+            endpoint.logger(log);
+            endpoint.listen(config);
+            let (driver, _, mut incoming) = endpoint.with_socket(sock).unwrap();
+            let mut runtime = Runtime::new().unwrap();
+            runtime.spawn(async { driver.await.unwrap() });
+            runtime.spawn(async move {
+                let quinn::NewConnection {
+                    driver,
+                    mut uni_streams,
+                    ..
+                } = incoming.next().await.unwrap().await.unwrap();
+                tokio::spawn(async move {
+                    match driver.await {
+                        Ok(()) => panic!("unexpected success"),
+                        Err(quinn::ConnectionError::ApplicationClosed { .. }) => {}
+                        Err(e) => panic!("{}", e),
+                    }
+                });
+                while let Some(Ok(mut stream)) = uni_streams.next().await {
+                    while let Some(_) = stream.read_unordered().await.unwrap() {}
+                }
+            });
+            runtime.run().unwrap();
+        });
+        (addr, handle)
+    }
+
+    pub fn make_client(&self, server_addr: SocketAddr) -> (quinn::Connection, Runtime) {
+        let mut endpoint = Endpoint::builder();
+        endpoint.logger(self.log.new(slog::o!("side" => "Client")));
+        let (endpoint_driver, endpoint, _) = endpoint
+            .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
+            .unwrap();
+        let mut runtime = Runtime::new().unwrap();
+        runtime.spawn(async move {
+            endpoint_driver.await.unwrap();
+        });
+        let quinn::NewConnection {
+            driver, connection, ..
+        } = runtime
+            .block_on(
+                endpoint
+                    .connect_with(self.client_config.clone(), &server_addr, "localhost")
+                    .unwrap(),
+            )
+            .unwrap();
+        runtime.spawn(async move {
+            driver.await.unwrap();
+        });
+        (connection, runtime)
+    }
 }
