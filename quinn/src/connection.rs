@@ -333,6 +333,7 @@ impl futures::Stream for IncomingUniStreams {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Uni) {
+            conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
@@ -358,6 +359,7 @@ impl futures::Stream for IncomingBiStreams {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Bi) {
+            conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok((
                 SendStream::new(self.0.clone(), x, false),
