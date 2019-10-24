@@ -1948,7 +1948,7 @@ where
                     // TODO: Cache, or perhaps forward to user?
                 }
                 Frame::Datagram(datagram) => {
-                    let window = match self.config.datagram_receive_window {
+                    let window = match self.config.datagram_receive_buffer_size {
                         None => {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "unexpected DATAGRAM frame",
@@ -2569,7 +2569,7 @@ where
                 self.datagrams.outgoing.push_front(datagram);
                 break;
             }
-            if self.datagrams.outgoing_total >= self.config.datagram_send_window {
+            if self.datagrams.outgoing_total >= self.config.datagram_send_buffer_size {
                 self.events.push_back(Event::DatagramSendUnblocked);
             }
             self.datagrams.outgoing_total -= datagram.data.len();
@@ -2986,13 +2986,13 @@ where
     /// If `Err(SendDatagramError::Blocked)` is returned, `Event::DatagramSendUnblocked` may be
     /// emitted in the future.
     pub fn send_datagram(&mut self) -> Result<DatagramSender<'_, S>, SendDatagramError> {
-        if self.config.datagram_receive_window.is_none() {
+        if self.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
         let max = self
             .max_datagram_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        if self.datagrams.outgoing_total >= self.config.datagram_send_window {
+        if self.datagrams.outgoing_total >= self.config.datagram_send_buffer_size {
             return Err(SendDatagramError::Blocked);
         }
         Ok(DatagramSender { max, conn: self })
@@ -3022,7 +3022,7 @@ where
             - 4                 // worst-case packet number size
             - self.space(SpaceId::Data).crypto.as_ref().or(self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
             - Datagram::SIZE_BOUND;
-        self.config.datagram_receive_window?;
+        self.config.datagram_receive_buffer_size?;
         let limit = self.params.max_datagram_frame_size?.into_inner();
         Some(limit.min(max_size as u64) as usize)
     }
