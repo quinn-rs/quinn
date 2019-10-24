@@ -2,6 +2,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::thread;
 
+use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
 use slog::Drain;
@@ -52,6 +53,24 @@ fn throughput(c: &mut Criterion) {
         runtime.run().unwrap();
         thread.join().unwrap();
     }
+
+    {
+        let (addr, thread) = ctx.spawn_server();
+        let (client, mut runtime) = ctx.make_client(addr);
+        let data = Bytes::from(&[0xAB; 32][..]);
+        group.throughput(Throughput::Elements(1));
+        group.bench_function("small datagrams", |b| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    client.send_datagram(data.clone()).await.unwrap();
+                });
+            })
+        });
+        drop(client);
+        runtime.run().unwrap();
+        thread.join().unwrap();
+    }
+
     group.finish();
 }
 
