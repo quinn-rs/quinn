@@ -356,7 +356,6 @@ where
         if ack.largest >= self.space(space).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
-        let was_congested = self.congestion_blocked();
         let was_blocked = self.blocked();
         let new_largest = {
             let space = self.space_mut(space);
@@ -445,12 +444,6 @@ where
             for stream in self.blocked_streams.drain() {
                 self.events.push_back(Event::StreamWritable { stream });
             }
-        }
-        if was_congested
-            && !self.congestion_blocked()
-            && mem::replace(&mut self.datagrams.send_blocked, false)
-        {
-            self.events.push_back(Event::DatagramSendUnblocked);
         }
         Ok(())
     }
@@ -1955,7 +1948,7 @@ where
                     // TODO: Cache, or perhaps forward to user?
                 }
                 Frame::Datagram(datagram) => {
-                    let window = match self.config.datagram_window {
+                    let window = match self.config.datagram_receive_window {
                         None => {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "unexpected DATAGRAM frame",
@@ -2576,6 +2569,10 @@ where
                 self.datagrams.outgoing.push_front(datagram);
                 break;
             }
+            if self.datagrams.outgoing_total >= self.config.datagram_send_window {
+                self.events.push_back(Event::DatagramSendUnblocked);
+            }
+            self.datagrams.outgoing_total -= datagram.data.len();
             datagram.encode(true, buf);
         }
 
@@ -2989,14 +2986,13 @@ where
     /// If `Err(SendDatagramError::Blocked)` is returned, `Event::DatagramSendUnblocked` may be
     /// emitted in the future.
     pub fn send_datagram(&mut self) -> Result<DatagramSender<'_, S>, SendDatagramError> {
-        if self.config.datagram_window.is_none() {
+        if self.config.datagram_receive_window.is_none() {
             return Err(SendDatagramError::Disabled);
         }
         let max = self
             .max_datagram_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        if self.congestion_blocked() {
-            self.datagrams.send_blocked = true;
+        if self.datagrams.outgoing_total >= self.config.datagram_send_window {
             return Err(SendDatagramError::Blocked);
         }
         Ok(DatagramSender { max, conn: self })
@@ -3026,7 +3022,7 @@ where
             - 4                 // worst-case packet number size
             - self.space(SpaceId::Data).crypto.as_ref().or(self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
             - Datagram::SIZE_BOUND;
-        self.config.datagram_window?;
+        self.config.datagram_receive_window?;
         let limit = self.params.max_datagram_frame_size?.into_inner();
         Some(limit.min(max_size as u64) as usize)
     }
@@ -3616,6 +3612,7 @@ impl<S: crypto::Session> DatagramSender<'_, S> {
         if data.len() > self.max {
             return Err(DatagramTooLarge);
         }
+        self.conn.datagrams.outgoing_total += data.len();
         self.conn.datagrams.outgoing.push_back(Datagram { data });
         Ok(())
     }
@@ -3625,19 +3622,18 @@ struct DatagramState {
     /// Number of bytes of datagrams that have been received by the local transport but not
     /// delivered to the application
     recv_buffered: usize,
-    /// Whether a `send_datagram` call failed due to congestion
-    send_blocked: bool,
     incoming: VecDeque<Datagram>,
     outgoing: VecDeque<Datagram>,
+    outgoing_total: usize,
 }
 
 impl DatagramState {
     fn new() -> Self {
         Self {
             recv_buffered: 0,
-            send_blocked: false,
             incoming: VecDeque::new(),
             outgoing: VecDeque::new(),
+            outgoing_total: 0,
         }
     }
 }
