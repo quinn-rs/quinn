@@ -40,7 +40,7 @@ fn throughput(c: &mut Criterion) {
         let (client, mut runtime) = ctx.make_client(addr);
         const DATA: &[u8] = &[0xAB; 32];
         group.throughput(Throughput::Elements(1));
-        group.bench_function("small streams", |b| {
+        group.bench_function("small streams unpipelined", |b| {
             b.iter(|| {
                 runtime.block_on(async {
                     let mut stream = client.open_uni().await.unwrap();
