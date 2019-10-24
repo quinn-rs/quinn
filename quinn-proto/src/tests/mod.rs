@@ -1175,7 +1175,7 @@ fn datagram_window() {
     const WINDOW: usize = 100;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            datagram_receive_window: Some(WINDOW),
+            datagram_receive_buffer_size: Some(WINDOW),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1238,7 +1238,7 @@ fn datagram_window() {
 fn datagram_unsupported() {
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            datagram_receive_window: None,
+            datagram_receive_buffer_size: None,
             ..TransportConfig::default()
         }),
         ..server_config()

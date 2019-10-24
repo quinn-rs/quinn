@@ -87,7 +87,7 @@ pub struct TransportConfig {
     /// The RTT used before an RTT sample is taken (μs)
     pub initial_rtt: u64,
 
-    /// The sender’s maximum payload size. Does not include UDP or IP overhead.
+    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
     ///
     /// Used for calculating initial and minimum congestion windows.
     pub max_datagram_size: u64,
@@ -124,13 +124,13 @@ pub struct TransportConfig {
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
     /// exceeds this value, old datagrams are dropped until it is no longer exceeded.
-    pub datagram_receive_window: Option<usize>,
+    pub datagram_receive_buffer_size: Option<usize>,
     /// Maximum number of outgoing application datagram bytes to buffer
     ///
     /// While datagrams are sent ASAP, it is possible for an application to generate data faster
     /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
     /// memory that may be consumed in that case.
-    pub datagram_send_window: usize,
+    pub datagram_send_buffer_size: usize,
 }
 
 impl Default for TransportConfig {
@@ -167,8 +167,8 @@ impl Default for TransportConfig {
             keep_alive_interval: 0,
             crypto_buffer_size: 16 * 1024,
             allow_spin: true,
-            datagram_receive_window: Some(STREAM_RWND as usize),
-            datagram_send_window: 1 * 1024 * 1024,
+            datagram_receive_buffer_size: Some(STREAM_RWND as usize),
+            datagram_send_buffer_size: 1 * 1024 * 1024,
         }
     }
 }
