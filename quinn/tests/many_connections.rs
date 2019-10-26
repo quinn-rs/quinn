@@ -1,12 +1,9 @@
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use std::{fmt, io, str};
 
 use crc::crc32;
 use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
-use slog::{Drain, Logger, KV};
 use tokio::runtime::current_thread::{self, Runtime};
 use unwrap::unwrap;
 
@@ -17,6 +14,13 @@ struct Shared {
 #[test]
 #[ignore]
 fn connect_n_nodes_to_1_and_send_1mb_data() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
+
     let mut runtime = unwrap!(Runtime::new());
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
@@ -30,15 +34,12 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
     let expected_messages = 50;
 
-    let epoch = Instant::now();
     let shared2 = shared.clone();
     let read_incoming_data = incoming_conns
         .filter_map(|connect| connect.map(|x| x.ok()))
         .take(expected_messages as u64)
         .for_each(move |new_conn| {
             let conn = new_conn.connection;
-            let logs = LogBuffer::new();
-            conn.set_logger(Logger::root(logs.clone().fuse(), slog::o!()));
             current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
 
             let shared = shared2.clone();
@@ -52,11 +53,6 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                     })
                 })
                 .unwrap_or_else(move |e| {
-                    let logs = logs.buffer.lock().unwrap();
-                    eprintln!("======== incoming connection failed: {}\nlogs:", e);
-                    for (time, line) in &*logs {
-                        eprintln!("{:?} {}", *time - epoch, line);
-                    }
                     shared.lock().unwrap().errors.push(e);
                 });
             current_thread::spawn(task);
@@ -65,11 +61,9 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         });
     runtime.spawn(read_incoming_data);
 
-    let mut client_cfg = configure_connector(&listener_cert);
+    let client_cfg = configure_connector(&listener_cert);
 
     for _ in 0..expected_messages {
-        let logs = LogBuffer::new();
-        client_cfg.log = Some(Logger::root(logs.clone().fuse(), slog::o!()));
         let data = random_data_with_hash(1024 * 1024);
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
@@ -88,17 +82,10 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                     | quinn::ConnectionError::Reset => {}
                     // TODO: Determine why packet loss during connection close leads to this timing out
                     // even though valid stateless reset packets are sent.
-                    _ => {
-                        let logs = logs.buffer.lock().unwrap();
-                        eprintln!("======== outgoing connection failed: {}\nlogs:", e);
-                        for (time, line) in &*logs {
-                            eprintln!("{:?} {}", *time - epoch, line);
-                        }
-                        if let quinn::ConnectionError::TimedOut = e {
-                        } else {
-                            shared.lock().unwrap().errors.push(e);
-                        }
-                    }
+                    _ => match e {
+                        quinn::ConnectionError::TimedOut => {}
+                        _ => shared.lock().unwrap().errors.push(e),
+                    },
                 }
             });
         runtime.spawn(task);
@@ -214,50 +201,4 @@ fn random_vec(size: usize) -> Vec<u8> {
     unsafe { ret.set_len(size) };
     rand::thread_rng().fill_bytes(&mut ret[..]);
     ret
-}
-
-#[derive(Clone)]
-struct LogBuffer {
-    buffer: Arc<Mutex<Vec<(Instant, String)>>>,
-}
-
-impl LogBuffer {
-    fn new() -> Self {
-        Self {
-            buffer: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-}
-
-impl Drain for LogBuffer {
-    type Ok = ();
-    type Err = ();
-
-    fn log(&self, record: &slog::Record, _values: &slog::OwnedKVList) -> Result<(), ()> {
-        let mut kv = Vec::new();
-        record
-            .kv()
-            .serialize(&record, &mut TestSerializer(&mut kv))
-            .unwrap();
-        let line = format!(
-            "{} {}{}",
-            record.level(),
-            record.msg(),
-            str::from_utf8(&kv).unwrap()
-        );
-        self.buffer.lock().unwrap().push((Instant::now(), line));
-        Ok(())
-    }
-}
-
-struct TestSerializer<'a, W>(&'a mut W);
-
-impl<'a, W> slog::Serializer for TestSerializer<'a, W>
-where
-    W: io::Write + 'a,
-{
-    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments<'_>) -> slog::Result {
-        write!(self.0, ", {}: {}", key, val).unwrap();
-        Ok(())
-    }
 }

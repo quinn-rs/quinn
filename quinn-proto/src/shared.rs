@@ -6,7 +6,7 @@ use std::{cmp, fmt};
 use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
-use slog::Logger;
+use tracing::warn;
 
 use crate::packet::PartialDecode;
 use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
@@ -174,7 +174,7 @@ impl Default for TransportConfig {
 }
 
 impl TransportConfig {
-    pub(crate) fn validate(&self, log: &Logger) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if let Some((name, _)) = [
             ("stream_window_bidi", self.stream_window_bidi),
             ("stream_window_uni", self.stream_window_uni),
@@ -194,10 +194,8 @@ impl TransportConfig {
         }
         if self.idle_timeout != 0 && u64::from(self.keep_alive_interval) >= self.idle_timeout {
             warn!(
-                log,
                 "keep-alive interval {} is ineffective due to lower idle timeout {}",
-                self.keep_alive_interval,
-                self.idle_timeout
+                self.keep_alive_interval, self.idle_timeout
             );
         }
         Ok(())
@@ -360,11 +358,6 @@ pub struct ClientConfig<C> {
 
     /// Cryptographic configuration to use
     pub crypto: C,
-
-    /// Diagnostic logger
-    ///
-    /// If unset, the endpoint's logger is used.
-    pub log: Option<Logger>,
 }
 
 /// Errors in the configuration of an endpoint
@@ -488,17 +481,6 @@ impl fmt::Display for ConnectionId {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())
-    }
-}
-
-impl slog::Value for ConnectionId {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{}", self))
     }
 }
 

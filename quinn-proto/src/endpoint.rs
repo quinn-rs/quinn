@@ -11,7 +11,7 @@ use err_derive::Error;
 use fnv::FnvHashMap;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
-use slog::{self, Logger};
+use tracing::{debug, trace, warn};
 
 use crate::coding::BufMutExt;
 use crate::connection::{initial_close, Connection};
@@ -38,7 +38,6 @@ pub struct Endpoint<S>
 where
     S: crypto::Session,
 {
-    log: Logger,
     rng: StdRng,
     transmits: VecDeque<Transmit>,
     connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
@@ -70,13 +69,11 @@ where
     ///
     /// Returns `Err` if the configuration is invalid.
     pub fn new(
-        log: Logger,
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig<S>>>,
     ) -> Result<Self, ConfigError> {
         config.validate()?;
         Ok(Self {
-            log,
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
             connection_ids_initial: FnvHashMap::default(),
@@ -128,17 +125,12 @@ where
                     self.connection_reset_tokens.remove(&old).unwrap();
                 }
                 if self.connection_reset_tokens.insert(token, ch).is_some() {
-                    warn!(self.log, "duplicate reset token");
+                    warn!("duplicate reset token");
                 }
             }
             RetireConnectionId(seq) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
-                    trace!(
-                        self.log,
-                        "peer retired CID {sequence}: {cid}",
-                        sequence = seq,
-                        cid = cid,
-                    );
+                    trace!("peer retired CID {}: {}", seq, cid);
                     self.connection_ids.remove(&cid);
                     return Some(self.send_new_identifiers(ch, 1));
                 }
@@ -176,10 +168,10 @@ where
                 destination,
             }) => {
                 if !self.is_server() {
-                    debug!(self.log, "dropping packet with unsupported version");
+                    debug!("dropping packet with unsupported version");
                     return None;
                 }
-                trace!(self.log, "sending version negotiation");
+                trace!("sending version negotiation");
                 // Negotiate versions
                 let mut buf = Vec::<u8>::new();
                 Header::VersionNegotiate {
@@ -198,7 +190,7 @@ where
                 return None;
             }
             Err(e) => {
-                trace!(self.log, "malformed header"; "reason" => %e);
+                trace!("malformed header: {}", e);
                 return None;
             }
         };
@@ -251,11 +243,7 @@ where
         //
 
         if !self.is_server() {
-            debug!(
-                self.log,
-                "got unexpected packet on unrecognized connection {connection}",
-                connection = dst_cid
-            );
+            debug!("packet for unrecognized connection {}", dst_cid);
             self.stateless_reset(datagram_len, remote, &dst_cid);
             return None;
         }
@@ -263,11 +251,7 @@ where
         if first_decode.has_long_header() {
             return if first_decode.is_initial() {
                 if datagram_len < MIN_INITIAL_SIZE {
-                    debug!(
-                        self.log,
-                        "ignoring short initial on {connection}",
-                        connection = dst_cid
-                    );
+                    debug!("ignoring short initial for connection {}", dst_cid);
                     return None;
                 }
 
@@ -286,15 +270,14 @@ where
                         )
                         .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                     Err(e) => {
-                        trace!(self.log, "unable to decode packet"; "reason" => %e);
+                        trace!("unable to decode packet: {}", e);
                         None
                     }
                 }
             } else {
                 debug!(
-                    self.log,
-                    "ignoring non-initial packet for unknown connection {connection}",
-                    connection = dst_cid
+                    "ignoring non-initial packet for unknown connection {}",
+                    dst_cid
                 );
                 None
             };
@@ -308,7 +291,7 @@ where
         if !dst_cid.is_empty() {
             self.stateless_reset(datagram_len, remote, &dst_cid);
         } else {
-            trace!(self.log, "dropping unrecognized short packet without ID");
+            trace!("dropping unrecognized short packet without ID");
         }
         None
     }
@@ -327,17 +310,12 @@ where
         let max_padding_len = match inciting_dgram_len.checked_sub(RESET_TOKEN_SIZE) {
             Some(headroom) if headroom > MIN_PADDING_LEN => headroom - 1,
             _ => {
-                debug!(self.log, "ignoring unexpected {len} byte packet: not larger than minimum stateless reset size", len=inciting_dgram_len);
+                debug!("ignoring unexpected {} byte packet: not larger than minimum stateless reset size", inciting_dgram_len);
                 return;
             }
         };
 
-        debug!(
-            self.log,
-            "sending stateless reset for {connection} to {remote}",
-            connection = dst_cid,
-            remote = remote,
-        );
+        debug!("sending stateless reset for {} to {}", dst_cid, remote);
         let mut buf = Vec::<u8>::new();
         // Resets with at least this much padding can't possibly be distinguished from real packets
         const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
@@ -368,9 +346,9 @@ where
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
-        config.transport.validate(&self.log)?;
+        config.transport.validate()?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
-        trace!(self.log, "initial dcid"; "value" => %remote_id);
+        trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
             remote_id,
             remote_id,
@@ -421,7 +399,7 @@ where
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         let loc_cid = self.new_cid();
-        let (server_config, tls, transport_config, log) = match opts {
+        let (server_config, tls, transport_config) = match opts {
             ConnectionOpts::Client {
                 config,
                 server_name,
@@ -431,9 +409,6 @@ where
                     None,
                     config.crypto.start_session(&server_name, &params)?,
                     config.transport,
-                    config
-                        .log
-                        .unwrap_or_else(|| self.log.new(o!("connection" => loc_cid))),
                 )
             }
             ConnectionOpts::Server { orig_dst_cid } => {
@@ -448,13 +423,11 @@ where
                     Some(config.clone()),
                     config.crypto.start_session(&server_params),
                     config.transport.clone(),
-                    self.log.new(o!("connection" => loc_cid)),
                 )
             }
         };
 
         let conn = Connection::new(
-            log,
             Arc::clone(&self.config),
             server_config,
             transport_config,
@@ -511,7 +484,7 @@ where
             )
             .is_err()
         {
-            debug!(self.log, "failed to authenticate initial packet"; "pn" => packet_number);
+            debug!(packet_number, "failed to authenticate initial packet");
             return None;
         };
 
@@ -522,7 +495,7 @@ where
         if self.incoming_handshakes == server_config.accept_buffer as usize
             || self.reject_new_connections
         {
-            debug!(self.log, "rejecting connection due to full accept buffer");
+            debug!("rejecting connection due to full accept buffer");
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
@@ -542,9 +515,8 @@ where
             && (!server_config.use_stateless_retry || dst_cid.len() != self.config.local_cid_len)
         {
             debug!(
-                self.log,
-                "rejecting connection due to invalid DCID length {len}",
-                len = dst_cid.len()
+                "rejecting connection due to invalid DCID length {}",
+                dst_cid.len()
             );
             self.transmits.push_back(Transmit {
                 destination: remote,
@@ -573,10 +545,10 @@ where
                 if expires > SystemTime::now() {
                     retry_cid = Some(token_dst_cid);
                 } else {
-                    trace!(self.log, "sending stateless retry due to expired token");
+                    trace!("sending stateless retry due to expired token");
                 }
             } else {
-                trace!(self.log, "sending stateless retry due to invalid token");
+                trace!("sending stateless retry due to invalid token");
             }
             if retry_cid.is_none() {
                 let token = token::generate(
@@ -624,12 +596,12 @@ where
         }
         match conn.handle_initial(now, remote, ecn, packet_number as u64, packet, rest) {
             Ok(()) => {
-                trace!(self.log, "connection incoming; ICID {icid}", icid = dst_cid);
+                trace!(id = ch.0, icid = %dst_cid, "connection incoming");
                 self.incoming_handshakes += 1;
                 Some((ch, conn))
             }
             Err(e) => {
-                debug!(self.log, "handshake failed"; "reason" => %e);
+                debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -679,7 +651,6 @@ where
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
-            .field("log", &self.log)
             .field("rng", &self.rng)
             .field("transmits", &self.transmits)
             .field("connection_ids_initial", &self.connection_ids_initial)

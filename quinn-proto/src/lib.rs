@@ -15,9 +15,6 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(dead_code))]
 
-#[macro_use]
-extern crate slog;
-
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops;
@@ -126,17 +123,6 @@ impl ops::Not for Side {
     }
 }
 
-impl slog::Value for Side {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
-}
-
 /// Whether a stream communicates data in both directions or only from the initiator
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Dir {
@@ -162,17 +148,6 @@ impl fmt::Display for Dir {
     }
 }
 
-impl slog::Value for Dir {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
-}
-
 /// Identifier for a stream within a particular connection
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StreamId(#[doc(hidden)] pub u64);
@@ -194,17 +169,6 @@ impl fmt::Display for StreamId {
             dir,
             self.index()
         )
-    }
-}
-
-impl slog::Value for StreamId {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 

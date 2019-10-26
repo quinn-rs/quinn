@@ -1,11 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fmt, io, str};
+use std::{io, str};
 
 use futures::{future, FutureExt, StreamExt, TryFutureExt};
-use slog::{o, Drain, Logger, KV};
 use tokio;
+use tracing::{info, info_span};
+use tracing_futures::Instrument as _;
 
 use super::{
     ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewConnection, RecvStream, SendStream,
@@ -14,9 +15,8 @@ use super::{
 
 #[test]
 fn handshake_timeout() {
-    let mut client = Endpoint::builder();
-    client.logger(logger());
-    let (client_driver, client, _) = client
+    let _guard = subscribe();
+    let (client_driver, client, _) = Endpoint::builder()
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
@@ -55,8 +55,8 @@ fn handshake_timeout() {
 
 #[test]
 fn drop_endpoint() {
-    let endpoint = Endpoint::builder();
-    let (driver, endpoint, _) = endpoint
+    let _guard = subscribe();
+    let (driver, endpoint, _) = Endpoint::builder()
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
 
@@ -86,6 +86,7 @@ fn drop_endpoint() {
 
 #[test]
 fn drop_endpoint_driver() {
+    let _guard = subscribe();
     let endpoint = Endpoint::builder();
     let (_, endpoint, _) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -101,6 +102,7 @@ fn drop_endpoint_driver() {
 
 #[test]
 fn close_endpoint() {
+    let _guard = subscribe();
     let endpoint = Endpoint::builder();
     let (_driver, endpoint, incoming) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -143,7 +145,8 @@ fn local_addr() {
 
 #[test]
 fn read_after_close() {
-    let (_, driver, endpoint, mut incoming) = endpoint();
+    let _guard = subscribe();
+    let (driver, endpoint, mut incoming) = endpoint();
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
@@ -184,10 +187,9 @@ fn read_after_close() {
 }
 
 /// Construct an endpoint suitable for connecting to itself
-fn endpoint() -> (Logger, EndpointDriver, Endpoint, Incoming) {
+fn endpoint() -> (EndpointDriver, Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();
 
-    let log = logger();
     let mut server_config = ServerConfigBuilder::default();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
@@ -197,20 +199,19 @@ fn endpoint() -> (Logger, EndpointDriver, Endpoint, Incoming) {
     endpoint.listen(server_config.build());
 
     let mut client_config = ClientConfigBuilder::default();
-    client_config.logger(log.new(o!("side" => "Client")));
     client_config.add_certificate_authority(cert).unwrap();
     endpoint.default_client_config(client_config.build());
-    endpoint.logger(log.new(o!("side" => "Server")));
 
     let (x, y, z) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
-    (log, x, y, z)
+    (x, y, z)
 }
 
 #[test]
 fn zero_rtt() {
-    let (log, driver, endpoint, incoming) = endpoint();
+    let _guard = subscribe();
+    let (driver, endpoint, incoming) = endpoint();
 
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
@@ -265,7 +266,7 @@ fn zero_rtt() {
         });
         driver.unwrap_or_else(|_| ()).await
     });
-    info!(log, "initial connection complete");
+    info!("initial connection complete");
     let (
         NewConnection {
             connection,
@@ -333,11 +334,11 @@ fn echo_dualstack() {
 }
 
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
+    let _guard = subscribe();
     let mut runtime = tokio::runtime::current_thread::Runtime::new().unwrap();
     {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
-        let log = logger();
         let mut server_config = ServerConfigBuilder::default();
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
@@ -346,7 +347,6 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server_config.certificate(cert_chain, key).unwrap();
 
         let mut server = Endpoint::builder();
-        server.logger(log.new(o!("side" => "Server")));
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
@@ -356,35 +356,48 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         client_config.add_certificate_authority(cert).unwrap();
         client_config.enable_keylog();
         let mut client = Endpoint::builder();
-        client.logger(log.new(o!("side" => "Client")));
         client.default_client_config(client_config.build());
         let (client_driver, client, _) = client.bind(&client_addr).unwrap();
 
-        runtime.spawn(server_driver.unwrap_or_else(|e| panic!("server driver failed: {}", e)));
-        runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client driver failed: {}", e)));
+        runtime.spawn(
+            server_driver
+                .unwrap_or_else(|e| panic!("server driver failed: {}", e))
+                .instrument(info_span!("server endpoint")),
+        );
+        runtime.spawn(
+            client_driver
+                .unwrap_or_else(|e| panic!("client driver failed: {}", e))
+                .instrument(info_span!("client endpoint")),
+        );
         runtime.spawn(async move {
             let incoming = server_incoming.next().await.unwrap();
-            let new_conn = incoming.await.unwrap();
+            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
             tokio::spawn(
                 new_conn
                     .bi_streams
                     .take_while(|x| future::ready(x.is_ok()))
                     .for_each(|s| echo(s.unwrap())),
             );
-            new_conn.driver.unwrap_or_else(|_| ()).await
+            new_conn
+                .driver
+                .unwrap_or_else(|_| ())
+                .instrument(info_span!("server"))
+                .await
         });
 
-        info!(log, "connecting from {} to {}", client_addr, server_addr);
+        info!("connecting from {} to {}", client_addr, server_addr);
         runtime.block_on(async move {
             let new_conn = client
                 .connect(&server_addr, "localhost")
                 .unwrap()
+                .instrument(info_span!("client"))
                 .await
                 .expect("connect");
             tokio::spawn(
                 new_conn
                     .driver
-                    .unwrap_or_else(|e| eprintln!("outgoing connection lost: {}", e)),
+                    .unwrap_or_else(|e| eprintln!("outgoing connection lost: {}", e))
+                    .instrument(info_span!("client")),
             );
             let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
             send.write_all(b"foo").await.expect("write");
@@ -406,39 +419,25 @@ async fn echo((mut send, recv): (SendStream, RecvStream)) {
     let _ = send.finish().await;
 }
 
-fn logger() -> Logger {
-    Logger::root(TestDrain.fuse(), o!())
+pub fn subscribe() -> tracing::subscriber::DefaultGuard {
+    let sub = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter("quinn=trace")
+        .with_writer(|| TestWriter)
+        .finish();
+    tracing::subscriber::set_default(sub)
 }
 
-struct TestDrain;
+struct TestWriter;
 
-impl Drain for TestDrain {
-    type Ok = ();
-    type Err = io::Error;
-    fn log(&self, record: &slog::Record<'_>, values: &slog::OwnedKVList) -> Result<(), io::Error> {
-        let mut vals = Vec::new();
-        values.serialize(&record, &mut TestSerializer(&mut vals))?;
-        record
-            .kv()
-            .serialize(&record, &mut TestSerializer(&mut vals))?;
-        println!(
-            "{} {}{}",
-            record.level(),
-            record.msg(),
-            str::from_utf8(&vals).unwrap()
+impl std::io::Write for TestWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        print!(
+            "{}",
+            str::from_utf8(buf).expect("tried to log invalid UTF-8")
         );
-        Ok(())
+        Ok(buf.len())
     }
-}
-
-struct TestSerializer<'a, W>(&'a mut W);
-
-impl<'a, W> slog::Serializer for TestSerializer<'a, W>
-where
-    W: io::Write + 'a,
-{
-    fn emit_arguments(&mut self, key: slog::Key, val: &fmt::Arguments<'_>) -> slog::Result {
-        write!(self.0, ", {}: {}", key, val).unwrap();
-        Ok(())
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
     }
 }

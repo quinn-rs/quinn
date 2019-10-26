@@ -3,7 +3,7 @@ use std::collections::hash_map;
 use bytes::Bytes;
 use err_derive::Error;
 use fnv::FnvHashMap;
-use slog::Logger;
+use tracing::debug;
 
 use crate::assembler::Assembler;
 use crate::frame;
@@ -309,7 +309,6 @@ impl Recv {
 
     pub fn ingest(
         &mut self,
-        log: &Logger,
         frame: frame::Stream,
         received: u64,
         max_data: u64,
@@ -318,7 +317,7 @@ impl Recv {
         let end = frame.offset + frame.data.len() as u64;
         if let Some(final_offset) = self.final_offset() {
             if end > final_offset || (frame.fin && end != final_offset) {
-                debug!(log, "final offset error"; "frame end" => end, "final offset" => final_offset);
+                debug!(end, final_offset, "final offset error");
                 return Err(TransportError::FINAL_OFFSET_ERROR(""));
             }
         }
@@ -327,9 +326,7 @@ impl Recv {
         let new_bytes = end.saturating_sub(prev_end);
         let stream_max_data = self.bytes_read + receive_window;
         if end > stream_max_data || received + new_bytes > max_data {
-            debug!(log, "flow control error";
-                       "stream" => frame.id.0, "recvd" => received, "new bytes" => new_bytes,
-                       "max data" => max_data, "end" => end, "stream max data" => stream_max_data);
+            debug!(stream = %frame.id, received, new_bytes, max_data, end, stream_max_data, "flow control error");
             return Err(TransportError::FLOW_CONTROL_ERROR(""));
         }
 

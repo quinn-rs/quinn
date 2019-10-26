@@ -7,7 +7,6 @@ use err_derive::Error;
 use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 use proto::{ClientConfig, EndpointConfig, ServerConfig};
 use rustls::TLSError;
-use slog::Logger;
 
 use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::udp::UdpSocket;
@@ -16,7 +15,6 @@ use crate::udp::UdpSocket;
 #[derive(Clone, Debug)]
 pub struct EndpointBuilder {
     reactor: Option<tokio_net::driver::Handle>,
-    logger: Logger,
     server_config: Option<ServerConfig>,
     config: EndpointConfig,
     client_config: ClientConfig,
@@ -54,13 +52,8 @@ impl EndpointBuilder {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
-            self.logger.clone(),
             socket,
-            proto::Endpoint::new(
-                self.logger,
-                Arc::new(self.config),
-                self.server_config.map(Arc::new),
-            )?,
+            proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new))?,
             addr.is_ipv6(),
         );
         Ok((
@@ -83,10 +76,6 @@ impl EndpointBuilder {
         self.reactor = Some(handle);
         self
     }
-    pub fn logger(&mut self, logger: Logger) -> &mut Self {
-        self.logger = logger;
-        self
-    }
 
     /// Set the default configuration used for outgoing connections.
     ///
@@ -101,7 +90,6 @@ impl Default for EndpointBuilder {
     fn default() -> Self {
         Self {
             reactor: None,
-            logger: Logger::root(slog::Discard, o!()),
             server_config: None,
             config: EndpointConfig::default(),
             client_config: ClientConfig::default(),
@@ -223,12 +211,6 @@ impl ClientConfigBuilder {
     /// [registry]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
     pub fn protocols(&mut self, protocols: &[&[u8]]) -> &mut Self {
         self.config.crypto.set_protocols(protocols);
-        self
-    }
-
-    /// Set the logger to use
-    pub fn logger(&mut self, logger: Logger) -> &mut Self {
-        self.config.log = Some(logger);
         self
     }
 
