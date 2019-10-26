@@ -12,7 +12,6 @@ use futures::channel::mpsc;
 use futures::task::{Context, Waker};
 use futures::{Future, FutureExt, Poll, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
-use slog::Logger;
 
 use crate::builders::EndpointBuilder;
 use crate::connection::{Connecting, ConnectionDriver, ConnectionRef};
@@ -68,9 +67,8 @@ impl Endpoint {
         } else {
             *addr
         };
-        let log = config.log.clone();
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(Connecting::new(endpoint.create_connection(log, ch, conn)))
+        Ok(Connecting::new(endpoint.create_connection(ch, conn)))
     }
 
     /// Switch to a new UDP socket
@@ -172,7 +170,6 @@ impl Drop for EndpointDriver {
 
 #[derive(Debug)]
 pub(crate) struct EndpointInner {
-    log: Logger,
     socket: UdpSocket,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
@@ -202,7 +199,7 @@ impl EndpointInner {
                 Poll::Ready(Ok((n, addr, ecn))) => {
                     match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = ConnectionDriver(self.create_connection(None, handle, conn));
+                            let conn = ConnectionDriver(self.create_connection(handle, conn));
                             if !self.incoming_live {
                                 conn.0.lock().unwrap().implicit_close();
                             }
@@ -316,7 +313,6 @@ impl EndpointInner {
 
     fn create_connection(
         &mut self,
-        log: Option<Logger>,
         handle: ConnectionHandle,
         conn: proto::Connection,
     ) -> ConnectionRef {
@@ -329,13 +325,7 @@ impl EndpointInner {
             .unwrap();
         }
         self.connections.insert(handle, send);
-        ConnectionRef::new(
-            log.unwrap_or_else(|| self.log.clone()),
-            handle,
-            conn,
-            self.sender.clone(),
-            recv,
-        )
+        ConnectionRef::new(handle, conn, self.sender.clone(), recv)
     }
 }
 
@@ -390,10 +380,9 @@ impl Drop for Incoming {
 pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
-    pub(crate) fn new(log: Logger, socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
+    pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
-            log,
             socket,
             inner,
             ipv6,

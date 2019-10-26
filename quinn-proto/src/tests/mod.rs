@@ -8,6 +8,7 @@ use bytes::Bytes;
 use hex_literal::hex;
 use rand::RngCore;
 use rustls::internal::msgs::enums::AlertDescription;
+use tracing::info;
 
 use super::*;
 mod util;
@@ -15,14 +16,9 @@ use util::*;
 
 #[test]
 fn version_negotiate_server() {
-    let log = logger();
+    let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(
-        log.new(o!("peer" => "server")),
-        Default::default(),
-        Some(Arc::new(server_config())),
-    )
-    .unwrap();
+    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config()))).unwrap();
     let now = Instant::now();
     let event = server.handle(
         now,
@@ -47,10 +43,9 @@ fn version_negotiate_server() {
 
 #[test]
 fn version_negotiate_client() {
-    let log = logger();
+    let _guard = subscribe();
     let server_addr = "[::2]:7890".parse().unwrap();
     let mut client = Endpoint::new(
-        log.new(o!("peer" => "client")),
         Arc::new(EndpointConfig {
             local_cid_len: 0,
             ..Default::default()
@@ -86,6 +81,7 @@ fn version_negotiate_client() {
 
 #[test]
 fn lifecycle() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
@@ -93,7 +89,7 @@ fn lifecycle() {
     assert!(pair.server_conn_mut(server_ch).using_ecn());
 
     const REASON: &[u8] = b"whee";
-    info!(pair.log, "closing");
+    info!("closing");
     pair.client.connections.get_mut(&client_ch).unwrap().close(
         pair.time,
         VarInt(42),
@@ -113,6 +109,7 @@ fn lifecycle() {
 
 #[test]
 fn stateless_retry() {
+    let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
@@ -125,6 +122,7 @@ fn stateless_retry() {
 
 #[test]
 fn server_stateless_reset() {
+    let _guard = subscribe();
     let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
     rng.fill_bytes(&mut reset_key);
@@ -136,19 +134,14 @@ fn server_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
-    pair.server.endpoint = Endpoint::new(
-        pair.log.new(o!("side" => "Server")),
-        endpoint_config,
-        Some(Arc::new(server_config())),
-    )
-    .unwrap();
+    pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config()))).unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
     pair.client.connections.get_mut(&client_ch).unwrap().close(
         pair.time,
         VarInt(42),
         (&[0xab; 128][..]).into(),
     );
-    info!(pair.log, "resetting");
+    info!("resetting");
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
@@ -160,6 +153,7 @@ fn server_stateless_reset() {
 
 #[test]
 fn client_stateless_reset() {
+    let _guard = subscribe();
     let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
     rng.fill_bytes(&mut reset_key);
@@ -171,19 +165,14 @@ fn client_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
-    pair.client.endpoint = Endpoint::new(
-        pair.log.new(o!("side" => "Client")),
-        endpoint_config,
-        Some(Arc::new(server_config())),
-    )
-    .unwrap();
+    pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config()))).unwrap();
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
         pair.time,
         VarInt(42),
         (&[0xab; 128][..]).into(),
     );
-    info!(pair.log, "resetting");
+    info!("resetting");
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -195,6 +184,7 @@ fn client_stateless_reset() {
 
 #[test]
 fn finish_stream() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -225,6 +215,7 @@ fn finish_stream() {
 
 #[test]
 fn reset_stream() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -234,7 +225,7 @@ fn reset_stream() {
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
 
-    info!(pair.log, "resetting stream");
+    info!("resetting stream");
     const ERROR: VarInt = VarInt(42);
     pair.client_conn_mut(client_ch).reset(s, ERROR);
     pair.drive();
@@ -253,6 +244,7 @@ fn reset_stream() {
 
 #[test]
 fn stop_stream() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -261,7 +253,7 @@ fn stop_stream() {
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
 
-    info!(pair.log, "stopping stream");
+    info!("stopping stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
         .stop_sending(s, ERROR)
@@ -290,8 +282,9 @@ fn stop_stream() {
 
 #[test]
 fn reject_self_signed_cert() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
-    info!(pair.log, "connecting");
+    info!("connecting");
     let client_ch = pair.begin_connect(ClientConfig::default());
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
@@ -301,6 +294,7 @@ fn reject_self_signed_cert() {
 
 #[test]
 fn congestion() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, _) = pair.connect();
 
@@ -329,6 +323,7 @@ fn congestion() {
 
 #[test]
 fn high_latency_handshake() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     pair.latency = Duration::from_micros(200 * 1000);
     let (client_ch, server_ch) = pair.connect();
@@ -340,6 +335,7 @@ fn high_latency_handshake() {
 
 #[test]
 fn zero_rtt_happypath() {
+    let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
@@ -364,7 +360,7 @@ fn zero_rtt_happypath() {
         Ipv6Addr::LOCALHOST.into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
-    info!(pair.log, "resuming session");
+    info!("resuming session");
     let client_ch = pair.begin_connect(config.clone());
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
@@ -382,6 +378,7 @@ fn zero_rtt_happypath() {
 
 #[test]
 fn zero_rtt_rejection() {
+    let _guard = subscribe();
     let mut server_config = server_config();
     Arc::get_mut(&mut server_config.crypto)
         .unwrap()
@@ -419,7 +416,7 @@ fn zero_rtt_rejection() {
     Arc::get_mut(&mut client_config.crypto)
         .unwrap()
         .set_protocols(&["bar".into()]);
-    info!(pair.log, "resuming session");
+    info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
@@ -444,6 +441,7 @@ fn zero_rtt_rejection() {
 
 #[test]
 fn alpn_success() {
+    let _guard = subscribe();
     let mut server_config = server_config();
     Arc::get_mut(&mut server_config.crypto)
         .unwrap()
@@ -470,6 +468,7 @@ fn alpn_success() {
 
 #[test]
 fn stream_id_backpressure() {
+    let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             stream_window_uni: 1,
@@ -536,6 +535,7 @@ fn stream_id_backpressure() {
 
 #[test]
 fn key_update() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     let s = pair
@@ -580,6 +580,7 @@ fn key_update() {
 
 #[test]
 fn key_update_reordered() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     let s = pair
@@ -592,16 +593,16 @@ fn key_update_reordered() {
 
     const MSG1: &[u8] = b"1";
     pair.client_conn_mut(client_ch).write(s, MSG1).unwrap();
-    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.drive(pair.time, pair.server.addr);
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
     pair.client_conn_mut(client_ch).initiate_key_update();
-    info!(pair.log, "updated keys");
+    info!("updated keys");
 
     const MSG2: &[u8] = b"two";
     pair.client_conn_mut(client_ch).write(s, MSG2).unwrap();
-    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.drive(pair.time, pair.server.addr);
     pair.client.finish_delay();
     pair.drive();
 
@@ -623,9 +624,10 @@ fn key_update_reordered() {
 
 #[test]
 fn initial_retransmit() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
-    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.drive(pair.time, pair.server.addr);
     pair.client.outbound.clear(); // Drop initial
     pair.drive();
     assert_matches!(
@@ -636,8 +638,9 @@ fn initial_retransmit() {
 
 #[test]
 fn instant_close() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
-    info!(pair.log, "connecting");
+    info!("connecting");
     let client_ch = pair.begin_connect(client_config());
     pair.client
         .connections
@@ -656,8 +659,9 @@ fn instant_close() {
 
 #[test]
 fn instant_close_2() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
-    info!(pair.log, "connecting");
+    info!("connecting");
     let client_ch = pair.begin_connect(client_config());
     // Unlike `instant_close`, the server sees a valid Initial packet first.
     pair.drive_client();
@@ -678,6 +682,7 @@ fn instant_close_2() {
 
 #[test]
 fn idle_timeout() {
+    let _guard = subscribe();
     const IDLE_TIMEOUT: u64 = 10;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
@@ -719,6 +724,7 @@ fn idle_timeout() {
 
 #[test]
 fn server_busy() {
+    let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
@@ -748,6 +754,7 @@ fn server_busy() {
 
 #[test]
 fn server_hs_retransmit() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
     pair.step();
@@ -762,6 +769,7 @@ fn server_hs_retransmit() {
 
 #[test]
 fn migration() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     pair.client.addr = SocketAddr::new(
@@ -775,6 +783,7 @@ fn migration() {
 }
 
 fn test_flow_control(config: TransportConfig, window_size: usize) {
+    let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
@@ -898,6 +907,7 @@ fn conn_flow_control() {
 
 #[test]
 fn stop_opens_bidi() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
     let s = pair.client_conn_mut(client_conn).open(Dir::Bi).unwrap();
@@ -927,6 +937,7 @@ fn stop_opens_bidi() {
 
 #[test]
 fn implicit_open() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
     let s1 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
@@ -946,6 +957,7 @@ fn implicit_open() {
 
 #[test]
 fn zero_length_cid() {
+    let _guard = subscribe();
     let mut pair = Pair::new(
         Arc::new(EndpointConfig {
             local_cid_len: 0,
@@ -955,7 +967,7 @@ fn zero_length_cid() {
     );
     let (client_ch, server_ch) = pair.connect();
     // Ensure we can reconnect after a previous connection is cleaned up
-    info!(pair.log, "closing");
+    info!("closing");
     pair.client
         .connections
         .get_mut(&client_ch)
@@ -972,6 +984,7 @@ fn zero_length_cid() {
 
 #[test]
 fn keep_alive() {
+    let _guard = subscribe();
     const IDLE_TIMEOUT: u64 = 10_000;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
@@ -998,6 +1011,7 @@ fn keep_alive() {
 
 #[test]
 fn finish_stream_flow_control_reordered() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -1006,19 +1020,19 @@ fn finish_stream_flow_control_reordered() {
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive_client(); // Send stream data
-    pair.server.drive(&pair.log, pair.time, pair.client.addr); // Receive
+    pair.server.drive(pair.time, pair.client.addr); // Receive
 
     // Issue flow control credit
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
         Ok(Some((ref data, 0))) if data == MSG
     );
-    pair.server.drive(&pair.log, pair.time, pair.client.addr);
+    pair.server.drive(pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
 
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive_client(); // Send FIN
-    pair.server.drive(&pair.log, pair.time, pair.client.addr); // Acknowledge
+    pair.server.drive(pair.time, pair.client.addr); // Acknowledge
     pair.server.finish_delay(); // Add flow control packets after
     pair.drive();
 
@@ -1037,6 +1051,7 @@ fn finish_stream_flow_control_reordered() {
 
 #[test]
 fn handshake_1rtt_handling() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
     pair.drive_client();
@@ -1044,7 +1059,7 @@ fn handshake_1rtt_handling() {
     let server_ch = pair.server.assert_accept();
     // Server now has 1-RTT keys, but remains in Handshake state until the TLS CFIN has
     // authenticated the client. Delay the final client handshake flight so that doesn't happen yet.
-    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.drive(pair.time, pair.server.addr);
     pair.client.delay_outbound();
 
     // Send some 1-RTT data which will be received first.
@@ -1052,7 +1067,7 @@ fn handshake_1rtt_handling() {
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.client_conn_mut(client_ch).finish(s).unwrap();
-    pair.client.drive(&pair.log, pair.time, pair.server.addr);
+    pair.client.drive(pair.time, pair.server.addr);
 
     // Add the handshake flight back on.
     pair.client.finish_delay();
@@ -1068,6 +1083,7 @@ fn handshake_1rtt_handling() {
 
 #[test]
 fn stop_before_finish() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -1076,7 +1092,7 @@ fn stop_before_finish() {
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
 
-    info!(pair.log, "stopping stream");
+    info!("stopping stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
         .stop_sending(s, ERROR)
@@ -1091,6 +1107,7 @@ fn stop_before_finish() {
 
 #[test]
 fn stop_during_finish() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
@@ -1100,7 +1117,7 @@ fn stop_during_finish() {
     pair.drive();
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    info!(pair.log, "stopping and finishing stream");
+    info!("stopping and finishing stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
         .stop_sending(s, ERROR)
@@ -1117,6 +1134,7 @@ fn stop_during_finish() {
 // Ensure we can recover from loss of tail packets when the congestion window is full
 #[test]
 fn congested_tail_loss() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, _) = pair.connect();
 
@@ -1147,6 +1165,7 @@ fn congested_tail_loss() {
 
 #[test]
 fn datagram_send_recv() {
+    let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
@@ -1172,6 +1191,7 @@ fn datagram_send_recv() {
 
 #[test]
 fn datagram_window() {
+    let _guard = subscribe();
     const WINDOW: usize = 100;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
@@ -1236,6 +1256,7 @@ fn datagram_window() {
 
 #[test]
 fn datagram_unsupported() {
+    let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             datagram_receive_buffer_size: None,

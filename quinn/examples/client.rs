@@ -1,7 +1,5 @@
 #[macro_use]
 extern crate failure;
-#[macro_use]
-extern crate slog;
 
 use std::fs;
 use std::io::{self, Write};
@@ -11,9 +9,9 @@ use std::time::{Duration, Instant};
 
 use failure::Error;
 use futures::TryFutureExt;
-use slog::{Drain, Logger};
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
+use tracing::{error, info};
 use url::Url;
 
 mod common;
@@ -44,16 +42,15 @@ struct Opt {
 }
 
 fn main() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
     let opt = Opt::from_args();
     let code = {
-        let decorator = slog_term::TermDecorator::new().stderr().build();
-        let drain = slog_term::FullFormat::new(decorator)
-            .use_original_order()
-            .build()
-            .fuse();
-        // We use a mutex-protected drain for simplicity; this example is single-threaded anyway.
-        let drain = std::sync::Mutex::new(drain).fuse();
-        if let Err(e) = run(Logger::root(drain, o!()), opt) {
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -63,7 +60,7 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(log: Logger, options: Opt) -> Result<()> {
+fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
@@ -73,7 +70,6 @@ fn run(log: Logger, options: Opt) -> Result<()> {
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(common::ALPN_QUIC_HTTP);
-    endpoint.logger(log.clone());
     if options.keylog {
         client_config.enable_keylog();
     }
@@ -87,10 +83,10 @@ fn run(log: Logger, options: Opt) -> Result<()> {
                 client_config.add_certificate_authority(quinn::Certificate::from_der(&cert)?)?;
             }
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "local server certificate not found");
+                info!("local server certificate not found");
             }
             Err(e) => {
-                error!(log, "failed to open local server certificate: {}", e);
+                error!("failed to open local server certificate: {}", e);
             }
         }
     }

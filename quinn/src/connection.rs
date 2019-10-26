@@ -12,8 +12,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::task::{Context, Waker};
 use futures::{Future, FutureExt, Poll, StreamExt};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
-use slog::Logger;
 use tokio_timer::{delay, Delay};
+use tracing::{info_span, trace};
 
 use crate::broadcast::{self, Broadcast};
 use crate::streams::{RecvStream, SendStream, WriteError};
@@ -165,6 +165,9 @@ impl Future for ConnectionDriver {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
 
+        let span = info_span!("drive", id = conn.handle.0);
+        let _guard = span.enter();
+
         loop {
             let now = Instant::now();
             let mut keep_going = false;
@@ -304,13 +307,6 @@ impl Connection {
     #[doc(hidden)]
     pub fn force_key_update(&self) {
         self.0.lock().unwrap().inner.initiate_key_update()
-    }
-
-    /// Replace the diagnostic logger
-    pub fn set_logger(&self, log: Logger) {
-        let mut conn = self.0.lock().unwrap();
-        conn.log = log.clone();
-        conn.inner.set_logger(log);
     }
 }
 
@@ -522,14 +518,12 @@ pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
     pub(crate) fn new(
-        log: Logger,
         handle: ConnectionHandle,
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
-            log,
             epoch: Instant::now(),
             inner: conn,
             driver: None,
@@ -585,7 +579,6 @@ impl std::ops::Deref for ConnectionRef {
 }
 
 pub struct ConnectionInner {
-    log: Logger,
     epoch: Instant,
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
@@ -723,7 +716,7 @@ impl ConnectionInner {
                 match delay.poll_unpin(cx) {
                     Poll::Ready(()) => {
                         *slot = None;
-                        trace!(self.log, "{timer:?} timeout", timer = timer);
+                        trace!("{:?} timeout", timer);
                         self.inner.handle_timeout(now, timer);
                         // Timeout call may have queued sends
                         keep_going = true;
@@ -745,11 +738,11 @@ impl ConnectionInner {
                     update: proto::TimerSetting::Start(time),
                 } => match self.timers[timer] {
                     ref mut x @ None => {
-                        trace!(self.log, "{timer:?} timer start", timer=timer; "time" => ?time.duration_since(self.epoch));
+                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer start", timer);
                         *x = Some(delay(time));
                     }
                     Some(ref mut x) => {
-                        trace!(self.log, "{timer:?} timer reset", timer=timer; "time" => ?time.duration_since(self.epoch));
+                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer reset", timer);
                         x.reset(time);
                     }
                 },
@@ -758,7 +751,7 @@ impl ConnectionInner {
                     update: proto::TimerSetting::Stop,
                 } => {
                     if self.timers[timer].take().is_some() {
-                        trace!(self.log, "{timer:?} timer stop", timer = timer);
+                        trace!("{:?} timer stop", timer);
                     }
                 }
             }

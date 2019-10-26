@@ -45,9 +45,6 @@
 //! encryption alone.
 #![warn(missing_docs)]
 
-#[macro_use]
-extern crate slog;
-
 mod broadcast;
 mod builders;
 mod platform;

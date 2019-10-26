@@ -2,7 +2,6 @@ use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use err_derive::Error;
-use slog;
 
 use crate::coding::{self, BufExt, BufMutExt};
 use crate::shared::ConnectionId;
@@ -743,33 +742,11 @@ impl From<LongHeaderType> for u8 {
     }
 }
 
-impl slog::Value for LongHeaderType {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
-}
-
 /// Long packet types with uniform header structure
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LongType {
     Handshake,
     ZeroRtt,
-}
-
-impl slog::Value for LongType {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
-    }
 }
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -811,17 +788,6 @@ impl SpaceId {
         [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data]
             .iter()
             .cloned()
-    }
-}
-
-impl slog::Value for SpaceId {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self))
     }
 }
 

@@ -8,7 +8,7 @@ use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use fnv::FnvHashSet;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use slog::Logger;
+use tracing::{debug, error, info, trace, trace_span, warn};
 
 use crate::coding::BufMutExt;
 use crate::crypto::{self, HeaderKeys, Keys};
@@ -42,7 +42,6 @@ pub struct Connection<S>
 where
     S: crypto::Session,
 {
-    log: Logger,
     endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
@@ -163,7 +162,6 @@ where
     S: crypto::Session,
 {
     pub(crate) fn new(
-        log: Logger,
         endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig<S>>>,
         config: Arc<TransportConfig>,
@@ -193,7 +191,6 @@ where
             .as_ref()
             .map_or(false, |c| c.use_stateless_retry);
         let mut this = Self {
-            log,
             endpoint_config,
             server_config,
             tls,
@@ -272,11 +269,6 @@ where
         this
     }
 
-    /// Replace the diagnostic logger
-    pub fn set_logger(&mut self, log: Logger) {
-        self.log = log;
-    }
-
     /// Returns timer updates
     ///
     /// Connections should be polled for timer updates after:
@@ -352,7 +344,6 @@ where
         space: SpaceId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
-        trace!(self.log, "handling ack"; "ranges" => ?ack.iter().collect::<Vec<_>>());
         if ack.largest >= self.space(space).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
@@ -434,7 +425,7 @@ where
                 }
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
-                debug!(self.log, "ECN not acknowledged by peer");
+                debug!("ECN not acknowledged by peer");
                 self.path.sending_ecn = false;
             }
         }
@@ -459,11 +450,7 @@ where
     ) {
         match self.space_mut(space).detect_ecn(newly_acked, ecn) {
             Err(e) => {
-                debug!(
-                    self.log,
-                    "halting ECN due to verification failure: {error}",
-                    error = e
-                );
+                debug!("halting ECN due to verification failure: {}", e);
                 self.path.sending_ecn = false;
                 // Wipe out the existing value because it might be garbage and could interfere with
                 // future attempts to use ECN on new paths.
@@ -501,7 +488,7 @@ where
             let ss = match self.streams.send_mut(id) {
                 Some(ss) => ss,
                 None => {
-                    info!(self.log, "no send stream found for acked reset: {:?}", id);
+                    info!("no send stream found for acked reset: {:?}", id);
                     continue;
                 }
             };
@@ -549,7 +536,7 @@ where
                 self.endpoint_events.push_back(EndpointEventInner::Drained);
             }
             TimerKind::KeepAlive => {
-                trace!(self.log, "sending keep-alive");
+                trace!("sending keep-alive");
                 self.ping();
             }
             TimerKind::LossDetection => {
@@ -560,7 +547,7 @@ where
                 self.prev_crypto = None;
             }
             TimerKind::PathValidation => {
-                debug!(self.log, "path validation failed");
+                debug!("path validation failed");
                 self.path_challenge = None;
                 self.path_challenge_pending = false;
                 if let Some(prev) = self.prev_path.take() {
@@ -594,7 +581,11 @@ where
             return;
         }
 
-        trace!(self.log, "PTO fired"; "in flight" => self.in_flight.bytes, "count" => self.pto_count);
+        trace!(
+            in_flight = self.in_flight.bytes,
+            count = self.pto_count,
+            "PTO fired"
+        );
         // Send two probes to improve odds of getting through under lossy conditions
         self.loss_probes = self.loss_probes.saturating_add(2);
         self.pto_count = self.pto_count.saturating_add(1);
@@ -671,7 +662,7 @@ where
             let old_bytes_in_flight = self.in_flight.bytes;
             let largest_lost_sent = self.space(pn_space).sent_packets[&largest_lost].time_sent;
             self.lost_packets += lost_packets.len() as u64;
-            trace!(self.log, "packets lost: {:?}", lost_packets);
+            trace!("packets lost: {:?}", lost_packets);
             for packet in &lost_packets {
                 let info = self
                     .space_mut(pn_space)
@@ -787,12 +778,7 @@ where
             Some(x) => x,
             None => return,
         };
-        trace!(
-            self.log,
-            "{space:?} packet {packet} authenticated",
-            space = space_id,
-            packet = packet
-        );
+        trace!("authenticated");
         if self.side.is_server() {
             if self.spaces[SpaceId::Initial as usize].crypto.is_some()
                 && space_id == SpaceId::Handshake
@@ -928,6 +914,8 @@ where
         packet: Packet,
         remaining: Option<BytesMut>,
     ) -> Result<(), TransportError> {
+        let span = trace_span!("recv initial");
+        let _guard = span.enter();
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
         self.total_recvd = len as u64;
@@ -942,7 +930,7 @@ where
         );
         self.process_early_payload(now, packet)?;
         if self.space(SpaceId::Initial).crypto_stream.offset() == 0 {
-            debug!(self.log, "dropping Initial with no CRYPTO data");
+            debug!("dropping Initial with no CRYPTO data");
             return Ok(());
         }
         if self.state.is_closed() {
@@ -994,15 +982,12 @@ where
                     self.set_params(params);
                 }
                 Err(e) => {
-                    error!(
-                        self.log,
-                        "session ticket has malformed transport parameters: {}", e
-                    );
+                    error!("session ticket has malformed transport parameters: {}", e);
                     return;
                 }
             }
         }
-        trace!(self.log, "0-RTT enabled");
+        trace!("0-RTT enabled");
         self.zero_rtt_enabled = true;
         self.zero_rtt_crypto = Some(CryptoSpace {
             header: packet.header_keys(),
@@ -1021,10 +1006,8 @@ where
         let end = crypto.offset + crypto.data.len() as u64;
         if space < expected && end > self.space(space).crypto_stream.offset() {
             warn!(
-                self.log,
-                "received new {actual:?} CRYPTO data when expecting {expected:?}",
-                actual = space,
-                expected = expected
+                "received new {:?} CRYPTO data when expecting {:?}",
+                space, expected
             );
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "new data at unexpected encryption level",
@@ -1045,7 +1028,7 @@ where
             if n == 0 {
                 return Ok(());
             }
-            trace!(self.log, "read {} TLS bytes", n);
+            trace!("read {} TLS bytes", n);
             self.tls.read_handshake(&buf[..n])?;
         }
     }
@@ -1076,12 +1059,7 @@ where
                 }
             }
             self.space_mut(space).crypto_offset += outgoing.len() as u64;
-            trace!(
-                self.log,
-                "wrote {} {space:?} TLS bytes",
-                outgoing.len(),
-                space = space
-            );
+            trace!("wrote {} {:?} TLS bytes", outgoing.len(), space);
             self.space_mut(space)
                 .pending
                 .crypto
@@ -1099,7 +1077,7 @@ where
             "already reached packet space {:?}",
             space
         );
-        trace!(self.log, "{space:?} keys ready", space = space);
+        trace!("{:?} keys ready", space);
         self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
@@ -1110,7 +1088,7 @@ where
     }
 
     fn discard_space(&mut self, space: SpaceId) {
-        trace!(self.log, "discarding {space:?} keys", space = space);
+        trace!("discarding {:?} keys", space);
         self.space_mut(space).crypto = None;
         let sent_packets = mem::replace(&mut self.space_mut(space).sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
@@ -1139,11 +1117,7 @@ where
                 if remote != self.path.remote
                     && self.server_config.as_ref().map_or(true, |x| !x.migration)
                 {
-                    trace!(
-                        self.log,
-                        "discarding packet from unrecognized peer {address}",
-                        address = format!("{}", remote)
-                    );
+                    trace!("discarding packet from unrecognized peer {}", remote);
                     return;
                 }
 
@@ -1179,7 +1153,7 @@ where
                     self.handle_decode(now, remote, ecn, partial_decode);
                 }
                 Err(e) => {
-                    trace!(self.log, "malformed header"; "reason" => %e);
+                    trace!("malformed header: {}", e);
                     return;
                 }
             }
@@ -1197,7 +1171,7 @@ where
             if let Some(ref crypto) = self.zero_rtt_crypto {
                 Some(&crypto.header)
             } else {
-                debug!(self.log, "dropping unexpected 0-RTT packet");
+                debug!("dropping unexpected 0-RTT packet");
                 return;
             }
         } else if let Some(space) = partial_decode.space() {
@@ -1205,10 +1179,9 @@ where
                 Some(&crypto.header)
             } else {
                 debug!(
-                    self.log,
-                    "discarding unexpected {space:?} packet ({len} bytes)",
-                    space = space,
-                    len = partial_decode.len(),
+                    "discarding unexpected {:?} packet ({} bytes)",
+                    space,
+                    partial_decode.len(),
                 );
                 return;
             }
@@ -1220,7 +1193,7 @@ where
         match partial_decode.finish(header_crypto) {
             Ok(packet) => self.handle_packet(now, remote, ecn, packet),
             Err(e) => {
-                trace!(self.log, "unable to complete packet decoding"; "reason" => %e);
+                trace!("unable to complete packet decoding: {}", e);
             }
         }
     }
@@ -1233,12 +1206,11 @@ where
         mut packet: Packet,
     ) {
         trace!(
-            self.log,
-            "got {space:?} packet ({len} bytes) from {remote} using id {connection}",
-            space = packet.header.space(),
-            len = packet.payload.len() + packet.header_data.len(),
-            remote = remote,
-            connection = packet.header.dst_cid(),
+            "got {:?} packet ({} bytes) from {} using id {}",
+            packet.header.space(),
+            packet.payload.len() + packet.header_data.len(),
+            remote,
+            packet.header.dst_cid(),
         );
         let was_closed = self.state.is_closed();
         let was_drained = self.state.is_drained();
@@ -1249,19 +1221,24 @@ where
 
         let result = match self.decrypt_packet(now, &mut packet) {
             Err(Some(e)) => {
-                warn!(self.log, "got illegal packet"; "reason" => %e);
+                warn!("illegal packet: {}", e);
                 Err(e.into())
             }
             Err(None) => {
                 if stateless_reset {
-                    debug!(self.log, "got stateless reset");
+                    debug!("got stateless reset");
                     Err(ConnectionError::Reset)
                 } else {
-                    debug!(self.log, "failed to authenticate packet");
+                    debug!("failed to authenticate packet");
                     return;
                 }
             }
             Ok(number) => {
+                let span = match number {
+                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
+                    None => trace_span!("recv", space = ?packet.header.space()),
+                };
+                let _guard = span.enter();
                 let duplicate = number.and_then(|n| {
                     if self.space_mut(packet.header.space()).dedup.insert(n) {
                         Some(n)
@@ -1274,16 +1251,12 @@ where
                     if stateless_reset {
                         Err(ConnectionError::Reset)
                     } else {
-                        warn!(
-                            self.log,
-                            "discarding possible duplicate packet {packet}",
-                            packet = number
-                        );
+                        warn!("discarding possible duplicate packet {}", number);
                         return;
                     }
                 } else if self.state.is_handshake() && packet.header.is_short() {
                     // TODO: SHOULD buffer these to improve reordering tolerance.
-                    trace!(self.log, "dropping short packet during handshake");
+                    trace!("dropping short packet during handshake");
                     return;
                 } else {
                     if !self.state.is_closed() {
@@ -1316,11 +1289,7 @@ where
                     unreachable!("timeouts aren't generated by packet processing");
                 }
                 ConnectionError::TransportError(err) => {
-                    debug!(
-                        self.log,
-                        "closing connection due to transport error: {error}",
-                        error = &err
-                    );
+                    debug!("closing connection due to transport error: {}", err);
                     State::closed(err)
                 }
                 ConnectionError::VersionMismatch => State::Draining,
@@ -1376,7 +1345,7 @@ where
                             // match the Destination Connection ID from its Initial packet.
                             return Ok(());
                         }
-                        trace!(self.log, "retrying with CID {rem_cid}", rem_cid = rem_cid);
+                        trace!("retrying with CID {}", rem_cid);
                         let client_hello = state.client_hello.take().unwrap();
                         self.orig_rem_cid = Some(self.rem_cid);
                         self.rem_cid = rem_cid;
@@ -1425,7 +1394,10 @@ where
                         ..
                     } => {
                         if rem_cid != self.rem_handshake_cid {
-                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_handshake_cid, actual = rem_cid);
+                            debug!(
+                                "discarding packet with mismatched remote CID: {} != {}",
+                                self.rem_handshake_cid, rem_cid
+                            );
                             return Ok(());
                         }
                         self.remote_validated = true;
@@ -1437,7 +1409,7 @@ where
                         }
 
                         if self.tls.is_handshaking() {
-                            trace!(self.log, "handshake ongoing");
+                            trace!("handshake ongoing");
                             self.state = State::Handshake(state::Handshake {
                                 token: None,
                                 ..state
@@ -1497,25 +1469,24 @@ where
 
                         self.events.push_back(Event::Connected);
                         self.state = State::Established;
-                        trace!(self.log, "established");
+                        trace!("established");
                         Ok(())
                     }
                     Header::Initial {
                         src_cid: rem_cid, ..
                     } => {
                         if !state.rem_cid_set {
-                            trace!(
-                                self.log,
-                                "switching remote CID to {rem_cid}",
-                                rem_cid = rem_cid
-                            );
+                            trace!("switching remote CID to {}", rem_cid);
                             let mut state = state.clone();
                             self.rem_cid = rem_cid;
                             self.rem_handshake_cid = rem_cid;
                             state.rem_cid_set = true;
                             self.state = State::Handshake(state);
                         } else if rem_cid != self.rem_handshake_cid {
-                            debug!(self.log, "discarding packet with mismatched remote CID: {expected} != {actual}", expected = self.rem_handshake_cid, actual = rem_cid);
+                            debug!(
+                                "discarding packet with mismatched remote CID: {} != {}",
+                                self.rem_handshake_cid, rem_cid
+                            );
                             return Ok(());
                         }
                         self.process_early_payload(now, packet)?;
@@ -1529,7 +1500,7 @@ where
                         Ok(())
                     }
                     Header::VersionNegotiate { .. } => {
-                        debug!(self.log, "remote doesn't support our version");
+                        debug!("remote doesn't support our version");
                         Err(ConnectionError::VersionMismatch)
                     }
                     Header::Short { .. } => unreachable!(
@@ -1550,7 +1521,7 @@ where
                 for frame in frame::Iter::new(packet.payload.into()) {
                     match frame {
                         Frame::Close(_) => {
-                            trace!(self.log, "draining");
+                            trace!("draining");
                             self.state = State::Draining;
                             return Ok(());
                         }
@@ -1571,12 +1542,11 @@ where
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         for frame in frame::Iter::new(packet.payload.into()) {
-            match frame {
-                Frame::Padding => {}
-                _ => {
-                    trace!(self.log, "got {type}", type=frame.ty());
-                }
-            }
+            let span = match frame {
+                Frame::Padding => None,
+                _ => Some(trace_span!("frame", ty = %frame.ty())),
+            };
+            let _guard = span.as_ref().map(|x| x.enter());
             match frame {
                 Frame::Ack(_) | Frame::Padding => {}
                 _ => {
@@ -1623,12 +1593,11 @@ where
         let is_0rtt = self.space(SpaceId::Data).crypto.is_none();
         let mut is_probing_packet = true;
         for frame in frame::Iter::new(payload) {
-            match frame {
-                Frame::Padding => {}
-                _ => {
-                    trace!(self.log, "got {type}", type=frame.ty());
-                }
-            }
+            let span = match frame {
+                Frame::Padding => None,
+                _ => Some(trace_span!("frame", ty = %frame.ty())),
+            };
+            let _guard = span.as_ref().map(|x| x.enter());
             if is_0rtt {
                 match frame {
                     Frame::Crypto(_) | Frame::Close(_) => {
@@ -1664,26 +1633,25 @@ where
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    trace!(self.log, "got stream"; "id" => frame.id.0, "offset" => frame.offset, "len" => frame.data.len(), "fin" => frame.fin);
+                    trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
                     let stream = frame.id;
                     let rs = match self.streams.recv_stream(self.side, stream) {
                         Err(e) => {
-                            debug!(self.log, "received illegal stream frame"; "stream" => stream.0);
+                            debug!("received illegal stream frame");
                             return Err(e);
                         }
                         Ok(None) => {
-                            trace!(self.log, "dropping frame for closed stream");
+                            trace!("dropping frame for closed stream");
                             continue;
                         }
                         Ok(Some(rs)) => rs,
                     };
                     if rs.is_finished() {
-                        trace!(self.log, "dropping frame for finished stream");
+                        trace!("dropping frame for finished stream");
                         continue;
                     }
 
                     self.data_recvd += rs.ingest(
-                        &self.log,
                         frame,
                         self.data_recvd,
                         self.local_max_data,
@@ -1722,7 +1690,7 @@ where
                     if self.path_challenge != Some(token) || remote != self.path.remote {
                         continue;
                     }
-                    trace!(self.log, "path validated");
+                    trace!("path validated");
                     self.io.timer_stop(TimerKind::PathValidation);
                     self.path_challenge = None;
                 }
@@ -1737,30 +1705,21 @@ where
                 }
                 Frame::MaxStreamData { id, offset } => {
                     if id.initiator() != self.side && id.dir() == Dir::Uni {
-                        debug!(
-                            self.log,
-                            "got MAX_STREAM_DATA on recv-only {stream}",
-                            stream = id
-                        );
+                        debug!("got MAX_STREAM_DATA on recv-only {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "MAX_STREAM_DATA on recv-only stream",
                         ));
                     }
                     if let Some(ss) = self.streams.send_mut(id) {
                         if offset > ss.max_data {
-                            trace!(self.log, "stream limit increased"; "stream" => id.0,
-                                   "old" => ss.max_data, "new" => offset, "current offset" => ss.offset);
+                            trace!(stream = %id, old = ss.max_data, new = offset, current_offset = ss.offset, "stream limit increased");
                             if ss.offset == ss.max_data {
                                 self.events.push_back(Event::StreamWritable { stream: id });
                             }
                             ss.max_data = offset;
                         }
                     } else if id.initiator() == self.side() && self.streams.is_local_unopened(id) {
-                        debug!(
-                            self.log,
-                            "got MAX_STREAM_DATA on unopened {stream}",
-                            stream = id
-                        );
+                        debug!("got MAX_STREAM_DATA on unopened {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "MAX_STREAM_DATA on unopened stream",
                         ));
@@ -1786,11 +1745,11 @@ where
                 }) => {
                     let rs = match self.streams.recv_stream(self.side, id) {
                         Err(e) => {
-                            debug!(self.log, "received illegal RST_STREAM");
+                            debug!("received illegal RST_STREAM");
                             return Err(e);
                         }
                         Ok(None) => {
-                            trace!(self.log, "received RST_STREAM on closed stream");
+                            trace!("received RST_STREAM on closed stream");
                             continue;
                         }
                         Ok(Some(stream)) => stream,
@@ -1823,37 +1782,30 @@ where
                     self.on_stream_frame(true, id);
                 }
                 Frame::DataBlocked { offset } => {
-                    debug!(self.log, "peer claims to be blocked at connection level"; "offset" => offset);
+                    debug!(offset, "peer claims to be blocked at connection level");
                 }
                 Frame::StreamDataBlocked { id, offset } => {
                     if id.initiator() == self.side && id.dir() == Dir::Uni {
-                        debug!(
-                            self.log,
-                            "got STREAM_DATA_BLOCKED on send-only {stream}",
-                            stream = id
-                        );
+                        debug!("got STREAM_DATA_BLOCKED on send-only {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "STREAM_DATA_BLOCKED on send-only stream",
                         ));
                     }
-                    debug!(self.log, "peer claims to be blocked at stream level"; "stream" => id, "offset" => offset);
+                    debug!(
+                        stream = %id,
+                        offset, "peer claims to be blocked at stream level"
+                    );
                 }
                 Frame::StreamsBlocked { dir, limit } => {
                     debug!(
-                        self.log,
-                        "peer claims to be blocked opening more than {limit} {dir} streams",
-                        limit = limit,
-                        dir = dir
+                        "peer claims to be blocked opening more than {} {} streams",
+                        limit, dir
                     );
                 }
                 Frame::StopSending(frame::StopSending { id, error_code }) => {
                     if id.initiator() != self.side {
                         if id.dir() == Dir::Uni {
-                            debug!(
-                                self.log,
-                                "got STOP_SENDING on recv-only {stream}",
-                                stream = id
-                            );
+                            debug!("got STOP_SENDING on recv-only {}", id);
                             return Err(TransportError::STREAM_STATE_ERROR(
                                 "STOP_SENDING on recv-only stream",
                             ));
@@ -1880,9 +1832,8 @@ where
                     }
                     if sequence > self.cids_issued {
                         debug!(
-                            self.log,
-                            "got RETIRE_CONNECTION_ID for unissued cid sequence number {sequence}",
-                            sequence = sequence,
+                            sequence,
+                            "got RETIRE_CONNECTION_ID for unissued sequence number"
                         );
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "RETIRE_CONNECTION_ID for unissued sequence number",
@@ -1893,10 +1844,8 @@ where
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
-                        self.log,
-                        "NEW_CONNECTION_ID {sequence} = {id}",
                         sequence = frame.sequence,
-                        id = frame.id,
+                        id = %frame.id,
                     );
                     if self.rem_cid.is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
@@ -1944,7 +1893,7 @@ where
                     if self.side.is_server() {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
                     }
-                    trace!(self.log, "got new token");
+                    trace!("got new token");
                     // TODO: Cache, or perhaps forward to user?
                 }
                 Frame::Datagram(datagram) => {
@@ -1963,7 +1912,7 @@ where
                         self.events.push_back(Event::DatagramReceived);
                     }
                     while datagram.data.len() + self.datagrams.recv_buffered > window {
-                        debug!(self.log, "dropping stale datagram");
+                        debug!("dropping stale datagram");
                         self.recv_datagram();
                     }
                     self.datagrams.recv_buffered += datagram.data.len();
@@ -2017,11 +1966,7 @@ where
     }
 
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
-        trace!(
-            self.log,
-            "migration initiated from {remote}",
-            remote = remote
-        );
+        trace!(%remote, "migration initiated");
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
         let maybe_rebinding = remote.is_ipv4() && remote.ip() == self.path.remote.ip();
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
@@ -2065,12 +2010,7 @@ where
     }
 
     fn update_rem_cid(&mut self, new: IssuedCid) {
-        trace!(
-            self.log,
-            "switching to remote CID {sequence}: {connection_id}",
-            sequence = new.sequence,
-            connection_id = new.id
-        );
+        trace!("switching to remote CID {}: {}", new.sequence, new.id);
         let retired = self.rem_cid_seq;
         self.space_mut(SpaceId::Data)
             .pending
@@ -2097,7 +2037,7 @@ where
             && self.side.is_server()
             && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
         {
-            trace!(self.log, "blocked by anti-amplification");
+            trace!("blocked by anti-amplification");
             return None;
         }
 
@@ -2171,12 +2111,8 @@ where
 
             let space = &mut self.spaces[space_id as usize];
             let exact_number = space.get_tx_number();
-            trace!(
-                self.log,
-                "sending {space:?} packet {number}",
-                space = space_id,
-                number = exact_number
-            );
+            let span = trace_span!("send", space = ?space_id, pn = exact_number);
+            let _guard = span.enter();
             let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
             let header = match space_id {
                 SpaceId::Data if space.crypto.is_some() => Header::Short {
@@ -2217,7 +2153,7 @@ where
             coalesce = coalesce && !header.is_short();
 
             let sent = if close {
-                trace!(self.log, "sending CONNECTION_CLOSE");
+                trace!("sending CONNECTION_CLOSE");
                 let max_len = buf.capacity()
                     - partial_encode.start
                     - partial_encode.header_len
@@ -2274,7 +2210,7 @@ where
             {
                 let padding = padding_minus_one + 1;
                 padded = true;
-                trace!(self.log, "PADDING * {count}", count = padding);
+                trace!("PADDING * {}", padding);
                 buf.resize(buf.len() + padding, 0);
             }
 
@@ -2320,7 +2256,7 @@ where
             return None;
         }
 
-        trace!(self.log, "{len} bytes", len = buf.len());
+        trace!("sending {} byte datagram", buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
         Some(Transmit {
@@ -2357,7 +2293,7 @@ where
 
         // PING
         if mem::replace(&mut self.ping_pending, false) {
-            trace!(self.log, "PING");
+            trace!("PING");
             buf.write(frame::Type::PING);
         }
 
@@ -2365,7 +2301,7 @@ where
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         let acks = if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            trace!(self.log, "ACK"; "ranges" => ?space.pending_acks.iter().collect::<Vec<_>>());
+            trace!("ACK");
             let ecn = if self.receiving_ecn {
                 Some(&self.ecn_counters)
             } else {
@@ -2383,7 +2319,7 @@ where
             if let Some(token) = self.path_challenge {
                 // But only send a packet solely for that purpose at most once
                 self.path_challenge_pending = false;
-                trace!(self.log, "PATH_CHALLENGE {token:08x}", token = token);
+                trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
             }
@@ -2392,11 +2328,7 @@ where
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
             if let Some(response) = self.path_response.take() {
-                trace!(
-                    self.log,
-                    "PATH_RESPONSE {token:08x}",
-                    token = response.token
-                );
+                trace!("PATH_RESPONSE {:08x}", response.token);
                 buf.write(frame::Type::PATH_RESPONSE);
                 buf.write(response.token);
             }
@@ -2418,10 +2350,9 @@ where
                 data,
             };
             trace!(
-                self.log,
-                "CRYPTO: off {offset} len {length}",
-                offset = truncated.offset,
-                length = truncated.data.len()
+                "CRYPTO: off {} len {}",
+                truncated.offset,
+                truncated.data.len()
             );
             truncated.encode(buf);
             sent.crypto.push_back(truncated);
@@ -2441,7 +2372,7 @@ where
                 Some(x) => x,
                 None => continue,
             };
-            trace!(self.log, "RESET_STREAM"; "stream" => id.0);
+            trace!(stream = %id, "RESET_STREAM");
             sent.rst_stream.push((id, error_code));
             frame::ResetStream {
                 id,
@@ -2464,14 +2395,14 @@ where
             if stream.is_finished() {
                 continue;
             }
-            trace!(self.log, "STOP_SENDING"; "stream" => frame.id);
+            trace!(stream = %frame.id, "STOP_SENDING");
             frame.encode(buf);
             sent.stop_sending.push(frame);
         }
 
         // MAX_DATA
         if space.pending.max_data && buf.len() + 9 < max_size {
-            trace!(self.log, "MAX_DATA"; "value" => self.local_max_data);
+            trace!(value = self.local_max_data, "MAX_DATA");
             space.pending.max_data = false;
             sent.max_data = true;
             buf.write(frame::Type::MAX_DATA);
@@ -2494,12 +2425,7 @@ where
             }
             sent.max_stream_data.insert(id);
             let max = rs.bytes_read + self.config.stream_receive_window;
-            trace!(
-                self.log,
-                "MAX_STREAM_DATA: {stream} = {max}",
-                stream = id,
-                max = max
-            );
+            trace!(stream = %id, max = max, "MAX_STREAM_DATA");
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
             buf.write_var(max);
@@ -2509,7 +2435,10 @@ where
         if space.pending.max_uni_stream_id && buf.len() + 9 < max_size {
             space.pending.max_uni_stream_id = false;
             sent.max_uni_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (unidirectional)"; "value" => self.streams.max_remote[Dir::Uni as usize]);
+            trace!(
+                value = self.streams.max_remote[Dir::Uni as usize],
+                "MAX_STREAMS (unidirectional)"
+            );
             buf.write(frame::Type::MAX_STREAMS_UNI);
             buf.write_var(self.streams.max_remote[Dir::Uni as usize]);
         }
@@ -2518,7 +2447,10 @@ where
         if space.pending.max_bi_stream_id && buf.len() + 9 < max_size {
             space.pending.max_bi_stream_id = false;
             sent.max_bi_stream_id = true;
-            trace!(self.log, "MAX_STREAMS (bidirectional)"; "value" => self.streams.max_remote[Dir::Bi as usize] - 1);
+            trace!(
+                value = self.streams.max_remote[Dir::Bi as usize],
+                "MAX_STREAMS (bidirectional)"
+            );
             buf.write(frame::Type::MAX_STREAMS_BIDI);
             buf.write_var(self.streams.max_remote[Dir::Bi as usize]);
         }
@@ -2530,10 +2462,9 @@ where
                 None => break,
             };
             trace!(
-                self.log,
-                "NEW_CONNECTION_ID {sequence} = {id}",
                 sequence = issued.sequence,
-                id = issued.id,
+                id = %issued.id,
+                "NEW_CONNECTION_ID"
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
@@ -2551,7 +2482,7 @@ where
                 Some(x) => x,
                 None => break,
             };
-            trace!(self.log, "RETIRE_CONNECTION_ID {sequence}", sequence = seq);
+            trace!(sequence = seq, "RETIRE_CONNECTION_ID");
             buf.write(frame::Type::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
             sent.retire_cids.push(seq);
@@ -2596,7 +2527,7 @@ where
             );
             let data = stream.data.split_to(len);
             let fin = stream.fin && stream.data.is_empty();
-            trace!(self.log, "STREAM"; "id" => stream.id.0, "off" => stream.offset, "len" => len, "fin" => fin);
+            trace!(id = %stream.id, off = stream.offset, len, fin, "STREAM");
             let frame = frame::Stream {
                 id: stream.id,
                 offset: stream.offset,
@@ -2631,7 +2562,7 @@ where
     }
 
     fn close_common(&mut self) {
-        trace!(self.log, "connection closed");
+        trace!("connection closed");
         for (_, timer) in &mut self.io.timers {
             *timer = Some(TimerSetting::Stop);
         }
@@ -2645,10 +2576,8 @@ where
     fn validate_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
         if self.side.is_client() && self.orig_rem_cid != params.original_connection_id {
             debug!(
-                self.log,
-                "original connection ID mismatch: expected {expected:x?}, actual {actual:x?}",
-                expected = self.orig_rem_cid,
-                actual = params.original_connection_id
+                "original connection ID mismatch: expected {:x?}, actual {:x?}",
+                self.orig_rem_cid, params.original_connection_id
             );
             return Err(TransportError::TRANSPORT_PARAMETER_ERROR(
                 "original CID mismatch",
@@ -2856,11 +2785,7 @@ where
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
             .map_err(|()| {
-                trace!(
-                    self.log,
-                    "decryption failed with packet number {packet}",
-                    packet = number
-                );
+                trace!("decryption failed with packet number {}", number);
                 None
             })?;
 
@@ -2894,7 +2819,7 @@ where
                     "illegal key update",
                 )));
             }
-            trace!(self.log, "key update authenticated");
+            trace!("key update authenticated");
             self.update_keys(crypto, Some((number, now)), true);
             self.set_key_discard_timer(now);
         }
@@ -2915,23 +2840,15 @@ where
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
         if self.state.is_closed() {
-            trace!(self.log, "write blocked; connection draining"; "stream" => stream.0);
+            trace!(%stream, "write blocked; connection draining");
             return Err(WriteError::Blocked);
         }
 
         if self.blocked() {
             if self.congestion_blocked() {
-                trace!(
-                    self.log,
-                    "write on {stream} blocked by congestion",
-                    stream = stream
-                );
+                trace!(%stream, "write blocked by congestion");
             } else {
-                trace!(
-                    self.log,
-                    "write on {stream} blocked by connection-level flow control",
-                    stream = stream
-                );
+                trace!(%stream, "write blocked by connection-level flow control");
             }
             self.blocked_streams.insert(stream);
             return Err(WriteError::Blocked);
@@ -2950,11 +2867,7 @@ where
                 return Err(e);
             }
             Err(e @ WriteError::Blocked) => {
-                trace!(
-                    self.log,
-                    "write on {stream} blocked by flow control",
-                    stream = stream
-                );
+                trace!(%stream, "write blocked by flow control");
                 return Err(e);
             }
             Err(WriteError::UnknownStream) => unreachable!("not returned here"),
@@ -2966,12 +2879,7 @@ where
         );
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.queue_stream_data(stream, (&data[0..n]).into())?;
-        trace!(
-            self.log,
-            "wrote {len} bytes to {stream}",
-            len = n,
-            stream = stream
-        );
+        trace!(%stream, "wrote {} bytes", n);
         Ok(n)
     }
 
@@ -3149,7 +3057,7 @@ where
     /// Reset state to account for 0-RTT being ignored by the server
     fn reject_0rtt(&mut self) {
         debug_assert!(self.side.is_client());
-        debug!(self.log, "0-RTT rejected");
+        debug!("0-RTT rejected");
         self.accepted_0rtt = false;
         self.streams.zero_rtt_rejected(self.side);
         // Discard already-queued frames

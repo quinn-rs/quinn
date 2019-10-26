@@ -1,9 +1,9 @@
 use std::fmt;
+use std::{fs, io, path::PathBuf};
 
 use failure::{bail, Error, Fail, ResultExt};
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
-use slog::{info, o, Drain, Logger};
-use std::{fs, io, path::PathBuf};
+use tracing::info;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -32,7 +32,6 @@ impl ErrorExt for Error {
 }
 
 pub fn build_certs(
-    log: Logger,
     key: &Option<PathBuf>,
     cert: &Option<PathBuf>,
 ) -> Result<(CertificateChain, Certificate, PrivateKey)> {
@@ -51,7 +50,7 @@ pub fn build_certs(
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
             Ok(x) => x,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                info!(log, "generating self-signed certificate");
+                info!("generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
                 let key = cert.serialize_private_key_der();
                 let cert = cert.serialize_der().unwrap();
@@ -72,13 +71,4 @@ pub fn build_certs(
             key,
         ))
     }
-}
-
-pub fn logger(label: String) -> Logger {
-    let decorator = slog_term::PlainSyncDecorator::new(std::io::stderr());
-    let drain = slog_term::FullFormat::new(decorator)
-        .use_original_order()
-        .build()
-        .fuse();
-    Logger::root(drain, o!("h3" => label))
 }

@@ -136,14 +136,3 @@ impl<T> IndexMut<Timer> for TimerTable<T> {
         &mut self.data[index.0 as usize]
     }
 }
-
-impl slog::Value for Timer {
-    fn serialize(
-        &self,
-        _: &slog::Record<'_>,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        serializer.emit_arguments(key, &format_args!("{:?}", self.0))
-    }
-}

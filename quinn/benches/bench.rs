@@ -5,8 +5,9 @@ use std::thread;
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
-use slog::Drain;
 use tokio::runtime::current_thread::Runtime;
+use tracing::info_span;
+use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
 
@@ -77,19 +78,10 @@ fn throughput(c: &mut Criterion) {
 struct Context {
     server_config: quinn::ServerConfig,
     client_config: quinn::ClientConfig,
-    log: slog::Logger,
 }
 
 impl Context {
     fn new() -> Self {
-        let decorator = slog_term::TermDecorator::new().stderr().build();
-        let drain = slog_term::FullFormat::new(decorator)
-            .use_original_order()
-            .build()
-            .fuse();
-        let drain = std::sync::Mutex::new(drain).fuse();
-        let log = slog::Logger::root(drain, slog::o!());
-
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
         let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
@@ -111,7 +103,6 @@ impl Context {
         Self {
             server_config: server_config.build(),
             client_config: client_config.build(),
-            log,
         }
     }
 
@@ -119,45 +110,47 @@ impl Context {
         let sock = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
         let addr = sock.local_addr().unwrap();
         let config = self.server_config.clone();
-        let log = self.log.new(slog::o!("side" => "Server"));
         let handle = thread::spawn(move || {
             let mut endpoint = Endpoint::builder();
-            endpoint.logger(log);
             endpoint.listen(config);
             let (driver, _, mut incoming) = endpoint.with_socket(sock).unwrap();
             let mut runtime = Runtime::new().unwrap();
-            runtime.spawn(async { driver.await.unwrap() });
-            runtime.spawn(async move {
-                let quinn::NewConnection {
-                    driver,
-                    mut uni_streams,
-                    ..
-                } = incoming.next().await.unwrap().await.unwrap();
-                tokio::spawn(async move {
-                    match driver.await {
-                        Ok(()) => panic!("unexpected success"),
-                        Err(quinn::ConnectionError::ApplicationClosed { .. }) => {}
-                        Err(e) => panic!("{}", e),
+            runtime.spawn(async { driver.instrument(info_span!("server")).await.unwrap() });
+            runtime.spawn(
+                async move {
+                    let quinn::NewConnection {
+                        driver,
+                        mut uni_streams,
+                        ..
+                    } = incoming.next().await.unwrap().await.unwrap();
+                    tokio::spawn(async move {
+                        match driver.await {
+                            Ok(()) => panic!("unexpected success"),
+                            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {}
+                            Err(e) => panic!("{}", e),
+                        }
+                    });
+                    while let Some(Ok(mut stream)) = uni_streams.next().await {
+                        while let Some(_) = stream.read_unordered().await.unwrap() {}
                     }
-                });
-                while let Some(Ok(mut stream)) = uni_streams.next().await {
-                    while let Some(_) = stream.read_unordered().await.unwrap() {}
                 }
-            });
+                    .instrument(info_span!("server")),
+            );
             runtime.run().unwrap();
         });
         (addr, handle)
     }
 
     pub fn make_client(&self, server_addr: SocketAddr) -> (quinn::Connection, Runtime) {
-        let mut endpoint = Endpoint::builder();
-        endpoint.logger(self.log.new(slog::o!("side" => "Client")));
-        let (endpoint_driver, endpoint, _) = endpoint
+        let (endpoint_driver, endpoint, _) = Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
             .unwrap();
         let mut runtime = Runtime::new().unwrap();
         runtime.spawn(async move {
-            endpoint_driver.await.unwrap();
+            endpoint_driver
+                .instrument(info_span!("client"))
+                .await
+                .unwrap();
         });
         let quinn::NewConnection {
             driver, connection, ..
@@ -165,11 +158,12 @@ impl Context {
             .block_on(
                 endpoint
                     .connect_with(self.client_config.clone(), &server_addr, "localhost")
-                    .unwrap(),
+                    .unwrap()
+                    .instrument(info_span!("client")),
             )
             .unwrap();
         runtime.spawn(async move {
-            driver.await.unwrap();
+            driver.instrument(info_span!("client")).await.unwrap();
         });
         (connection, runtime)
     }
