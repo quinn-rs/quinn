@@ -6,7 +6,7 @@ use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
 use tokio::runtime::current_thread::Runtime;
-use tracing::info_span;
+use tracing::error_span;
 use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
@@ -15,6 +15,13 @@ criterion_group!(benches, throughput);
 criterion_main!(benches);
 
 fn throughput(c: &mut Criterion) {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
+
     let ctx = Context::new();
     let mut group = c.benchmark_group("throughput");
     {
@@ -39,14 +46,13 @@ fn throughput(c: &mut Criterion) {
     {
         let (addr, thread) = ctx.spawn_server();
         let (client, mut runtime) = ctx.make_client(addr);
-        const DATA: &[u8] = &[0xAB; 32];
+        const DATA: &[u8] = &[0xAB; 1];
         group.throughput(Throughput::Elements(1));
-        group.bench_function("small streams unpipelined", |b| {
+        group.bench_function("small streams", |b| {
             b.iter(|| {
                 runtime.block_on(async {
                     let mut stream = client.open_uni().await.unwrap();
                     stream.write_all(DATA).await.unwrap();
-                    stream.finish().await.unwrap();
                 });
             })
         });
@@ -58,7 +64,7 @@ fn throughput(c: &mut Criterion) {
     {
         let (addr, thread) = ctx.spawn_server();
         let (client, mut runtime) = ctx.make_client(addr);
-        let data = Bytes::from(&[0xAB; 32][..]);
+        let data = Bytes::from(&[0xAB; 1][..]);
         group.throughput(Throughput::Elements(1));
         group.bench_function("small datagrams", |b| {
             b.iter(|| {
@@ -115,26 +121,31 @@ impl Context {
             endpoint.listen(config);
             let (driver, _, mut incoming) = endpoint.with_socket(sock).unwrap();
             let mut runtime = Runtime::new().unwrap();
-            runtime.spawn(async { driver.instrument(info_span!("server")).await.unwrap() });
+            runtime.spawn(async { driver.instrument(error_span!("server")).await.unwrap() });
             runtime.spawn(
                 async move {
                     let quinn::NewConnection {
                         driver,
                         mut uni_streams,
                         ..
-                    } = incoming.next().await.unwrap().await.unwrap();
+                    } = incoming
+                        .next()
+                        .await
+                        .expect("accept")
+                        .await
+                        .expect("connect");
                     tokio::spawn(async move {
-                        match driver.await {
+                        match driver.instrument(error_span!("server")).await {
                             Ok(()) => panic!("unexpected success"),
                             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {}
-                            Err(e) => panic!("{}", e),
+                            Err(e) => panic!("connection lost: {}", e),
                         }
                     });
                     while let Some(Ok(mut stream)) = uni_streams.next().await {
                         while let Some(_) = stream.read_unordered().await.unwrap() {}
                     }
                 }
-                    .instrument(info_span!("server")),
+                    .instrument(error_span!("server")),
             );
             runtime.run().unwrap();
         });
@@ -148,7 +159,7 @@ impl Context {
         let mut runtime = Runtime::new().unwrap();
         runtime.spawn(async move {
             endpoint_driver
-                .instrument(info_span!("client"))
+                .instrument(error_span!("client"))
                 .await
                 .unwrap();
         });
@@ -159,11 +170,11 @@ impl Context {
                 endpoint
                     .connect_with(self.client_config.clone(), &server_addr, "localhost")
                     .unwrap()
-                    .instrument(info_span!("client")),
+                    .instrument(error_span!("client")),
             )
             .unwrap();
         runtime.spawn(async move {
-            driver.instrument(info_span!("client")).await.unwrap();
+            driver.instrument(error_span!("client")).await.unwrap();
         });
         (connection, runtime)
     }
