@@ -205,24 +205,30 @@ where
             } else {
                 None
             };
-            ch.or_else(|| self.connection_ids_initial.get(&dst_cid))
-                .or_else(|| {
-                    if self.config.local_cid_len == 0 {
-                        self.connection_remotes.get(&remote)
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    let data = first_decode.data();
-                    if data.len() >= RESET_TOKEN_SIZE {
-                        self.connection_reset_tokens
-                            .get(&data[data.len() - RESET_TOKEN_SIZE..])
-                    } else {
-                        None
-                    }
-                })
-                .cloned()
+            ch.or_else(|| {
+                if first_decode.is_initial() {
+                    self.connection_ids_initial.get(&dst_cid)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                if self.config.local_cid_len == 0 {
+                    self.connection_remotes.get(&remote)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                let data = first_decode.data();
+                if data.len() >= RESET_TOKEN_SIZE {
+                    self.connection_reset_tokens
+                        .get(&data[data.len() - RESET_TOKEN_SIZE..])
+                } else {
+                    None
+                }
+            })
+            .cloned()
         };
         if let Some(ch) = known_ch {
             return Some((
