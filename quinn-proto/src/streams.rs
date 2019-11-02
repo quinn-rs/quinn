@@ -1,8 +1,7 @@
-use std::collections::hash_map;
+use std::collections::{hash_map, HashMap};
 
 use bytes::Bytes;
 use err_derive::Error;
-use fnv::FnvHashMap;
 use tracing::debug;
 
 use crate::assembler::Assembler;
@@ -12,8 +11,8 @@ use crate::{Dir, Side, StreamId, TransportError, VarInt};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer
-    send: FnvHashMap<StreamId, Send>,
-    recv: FnvHashMap<StreamId, Recv>,
+    send: HashMap<StreamId, Send>,
+    recv: HashMap<StreamId, Recv>,
     next: [u64; 2],
     // Locally initiated
     pub max: [u64; 2],
@@ -28,8 +27,8 @@ pub struct Streams {
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
         let mut this = Self {
-            send: FnvHashMap::default(),
-            recv: FnvHashMap::default(),
+            send: HashMap::default(),
+            recv: HashMap::default(),
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi, max_remote_uni],

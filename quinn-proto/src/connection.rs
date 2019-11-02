@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6,7 +6,6 @@ use std::{cmp, fmt, io, mem};
 
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
-use fnv::FnvHashSet;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
 
@@ -66,7 +65,7 @@ where
     /// Transport parameters set by the peer
     params: TransportParameters,
     /// Streams on which writing was blocked on *connection-level* flow or congestion control
-    blocked_streams: FnvHashSet<StreamId>,
+    blocked_streams: HashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
     max_data: u64,
     /// Sum of current offsets of all send streams.
@@ -213,7 +212,7 @@ where
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
-            blocked_streams: FnvHashSet::default(),
+            blocked_streams: HashSet::new(),
             max_data: 0,
             data_sent: 0,
             data_recvd: 0,

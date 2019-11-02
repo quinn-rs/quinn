@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::time::Instant;
 use std::{cmp, mem};
 
 use bytes::Bytes;
-use fnv::FnvHashSet;
 
 use crate::assembler::Assembler;
 use crate::range_set::RangeSet;
@@ -168,7 +167,7 @@ pub struct Retransmits {
     pub stream: VecDeque<frame::Stream>,
     pub rst_stream: Vec<(StreamId, VarInt)>,
     pub stop_sending: Vec<frame::StopSending>,
-    pub max_stream_data: FnvHashSet<StreamId>,
+    pub max_stream_data: HashSet<StreamId>,
     pub crypto: VecDeque<frame::Crypto>,
     pub new_cids: Vec<IssuedCid>,
     pub retire_cids: Vec<u64>,
@@ -198,7 +197,7 @@ impl Default for Retransmits {
             stream: VecDeque::new(),
             rst_stream: Vec::new(),
             stop_sending: Vec::new(),
-            max_stream_data: FnvHashSet::default(),
+            max_stream_data: HashSet::new(),
             crypto: VecDeque::new(),
             new_cids: Vec::new(),
             retire_cids: Vec::new(),
