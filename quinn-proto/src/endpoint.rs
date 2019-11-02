@@ -8,7 +8,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use bytes::{BufMut, BytesMut};
 use err_derive::Error;
-use fnv::FnvHashMap;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
 use tracing::{debug, trace, warn};
@@ -40,10 +39,10 @@ where
 {
     rng: StdRng,
     transmits: VecDeque<Transmit>,
-    connection_ids_initial: FnvHashMap<ConnectionId, ConnectionHandle>,
-    connection_ids: FnvHashMap<ConnectionId, ConnectionHandle>,
+    connection_ids_initial: HashMap<ConnectionId, ConnectionHandle>,
+    connection_ids: HashMap<ConnectionId, ConnectionHandle>,
     /// Identifies connections with zero-length CIDs
-    connection_remotes: FnvHashMap<SocketAddr, ConnectionHandle>,
+    connection_remotes: HashMap<SocketAddr, ConnectionHandle>,
     /// Reset tokens provided by the peer for the CID each connection is currently sending to
     ///
     /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
@@ -76,9 +75,9 @@ where
         Ok(Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
-            connection_ids_initial: FnvHashMap::default(),
-            connection_ids: FnvHashMap::default(),
-            connection_remotes: FnvHashMap::default(),
+            connection_ids_initial: HashMap::new(),
+            connection_ids: HashMap::new(),
+            connection_remotes: HashMap::new(),
             connection_reset_tokens: HashMap::new(),
             connections: Slab::new(),
             incoming_handshakes: 0,

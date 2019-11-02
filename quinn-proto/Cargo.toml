@@ -23,7 +23,6 @@ tls-rustls = ["rustls", "webpki", "ring"]
 [dependencies]
 bytes = "0.4.7"
 err-derive = "0.2"
-fnv = "1.0.6"
 lazy_static = "1"
 rand = "0.7"
 ring = { version = "0.16.7", optional = true }

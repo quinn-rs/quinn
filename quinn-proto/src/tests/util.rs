@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Write};
 use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
 use std::ops::RangeFrom;
@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{cmp, env, mem, str};
 
-use fnv::FnvHashMap;
 use lazy_static::lazy_static;
 use rustls::KeyLogFile;
 use tracing::{info_span, trace};
@@ -173,8 +172,8 @@ pub struct TestEndpoint {
     delayed: VecDeque<Transmit>,
     pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
     accepted: Option<ConnectionHandle>,
-    pub connections: FnvHashMap<ConnectionHandle, Connection>,
-    conn_events: FnvHashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    pub connections: HashMap<ConnectionHandle, Connection>,
+    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
 }
 
 impl TestEndpoint {
@@ -197,8 +196,8 @@ impl TestEndpoint {
             delayed: VecDeque::new(),
             inbound: VecDeque::new(),
             accepted: None,
-            connections: FnvHashMap::default(),
-            conn_events: FnvHashMap::default(),
+            connections: HashMap::default(),
+            conn_events: HashMap::default(),
         }
     }
 
