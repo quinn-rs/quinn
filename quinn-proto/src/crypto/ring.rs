@@ -34,10 +34,10 @@ impl Crypto {
 
         Crypto {
             local_secret,
-            sealing_key: aead::LessSafeKey::new(local_key.into()),
+            sealing_key: aead::LessSafeKey::new(local_key),
             local_iv,
             remote_secret,
-            opening_key: aead::LessSafeKey::new(remote_key.into()),
+            opening_key: aead::LessSafeKey::new(remote_key),
             remote_iv,
         }
     }

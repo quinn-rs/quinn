@@ -168,7 +168,7 @@ impl Default for TransportConfig {
             crypto_buffer_size: 16 * 1024,
             allow_spin: true,
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
-            datagram_send_buffer_size: 1 * 1024 * 1024,
+            datagram_send_buffer_size: 1024 * 1024,
         }
     }
 }
