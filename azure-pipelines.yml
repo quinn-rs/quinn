@@ -1,5 +1,5 @@
 stages:
- - template: azure/nightly-stages.yml@templates
+ - template: azure/stages.yml@templates
    parameters:
      benches: true
      minrust: false
