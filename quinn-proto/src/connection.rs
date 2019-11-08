@@ -290,7 +290,9 @@ where
     /// - an incoming packet is handled, or
     /// - the idle timer expires
     pub fn poll(&mut self) -> Option<Event> {
-        for dir in Dir::iter().filter(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
+        if let Some(dir) = Dir::iter()
+            .filter(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
+            .next()
         {
             return Some(Event::StreamOpened { dir });
         }
