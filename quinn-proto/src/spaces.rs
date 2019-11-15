@@ -1,13 +1,15 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::time::Instant;
-use std::{cmp, mem};
+use std::{
+    cmp,
+    collections::{BTreeMap, HashSet, VecDeque},
+    mem,
+    time::Instant,
+};
 
 use bytes::Bytes;
 
-use crate::assembler::Assembler;
-use crate::range_set::RangeSet;
-use crate::shared::IssuedCid;
-use crate::{crypto, frame, StreamId, VarInt};
+use crate::{
+    assembler::Assembler, crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
+};
 
 pub struct PacketSpace<K>
 where

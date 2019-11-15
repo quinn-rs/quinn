@@ -1,8 +1,9 @@
-use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
+    sync::Arc,
+    time::Instant,
+};
 
 use failure::{format_err, Error};
 use futures::{StreamExt, TryFutureExt};
@@ -15,8 +16,7 @@ use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
     body::RecvBody,
-    client::Builder as ClientBuilder,
-    client::Client,
+    client::{Builder as ClientBuilder, Client},
     connection::ConnectionDriver,
     server::{Builder as ServerBuilder, IncomingRequest, Sender},
 };

@@ -1,17 +1,25 @@
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-use std::{fmt, io, str};
+use std::{
+    fmt, io,
+    ops::{Deref, DerefMut},
+    str,
+    sync::Arc,
+};
 
 use ring::{hkdf, hmac};
-use rustls::internal::{msgs::enums::HashAlgorithm, pemfile};
-use rustls::quic::{ClientQuicExt, Secrets, ServerQuicExt};
 pub use rustls::TLSError;
-use rustls::{self, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
+use rustls::{
+    self,
+    internal::{msgs::enums::HashAlgorithm, pemfile},
+    quic::{ClientQuicExt, Secrets, ServerQuicExt},
+    KeyLogFile, NoClientAuth, ProtocolVersion, Session,
+};
 use webpki::DNSNameRef;
 
 use super::ring::{hkdf_expand, Crypto};
-use crate::transport_parameters::TransportParameters;
-use crate::{crypto, ConnectError, Side, TransportError, TransportErrorCode};
+use crate::{
+    crypto, transport_parameters::TransportParameters, ConnectError, Side, TransportError,
+    TransportErrorCode,
+};
 
 /// A rustls TLS session
 pub enum TlsSession {

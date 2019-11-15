@@ -3,24 +3,24 @@ use std::io::Cursor;
 
 use err_derive::Error;
 
-use super::static_::{Error as StaticError, StaticTable};
-use super::vas;
 use super::{
-    DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter, HeaderField,
+    static_::{Error as StaticError, StaticTable},
+    vas, DynamicTable, DynamicTableDecoder, DynamicTableError, DynamicTableInserter, HeaderField,
 };
 
-use super::block::{
-    HeaderBlockField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
-    LiteralWithPostBaseNameRef,
-};
-use super::parse_error::ParseError;
-use super::stream::{
-    Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck, InsertCountIncrement,
-    InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
+use super::{
+    block::{
+        HeaderBlockField, HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+        LiteralWithPostBaseNameRef,
+    },
+    parse_error::ParseError,
+    stream::{
+        Duplicate, DynamicTableSizeUpdate, EncoderInstruction, HeaderAck, InsertCountIncrement,
+        InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
+    },
 };
 
-use super::prefix_int;
-use super::prefix_string;
+use super::{prefix_int, prefix_string};
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {

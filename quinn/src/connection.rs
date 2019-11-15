@@ -1,23 +1,28 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::mem;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fmt, mem,
+    net::SocketAddr,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use bytes::Bytes;
 use err_derive::Error;
-use futures::channel::{mpsc, oneshot};
-use futures::task::{Context, Waker};
-use futures::{Future, FutureExt, Poll, StreamExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    task::{Context, Waker},
+    Future, FutureExt, Poll, StreamExt,
+};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
 use tokio_timer::{delay, Delay};
 use tracing::{info_span, trace};
 
-use crate::broadcast::{self, Broadcast};
-use crate::streams::{RecvStream, SendStream, WriteError};
-use crate::{ConnectionEvent, EndpointEvent, VarInt};
+use crate::{
+    broadcast::{self, Broadcast},
+    streams::{RecvStream, SendStream, WriteError},
+    ConnectionEvent, EndpointEvent, VarInt,
+};
 
 /// In-progress connection attempt future
 ///

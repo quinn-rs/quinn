@@ -1,8 +1,8 @@
-use std::os::unix::io::AsRawFd;
 use std::{
     io,
     mem::{self, MaybeUninit},
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    os::unix::io::AsRawFd,
     ptr,
 };
 

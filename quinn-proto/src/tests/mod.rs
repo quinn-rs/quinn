@@ -1,7 +1,9 @@
-use std::convert::TryInto;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use assert_matches::assert_matches;
 use bytes::Bytes;

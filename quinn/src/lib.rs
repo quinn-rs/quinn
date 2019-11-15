@@ -50,9 +50,10 @@ mod builders;
 mod platform;
 mod udp;
 
-pub use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 pub use proto::{
-    crypto, ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
+    crypto,
+    crypto::rustls::{Certificate, CertificateChain, PrivateKey},
+    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
     Transmit, TransportConfig, VarInt,
 };
 

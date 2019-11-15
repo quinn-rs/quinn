@@ -1,8 +1,10 @@
 use std::mem::size_of;
 
 use bytes::{Buf, BufMut, Bytes};
-use quinn_proto::coding::{BufExt, BufMutExt, Codec, UnexpectedEnd};
-use quinn_proto::VarInt;
+use quinn_proto::{
+    coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
+    VarInt,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum Error {

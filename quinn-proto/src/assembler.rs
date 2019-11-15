@@ -1,5 +1,4 @@
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::{cmp::Ordering, collections::BinaryHeap};
 
 use bytes::Bytes;
 

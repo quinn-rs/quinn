@@ -1,12 +1,14 @@
-use std::ops::{Range, RangeInclusive};
-use std::{fmt, io, mem};
+use std::{
+    fmt, io, mem,
+    ops::{Range, RangeInclusive},
+};
 
 use bytes::{Buf, BufMut, Bytes};
 
-use crate::coding::{self, BufExt, BufMutExt, UnexpectedEnd};
-use crate::range_set::RangeSet;
-use crate::shared::{EcnCodepoint, ResetToken};
 use crate::{
+    coding::{self, BufExt, BufMutExt, UnexpectedEnd},
+    range_set::RangeSet,
+    shared::{EcnCodepoint, ResetToken},
     ConnectionId, Dir, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE,
     RESET_TOKEN_SIZE,
 };

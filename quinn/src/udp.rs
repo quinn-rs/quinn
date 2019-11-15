@@ -1,12 +1,9 @@
-use std::io;
-use std::net::SocketAddr;
+use std::{io, net::SocketAddr};
 
-use futures::task::Context;
-use futures::{ready, Poll};
+use futures::{ready, task::Context, Poll};
 use mio;
 
-use tokio_net::driver::Handle;
-use tokio_net::util::PollEvented;
+use tokio_net::{driver::Handle, util::PollEvented};
 
 use proto::EcnCodepoint;
 
