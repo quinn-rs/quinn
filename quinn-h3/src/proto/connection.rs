@@ -37,7 +37,7 @@ impl Connection {
             local_settings: settings,
             remote_settings: None,
             decoder_table,
-            pending_control: pending_control,
+            pending_control,
             encoder_table: DynamicTable::new(),
             pending_encoder: BytesMut::with_capacity(2048),
             pending_decoder: BytesMut::with_capacity(2048),

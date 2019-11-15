@@ -208,7 +208,7 @@ impl<'a> DynamicTableEncoder<'a> {
                     self.find_name(&field.name),
                 ));
             }
-            Err(e) => Err(e)?,
+            Err(e) => return Err(e),
         };
         self.track_ref(index);
 
