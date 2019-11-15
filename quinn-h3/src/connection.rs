@@ -67,7 +67,7 @@ impl ConnectionDriver {
         self.conn.quic.close(code.into(), &reason.into());
     }
 
-    fn poll_pending_uni(&mut self, cx: &mut Context) {
+    fn poll_pending_uni(&mut self, cx: &mut Context) -> bool {
         let resolved: Vec<(usize, Result<NewUni, Error>)> = self
             .pending_uni
             .iter_mut()
@@ -83,6 +83,8 @@ impl ConnectionDriver {
                 }
             })
             .collect();
+
+        let keep_going = !resolved.is_empty();
 
         for (i, res) in resolved {
             self.pending_uni.remove(i);
@@ -107,21 +109,25 @@ impl ConnectionDriver {
                 },
             }
         }
+
+        keep_going
     }
 
-    fn poll_control(&mut self, cx: &mut Context) {
+    fn poll_control(&mut self, cx: &mut Context) -> bool {
         let mut control = match self.control.as_mut() {
-            None => return,
+            None => return false,
             Some(c) => c,
         };
 
         match Pin::new(&mut control).poll_next(cx) {
             Poll::Ready(None) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed")
+                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed");
+                false
             }
             Poll::Ready(Some(Err(e))) => {
                 let (code, msg) = e.into();
-                self.set_error(code, msg)
+                self.set_error(code, msg);
+                false
             }
             Poll::Ready(Some(Ok(frame))) => {
                 let conn = &mut self.conn.h3;
@@ -135,10 +141,10 @@ impl ConnectionDriver {
                         self.conn.h3.lock().unwrap().inner.leave(StreamId(id));
                     }
                     (true, Side::Server, HttpFrame::CancelPush(_)) => {
-                        println!("CANCEL_PUSH frame ignored")
+                        println!("CANCEL_PUSH frame ignored");
                     }
                     (true, Side::Server, HttpFrame::MaxPushId(_)) => {
-                        println!("MAX_PUSH_ID frame ignored")
+                        println!("MAX_PUSH_ID frame ignored");
                     }
                     (false, Side::Server, HttpFrame::CancelPush(_))
                     | (false, Side::Server, HttpFrame::MaxPushId(_))
@@ -150,8 +156,9 @@ impl ConnectionDriver {
                         "unexpected frame type on control stream",
                     ),
                 }
+                true
             }
-            Poll::Pending => (),
+            Poll::Pending => false,
         }
     }
 }
@@ -160,51 +167,73 @@ impl Future for ConnectionDriver {
     type Output = Result<(), Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if let Poll::Ready(Err(_err)) = Pin::new(&mut self.send_control).poll(cx) {
-            self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control out stream");
-        }
-
-        if let Poll::Ready(Some(recv)) = Pin::new(&mut self.incoming_uni).poll_next(cx)? {
-            self.pending_uni.push_back(Some(RecvUni::new(recv)));
-        }
-
-        self.poll_pending_uni(cx);
-        self.poll_control(cx);
-
-        if let Poll::Ready(Some((mut send, mut recv))) =
-            Pin::new(&mut self.incoming_bi).poll_next(cx)?
-        {
-            match self.side {
-                Side::Client => self.set_error(
-                    ErrorCode::STREAM_CREATION_ERROR,
-                    "client does not accept bidirectional streams",
-                ),
-                Side::Server => {
-                    let mut conn = self.conn.h3.lock().unwrap();
-                    if conn.inner.is_closing() {
-                        send.reset(ErrorCode::REQUEST_REJECTED.into());
-                        let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
-                    } else {
-                        conn.inner.request_initiated(send.id());
-                        conn.requests.push_back((send, recv));
-                        if let Some(t) = conn.requests_task.take() {
-                            t.wake();
-                        }
-                    }
+        loop {
+            let mut keep_going = match Pin::new(&mut self.send_control).poll(cx) {
+                Poll::Pending => false,
+                Poll::Ready(Ok(_)) => true,
+                Poll::Ready(Err(err)) => {
+                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
+                    return Poll::Ready(Err(err));
                 }
+            };
+
+            keep_going |= match Pin::new(&mut self.incoming_uni).poll_next(cx)? {
+                Poll::Pending => false,
+                Poll::Ready(None) => {
+                    return Poll::Ready(Err(Error::Peer("closed incoming uni".into())));
+                }
+                Poll::Ready(Some(recv)) => {
+                    self.pending_uni.push_back(Some(RecvUni::new(recv)));
+                    true
+                }
+            };
+
+            keep_going |= self.poll_pending_uni(cx);
+            self.poll_control(cx);
+
+            keep_going |= match Pin::new(&mut self.incoming_bi).poll_next(cx) {
+                Poll::Pending => false,
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e.into())),
+                Poll::Ready(None) => {
+                    return Poll::Ready(Err(Error::Peer("closed incoming bi".into())));
+                }
+                Poll::Ready(Some(Ok((mut send, mut recv)))) => match self.side {
+                    Side::Client => {
+                        self.set_error(
+                            ErrorCode::STREAM_CREATION_ERROR,
+                            "client does not accept bidirectional streams",
+                        );
+                        false
+                    }
+                    Side::Server => {
+                        let mut conn = self.conn.h3.lock().unwrap();
+                        if conn.inner.is_closing() {
+                            send.reset(ErrorCode::REQUEST_REJECTED.into());
+                            let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
+                        } else {
+                            conn.inner.request_initiated(send.id());
+                            conn.requests.push_back((send, recv));
+                            if let Some(t) = conn.requests_task.take() {
+                                t.wake();
+                            }
+                        }
+                        true
+                    }
+                },
+            };
+
+            let (is_closing, requests_in_flight) = {
+                let conn = &self.conn.h3.lock().unwrap().inner;
+                (conn.is_closing(), conn.requests_in_flight())
+            };
+
+            if is_closing && requests_in_flight == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            if !keep_going {
+                return Poll::Pending;
             }
         }
-
-        let (is_closing, requests_in_flight) = {
-            let conn = &self.conn.h3.lock().unwrap().inner;
-            (conn.is_closing(), conn.requests_in_flight())
-        };
-
-        if is_closing && requests_in_flight == 0 {
-            return Poll::Ready(Ok(()));
-        }
-
-        Poll::Pending
     }
 }
 
