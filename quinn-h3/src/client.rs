@@ -41,7 +41,7 @@ impl Builder {
 
     pub fn endpoint(self, endpoint: Endpoint) -> Client {
         Client {
-            endpoint: endpoint,
+            endpoint,
             settings: self.settings,
         }
     }

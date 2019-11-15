@@ -144,11 +144,8 @@ impl ReadToEnd {
 
     pub fn cancel(mut self) {
         let state = mem::replace(&mut self.state, ReadToEndState::Finished);
-        match state {
-            ReadToEndState::Receiving(recv, _, _) => {
-                recv.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            _ => (),
+        if let ReadToEndState::Receiving(recv, _, _) = state {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
         }
     }
 }

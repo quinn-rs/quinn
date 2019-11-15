@@ -48,7 +48,7 @@ impl Decoder for FrameDecoder {
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.len() == 0 {
+        if src.is_empty() {
             return Ok(None);
         }
 
@@ -88,7 +88,7 @@ impl Decoder for FrameDecoder {
                 self.expected = Some(min);
                 Ok(None)
             }
-            Err(e) => Err(e)?,
+            Err(e) => return Err(e.into()),
             Ok(frame) => {
                 src.advance(pos);
                 self.expected = None;
