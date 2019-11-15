@@ -85,9 +85,11 @@ impl ConnectionDriver {
             .collect();
 
         let keep_going = !resolved.is_empty();
+        let mut removed = 0;
 
         for (i, res) in resolved {
-            self.pending_uni.remove(i);
+            self.pending_uni.remove(i - removed);
+            removed += 1;
             match res {
                 Err(Error::UnknownStream(ty)) => println!("unknown stream type {}", ty),
                 Err(e) => {
