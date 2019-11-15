@@ -3,11 +3,11 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
-use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
-    crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT,
-    RESET_TOKEN_SIZE,
+    coding::{BufExt, BufMutExt, UnexpectedEnd},
+    crypto,
+    shared::{ConnectionId, ResetToken, ServerConfig},
+    Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with

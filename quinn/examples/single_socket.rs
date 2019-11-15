@@ -25,8 +25,10 @@
 //! endpoint.
 
 use futures::{StreamExt, TryFutureExt};
-use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::{
+    error::Error,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
+};
 use tokio::runtime::current_thread::{self, Runtime};
 
 use quinn::Endpoint;

@@ -4,8 +4,10 @@ mod encode;
 
 pub use self::bitwin::BitWindow;
 
-pub use self::decode::{DecodeIter, Error as HuffmanDecodingError, HpackStringDecode};
-pub use self::encode::{Error as HuffmanEncodingError, HpackStringEncode};
+pub use self::{
+    decode::{DecodeIter, Error as HuffmanDecodingError, HpackStringDecode},
+    encode::{Error as HuffmanEncodingError, HpackStringEncode},
+};
 
 use crate::qpack::prefix_int::{self, Error as IntegerError};
 use bytes::{Buf, BufMut};

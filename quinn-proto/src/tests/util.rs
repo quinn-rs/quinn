@@ -1,18 +1,25 @@
-use std::collections::{HashMap, VecDeque};
-use std::io::{self, Write};
-use std::net::{Ipv6Addr, SocketAddr, UdpSocket};
-use std::ops::RangeFrom;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use std::{cmp, env, mem, str};
+use std::{
+    cmp,
+    collections::{HashMap, VecDeque},
+    env,
+    io::{self, Write},
+    mem,
+    net::{Ipv6Addr, SocketAddr, UdpSocket},
+    ops::RangeFrom,
+    str,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use lazy_static::lazy_static;
 use rustls::KeyLogFile;
 use tracing::{info_span, trace};
 
 use super::*;
-use crate::crypto::rustls::{CertificateChain, PrivateKey};
-use crate::timer::TimerKind;
+use crate::{
+    crypto::rustls::{CertificateChain, PrivateKey},
+    timer::TimerKind,
+};
 
 pub struct Pair {
     pub server: TestEndpoint,

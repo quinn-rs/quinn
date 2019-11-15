@@ -12,9 +12,11 @@ use std::str;
 
 use bytes::BytesMut;
 
-use crate::shared::{ConfigError, ConnectionId};
-use crate::transport_parameters::TransportParameters;
-use crate::{ConnectError, Side, TransportError};
+use crate::{
+    shared::{ConfigError, ConnectionId},
+    transport_parameters::TransportParameters,
+    ConnectError, Side, TransportError,
+};
 
 /// Cryptography interface based on *ring*
 #[cfg(feature = "ring")]

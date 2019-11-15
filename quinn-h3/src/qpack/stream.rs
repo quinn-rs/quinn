@@ -1,8 +1,10 @@
 use bytes::{Buf, BufMut};
 
-use super::parse_error::ParseError;
-use super::prefix_int::{self, Error as IntError};
-use super::prefix_string::{self, Error as StringError};
+use super::{
+    parse_error::ParseError,
+    prefix_int::{self, Error as IntError},
+    prefix_string::{self, Error as StringError},
+};
 
 pub enum EncoderInstruction {
     InsertWithNameRef,

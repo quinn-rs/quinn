@@ -1,12 +1,17 @@
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::PathBuf;
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
+};
 use structopt::{self, StructOpt};
 
 use failure::{format_err, Error};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request};
 use url::Url;
 
-use quinn_h3::{self, client::Builder as ClientBuilder, client::Client};
+use quinn_h3::{
+    self,
+    client::{Builder as ClientBuilder, Client},
+};
 
 mod shared;
 use shared::build_certs;

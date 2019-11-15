@@ -3,9 +3,12 @@ use std::{cmp::Ordering, io, ops::Range, str};
 use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
 use err_derive::Error;
 
-use crate::coding::{self, BufExt, BufMutExt};
-use crate::shared::ConnectionId;
-use crate::{crypto, MAX_CID_SIZE, VERSION};
+use crate::{
+    coding::{self, BufExt, BufMutExt},
+    crypto,
+    shared::ConnectionId,
+    MAX_CID_SIZE, VERSION,
+};
 
 // Due to packet number encryption, it is impossible to fully decode a header
 // (which includes a variable-length packet number) without crypto context.
@@ -833,8 +836,10 @@ mod tests {
     #[cfg(feature = "ring")]
     #[test]
     fn header_encoding() {
-        use crate::crypto::{ring::Crypto, Keys};
-        use crate::Side;
+        use crate::{
+            crypto::{ring::Crypto, Keys},
+            Side,
+        };
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client_crypto = Crypto::new_initial(&dcid, Side::Client);

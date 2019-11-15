@@ -1,7 +1,9 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::iter::{IntoIterator, Iterator};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    convert::TryFrom,
+    iter::{IntoIterator, Iterator},
+};
 
 use bytes::Bytes;
 use http::{

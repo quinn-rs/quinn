@@ -1,32 +1,36 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::{cmp, fmt, io, mem};
+use std::{
+    cmp,
+    collections::{BTreeMap, HashSet, VecDeque},
+    fmt, io, mem,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
 
-use crate::coding::BufMutExt;
-use crate::crypto::{self, HeaderKeys, Keys};
-use crate::frame::{Close, Datagram, FrameStruct};
-use crate::packet::{
-    Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
-    SHORT_RESERVED_BITS,
-};
-use crate::range_set::RangeSet;
-use crate::shared::{
-    ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-    EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
-};
-use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
-use crate::streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError};
-use crate::timer::{Timer, TimerKind, TimerTable};
-use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
+    coding::BufMutExt,
+    crypto::{self, HeaderKeys, Keys},
+    frame,
+    frame::{Close, Datagram, FrameStruct},
+    packet::{
+        Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
+        SHORT_RESERVED_BITS,
+    },
+    range_set::RangeSet,
+    shared::{
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
+        EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
+    },
+    spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket},
+    streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError},
+    timer::{Timer, TimerKind, TimerTable},
+    transport_parameters::{self, TransportParameters},
+    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };

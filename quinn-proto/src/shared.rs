@@ -1,15 +1,11 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
-use std::{cmp, fmt};
+use std::{cmp, fmt, net::SocketAddr, sync::Arc, time::Instant};
 
 use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
 use tracing::warn;
 
-use crate::packet::PartialDecode;
-use crate::{crypto, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{crypto, packet::PartialDecode, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Parameters governing the core QUIC state machine
 ///

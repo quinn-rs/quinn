@@ -4,10 +4,14 @@ use bytes::{Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
 
-use crate::proto::frame::{HeadersFrame, HttpFrame};
-use crate::proto::headers::{self, Header};
-use crate::qpack::{self, DecoderError, DynamicTable, EncoderError, HeaderField};
-use crate::Settings;
+use crate::{
+    proto::{
+        frame::{HeadersFrame, HttpFrame},
+        headers::{self, Header},
+    },
+    qpack::{self, DecoderError, DynamicTable, EncoderError, HeaderField},
+    Settings,
+};
 
 pub struct Connection {
     #[allow(dead_code)]

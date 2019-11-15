@@ -1,10 +1,11 @@
-use std::collections::{HashMap, VecDeque};
-use std::fmt;
-use std::iter;
-use std::net::SocketAddr;
-use std::ops::{Index, IndexMut};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt, iter,
+    net::SocketAddr,
+    ops::{Index, IndexMut},
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
+};
 
 use bytes::{BufMut, BytesMut};
 use err_derive::Error;
@@ -12,18 +13,19 @@ use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
 use tracing::{debug, trace, warn};
 
-use crate::coding::BufMutExt;
-use crate::connection::{initial_close, Connection};
-use crate::crypto::{
-    self, ClientConfig as ClientCryptoConfig, HmacKey, Keys, ServerConfig as ServerCryptoConfig,
-};
-use crate::packet::{Header, Packet, PacketDecodeError, PartialDecode};
-use crate::shared::{
-    ClientConfig, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint,
-    EndpointConfig, EndpointEvent, EndpointEventInner, IssuedCid, ResetToken, ServerConfig,
-};
-use crate::transport_parameters::TransportParameters;
 use crate::{
+    coding::BufMutExt,
+    connection::{initial_close, Connection},
+    crypto::{
+        self, ClientConfig as ClientCryptoConfig, HmacKey, Keys, ServerConfig as ServerCryptoConfig,
+    },
+    packet::{Header, Packet, PacketDecodeError, PartialDecode},
+    shared::{
+        ClientConfig, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId,
+        EcnCodepoint, EndpointConfig, EndpointEvent, EndpointEventInner, IssuedCid, ResetToken,
+        ServerConfig,
+    },
+    transport_parameters::TransportParameters,
     Side, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE, MIN_INITIAL_SIZE,
     RESET_TOKEN_SIZE, VERSION,
 };
@@ -698,16 +700,20 @@ where
 }
 
 mod token {
-    use std::io;
-    use std::net::{IpAddr, SocketAddr};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::{
+        io,
+        net::{IpAddr, SocketAddr},
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     use bytes::{Buf, BufMut};
 
-    use crate::coding::{BufExt, BufMutExt};
-    use crate::crypto::HmacKey;
-    use crate::shared::ConnectionId;
-    use crate::MAX_CID_SIZE;
+    use crate::{
+        coding::{BufExt, BufMutExt},
+        crypto::HmacKey,
+        shared::ConnectionId,
+        MAX_CID_SIZE,
+    };
 
     // TODO: Use AEAD to hide token details from clients for better stability guarantees:
     // - ticket consists of (random, aead-encrypted-data)
@@ -847,8 +853,10 @@ mod test {
         use super::*;
         use crate::crypto::HmacKey;
         use ring::hmac;
-        use std::net::Ipv6Addr;
-        use std::time::{Duration, UNIX_EPOCH};
+        use std::{
+            net::Ipv6Addr,
+            time::{Duration, UNIX_EPOCH},
+        };
 
         let mut key = [0; 64];
         rand::thread_rng().fill_bytes(&mut key);

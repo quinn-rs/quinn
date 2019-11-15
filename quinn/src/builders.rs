@@ -1,15 +1,16 @@
-use std::io;
-use std::net::SocketAddr;
-use std::str;
-use std::sync::Arc;
+use std::{io, net::SocketAddr, str, sync::Arc};
 
 use err_derive::Error;
-use proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
-use proto::{ClientConfig, EndpointConfig, ServerConfig};
+use proto::{
+    crypto::rustls::{Certificate, CertificateChain, PrivateKey},
+    ClientConfig, EndpointConfig, ServerConfig,
+};
 use rustls::TLSError;
 
-use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
-use crate::udp::UdpSocket;
+use crate::{
+    endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
+    udp::UdpSocket,
+};
 
 /// A helper for constructing an `Endpoint`.
 ///

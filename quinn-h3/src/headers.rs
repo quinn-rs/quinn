@@ -1,5 +1,4 @@
-use std::pin::Pin;
-use std::task::Context;
+use std::{pin::Pin, task::Context};
 
 use futures::{Future, Poll};
 use quinn::SendStream;

@@ -1,21 +1,27 @@
-use std::collections::{HashMap, VecDeque};
-use std::io;
-use std::net::{SocketAddr, SocketAddrV6};
-use std::pin::Pin;
-use std::str;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::{
+    collections::{HashMap, VecDeque},
+    io,
+    net::{SocketAddr, SocketAddrV6},
+    pin::Pin,
+    str,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use bytes::Bytes;
-use futures::channel::mpsc;
-use futures::task::{Context, Waker};
-use futures::{Future, FutureExt, Poll, StreamExt};
+use futures::{
+    channel::mpsc,
+    task::{Context, Waker},
+    Future, FutureExt, Poll, StreamExt,
+};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
-use crate::builders::EndpointBuilder;
-use crate::connection::{Connecting, ConnectionDriver, ConnectionRef};
-use crate::udp::UdpSocket;
-use crate::{ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND};
+use crate::{
+    builders::EndpointBuilder,
+    connection::{Connecting, ConnectionDriver, ConnectionRef},
+    udp::UdpSocket,
+    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
+};
 
 /// A QUIC endpoint.
 ///

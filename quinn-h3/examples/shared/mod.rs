@@ -1,5 +1,4 @@
-use std::fmt;
-use std::{fs, io, path::PathBuf};
+use std::{fmt, fs, io, path::PathBuf};
 
 use failure::{bail, Error, Fail, ResultExt};
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};

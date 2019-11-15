@@ -1,10 +1,13 @@
 #[macro_use]
 extern crate failure;
 
-use std::net::SocketAddr;
-use std::path::{self, Path, PathBuf};
-use std::sync::Arc;
-use std::{ascii, fs, io, str};
+use std::{
+    ascii, fs, io,
+    net::SocketAddr,
+    path::{self, Path, PathBuf},
+    str,
+    sync::Arc,
+};
 
 use failure::{Error, ResultExt};
 use futures::{StreamExt, TryFutureExt};

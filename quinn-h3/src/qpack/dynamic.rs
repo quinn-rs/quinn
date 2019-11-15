@@ -1,12 +1,11 @@
-use std::borrow::Cow;
-use std::collections::btree_map::Entry as BTEntry;
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::{
+    borrow::Cow,
+    collections::{btree_map::Entry as BTEntry, hash_map::Entry, BTreeMap, HashMap, VecDeque},
+};
 
 use err_derive::Error;
 
-use super::field::HeaderField;
-use super::static_::StaticTable;
+use super::{field::HeaderField, static_::StaticTable};
 use crate::qpack::vas::{self, VirtualAddressSpace};
 
 /**
@@ -603,8 +602,7 @@ impl From<vas::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::qpack::static_::StaticTable;
-    use crate::qpack::tests::helpers::build_table;
+    use crate::qpack::{static_::StaticTable, tests::helpers::build_table};
 
     const STREAM_ID: u64 = 0x4;
 

@@ -1,7 +1,4 @@
-use std::mem;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::Context;
+use std::{mem, net::SocketAddr, pin::Pin, task::Context};
 
 use futures::{ready, stream::Stream, Future, Poll};
 use http::{request, HeaderMap, Request, Response};

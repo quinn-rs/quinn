@@ -15,10 +15,7 @@
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(dead_code))]
 
-use std::fmt;
-use std::net::SocketAddr;
-use std::ops;
-use std::time::Duration;
+use std::{fmt, net::SocketAddr, ops, time::Duration};
 
 mod assembler;
 #[doc(hidden)]
@@ -65,9 +62,11 @@ pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportE
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
-    pub use crate::connection::Connection;
-    pub use crate::endpoint::Endpoint;
-    pub use crate::shared::{ClientConfig, ServerConfig};
+    pub use crate::{
+        connection::Connection,
+        endpoint::Endpoint,
+        shared::{ClientConfig, ServerConfig},
+    };
 }
 
 #[cfg(feature = "rustls")]
