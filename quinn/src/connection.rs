@@ -256,9 +256,9 @@ impl Connection {
     ///
     /// Will not wait unless the link is congested. The first call on a connection after
     /// `send_datagram_ready` completes successfully is guaranteed not to wait.
-    pub fn send_datagram(&self, data: Bytes) -> SendDatagram {
+    pub fn send_datagram(&self, data: Bytes) -> SendDatagram<'_> {
         SendDatagram {
-            conn: self.0.clone(),
+            conn: &self.0,
             data,
             state: broadcast::State::default(),
         }
@@ -268,9 +268,9 @@ impl Connection {
     ///
     /// Useful when you don't want to materialize a datagram until the last possible moment before
     /// sending. Has no impact unless the link is congested.
-    pub fn send_datagram_ready(&self) -> SendDatagramReady {
+    pub fn send_datagram_ready(&self) -> SendDatagramReady<'_> {
         SendDatagramReady {
-            conn: self.0.clone(),
+            conn: &self.0,
             state: broadcast::State::default(),
         }
     }
@@ -447,12 +447,12 @@ impl Future for OpenBi {
     }
 }
 
-pub struct SendDatagramReady {
-    conn: ConnectionRef,
+pub struct SendDatagramReady<'a> {
+    conn: &'a ConnectionRef,
     state: broadcast::State,
 }
 
-impl Future for SendDatagramReady {
+impl<'a> Future for SendDatagramReady<'a> {
     type Output = Result<(), SendDatagramError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -468,13 +468,13 @@ impl Future for SendDatagramReady {
     }
 }
 
-pub struct SendDatagram {
-    conn: ConnectionRef,
+pub struct SendDatagram<'a> {
+    conn: &'a ConnectionRef,
     data: Bytes,
     state: broadcast::State,
 }
 
-impl Future for SendDatagram {
+impl<'a> Future for SendDatagram<'a> {
     type Output = Result<(), SendDatagramError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
