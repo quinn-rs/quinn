@@ -5,7 +5,7 @@ use mio;
 
 use tokio_net::{driver::Handle, util::PollEvented};
 
-use proto::EcnCodepoint;
+use proto::{EcnCodepoint, Transmit};
 
 use crate::platform::UdpExt;
 
@@ -29,12 +29,10 @@ impl UdpSocket {
     pub fn poll_send(
         &self,
         cx: &mut Context,
-        remote: &SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        msg: &[u8],
+        transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
         ready!(self.io.poll_write_ready(cx))?;
-        match self.io.get_ref().send_ext(remote, ecn, msg) {
+        match self.io.get_ref().send_ext(transmits) {
             Ok(n) => Poll::Ready(Ok(n)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.io.clear_write_ready(cx)?;
@@ -64,3 +62,8 @@ impl UdpSocket {
         self.io.get_ref().local_addr()
     }
 }
+
+/// Number of UDP packets to send at a time
+///
+/// Chosen somewhat arbitrarily; might benefit from additional tuning.
+pub const BATCH_SIZE: usize = 32;

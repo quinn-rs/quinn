@@ -7,7 +7,7 @@ use std::{
 };
 
 use mio::net::UdpSocket;
-use proto::EcnCodepoint;
+use proto::{EcnCodepoint, Transmit};
 
 use super::cmsg;
 
@@ -71,51 +71,29 @@ impl super::UdpExt for UdpSocket {
         Ok(())
     }
 
-    fn send_ext(
-        &self,
-        remote: &SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        msg: &[u8],
-    ) -> io::Result<usize> {
-        let (name, namelen) = match *remote {
-            SocketAddr::V4(ref addr) => {
-                (addr as *const _ as _, mem::size_of::<libc::sockaddr_in>())
-            }
-            SocketAddr::V6(ref addr) => {
-                (addr as *const _ as _, mem::size_of::<libc::sockaddr_in6>())
-            }
-        };
-        let ecn = ecn.map_or(0, |x| x as libc::c_int);
-        let mut iov = libc::iovec {
-            iov_base: msg.as_ptr() as *const _ as *mut _,
-            iov_len: msg.len(),
-        };
-        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
-        hdr.msg_name = name;
-        hdr.msg_namelen = namelen as _;
-        hdr.msg_iov = &mut iov;
-        hdr.msg_iovlen = 1;
-        hdr.msg_control = ptr::null_mut();
-        hdr.msg_controllen = 0;
-        hdr.msg_flags = 0;
-        // We may never fully initialize this, and it's only written/read via `ptr::write`/syscalls,
-        // so no `assume_init` call can or should be made.
-        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
-        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-        hdr.msg_controllen = CMSG_LEN as _;
-        let is_ipv4 = match remote {
-            SocketAddr::V4(_) => true,
-            SocketAddr::V6(ref addr) => addr.ip().segments().starts_with(&[0, 0, 0, 0, 0, 0xffff]),
-        };
-        let mut encoder = unsafe { cmsg::Encoder::new(&mut hdr) };
-        if is_ipv4 {
-            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
-        } else {
-            encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+    #[cfg(not(target_os = "macos"))]
+    fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
+        use crate::udp::BATCH_SIZE;
+        let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
+        let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
+        let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
+        for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
+            prepare_msg(
+                transmit,
+                &mut msgs[i].msg_hdr,
+                &mut iovecs[i],
+                &mut cmsgs[i],
+            );
         }
-        encoder.finish();
         loop {
-            let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
+            let n = unsafe {
+                libc::sendmmsg(
+                    self.as_raw_fd(),
+                    msgs.as_mut_ptr(),
+                    transmits.len().min(crate::udp::BATCH_SIZE) as _,
+                    0,
+                )
+            };
             if n == -1 {
                 let e = io::Error::last_os_error();
                 if e.kind() == io::ErrorKind::Interrupted {
@@ -125,6 +103,34 @@ impl super::UdpExt for UdpSocket {
             }
             return Ok(n as usize);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
+        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+        let mut iov: libc::iovec = unsafe { mem::zeroed() };
+        let mut ctrl = cmsg::Aligned(MaybeUninit::uninit());
+        let mut sent = 0;
+        while sent < transmits.len() {
+            prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
+            let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                if sent != 0 {
+                    // We need to report that some packets were sent in this case, so we rely on
+                    // errors being either harmlessly transient (in the case of WouldBlock) or
+                    // recurring on the next call.
+                    return Ok(sent);
+                }
+                return Err(e);
+            } else {
+                sent += 1;
+            }
+        }
+        Ok(sent)
     }
 
     fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
@@ -189,3 +195,33 @@ impl super::UdpExt for UdpSocket {
 }
 
 const CMSG_LEN: usize = 24;
+
+fn prepare_msg(
+    transmit: &Transmit,
+    hdr: &mut libc::msghdr,
+    iov: &mut libc::iovec,
+    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
+) {
+    iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
+    iov.iov_len = transmit.contents.len();
+
+    let (name, namelen) = match transmit.destination {
+        SocketAddr::V4(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in>()),
+        SocketAddr::V6(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in6>()),
+    };
+    hdr.msg_name = name;
+    hdr.msg_namelen = namelen as _;
+    hdr.msg_iov = iov;
+    hdr.msg_iovlen = 1;
+
+    hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+    hdr.msg_controllen = CMSG_LEN as _;
+    let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
+    let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
+    if transmit.destination.is_ipv4() {
+        encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+    } else {
+        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+    }
+    encoder.finish();
+}
