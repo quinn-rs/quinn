@@ -12,6 +12,8 @@ use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 use crate::udp::UdpSocket;
 
 /// A helper for constructing an `Endpoint`.
+///
+/// See `ClientConfigBuilder` for details on trust defaults.
 #[derive(Clone, Debug)]
 pub struct EndpointBuilder {
     reactor: Option<tokio_net::driver::Handle>,
@@ -171,12 +173,20 @@ impl Default for ServerConfigBuilder {
 }
 
 /// Helper for creating new outgoing connections.
+///
+/// If the `native-certs` and `ct-logs` features are enabled, `ClientConfigBuilder::default()` will
+/// construct a configuration that trusts the host OS certificate store and uses built-in
+/// certificate transparency logs respectively. These features are both enabled by default.
 pub struct ClientConfigBuilder {
     config: ClientConfig,
 }
 
 impl ClientConfigBuilder {
     /// Construct a builder using `config` as the initial state.
+    ///
+    /// If you want to trust the usual certificate authorities trusted by the system, use
+    /// `ClientConfigBuilder::default()` with the `native-certs` and `ct-logs` features enabled
+    /// instead.
     pub fn new(config: ClientConfig) -> Self {
         Self { config }
     }
@@ -224,10 +234,19 @@ impl Default for ClientConfigBuilder {
     fn default() -> Self {
         let mut x = ClientConfig::default();
         let crypto = Arc::make_mut(&mut x.crypto);
-        crypto
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        crypto.ct_logs = Some(&ct_logs::LOGS);
+        #[cfg(feature = "native-certs")]
+        match rustls_native_certs::load_native_certs() {
+            Ok(x) => {
+                crypto.root_store = x;
+            }
+            Err(e) => {
+                tracing::warn!("couldn't load default trust roots: {}", e);
+            }
+        }
+        #[cfg(feature = "ct-logs")]
+        {
+            crypto.ct_logs = Some(&ct_logs::LOGS);
+        }
         Self::new(x)
     }
 }
