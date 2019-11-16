@@ -3,7 +3,7 @@ use std::{mem, net::SocketAddr, pin::Pin, task::Context};
 use futures::{ready, stream::Stream, Future, Poll};
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, OpenBi};
-use quinn_proto::StreamId;
+use quinn_proto::{Side, StreamId};
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},
@@ -96,10 +96,16 @@ impl Future for Connecting {
             bi_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
-        let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
+        let conn_ref = ConnectionRef::new(
+            connection,
+            Side::Client,
+            uni_streams,
+            bi_streams,
+            self.settings.clone(),
+        )?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new_client(conn_ref.clone(), uni_streams, bi_streams),
+            ConnectionDriver(conn_ref.clone()),
             Connection(conn_ref),
         )))
     }

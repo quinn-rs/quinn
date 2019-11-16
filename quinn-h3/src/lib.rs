@@ -104,17 +104,18 @@ fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
 /// TLS ALPN value for H3
 pub const ALPN: &[u8] = b"h3-20";
 
-impl From<frame::Error> for (ErrorCode, String) {
+impl From<frame::Error> for (ErrorCode, String, Error) {
     fn from(err: frame::Error) -> Self {
         match err {
             frame::Error::Io(e) => (
                 ErrorCode::GENERAL_PROTOCOL_ERROR,
                 format!("IO Error: {:?}", e),
+                Error::Io(e),
             ),
-            frame::Error::Proto(e) => (
-                ErrorCode::FRAME_ERROR,
-                format!("Parse frame error: {:?}", e),
-            ),
+            frame::Error::Proto(e) => {
+                let msg = format!("Parse frame error: {:?}", e);
+                (ErrorCode::FRAME_ERROR, msg.clone(), Error::Peer(msg))
+            }
         }
     }
 }
