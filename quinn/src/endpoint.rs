@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
 use std::pin::Pin;
@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bytes::Bytes;
-use fnv::FnvHashMap;
 use futures::channel::mpsc;
 use futures::task::{Context, Waker};
 use futures::{Future, FutureExt, Poll, StreamExt};
@@ -179,7 +178,7 @@ pub(crate) struct EndpointInner {
     incoming_live: bool,
     driver: Option<Waker>,
     ipv6: bool,
-    connections: FnvHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
+    connections: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
     // Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
@@ -393,7 +392,7 @@ impl EndpointRef {
             incoming_live: true,
             incoming_reader: None,
             driver: None,
-            connections: FnvHashMap::default(),
+            connections: HashMap::new(),
             ref_count: 0,
             close: None,
             driver_lost: false,

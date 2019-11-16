@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
@@ -7,7 +8,6 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use err_derive::Error;
-use fnv::FnvHashMap;
 use futures::channel::{mpsc, oneshot};
 use futures::task::{Context, Waker};
 use futures::{Future, FutureExt, Poll, StreamExt};
@@ -533,14 +533,14 @@ impl ConnectionRef {
             timers: Default::default(),
             conn_events,
             endpoint_events,
-            blocked_writers: FnvHashMap::default(),
-            blocked_readers: FnvHashMap::default(),
+            blocked_writers: HashMap::new(),
+            blocked_readers: HashMap::new(),
             uni_opening: Broadcast::new(),
             bi_opening: Broadcast::new(),
             incoming_uni_streams_reader: None,
             incoming_bi_streams_reader: None,
             datagram_reader: None,
-            finishing: FnvHashMap::default(),
+            finishing: HashMap::new(),
             error: None,
             ref_count: 0,
             send_datagram_blocked: Broadcast::new(),
@@ -588,14 +588,14 @@ pub struct ConnectionInner {
     timers: proto::TimerTable<Option<Delay>>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
-    pub(crate) blocked_writers: FnvHashMap<StreamId, Waker>,
-    pub(crate) blocked_readers: FnvHashMap<StreamId, Waker>,
+    pub(crate) blocked_writers: HashMap<StreamId, Waker>,
+    pub(crate) blocked_readers: HashMap<StreamId, Waker>,
     uni_opening: Broadcast,
     bi_opening: Broadcast,
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
-    pub(crate) finishing: FnvHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
+    pub(crate) finishing: HashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
