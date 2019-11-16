@@ -3,7 +3,7 @@ use std::{mem, net::SocketAddr, pin::Pin, task::Context};
 use futures::{ready, Future, Poll, Stream};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
-use quinn_proto::StreamId;
+use quinn_proto::{Side, StreamId};
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},
@@ -89,10 +89,16 @@ impl Future for Connecting {
             uni_streams,
             ..
         } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
-        let conn_ref = ConnectionRef::new(connection, self.settings.clone())?;
+        let conn_ref = ConnectionRef::new(
+            connection,
+            Side::Server,
+            uni_streams,
+            bi_streams,
+            self.settings.clone(),
+        )?;
         Poll::Ready(Ok((
             driver,
-            ConnectionDriver::new_server(conn_ref.clone(), uni_streams, bi_streams),
+            ConnectionDriver(conn_ref.clone()),
             IncomingRequest(conn_ref),
         )))
     }

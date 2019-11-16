@@ -1,3 +1,4 @@
+use crate::streams::SendUni;
 use quinn_proto::StreamId;
 use std::{
     collections::VecDeque,
@@ -16,60 +17,128 @@ use crate::{
     proto::{
         connection::{Connection, Error as ProtoError},
         frame::HttpFrame,
-        ErrorCode,
+        ErrorCode, StreamType,
     },
-    streams::{NewUni, RecvUni, SendControlStream},
+    streams::{NewUni, RecvUni},
     Error, Settings,
 };
 
-pub struct ConnectionDriver {
-    conn: ConnectionRef,
+pub struct ConnectionDriver(pub(crate) ConnectionRef);
+
+impl Future for ConnectionDriver {
+    type Output = Result<(), Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let mut conn = self.0.h3.lock().unwrap();
+
+        conn.poll_incoming_uni(cx)?;
+        conn.poll_send(cx)?;
+        conn.poll_recv_control(cx)?;
+        conn.poll_incoming_bi(cx)?;
+
+        if conn.inner.is_closing() && conn.inner.requests_in_flight() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        Poll::Pending
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ConnectionRef {
+    pub h3: Arc<Mutex<ConnectionInner>>,
+    pub quic: quinn::Connection,
+}
+
+impl ConnectionRef {
+    pub fn new(
+        quic: quinn::Connection,
+        side: Side,
+        uni_streams: IncomingUniStreams,
+        bi_streams: IncomingBiStreams,
+        settings: Settings,
+    ) -> Result<Self, ProtoError> {
+        Ok(Self {
+            quic: quic.clone(),
+            h3: Arc::new(Mutex::new(ConnectionInner {
+                side,
+                quic: quic.clone(),
+                incoming_bi: bi_streams,
+                incoming_uni: uni_streams,
+                pending_uni: VecDeque::with_capacity(3),
+                inner: Connection::with_settings(settings)?,
+                requests: VecDeque::with_capacity(16),
+                requests_task: None,
+                recv_control: None,
+                send_control: SendUni::new(StreamType::CONTROL, quic),
+            })),
+        })
+    }
+}
+
+pub(crate) struct ConnectionInner {
+    pub inner: Connection,
+    pub requests: VecDeque<(SendStream, RecvStream)>,
+    pub requests_task: Option<Waker>,
     side: Side,
+    quic: quinn::Connection,
     incoming_bi: IncomingBiStreams,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
-    control: Option<FrameStream>,
-    send_control: SendControlStream,
+    recv_control: Option<FrameStream>,
+    send_control: SendUni,
 }
 
-impl ConnectionDriver {
-    pub(crate) fn new_client(
-        conn: ConnectionRef,
-        incoming_uni: IncomingUniStreams,
-        incoming_bi: IncomingBiStreams,
-    ) -> Self {
-        Self {
-            pending_uni: VecDeque::with_capacity(10),
-            send_control: SendControlStream::new(conn.clone()),
-            side: Side::Client,
-            control: None,
-            conn,
-            incoming_uni,
-            incoming_bi,
+impl ConnectionInner {
+    fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), Error> {
+        loop {
+            match Pin::new(&mut self.incoming_bi).poll_next(cx) {
+                Poll::Pending => return Ok(()),
+                Poll::Ready(Some(Err(e))) => return Err(e.into()),
+                Poll::Ready(None) => {
+                    return Err(Error::Peer("closed incoming bi".into()));
+                }
+                Poll::Ready(Some(Ok((mut send, mut recv)))) => match self.side {
+                    Side::Client => {
+                        self.set_error(
+                            ErrorCode::STREAM_CREATION_ERROR,
+                            "client does not accept bidirectional streams",
+                        );
+                        return Err(Error::Peer(
+                            "client does not accept bidirectional streams".into(),
+                        ));
+                    }
+                    Side::Server => {
+                        if self.inner.is_closing() {
+                            send.reset(ErrorCode::REQUEST_REJECTED.into());
+                            let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
+                        } else {
+                            self.inner.request_initiated(send.id());
+                            self.requests.push_back((send, recv));
+                            if let Some(t) = self.requests_task.take() {
+                                t.wake();
+                            }
+                        }
+                    }
+                },
+            }
         }
     }
 
-    pub(crate) fn new_server(
-        conn: ConnectionRef,
-        incoming_uni: IncomingUniStreams,
-        incoming_bi: IncomingBiStreams,
-    ) -> Self {
-        Self {
-            pending_uni: VecDeque::with_capacity(10),
-            send_control: SendControlStream::new(conn.clone()),
-            side: Side::Server,
-            control: None,
-            conn,
-            incoming_uni,
-            incoming_bi,
+    fn poll_incoming_uni(&mut self, cx: &mut Context) -> Result<(), Error> {
+        loop {
+            match Pin::new(&mut self.incoming_uni).poll_next(cx)? {
+                Poll::Pending => break,
+                Poll::Ready(None) => return Err(Error::Peer("closed incoming uni".into())),
+                Poll::Ready(Some(recv)) => self.pending_uni.push_back(Some(RecvUni::new(recv))),
+            }
         }
+
+        self.poll_resolve_uni(cx);
+
+        Ok(())
     }
 
-    fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
-        self.conn.quic.close(code.into(), &reason.into());
-    }
-
-    fn poll_pending_uni(&mut self, cx: &mut Context) -> bool {
+    fn poll_resolve_uni(&mut self, cx: &mut Context) {
         let resolved: Vec<(usize, Result<NewUni, Error>)> = self
             .pending_uni
             .iter_mut()
@@ -86,7 +155,6 @@ impl ConnectionDriver {
             })
             .collect();
 
-        let keep_going = !resolved.is_empty();
         let mut removed = 0;
 
         for (i, res) in resolved {
@@ -98,8 +166,8 @@ impl ConnectionDriver {
                     self.set_error(ErrorCode::STREAM_CREATION_ERROR, format!("{:?}", e));
                 }
                 Ok(n) => match n {
-                    NewUni::Control(stream) => match self.control {
-                        None => self.control = Some(stream),
+                    NewUni::Control(stream) => match self.recv_control {
+                        None => self.recv_control = Some(stream),
                         Some(_) => {
                             self.set_error(
                                 ErrorCode::STREAM_CREATION_ERROR,
@@ -113,155 +181,76 @@ impl ConnectionDriver {
                 },
             }
         }
-
-        keep_going
     }
 
-    fn poll_control(&mut self, cx: &mut Context) -> bool {
-        let mut control = match self.control.as_mut() {
-            None => return false,
+    fn poll_recv_control(&mut self, cx: &mut Context) -> Result<(), Error> {
+        let mut control = match self.recv_control.as_mut() {
+            None => return Ok(()),
             Some(c) => c,
         };
 
-        match Pin::new(&mut control).poll_next(cx) {
-            Poll::Ready(None) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed");
-                false
-            }
-            Poll::Ready(Some(Err(e))) => {
-                let (code, msg) = e.into();
-                self.set_error(code, msg);
-                false
-            }
-            Poll::Ready(Some(Ok(frame))) => {
-                let conn = &mut self.conn.h3;
-                let has_remote_settings = conn.lock().unwrap().inner.remote_settings().is_some();
-
-                match (has_remote_settings, self.side, frame) {
-                    (_, _, HttpFrame::Settings(s)) => {
-                        conn.lock().unwrap().inner.set_remote_settings(s);
-                    }
-                    (true, Side::Client, HttpFrame::Goaway(id)) => {
-                        self.conn.h3.lock().unwrap().inner.leave(StreamId(id));
-                    }
-                    (true, Side::Server, HttpFrame::CancelPush(_)) => {
-                        println!("CANCEL_PUSH frame ignored");
-                    }
-                    (true, Side::Server, HttpFrame::MaxPushId(_)) => {
-                        println!("MAX_PUSH_ID frame ignored");
-                    }
-                    (false, Side::Server, HttpFrame::CancelPush(_))
-                    | (false, Side::Server, HttpFrame::MaxPushId(_))
-                    | (false, Side::Client, HttpFrame::Goaway(_)) => {
-                        self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings")
-                    }
-                    _ => self.set_error(
-                        ErrorCode::FRAME_UNEXPECTED,
-                        "unexpected frame type on control stream",
-                    ),
-                }
-                true
-            }
-            Poll::Pending => false,
-        }
-    }
-}
-
-impl Future for ConnectionDriver {
-    type Output = Result<(), Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            let mut keep_going = match Pin::new(&mut self.send_control).poll(cx) {
-                Poll::Pending => false,
-                Poll::Ready(Ok(_)) => true,
-                Poll::Ready(Err(err)) => {
-                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
-                    return Poll::Ready(Err(err));
-                }
-            };
-
-            keep_going |= match Pin::new(&mut self.incoming_uni).poll_next(cx)? {
-                Poll::Pending => false,
+            match Pin::new(&mut control).poll_next(cx) {
+                Poll::Pending => return Ok(()),
                 Poll::Ready(None) => {
-                    return Poll::Ready(Err(Error::Peer("closed incoming uni".into())));
+                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed");
+                    return Err(Error::Peer("control in closed".into()));
                 }
-                Poll::Ready(Some(recv)) => {
-                    self.pending_uni.push_back(Some(RecvUni::new(recv)));
-                    true
+                Poll::Ready(Some(Err(e))) => {
+                    let (code, msg, err) = e.into();
+                    self.set_error(code, msg.clone());
+                    return Err(err);
                 }
-            };
-
-            keep_going |= self.poll_pending_uni(cx);
-            self.poll_control(cx);
-
-            keep_going |= match Pin::new(&mut self.incoming_bi).poll_next(cx) {
-                Poll::Pending => false,
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e.into())),
-                Poll::Ready(None) => {
-                    return Poll::Ready(Err(Error::Peer("closed incoming bi".into())));
-                }
-                Poll::Ready(Some(Ok((mut send, mut recv)))) => match self.side {
-                    Side::Client => {
-                        self.set_error(
-                            ErrorCode::STREAM_CREATION_ERROR,
-                            "client does not accept bidirectional streams",
-                        );
-                        false
-                    }
-                    Side::Server => {
-                        let mut conn = self.conn.h3.lock().unwrap();
-                        if conn.inner.is_closing() {
-                            send.reset(ErrorCode::REQUEST_REJECTED.into());
-                            let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
-                        } else {
-                            conn.inner.request_initiated(send.id());
-                            conn.requests.push_back((send, recv));
-                            if let Some(t) = conn.requests_task.take() {
-                                t.wake();
-                            }
+                Poll::Ready(Some(Ok(frame))) => {
+                    match (self.inner.remote_settings().is_some(), self.side, frame) {
+                        (_, _, HttpFrame::Settings(s)) => {
+                            self.inner.set_remote_settings(s);
                         }
-                        true
+                        (true, Side::Client, HttpFrame::Goaway(id)) => {
+                            self.inner.leave(StreamId(id));
+                        }
+                        (true, Side::Server, HttpFrame::CancelPush(_)) => {
+                            println!("CANCEL_PUSH frame ignored");
+                        }
+                        (true, Side::Server, HttpFrame::MaxPushId(_)) => {
+                            println!("MAX_PUSH_ID frame ignored");
+                        }
+                        (false, Side::Server, HttpFrame::CancelPush(_))
+                        | (false, Side::Server, HttpFrame::MaxPushId(_))
+                        | (false, Side::Client, HttpFrame::Goaway(_)) => {
+                            self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings");
+                            return Err(Error::Peer("missing settings".into()));
+                        }
+                        f => {
+                            self.set_error(
+                                ErrorCode::FRAME_UNEXPECTED,
+                                "unexpected frame type on control stream",
+                            );
+                            return Err(Error::Peer(format!(
+                                "frame {:?} unexpected on control stream",
+                                f
+                            )));
+                        }
                     }
-                },
-            };
-
-            let (is_closing, requests_in_flight) = {
-                let conn = &self.conn.h3.lock().unwrap().inner;
-                (conn.is_closing(), conn.requests_in_flight())
-            };
-
-            if is_closing && requests_in_flight == 0 {
-                return Poll::Ready(Ok(()));
-            }
-            if !keep_going {
-                return Poll::Pending;
+                }
             }
         }
     }
-}
 
-pub(crate) struct ConnectionInner {
-    pub inner: Connection,
-    pub requests: VecDeque<(SendStream, RecvStream)>,
-    pub requests_task: Option<Waker>,
-}
+    fn poll_send(&mut self, cx: &mut Context) -> Result<(), Error> {
+        if let Some(data) = self.inner.pending_control() {
+            self.send_control.push(data);
+        }
+        match Pin::new(&mut self.send_control).poll(cx) {
+            Poll::Ready(Err(err)) => {
+                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
+                return Err(err);
+            }
+            _ => return Ok(()),
+        }
+    }
 
-#[derive(Clone)]
-pub(crate) struct ConnectionRef {
-    pub h3: Arc<Mutex<ConnectionInner>>,
-    pub quic: quinn::Connection,
-}
-
-impl ConnectionRef {
-    pub fn new(quic: quinn::Connection, settings: Settings) -> Result<Self, ProtoError> {
-        Ok(Self {
-            h3: Arc::new(Mutex::new(ConnectionInner {
-                inner: Connection::with_settings(settings)?,
-                requests: VecDeque::with_capacity(16),
-                requests_task: None,
-            })),
-            quic,
-        })
+    fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
+        self.quic.close(code.into(), &reason.into());
     }
 }
