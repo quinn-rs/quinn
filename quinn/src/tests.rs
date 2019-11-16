@@ -131,15 +131,13 @@ fn close_endpoint() {
 
 #[test]
 fn local_addr() {
-    let port = 56987;
-    let (_, ep, _) = Endpoint::builder()
-        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
-        .expect("Could not bind to localhost");
+    let socket = UdpSocket::bind("[::1]:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    let (_, ep, _) = Endpoint::builder().with_socket(socket).unwrap();
     assert_eq!(
-        port,
+        addr,
         ep.local_addr()
             .expect("Could not obtain our local endpoint")
-            .port()
     );
 }
 
