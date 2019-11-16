@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, io, mem, pin::Pin, task::Context};
+use std::{collections::VecDeque, convert::TryFrom, io, mem, pin::Pin, task::Context};
 
 use bytes::Bytes;
 use futures::{
@@ -9,7 +9,6 @@ use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;
 
 use crate::{
-    connection::ConnectionRef,
     frame::{FrameDecoder, FrameStream},
     proto::{ErrorCode, StreamType},
     Error,
@@ -83,56 +82,74 @@ impl Future for RecvUni {
 
 pub struct PushStream(FrameStream);
 
-pub struct SendControlStream {
-    conn: ConnectionRef,
-    state: SendControlStreamState,
-    send: Option<SendStream>,
+pub struct SendUni {
+    ty: StreamType,
+    state: SendUniState,
+    data: VecDeque<Bytes>,
 }
 
-impl SendControlStream {
-    pub(super) fn new(conn: ConnectionRef) -> Self {
+impl SendUni {
+    pub(super) fn new(ty: StreamType, quic: quinn::Connection) -> Self {
         Self {
-            state: SendControlStreamState::Opening(conn.quic.open_uni()),
-            send: None,
-            conn,
+            ty,
+            state: SendUniState::New(quic),
+            data: VecDeque::with_capacity(2),
         }
     }
 }
 
-enum SendControlStreamState {
+enum SendUniState {
+    New(quinn::Connection),
     Opening(OpenUni),
-    Idle,
+    Idle(SendStream),
     Sending(SendStream, Bytes),
+    Transitive,
 }
 
-impl Future for SendControlStream {
+impl SendUni {
+    pub fn push(&mut self, data: Bytes) {
+        self.data.push_back(data);
+    }
+}
+
+/// Send all buffers from self.data, return `Poll::Ready(Ok(()))` when there is nothing more to be done
+impl Future for SendUni {
     type Output = Result<(), Error>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let is_empty = self.data.is_empty();
         loop {
             match self.state {
-                SendControlStreamState::Opening(ref mut o) => {
-                    let send = ready!(Pin::new(o).poll(cx))?;
-                    self.state =
-                        SendControlStreamState::Sending(send, StreamType::CONTROL.encoded());
-                }
-                SendControlStreamState::Idle => {
-                    let pending = self.conn.h3.lock().unwrap().inner.pending_control();
-                    if let Some(data) = pending {
-                        self.state =
-                            SendControlStreamState::Sending(self.send.take().unwrap(), data);
+                SendUniState::New(ref mut c) => {
+                    if is_empty {
+                        return Poll::Ready(Ok(()));
                     }
-                    return Poll::Pending;
+                    self.state = SendUniState::Opening(c.open_uni());
                 }
-                SendControlStreamState::Sending(ref mut send, ref mut data) => {
-                    let wrote = ready!(Pin::new(send).poll_write(cx, &data))?;
+                SendUniState::Opening(ref mut o) => {
+                    let send = ready!(Pin::new(o).poll(cx))?;
+                    self.state = SendUniState::Sending(send, self.ty.encoded());
+                }
+                SendUniState::Idle(_) => match self.data.pop_front() {
+                    Some(d) => match mem::replace(&mut self.state, SendUniState::Transitive) {
+                        SendUniState::Idle(s) => self.state = SendUniState::Sending(s, d),
+                        _ => unreachable!(),
+                    },
+                    None => return Poll::Ready(Ok(())),
+                },
+                SendUniState::Sending(ref mut send, ref mut data) => {
+                    let wrote = ready!(Pin::new(send).poll_write(cx, data))?;
                     data.advance(wrote);
                     if data.is_empty() {
-                        match mem::replace(&mut self.state, SendControlStreamState::Idle) {
-                            SendControlStreamState::Sending(send, _) => self.send = Some(send),
+                        self.state = match mem::replace(&mut self.state, SendUniState::Transitive) {
+                            SendUniState::Sending(s, _) => match self.data.pop_front() {
+                                Some(d) => SendUniState::Sending(s, d),
+                                None => SendUniState::Idle(s),
+                            },
                             _ => unreachable!(),
-                        }
+                        };
                     }
                 }
+                _ => panic!("SendUni state machine fault"),
             }
         }
     }
