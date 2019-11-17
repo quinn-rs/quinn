@@ -17,10 +17,7 @@ use crate::{
     crypto::{self, HeaderKeys, Keys},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    packet::{
-        Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
-        SHORT_RESERVED_BITS,
-    },
+    packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
     range_set::RangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
@@ -2795,11 +2792,7 @@ where
             }
         }
 
-        let reserved = match packet.header {
-            Header::Short { .. } => SHORT_RESERVED_BITS,
-            _ => LONG_RESERVED_BITS,
-        };
-        if packet.header_data[0] & reserved != 0 {
+        if !packet.reserved_bits_valid() {
             return Err(Some(TransportError::PROTOCOL_VIOLATION(
                 "reserved bits set",
             )));

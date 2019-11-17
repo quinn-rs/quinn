@@ -488,6 +488,11 @@ where
             return None;
         };
 
+        if !packet.reserved_bits_valid() {
+            debug!("dropping connection attempt with invalid reserved bits");
+            return None;
+        }
+
         // Local CID used for stateless packets
         let temp_loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
