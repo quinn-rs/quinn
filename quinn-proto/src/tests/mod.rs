@@ -1277,3 +1277,27 @@ fn datagram_unsupported() {
         Ok(_) => panic!("unexpected success"),
     }
 }
+
+#[test]
+fn large_initial() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let mut cfg = client_config();
+    let way_too_many_protocols = (0..1000u32).map(|x| x.to_be_bytes()).collect::<Vec<_>>();
+    let refs = way_too_many_protocols
+        .iter()
+        .map(|x| &x[..])
+        .collect::<Vec<_>>();
+    cfg.crypto.set_protocols(&refs);
+    let client_ch = pair.begin_connect(cfg);
+    pair.drive();
+    let server_ch = pair.server.assert_accept();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected { .. })
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Connected { .. })
+    );
+}
