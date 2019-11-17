@@ -499,7 +499,7 @@ where
         };
 
         // Local CID used for stateless packets
-        let temp_loc_cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
+        let temp_loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
         if self.incoming_handshakes == server_config.accept_buffer as usize
