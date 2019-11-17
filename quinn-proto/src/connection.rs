@@ -1895,9 +1895,12 @@ where
                         self.update_rem_cid(new);
                     }
                 }
-                Frame::NewToken { .. } => {
+                Frame::NewToken { token } => {
                     if self.side.is_server() {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
+                    }
+                    if token.is_empty() {
+                        return Err(TransportError::FRAME_ENCODING_ERROR("empty token"));
                     }
                     trace!("got new token");
                     // TODO: Cache, or perhaps forward to user?
