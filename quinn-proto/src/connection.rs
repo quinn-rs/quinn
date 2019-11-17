@@ -2186,7 +2186,7 @@ where
             let mut padded = if pad_space == Some(space_id)
                 && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
             {
-                // Initial-only packets MUST be padded
+                // Initial-bearing packets MUST be padded
                 buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
                 true
             } else {
