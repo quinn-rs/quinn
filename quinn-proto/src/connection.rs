@@ -1538,12 +1538,14 @@ where
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
             let _guard = span.as_ref().map(|x| x.enter());
+            // Check for ack-eliciting frames
             match frame {
-                Frame::Ack(_) | Frame::Padding => {}
+                Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
                 _ => {
                     self.space_mut(packet.header.space()).permit_ack_only = true;
                 }
             }
+            // Process frames
             match frame {
                 Frame::Padding => {}
                 Frame::Crypto(frame) => {
@@ -1599,12 +1601,14 @@ where
                     _ => {}
                 }
             }
+            // Check for ack-eliciting frames
             match frame {
-                Frame::Ack(_) | Frame::Padding => {}
+                Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
                 _ => {
                     self.space_mut(SpaceId::Data).permit_ack_only = true;
                 }
             }
+            // Check whether this could be a probing packet
             match frame {
                 Frame::Padding
                 | Frame::PathChallenge(_)
