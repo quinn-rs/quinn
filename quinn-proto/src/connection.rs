@@ -936,7 +936,7 @@ where
             false,
             false,
         );
-        self.handle_connected_inner(now, remote, Some(packet_number), packet)?;
+        self.process_decrypted_packet(now, remote, Some(packet_number), packet)?;
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
@@ -1256,7 +1256,7 @@ where
                             packet.header.is_1rtt(),
                         );
                     }
-                    self.handle_connected_inner(now, remote, number, packet)
+                    self.process_decrypted_packet(now, remote, number, packet)
                 }
             }
         };
@@ -1301,7 +1301,7 @@ where
         }
     }
 
-    fn handle_connected_inner(
+    fn process_decrypted_packet(
         &mut self,
         now: Instant,
         remote: SocketAddr,
