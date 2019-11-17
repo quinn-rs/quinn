@@ -151,6 +151,9 @@ impl super::UdpExt for UdpSocket {
                 }
                 return Err(e);
             }
+            if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+                continue;
+            }
             break n;
         };
         let name = unsafe { name.assume_init() };
