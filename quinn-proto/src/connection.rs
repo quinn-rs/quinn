@@ -2074,11 +2074,11 @@ where
         };
 
         for space_id in spaces {
-            let mut ack_only = self.space(space_id).pending.is_empty();
+            let mut ack_eliciting = !self.space(space_id).pending.is_empty();
             if space_id == SpaceId::Data {
-                ack_only &= self.path_response.is_none();
+                ack_eliciting |= self.path_response.is_some();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if !ack_only && self.loss_probes == 0 && self.congestion_blocked() {
+                if ack_eliciting && self.loss_probes == 0 && self.congestion_blocked() {
                     continue;
                 }
             }
@@ -2227,12 +2227,12 @@ where
                     SentPacket {
                         acks,
                         time_sent: now,
-                        size: if padded || !ack_only {
+                        size: if padded || ack_eliciting {
                             buf.len() as u16
                         } else {
                             0
                         },
-                        ack_eliciting: !ack_only,
+                        ack_eliciting,
                         retransmits: sent,
                     },
                 );
