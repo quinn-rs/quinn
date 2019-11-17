@@ -2076,7 +2076,7 @@ where
         for space_id in spaces {
             let mut ack_eliciting = !self.space(space_id).pending.is_empty();
             if space_id == SpaceId::Data {
-                ack_eliciting |= self.path_response.is_some();
+                ack_eliciting |= self.can_send_1rtt();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.loss_probes == 0 && self.congestion_blocked() {
                     continue;
