@@ -412,8 +412,8 @@ impl EndpointEvent {
 pub(crate) enum EndpointEventInner {
     /// The connection has been drained
     Drained,
-    /// A stateless reset token has been issued for the connection
-    ResetToken(ResetToken),
+    /// The reset token and/or address eligible for generating resets has been updated
+    ResetToken(SocketAddr, ResetToken),
     /// The connection needs connection identifiers
     NeedIdentifiers(u64),
     /// Stop routing connection ID for this sequence number to the connection
@@ -511,6 +511,7 @@ impl EcnCodepoint {
 /// Stateless reset token
 ///
 /// Used for an endpoint to securely communicate that it has lost state for a connection.
+// FIXME: `Eq` must be constant-time!
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
 

@@ -1445,7 +1445,10 @@ where
                             }
                             if let Some(token) = params.stateless_reset_token {
                                 self.endpoint_events
-                                    .push_back(EndpointEventInner::ResetToken(token));
+                                    .push_back(EndpointEventInner::ResetToken(
+                                        self.path.remote,
+                                        token,
+                                    ));
                             }
                             self.validate_params(&params)?;
                             self.set_params(params);
@@ -2014,7 +2017,10 @@ where
         self.rem_cid = new.id;
         self.rem_cid_seq = new.sequence;
         self.endpoint_events
-            .push_back(EndpointEventInner::ResetToken(new.reset_token));
+            .push_back(EndpointEventInner::ResetToken(
+                self.path.remote,
+                new.reset_token,
+            ));
         self.params.stateless_reset_token = Some(new.reset_token);
         // Reduce linkability
         self.spin = false;
