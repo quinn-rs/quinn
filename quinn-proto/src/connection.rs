@@ -1321,11 +1321,16 @@ where
                                 TransportError::PROTOCOL_VIOLATION("client sent Retry").into()
                             );
                         }
-                        if self.orig_rem_cid.is_some() || orig_dst_cid != self.rem_cid {
+                        if self.orig_rem_cid.is_some()
+                            || orig_dst_cid != self.rem_cid
+                            || rem_cid == self.rem_cid
+                        {
                             // A client MUST accept and process at most one Retry packet for each
                             // connection attempt, and clients MUST discard Retry packets that
                             // contain an Original Destination Connection ID field that does not
-                            // match the Destination Connection ID from its Initial packet.
+                            // match the Destination Connection ID from its Initial packet, or that
+                            // contains a Source Connection ID field that is identical to the
+                            // Destination Connection ID field of its first Initial packet.
                             return Ok(());
                         }
                         trace!("retrying with CID {}", rem_cid);
