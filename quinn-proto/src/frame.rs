@@ -597,8 +597,11 @@ impl Iter {
             Type::NEW_CONNECTION_ID => {
                 let sequence = self.bytes.get_var()?;
                 let retire_prior_to = self.bytes.get_var()?;
+                if retire_prior_to > sequence {
+                    return Err(IterErr::Malformed);
+                }
                 let length = self.bytes.get::<u8>()? as usize;
-                if length > MAX_CID_SIZE {
+                if length > MAX_CID_SIZE || length == 0 {
                     return Err(IterErr::Malformed);
                 }
                 if length > self.bytes.remaining() {
