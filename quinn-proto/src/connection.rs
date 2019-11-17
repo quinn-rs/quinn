@@ -909,7 +909,11 @@ where
             .push((stream_id, error_code));
     }
 
-    pub(crate) fn handle_initial(
+    /// Handle the already-decrypted first packet from the client
+    ///
+    /// Decrypting the first packet in the `Endpoint` allows stateless packet handling to be more
+    /// efficient.
+    pub(crate) fn handle_first_packet(
         &mut self,
         now: Instant,
         remote: SocketAddr,
@@ -917,8 +921,8 @@ where
         packet_number: u64,
         packet: Packet,
         remaining: Option<BytesMut>,
-    ) -> Result<(), TransportError> {
-        let span = trace_span!("recv initial");
+    ) -> Result<(), ConnectionError> {
+        let span = trace_span!("first recv");
         let _guard = span.enter();
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
@@ -932,32 +936,7 @@ where
             false,
             false,
         );
-        self.process_early_payload(now, packet)?;
-        if self.space(SpaceId::Initial).crypto_stream.offset() == 0 {
-            debug!("dropping Initial with no CRYPTO data");
-            return Ok(());
-        }
-        if self.state.is_closed() {
-            return Ok(());
-        }
-        let params = self
-            .tls
-            .transport_parameters()?
-            .ok_or_else(|| TransportError {
-                code: TransportErrorCode::crypto(0x6d),
-                frame: None,
-                reason: "transport parameters missing".into(),
-            })?;
-        self.validate_params(&params)?;
-        self.set_params(params);
-        if params.active_connection_id_limit != 0 {
-            self.endpoint_events
-                .push_back(EndpointEventInner::NeedIdentifiers(
-                    params.active_connection_id_limit,
-                ));
-        }
-        self.write_tls();
-        self.init_0rtt();
+        self.handle_connected_inner(now, remote, Some(packet_number), packet)?;
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
@@ -1480,7 +1459,33 @@ where
                             );
                             return Ok(());
                         }
+
+                        let starting_space = self.highest_space;
                         self.process_early_payload(now, packet)?;
+
+                        if self.side.is_server()
+                            && starting_space == SpaceId::Initial
+                            && self.highest_space != SpaceId::Initial
+                        {
+                            let params =
+                                self.tls
+                                    .transport_parameters()?
+                                    .ok_or_else(|| TransportError {
+                                        code: TransportErrorCode::crypto(0x6d),
+                                        frame: None,
+                                        reason: "transport parameters missing".into(),
+                                    })?;
+                            self.validate_params(&params)?;
+                            self.set_params(params);
+                            if params.active_connection_id_limit != 0 {
+                                self.endpoint_events.push_back(
+                                    EndpointEventInner::NeedIdentifiers(
+                                        params.active_connection_id_limit,
+                                    ),
+                                );
+                            }
+                            self.init_0rtt();
+                        }
                         Ok(())
                     }
                     Header::Long {
@@ -1572,6 +1577,7 @@ where
                 }
             }
         }
+
         self.write_tls();
         Ok(())
     }
