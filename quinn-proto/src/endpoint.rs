@@ -255,37 +255,28 @@ where
         }
 
         if first_decode.has_long_header() {
-            return if first_decode.is_initial() {
-                if datagram_len < MIN_INITIAL_SIZE {
-                    debug!("ignoring short initial for connection {}", dst_cid);
-                    return None;
-                }
-
-                let crypto = S::Keys::new_initial(&dst_cid, Side::Server);
-                let header_crypto = crypto.header_keys();
-                match first_decode.finish(Some(&header_crypto)) {
-                    Ok(packet) => self
-                        .handle_initial(
-                            now,
-                            remote,
-                            ecn,
-                            packet,
-                            remaining,
-                            &crypto,
-                            &header_crypto,
-                        )
-                        .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
-                    Err(e) => {
-                        trace!("unable to decode packet: {}", e);
-                        None
-                    }
-                }
-            } else {
+            if !first_decode.is_initial() {
                 debug!(
                     "ignoring non-initial packet for unknown connection {}",
                     dst_cid
                 );
-                None
+                return None;
+            }
+            if datagram_len < MIN_INITIAL_SIZE {
+                debug!("ignoring short initial for connection {}", dst_cid);
+                return None;
+            }
+
+            let crypto = S::Keys::new_initial(&dst_cid, Side::Server);
+            let header_crypto = crypto.header_keys();
+            return match first_decode.finish(Some(&header_crypto)) {
+                Ok(packet) => self
+                    .handle_initial(now, remote, ecn, packet, remaining, &crypto, &header_crypto)
+                    .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
+                Err(e) => {
+                    trace!("unable to decode initial packet: {}", e);
+                    None
+                }
             };
         }
 
