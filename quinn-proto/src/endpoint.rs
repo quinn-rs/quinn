@@ -49,7 +49,7 @@ where
     ///
     /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
     /// recipient, if any.
-    connection_reset_tokens: HashMap<ResetToken, ConnectionHandle>,
+    connection_reset_tokens: ResetTokenTable,
     connections: Slab<ConnectionMeta>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig<S>>>,
@@ -80,7 +80,7 @@ where
             connection_ids_initial: HashMap::new(),
             connection_ids: HashMap::new(),
             connection_remotes: HashMap::new(),
-            connection_reset_tokens: HashMap::new(),
+            connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
             incoming_handshakes: 0,
             reject_new_connections: false,
@@ -121,11 +121,11 @@ where
                     );
                 }
             }
-            ResetToken(token) => {
-                if let Some(old) = self.connections[ch].reset_token.replace(token) {
-                    self.connection_reset_tokens.remove(&old).unwrap();
+            ResetToken(remote, token) => {
+                if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
+                    self.connection_reset_tokens.remove(old.0, old.1);
                 }
-                if self.connection_reset_tokens.insert(token, ch).is_some() {
+                if self.connection_reset_tokens.insert(remote, token, ch) {
                     warn!("duplicate reset token");
                 }
             }
@@ -145,8 +145,8 @@ where
                     self.connection_ids.remove(&cid);
                 }
                 self.connection_remotes.remove(&conn.initial_remote);
-                if let Some(token) = conn.reset_token {
-                    self.connection_reset_tokens.remove(&token);
+                if let Some((remote, token)) = conn.reset_token {
+                    self.connection_reset_tokens.remove(remote, token);
                 }
             }
         }
@@ -223,12 +223,11 @@ where
             })
             .or_else(|| {
                 let data = first_decode.data();
-                if data.len() >= RESET_TOKEN_SIZE {
-                    self.connection_reset_tokens
-                        .get(&data[data.len() - RESET_TOKEN_SIZE..])
-                } else {
-                    None
+                if data.len() < RESET_TOKEN_SIZE {
+                    return None;
                 }
+                self.connection_reset_tokens
+                    .get(remote, &data[data.len() - RESET_TOKEN_SIZE..])
             })
             .cloned()
         };
@@ -643,7 +642,7 @@ where
         let x = self.connections.len();
         debug_assert_eq!(x, self.connection_ids_initial.len());
         // Not all connections have known reset tokens
-        debug_assert!(x >= self.connection_reset_tokens.len());
+        debug_assert!(x >= self.connection_reset_tokens.0.len());
         // Not all connections have unique remotes, and 0-length CIDs might not be in use.
         debug_assert!(x >= self.connection_remotes.len());
         x
@@ -698,8 +697,9 @@ pub(crate) struct ConnectionMeta {
     /// Only needed to support connections with zero-length CIDs, which cannot migrate, so we don't
     /// bother keeping it up to date.
     initial_remote: SocketAddr,
-    /// Reset token provided by the peer for the CID we're currently sending to
-    reset_token: Option<ResetToken>,
+    /// Reset token provided by the peer for the CID we're currently sending to, and the address
+    /// being sent to
+    reset_token: Option<(SocketAddr, ResetToken)>,
 }
 
 fn reset_token_for<H>(key: &H, id: &ConnectionId) -> ResetToken
@@ -862,6 +862,36 @@ pub enum ConnectError {
     /// The transport configuration was invalid
     #[error(display = "transport configuration error: {}", _0)]
     Config(#[source] ConfigError),
+}
+
+#[derive(Default, Debug)]
+struct ResetTokenTable(HashMap<SocketAddr, HashMap<ResetToken, ConnectionHandle>>);
+
+impl ResetTokenTable {
+    fn insert(&mut self, remote: SocketAddr, token: ResetToken, ch: ConnectionHandle) -> bool {
+        self.0
+            .entry(remote)
+            .or_default()
+            .insert(token, ch)
+            .is_some()
+    }
+
+    fn remove(&mut self, remote: SocketAddr, token: ResetToken) {
+        use std::collections::hash_map::Entry;
+        match self.0.entry(remote) {
+            Entry::Vacant(_) => {}
+            Entry::Occupied(mut e) => {
+                e.get_mut().remove(&token);
+                if e.get().is_empty() {
+                    e.remove_entry();
+                }
+            }
+        }
+    }
+
+    fn get(&self, remote: SocketAddr, token: &[u8]) -> Option<&ConnectionHandle> {
+        self.0.get(&remote).and_then(|x| x.get(token))
+    }
 }
 
 #[cfg(test)]
