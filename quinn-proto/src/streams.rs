@@ -313,6 +313,12 @@ impl Recv {
         receive_window: u64,
     ) -> Result<u64, TransportError> {
         let end = frame.offset + frame.data.len() as u64;
+        if end >= 2u64.pow(62) {
+            return Err(TransportError::FRAME_ENCODING_ERROR(
+                "maximum stream offset too large",
+            ));
+        }
+
         if let Some(final_offset) = self.final_offset() {
             if end > final_offset || (frame.fin && end != final_offset) {
                 debug!(end, final_offset, "final offset error");
