@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use futures::channel::mpsc;
-use futures::task::{Context, Waker};
-use futures::{Future, FutureExt, Poll, StreamExt};
+use futures::task::{Context, Poll, Waker};
+use futures::{Future, FutureExt, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::builders::EndpointBuilder;

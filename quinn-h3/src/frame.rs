@@ -1,10 +1,10 @@
 use std::{io, mem, pin::Pin, task::Context};
 
 use bytes::{Bytes, BytesMut};
-use futures::{io::AsyncWrite, ready, Future, Poll};
+use futures::{io::AsyncWrite, ready, task::Poll, Future};
 use quinn::{RecvStream, SendStream, VarInt};
-use tokio_codec::{Decoder, FramedRead};
-use tokio_io::AsyncRead;
+use tokio::codec::{Decoder, FramedRead};
+use tokio::io::AsyncRead;
 
 use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
 use crate::{proto::ErrorCode, streams::Reset};

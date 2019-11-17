@@ -10,14 +10,13 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
     stream::Stream,
-    task::Context,
-    Poll,
+    task::{Context, Poll},
 };
 use http::HeaderMap;
 use quinn::SendStream;
 use quinn_proto::StreamId;
 use std::future::Future;
-use tokio_io;
+use tokio::stream::Stream as _;
 
 use crate::{
     connection::ConnectionRef,
@@ -430,7 +429,7 @@ impl AsyncRead for BodyReader {
     }
 }
 
-impl tokio_io::AsyncRead for BodyReader {
+impl tokio::io::AsyncRead for BodyReader {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -593,7 +592,7 @@ impl AsyncWrite for BodyWriter {
     }
 }
 
-impl tokio_io::AsyncWrite for BodyWriter {
+impl tokio::io::AsyncWrite for BodyWriter {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,

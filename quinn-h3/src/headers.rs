@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::task::Context;
 
-use futures::{Future, Poll};
+use futures::{task::Poll, Future};
 use quinn::SendStream;
 use quinn_proto::StreamId;
 

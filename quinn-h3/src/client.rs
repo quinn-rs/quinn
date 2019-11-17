@@ -3,10 +3,11 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::Context;
 
-use futures::{ready, stream::Stream, Future, Poll};
+use futures::{ready, task::Poll, Future};
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, OpenBi};
 use quinn_proto::StreamId;
+use tokio::stream::Stream;
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},

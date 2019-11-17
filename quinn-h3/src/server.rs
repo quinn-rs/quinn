@@ -3,10 +3,11 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::Context;
 
-use futures::{ready, Future, Poll, Stream};
+use futures::{ready, task::Poll, Future, Stream};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;
+use tokio::stream::Stream as _;
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},

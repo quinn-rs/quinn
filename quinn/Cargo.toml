@@ -28,15 +28,15 @@ azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" 
 bytes = "0.4.7"
 ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2"
-futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
+futures = "0.3.1"
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
 rustls = { version = "0.16", features = ["quic"] }
 tracing = "0.1.10"
-tokio-net = { version = "0.2.0-alpha.5", default-features = false }
-tokio-timer = "0.3.0-alpha.5"
-tokio-io = "0.2.0-alpha.5"
+tokio-net = { version = "0.2.0-alpha.6", default-features = false }
+tokio-timer = "0.3.0-alpha.6"
+tokio-io = "0.2.0-alpha.6"
 webpki = "0.21"
 rustls-native-certs = { version = "0.1.0", optional = true }
 
@@ -50,7 +50,7 @@ rcgen = "0.7"
 tracing-subscriber = "0.1.5"
 tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 structopt = "0.3.0"
-tokio = "0.2.0-alpha.5"
+tokio = { version = "0.2.0-alpha.6", default-features = false, features = ["codec", "rt-full"] }
 unwrap = "1.2.1"
 url = "2"
 

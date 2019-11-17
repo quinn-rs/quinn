@@ -3,7 +3,9 @@ use std::{convert::TryFrom, io, mem, pin::Pin, task::Context};
 use bytes::Bytes;
 use futures::{
     io::{AsyncRead, AsyncWrite},
-    ready, Future, Poll,
+    ready,
+    task::Poll,
+    Future,
 };
 use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;

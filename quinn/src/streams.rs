@@ -6,8 +6,8 @@ use bytes::Bytes;
 use err_derive::Error;
 use futures::channel::oneshot;
 use futures::io::{AsyncRead, AsyncWrite};
-use futures::task::Context;
-use futures::{ready, Future, FutureExt, Poll};
+use futures::task::{Context, Poll};
+use futures::{ready, Future, FutureExt};
 use proto::{ConnectionError, StreamId};
 
 use crate::connection::ConnectionRef;

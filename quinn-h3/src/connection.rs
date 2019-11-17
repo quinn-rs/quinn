@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use bytes::Bytes;
-use futures::{Future, Poll, Stream};
+use futures::{task::Poll, Future, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::Side;
+use tokio::stream::Stream as _;
 
 use crate::{
     frame::FrameStream,
