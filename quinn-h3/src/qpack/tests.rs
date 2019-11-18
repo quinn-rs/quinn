@@ -11,14 +11,14 @@ pub mod helpers {
 
     pub fn build_table() -> DynamicTable {
         let mut table = DynamicTable::new();
-        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_size(TABLE_SIZE).unwrap();
         table.set_max_blocked(100).unwrap();
         table
     }
 
     pub fn build_table_with_size(n_field: usize) -> DynamicTable {
         let mut table = DynamicTable::new();
-        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_size(TABLE_SIZE).unwrap();
         table.set_max_blocked(100).unwrap();
 
         let mut inserter = table.inserter();
@@ -69,10 +69,10 @@ const TABLE_SIZE: usize = 4096;
 #[test]
 fn blocked_header() {
     let mut enc_table = DynamicTable::new();
-    enc_table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+    enc_table.set_max_size(TABLE_SIZE).unwrap();
     enc_table.set_max_blocked(100).unwrap();
     let mut dec_table = DynamicTable::new();
-    dec_table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+    dec_table.set_max_size(TABLE_SIZE).unwrap();
     dec_table.set_max_blocked(100).unwrap();
 
     let mut block_buf = vec![];
@@ -108,8 +108,8 @@ fn codec_table_size_0() {
         HeaderField::new("foo", "bar"),
     ];
 
-    dec_table.inserter().set_max_mem_size(0).unwrap();
-    enc_table.inserter().set_max_mem_size(0).unwrap();
+    dec_table.set_max_size(0).unwrap();
+    enc_table.set_max_size(0).unwrap();
 
     encode(
         &mut enc_table.encoder(42),
@@ -143,8 +143,8 @@ fn codec_table_full() {
         HeaderField::new("foo1", "bar1"),
     ];
 
-    dec_table.inserter().set_max_mem_size(42).unwrap();
-    enc_table.inserter().set_max_mem_size(42).unwrap();
+    dec_table.set_max_size(42).unwrap();
+    enc_table.set_max_size(42).unwrap();
 
     encode(
         &mut enc_table.encoder(42),

@@ -60,7 +60,7 @@ where
         required_ref,
         table.base(),
         table.total_inserted(),
-        table.max_mem_size(),
+        table.max_size(),
     )
     .encode(block);
     block.put(block_buf);
@@ -190,7 +190,7 @@ pub fn set_dynamic_table_size<W: BufMut>(
     encoder: &mut W,
     size: usize,
 ) -> Result<(), Error> {
-    table.inserter().set_max_mem_size(size)?;
+    table.set_max_size(size)?;
     DynamicTableSizeUpdate(size).encode(encoder);
     Ok(())
 }
@@ -230,7 +230,7 @@ mod tests {
         check: &dyn Fn(&mut Cursor<&mut Vec<u8>>, &mut Cursor<&mut Vec<u8>>),
     ) {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(TABLE_SIZE).unwrap();
+        table.set_max_size(TABLE_SIZE).unwrap();
         check_encode_field_table(&mut table, init_fields, field, 1, check);
     }
 
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn encode_literal() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(0).unwrap();
+        table.set_max_size(0).unwrap();
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(&mut table, &[], &[field], 1, &|mut b, e| {
             assert_eq!(Literal::decode(&mut b), Ok(Literal::new("foo", "bar")));
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn encode_literal_nameref() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(63).unwrap();
+        table.set_max_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
 
         check_encode_field_table(&mut table, &[], &[field.clone()], 1, &|mut b, _| {
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn encode_literal_postbase_nameref() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(63).unwrap();
+        table.set_max_size(63).unwrap();
         let field = HeaderField::new("foo", "bar");
         check_encode_field_table(
             &mut table,

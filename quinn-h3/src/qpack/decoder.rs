@@ -122,7 +122,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
         match instruction {
             Instruction::Insert(field) => table.put_field(field)?,
             Instruction::TableSizeUpdate(size) => {
-                table.set_max_mem_size(size)?;
+                table.set_max_size(size)?;
             }
         }
     }

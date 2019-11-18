@@ -48,8 +48,7 @@ impl Connection {
         let mut decoder_table = DynamicTable::new();
         decoder_table.set_max_blocked(settings.qpack_blocked_streams as usize)?;
         decoder_table
-            .inserter()
-            .set_max_mem_size(settings.qpack_max_table_capacity as usize)?;
+            .set_max_size(settings.qpack_max_table_capacity as usize)?;
 
         let mut pending_control = BytesMut::with_capacity(128);
         settings.encode(&mut pending_control);
@@ -252,8 +251,7 @@ mod tests {
 
         let mut conn = Connection::default();
         conn.encoder_table
-            .inserter()
-            .set_max_mem_size(2048)
+            .set_max_size(2048)
             .expect("set table size");
         conn.encoder_table
             .set_max_blocked(12usize)
@@ -309,8 +307,7 @@ mod tests {
         let mut client = Connection::default();
         client
             .encoder_table
-            .inserter()
-            .set_max_mem_size(2048)
+            .set_max_size(2048)
             .expect("set table size");
         client
             .encoder_table
