@@ -414,8 +414,8 @@ fn update_secrets(hash_alg: HashAlgorithm, client: &hkdf::Prk, server: &hkdf::Pr
     };
 
     Secrets {
-        client: hkdf_expand(client, b"traffic upd", hkdf_alg),
-        server: hkdf_expand(server, b"traffic upd", hkdf_alg),
+        client: hkdf_expand(client, b"quic ku", hkdf_alg),
+        server: hkdf_expand(server, b"quic ku", hkdf_alg),
     }
 }
 
