@@ -467,11 +467,13 @@ where
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
     fn on_packet_acked(&mut self, info: SentPacket) {
+        let was_congestion_blocked = self.congestion_blocked();
         self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
-            // Do not increase congestion window in recovery period or while migrating.
-            if !self.in_recovery(info.time_sent) && !self.migrating() {
+            // Do not increase congestion window in recovery period or while migrating, or if we
+            // weren't sending at max rate.
+            if !self.in_recovery(info.time_sent) && !self.migrating() && was_congestion_blocked {
                 if self.path.congestion_window < self.path.ssthresh {
                     // Slow start.
                     self.path.congestion_window += u64::from(info.size);
