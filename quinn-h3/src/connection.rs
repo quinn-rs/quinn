@@ -15,7 +15,7 @@ use quinn_proto::Side;
 use crate::{
     frame::FrameStream,
     proto::{
-        connection::{Connection, Error as ProtoError},
+        connection::{Connection, Error as ProtoError, PendingStreamType},
         frame::HttpFrame,
         ErrorCode, StreamType,
     },
@@ -69,7 +69,11 @@ impl ConnectionRef {
                 requests: VecDeque::with_capacity(16),
                 requests_task: None,
                 recv_control: None,
-                send_control: SendUni::new(StreamType::CONTROL, quic),
+                send_unis: [
+                    SendUni::new(StreamType::CONTROL, quic.clone()),
+                    SendUni::new(StreamType::ENCODER, quic.clone()),
+                    SendUni::new(StreamType::DECODER, quic),
+                ],
             })),
         })
     }
@@ -85,7 +89,7 @@ pub(crate) struct ConnectionInner {
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     recv_control: Option<FrameStream>,
-    send_control: SendUni,
+    send_unis: [SendUni; 3],
 }
 
 impl ConnectionInner {
@@ -238,16 +242,22 @@ impl ConnectionInner {
     }
 
     fn poll_send(&mut self, cx: &mut Context) -> Result<(), Error> {
-        if let Some(data) = self.inner.pending_control() {
-            self.send_control.push(data);
-        }
-        match Pin::new(&mut self.send_control).poll(cx) {
-            Poll::Ready(Err(err)) => {
-                self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
-                return Err(err);
+        for ty in PendingStreamType::iter() {
+            if let Some(data) = self.inner.pending_stream_take(ty) {
+                self.send_unis[ty as usize].push(data);
             }
-            _ => return Ok(()),
+            match Pin::new(&mut self.send_unis[ty as usize]).poll(cx) {
+                Poll::Ready(Err(err)) => {
+                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
+                    return Err(err);
+                }
+                Poll::Ready(Ok(_)) => {
+                    self.inner.pending_stream_release(ty);
+                }
+                Poll::Pending => return Ok(()),
+            }
         }
+        Ok(())
     }
 
     fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
