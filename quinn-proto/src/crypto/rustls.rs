@@ -2,13 +2,14 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{fmt, io, str};
 
-use ring::hmac;
-use rustls::quic::{ClientQuicExt, ServerQuicExt};
+use ring::{hkdf, hmac};
+use rustls::internal::{msgs::enums::HashAlgorithm, pemfile};
+use rustls::quic::{ClientQuicExt, Secrets, ServerQuicExt};
 pub use rustls::TLSError;
-use rustls::{self, internal::pemfile, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
+use rustls::{self, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
 use webpki::DNSNameRef;
 
-use super::ring::Crypto;
+use super::ring::{hkdf_expand, Crypto};
 use crate::transport_parameters::TransportParameters;
 use crate::{crypto, ConnectError, Side, TransportError, TransportErrorCode};
 
@@ -116,7 +117,11 @@ impl crypto::Session for TlsSession {
             Side::Server => (&keys.remote_secret, &keys.local_secret),
         };
 
-        let secrets = self.update_secrets(client_secret, server_secret);
+        let hash_alg = self
+            .get_negotiated_ciphersuite()
+            .expect("should not get secrets without cipher suite")
+            .hash;
+        let secrets = update_secrets(hash_alg, client_secret, server_secret);
         let suite = self.get_negotiated_ciphersuite().unwrap();
         Crypto::new(
             self.side(),
@@ -389,6 +394,20 @@ impl PrivateKey {
         Ok(Self {
             inner: rustls::PrivateKey(der.to_vec()),
         })
+    }
+}
+
+fn update_secrets(hash_alg: HashAlgorithm, client: &hkdf::Prk, server: &hkdf::Prk) -> Secrets {
+    let hkdf_alg = match hash_alg {
+        HashAlgorithm::SHA256 => hkdf::HKDF_SHA256,
+        HashAlgorithm::SHA384 => hkdf::HKDF_SHA384,
+        HashAlgorithm::SHA512 => hkdf::HKDF_SHA512,
+        _ => panic!("unknown HKDF algorithm for hash algorithm {:?}", hash_alg),
+    };
+
+    Secrets {
+        client: hkdf_expand(client, b"traffic upd", hkdf_alg),
+        server: hkdf_expand(server, b"traffic upd", hkdf_alg),
     }
 }
 
