@@ -166,22 +166,6 @@ impl Connection {
     }
 }
 
-impl Default for Connection {
-    fn default() -> Self {
-        Self {
-            local_settings: Settings::default(),
-            remote_settings: None,
-            decoder_table: DynamicTable::new(),
-            encoder_table: DynamicTable::new(),
-            pending_encoder: BytesMut::with_capacity(2048),
-            pending_decoder: BytesMut::with_capacity(2048),
-            pending_control: BytesMut::with_capacity(128),
-            requests_in_flight: VecDeque::with_capacity(32),
-            go_away: false,
-        }
-    }
-}
-
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, PartialEq)]
@@ -230,6 +214,24 @@ mod tests {
         uri::Uri,
         Method,
     };
+
+    impl Default for Connection {
+        fn default() -> Self {
+            Self {
+                local_settings: Settings::default(),
+                remote_settings: None,
+                decoder_table: DynamicTable::new(),
+                encoder_table: DynamicTable::new(),
+                pending_streams: [
+                    BytesMut::with_capacity(2048),
+                    BytesMut::with_capacity(2048),
+                    BytesMut::with_capacity(2048),
+                ],
+                requests_in_flight: VecDeque::with_capacity(32),
+                go_away: false,
+            }
+        }
+    }
 
     #[test]
     fn encode_no_dynamic() {
