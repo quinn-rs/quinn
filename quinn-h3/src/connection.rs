@@ -7,7 +7,7 @@ use std::{
     task::{Context, Waker},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::Side;
@@ -69,6 +69,8 @@ impl ConnectionRef {
                 requests: VecDeque::with_capacity(16),
                 requests_task: None,
                 recv_control: None,
+                recv_encoder: None,
+                recv_decoder: None,
                 send_unis: [
                     SendUni::new(StreamType::CONTROL, quic.clone()),
                     SendUni::new(StreamType::ENCODER, quic.clone()),
@@ -89,6 +91,8 @@ pub(crate) struct ConnectionInner {
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
     recv_control: Option<FrameStream>,
+    recv_encoder: Option<(RecvStream, BytesMut)>,
+    recv_decoder: Option<(RecvStream, BytesMut)>,
     send_unis: [SendUni; 3],
 }
 
@@ -137,12 +141,12 @@ impl ConnectionInner {
             }
         }
 
-        self.poll_resolve_uni(cx);
+        self.poll_resolve_uni(cx)?;
 
         Ok(())
     }
 
-    fn poll_resolve_uni(&mut self, cx: &mut Context) {
+    fn poll_resolve_uni(&mut self, cx: &mut Context) -> Result<(), Error> {
         let resolved: Vec<(usize, Result<NewUni, Error>)> = self
             .pending_uni
             .iter_mut()
@@ -168,21 +172,58 @@ impl ConnectionInner {
                 Err(Error::UnknownStream(ty)) => println!("unknown stream type {}", ty),
                 Err(e) => {
                     self.set_error(ErrorCode::STREAM_CREATION_ERROR, format!("{:?}", e));
+                    return Err(e);
                 }
-                Ok(n) => match n {
-                    NewUni::Control(stream) => match self.recv_control {
-                        None => self.recv_control = Some(stream),
-                        Some(_) => {
-                            self.set_error(
-                                ErrorCode::STREAM_CREATION_ERROR,
-                                "control stream already open",
-                            );
-                        }
-                    },
-                    NewUni::Decoder(_) => println!("decoder stream ignored"),
-                    NewUni::Encoder(_) => println!("encoder stream ignored"),
-                    NewUni::Push(_) => println!("push stream ignored"),
-                },
+                Ok(n) => self.on_uni_resolved(n)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn on_uni_resolved(&mut self, new_stream: NewUni) -> Result<(), Error> {
+        match new_stream {
+            NewUni::Control(stream) => match self.recv_control {
+                None => {
+                    self.recv_control = Some(stream);
+                    Ok(())
+                }
+                Some(_) => {
+                    self.set_error(
+                        ErrorCode::STREAM_CREATION_ERROR,
+                        "control stream already open",
+                    );
+                    Err(Error::Peer("control stream already open".into()))
+                }
+            },
+            NewUni::Decoder(s) => match self.recv_decoder {
+                None => {
+                    self.recv_decoder = Some((s, BytesMut::with_capacity(2048)));
+                    Ok(())
+                }
+                Some(_) => {
+                    self.set_error(
+                        ErrorCode::STREAM_CREATION_ERROR,
+                        "decoder stream already open",
+                    );
+                    Err(Error::Peer("decoder stream already open".into()))
+                }
+            },
+            NewUni::Encoder(s) => match self.recv_encoder {
+                None => {
+                    self.recv_encoder = Some((s, BytesMut::with_capacity(2048)));
+                    Ok(())
+                }
+                Some(_) => {
+                    self.set_error(
+                        ErrorCode::STREAM_CREATION_ERROR,
+                        "encoder stream already open",
+                    );
+                    Err(Error::Peer("encoder stream already open".into()))
+                }
+            },
+            NewUni::Push(_) => {
+                println!("push stream ignored");
+                Ok(())
             }
         }
     }
