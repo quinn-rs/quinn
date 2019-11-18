@@ -237,7 +237,7 @@ fn run(options: Opt) -> Result<()> {
     let mut runtime = Runtime::new()?;
 
     let results = Arc::new(Mutex::new(Results::default()));
-    let protocols = vec![b"hq-23"[..].into(), quinn_h3::ALPN.into()];
+    let protocols = vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()];
 
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
