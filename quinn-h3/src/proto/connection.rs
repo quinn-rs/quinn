@@ -13,15 +13,32 @@ use crate::{
     Settings,
 };
 
+#[derive(Clone, Copy)]
+pub enum PendingStreamType {
+    Control = 0,
+    Encoder = 1,
+    Decoder = 2,
+}
+
+impl PendingStreamType {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        [
+            PendingStreamType::Control,
+            PendingStreamType::Encoder,
+            PendingStreamType::Decoder,
+        ]
+        .iter()
+        .cloned()
+    }
+}
+
 pub struct Connection {
     #[allow(dead_code)]
     local_settings: Settings,
     remote_settings: Option<Settings>,
     decoder_table: DynamicTable,
     encoder_table: DynamicTable,
-    pending_encoder: BytesMut,
-    pending_decoder: BytesMut,
-    pending_control: BytesMut,
+    pending_streams: [BytesMut; 3],
     requests_in_flight: VecDeque<StreamId>,
     go_away: bool,
 }
@@ -36,15 +53,18 @@ impl Connection {
 
         let mut pending_control = BytesMut::with_capacity(128);
         settings.encode(&mut pending_control);
+        let pending_streams = [
+            pending_control,
+            BytesMut::with_capacity(2048),
+            BytesMut::with_capacity(2048),
+        ];
 
         Ok(Self {
+            decoder_table,
+            pending_streams,
             local_settings: settings,
             remote_settings: None,
-            decoder_table,
-            pending_control,
             encoder_table: DynamicTable::new(),
-            pending_encoder: BytesMut::with_capacity(2048),
-            pending_decoder: BytesMut::with_capacity(2048),
             requests_in_flight: VecDeque::with_capacity(32),
             go_away: false,
         })
@@ -61,7 +81,7 @@ impl Connection {
         qpack::encode(
             &mut self.encoder_table.encoder(stream_id.0),
             &mut block,
-            &mut self.pending_encoder,
+            &mut self.pending_streams[PendingStreamType::Encoder as usize],
             headers.into_iter().map(HeaderField::from),
         )?;
 
@@ -82,7 +102,10 @@ impl Connection {
             Err(DecoderError::MissingRefs) => Ok(None),
             Err(e) => Err(Error::DecodeError { reason: e }),
             Ok(decoded) => {
-                qpack::ack_header(stream_id.0, &mut self.pending_decoder);
+                qpack::ack_header(
+                    stream_id.0,
+                    &mut self.pending_streams[PendingStreamType::Decoder as usize],
+                );
                 Ok(Some(Header::try_from(decoded)?))
             }
         }
@@ -96,11 +119,16 @@ impl Connection {
         self.remote_settings = Some(settings);
     }
 
-    pub fn pending_control(&mut self) -> Option<Bytes> {
-        if self.pending_control.is_empty() {
+    pub fn pending_stream_take(&mut self, ty: PendingStreamType) -> Option<Bytes> {
+        if self.pending_streams[ty as usize].is_empty() {
             return None;
         }
-        Some(self.pending_control.take().freeze())
+        Some(self.pending_streams[ty as usize].take().freeze())
+    }
+
+    pub fn pending_stream_release(&mut self, ty: PendingStreamType) {
+        let capacity = self.pending_streams[ty as usize].capacity();
+        self.pending_streams[ty as usize].reserve(capacity);
     }
 
     pub fn request_initiated(&mut self, id: StreamId) {
@@ -123,7 +151,8 @@ impl Connection {
         if !self.go_away {
             self.go_away = true;
             let id = self.requests_in_flight.back().map(|i| i.0).unwrap_or(0) + 1;
-            HttpFrame::Goaway(id).encode(&mut self.pending_control);
+            HttpFrame::Goaway(id)
+                .encode(&mut self.pending_streams[PendingStreamType::Control as usize]);
         }
     }
 
@@ -210,7 +239,7 @@ mod tests {
 
         let mut conn = Connection::default();
         assert_matches!(conn.encode_header(StreamId(1), header), Ok(_));
-        assert!(conn.pending_encoder.is_empty());
+        assert!(conn.pending_streams[PendingStreamType::Encoder as usize].is_empty());
     }
 
     #[test]
@@ -228,7 +257,7 @@ mod tests {
             .set_max_blocked(12usize)
             .expect("set max blocked");
         assert_matches!(conn.encode_header(StreamId(1), header), Ok(_));
-        assert!(!conn.pending_encoder.is_empty());
+        assert!(!conn.pending_streams[PendingStreamType::Encoder as usize].is_empty());
     }
 
     #[test]
@@ -266,7 +295,7 @@ mod tests {
             server.decode_header(StreamId(1), &encoded),
             Ok(Some(_header))
         );
-        assert!(!server.pending_decoder.is_empty());
+        assert!(!server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
     }
 
     #[test]
@@ -289,7 +318,7 @@ mod tests {
         let encoded = client
             .encode_header(StreamId(1), header)
             .expect("encoding failed");
-        assert!(!client.pending_encoder.is_empty());
+        assert!(!client.pending_streams[PendingStreamType::Encoder as usize].is_empty());
 
         let mut server = Connection::with_settings(Settings {
             qpack_max_table_capacity: 2048,
@@ -299,6 +328,6 @@ mod tests {
         .expect("create server");
 
         assert_eq!(server.decode_header(StreamId(1), &encoded), Ok(None));
-        assert!(server.pending_decoder.is_empty());
+        assert!(server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
     }
 }
