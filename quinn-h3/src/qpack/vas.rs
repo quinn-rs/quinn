@@ -97,7 +97,7 @@ impl VirtualAddressSpace {
     }
 
     pub fn relative(&self, index: RelativeIndex) -> Result<usize, Error> {
-        if self.delta == 0 || self.inserted - index <= self.dropped {
+        if self.inserted < index || self.delta == 0 || self.inserted - index <= self.dropped {
             Err(Error::BadRelativeIndex(index))
         } else {
             Ok(self.inserted - self.dropped - index - 1)
@@ -150,6 +150,13 @@ mod tests {
         let vas = VirtualAddressSpace::default();
         let res = vas.relative_base(0, 0);
         assert_eq!(res, Err(Error::BadRelativeIndex(0)));
+    }
+
+    #[test]
+    fn test_relative_underflow_protected() {
+        let mut vas = VirtualAddressSpace::default();
+        vas.add();
+        assert_eq!(vas.relative(2), Err(Error::BadRelativeIndex(2)));
     }
 
     proptest! {
