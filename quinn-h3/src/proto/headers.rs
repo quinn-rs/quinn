@@ -310,7 +310,7 @@ macro_rules! pseudo_type {
         lazy_static! {
             static ref PSEUDO_MAP: HashMap<Cow<'static, [u8]>, PseudoType> = [
                 $((Cow::Borrowed(&$val[..]), PseudoType::$name),)+
-            ].into_iter().map(|(n, v)| (n.clone(), v.clone())).collect();
+            ].iter().map(|(n, v)| (n.clone(), v.clone())).collect();
         }
     }
 }
