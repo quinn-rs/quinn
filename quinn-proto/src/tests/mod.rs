@@ -1158,6 +1158,7 @@ fn congested_tail_loss() {
     }
     assert!(!pair.server.inbound.is_empty());
     pair.server.inbound.clear();
+    info!("recovering");
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
     pair.client_conn_mut(client_ch)

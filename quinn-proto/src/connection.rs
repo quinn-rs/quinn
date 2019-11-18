@@ -116,9 +116,6 @@ where
     /// Sequence number of the first remote CID that we haven't been asked to retire
     first_unretired_cid: u64,
 
-    // Queued non-retransmittable non-0-RTT data
-    ping_pending: bool,
-
     //
     // Queued non-retransmittable 1-RTT data
     //
@@ -133,10 +130,6 @@ where
     crypto_count: u32,
     /// The number of times a PTO has been sent without receiving an ack.
     pto_count: u32,
-    /// The time the most recently sent retransmittable packet was sent.
-    time_of_last_sent_ack_eliciting_packet: Instant,
-    /// Number of tail loss probes to send
-    loss_probes: u32,
 
     //
     // Congestion Control
@@ -245,13 +238,10 @@ where
             first_unretired_cid: 0,
 
             path_challenge_pending: false,
-            ping_pending: false,
             path_response: None,
 
             crypto_count: 0,
             pto_count: 0,
-            time_of_last_sent_ack_eliciting_packet: now,
-            loss_probes: 0,
 
             in_flight: InFlight::new(),
             recovery_start_time: now,
@@ -336,7 +326,7 @@ where
         self.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
-                self.time_of_last_sent_ack_eliciting_packet = now;
+                self.space_mut(space).time_of_last_sent_ack_eliciting_packet = Some(now);
                 if self.permit_idle_reset {
                     self.reset_idle_timeout(now);
                 }
@@ -584,20 +574,24 @@ where
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
-        if let Some((_, pn_space)) = self.earliest_loss_time() {
+        if let Some((_, pn_space)) = self.earliest_time_and_space(|x| x.loss_time) {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space);
             self.set_loss_detection_timer();
             return;
         }
 
+        // Send two probes to improve odds of getting through under lossy conditions
+        let (_, space) = self
+            .earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
+            .unwrap();
         trace!(
             in_flight = self.in_flight.bytes,
             count = self.pto_count,
+            ?space,
             "PTO fired"
         );
-        // Send two probes to improve odds of getting through under lossy conditions
-        self.loss_probes = self.loss_probes.saturating_add(2);
+        self.space_mut(space).loss_probes = self.space(space).loss_probes.saturating_add(2);
         self.pto_count = self.pto_count.saturating_add(1);
         self.set_loss_detection_timer();
     }
@@ -614,26 +608,25 @@ where
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
-    fn ensure_probe_queued(&mut self) {
+    fn ensure_probe_queued(&mut self, space: SpaceId) {
         // Retransmit the data of the oldest in-flight packet
-        for space in &mut self.spaces {
-            if !space.pending.is_empty() {
-                // There's real data to send here, no need to make something up
+        let space = self.space_mut(space);
+        if !space.pending.is_empty() {
+            // There's real data to send here, no need to make something up
+            return;
+        }
+        for packet in space.sent_packets.values_mut() {
+            if !packet.retransmits.is_empty() {
+                // Remove retransmitted data from the old packet so we don't end up retransmitting
+                // it *again* even if the copy we're sending now gets acknowledged.
+                space.pending += mem::replace(&mut packet.retransmits, Retransmits::default());
                 return;
-            }
-            for packet in space.sent_packets.values_mut() {
-                if !packet.retransmits.is_empty() {
-                    // Remove retransmitted data from the old packet so we don't end up retransmitting
-                    // it *again* even if the copy we're sending now gets acknowledged.
-                    space.pending += mem::replace(&mut packet.retransmits, Retransmits::default());
-                    return;
-                }
             }
         }
         // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
         // happen in rare cases during the handshake when the server becomes blocked by
         // anti-amplification.
-        self.ping();
+        space.ping_pending = true;
     }
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
@@ -721,9 +714,13 @@ where
         sent_time <= self.recovery_start_time
     }
 
-    fn earliest_loss_time(&self) -> Option<(Instant, SpaceId)> {
+    fn earliest_time_and_space(
+        &self,
+        get: impl Fn(&PacketSpace<S::Keys>) -> Option<Instant>,
+    ) -> Option<(Instant, SpaceId)> {
         SpaceId::iter()
-            .filter_map(|id| self.space(id).loss_time.map(|x| (x, id)))
+            .filter(|&id| id != SpaceId::Data || !self.is_handshaking())
+            .filter_map(|id| get(self.space(id)).map(|x| (x, id)))
             .min_by_key(|&(time, _)| time)
     }
 
@@ -738,7 +735,7 @@ where
     }
 
     fn set_loss_detection_timer(&mut self) {
-        if let Some((loss_time, _)) = self.earliest_loss_time() {
+        if let Some((loss_time, _)) = self.earliest_time_and_space(|x| x.loss_time) {
             // Time threshold loss detection.
             self.io.timer_start(TimerKind::LossDetection, loss_time);
             return;
@@ -752,11 +749,13 @@ where
         }
 
         // Calculate PTO duration
-        let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_BACKOFF_EXPONENT));
-        self.io.timer_start(
-            TimerKind::LossDetection,
-            self.time_of_last_sent_ack_eliciting_packet + timeout,
-        );
+        if let Some((sent_time, _)) =
+            self.earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
+        {
+            let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_BACKOFF_EXPONENT));
+            self.io
+                .timer_start(TimerKind::LossDetection, sent_time + timeout);
+        }
     }
 
     /// Probe Timeout
@@ -1084,8 +1083,11 @@ where
 
     fn discard_space(&mut self, space: SpaceId) {
         trace!("discarding {:?} keys", space);
-        self.space_mut(space).crypto = None;
-        let sent_packets = mem::replace(&mut self.space_mut(space).sent_packets, BTreeMap::new());
+        let space = self.space_mut(space);
+        space.crypto = None;
+        space.time_of_last_sent_ack_eliciting_packet = None;
+        space.loss_time = None;
+        let sent_packets = mem::replace(&mut space.sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
             self.in_flight.remove(&packet);
         }
@@ -2065,9 +2067,11 @@ where
             return None;
         }
 
-        if self.loss_probes != 0 {
-            // If we need to send a probe, make sure we have something to send.
-            self.ensure_probe_queued();
+        // If we need to send a probe, make sure we have something to send.
+        for space in SpaceId::iter() {
+            if self.space(space).loss_probes != 0 {
+                self.ensure_probe_queued(space);
+            }
         }
 
         // Select the set of spaces that have data to send so we can try to coalesce them
@@ -2085,8 +2089,7 @@ where
             _ => (
                 SpaceId::iter()
                     .filter(|&x| {
-                        (self.space(x).crypto.is_some()
-                            && (self.ping_pending || self.space(x).can_send()))
+                        (self.space(x).crypto.is_some() && self.space(x).can_send())
                             || (x == SpaceId::Data
                                 && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
                                     || (self.zero_rtt_crypto.is_some()
@@ -2107,11 +2110,15 @@ where
         };
 
         for space_id in spaces {
-            let mut ack_eliciting = !self.space(space_id).pending.is_empty();
+            let mut ack_eliciting =
+                !self.space(space_id).pending.is_empty() || self.space(space_id).ping_pending;
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if ack_eliciting && self.loss_probes == 0 && self.congestion_blocked() {
+                if ack_eliciting
+                    && self.space(space_id).loss_probes == 0
+                    && self.congestion_blocked()
+                {
                     continue;
                 }
             }
@@ -2119,7 +2126,6 @@ where
             //
             // From here on, we've determined that a packet will definitely be sent.
             //
-            self.loss_probes = self.loss_probes.saturating_sub(1);
 
             if self.spaces[SpaceId::Initial as usize].crypto.is_some()
                 && space_id == SpaceId::Handshake
@@ -2134,6 +2140,7 @@ where
             }
 
             let space = &mut self.spaces[space_id as usize];
+            space.loss_probes = space.loss_probes.saturating_sub(1);
             let exact_number = space.get_tx_number();
             let span = trace_span!("send", space = ?space_id, pn = exact_number);
             let _guard = span.enter();
@@ -2316,7 +2323,7 @@ where
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
         // PING
-        if mem::replace(&mut self.ping_pending, false) {
+        if mem::replace(&mut space.ping_pending, false) {
             trace!("PING");
             buf.write(frame::Type::PING);
         }
@@ -2655,7 +2662,7 @@ where
     ///
     /// Causes an ACK-eliciting packet to be transmitted.
     pub fn ping(&mut self) {
-        self.ping_pending = true;
+        self.spaces[self.highest_space as usize].ping_pending = true;
     }
 
     /// Permit an additional remote `ty` stream.
