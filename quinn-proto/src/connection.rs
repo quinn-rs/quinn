@@ -643,8 +643,10 @@ where
             .rtt
             .smoothed
             .map_or(self.path.rtt.latest, |x| cmp::max(x, self.path.rtt.latest));
-        let rtt = cmp::max(rtt, TIMER_GRANULARITY);
-        let loss_delay = rtt + ((rtt * u32::from(self.config.time_threshold)) / 65536);
+        let loss_delay = cmp::max(
+            rtt + ((rtt * u32::from(self.config.time_threshold)) / 65536),
+            TIMER_GRANULARITY,
+        );
 
         // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
