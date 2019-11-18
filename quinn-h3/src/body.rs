@@ -3,6 +3,7 @@ use std::{
     io::{self, ErrorKind},
     mem,
     pin::Pin,
+    task::{Context, Poll},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -10,7 +11,6 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
     stream::Stream,
-    task::{Context, Poll},
 };
 use http::HeaderMap;
 use quinn::SendStream;

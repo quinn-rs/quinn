@@ -1,11 +1,15 @@
-use std::{convert::TryFrom, io, mem, pin::Pin, task::Context};
+use std::{
+    convert::TryFrom,
+    future::Future,
+    io, mem,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
 use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
-    task::Poll,
-    Future,
 };
 use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;

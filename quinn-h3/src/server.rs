@@ -1,9 +1,10 @@
+use std::future::Future;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::Context;
+use std::task::{Context, Poll};
 
-use futures::{ready, task::Poll, Future, Stream};
+use futures::{ready, Stream};
 use http::{response, HeaderMap, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::StreamId;

@@ -1,11 +1,12 @@
 use quinn_proto::StreamId;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Waker};
+use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
-use futures::{task::Poll, Future, Stream};
+use futures::Stream;
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::Side;
 use tokio::stream::Stream as _;

@@ -1,9 +1,10 @@
+use std::future::Future;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::Context;
+use std::task::{Context, Poll};
 
-use futures::{ready, task::Poll, Future};
+use futures::ready;
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, OpenBi};
 use quinn_proto::StreamId;

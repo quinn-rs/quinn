@@ -1,13 +1,14 @@
+use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::str;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use err_derive::Error;
 use futures::channel::oneshot;
 use futures::io::{AsyncRead, AsyncWrite};
-use futures::task::{Context, Poll};
-use futures::{ready, Future, FutureExt};
+use futures::{ready, FutureExt};
 use proto::{ConnectionError, StreamId};
 
 use crate::connection::ConnectionRef;

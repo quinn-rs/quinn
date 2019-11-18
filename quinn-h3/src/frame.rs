@@ -1,7 +1,12 @@
-use std::{io, mem, pin::Pin, task::Context};
+use std::{
+    future::Future,
+    io, mem,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use bytes::{Bytes, BytesMut};
-use futures::{io::AsyncWrite, ready, task::Poll, Future};
+use futures::{io::AsyncWrite, ready};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio::codec::{Decoder, FramedRead};
 use tokio::io::AsyncRead;

@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use bytes::Bytes;
 use err_derive::Error;
 use futures::channel::{mpsc, oneshot};
-use futures::task::{Context, Poll, Waker};
-use futures::{Future, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
 use tokio_timer::{delay, Delay};
 use tracing::{info_span, trace};

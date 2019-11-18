@@ -1,15 +1,16 @@
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV6};
 use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use bytes::Bytes;
 use futures::channel::mpsc;
-use futures::task::{Context, Poll, Waker};
-use futures::{Future, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::builders::EndpointBuilder;

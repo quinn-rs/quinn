@@ -1,8 +1,8 @@
 use std::io;
 use std::net::SocketAddr;
+use std::task::{Context, Poll};
 
 use futures::ready;
-use futures::task::{Context, Poll};
 use mio;
 
 use tokio_net::driver::Handle;
