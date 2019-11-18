@@ -96,6 +96,11 @@ where
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
     prev_crypto: Option<PrevCrypto<S::Keys>>,
+    /// 1-RTT keys to be used for the next key update
+    ///
+    /// These are generated in advance to prevent timing attacks and/or DoS by third-party attackers
+    /// spoofing key updates.
+    next_crypto: Option<S::Keys>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
@@ -230,6 +235,7 @@ where
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
+            next_crypto: None,
             path_challenge: None,
             stream_opened: [false, false],
             accepted_0rtt: false,
@@ -1061,6 +1067,10 @@ where
             space
         );
         trace!("{:?} keys ready", space);
+        if space == SpaceId::Data {
+            // Precompute the first key update
+            self.next_crypto = Some(self.tls.update_keys(&crypto));
+        }
         self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
@@ -2757,7 +2767,7 @@ where
         let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
         let key_phase = packet.header.key_phase();
 
-        let mut crypto_update = None;
+        let mut crypto_update = false;
         let crypto = if packet.header.is_0rtt() {
             &self.zero_rtt_crypto.as_ref().unwrap().packet
         } else if key_phase == self.key_phase || space != SpaceId::Data {
@@ -2779,16 +2789,8 @@ where
             // initiated key update or the locally initiated key update was acknowledged by a
             // lower-numbered packet. The key phase mismatch must therefore represent a new
             // remotely-initiated key update.
-            crypto_update = Some(
-                self.tls.update_keys(
-                    &self.spaces[SpaceId::Data as usize]
-                        .crypto
-                        .as_ref()
-                        .unwrap()
-                        .packet,
-                ),
-            );
-            crypto_update.as_ref().unwrap()
+            crypto_update = true;
+            self.next_crypto.as_ref().unwrap()
         };
 
         crypto
@@ -2812,7 +2814,7 @@ where
             )));
         }
 
-        if let Some(crypto) = crypto_update {
+        if crypto_update {
             // Validate and commit incoming key update
             if number <= rx_packet
                 || self
@@ -2825,7 +2827,7 @@ where
                 )));
             }
             trace!("key update authenticated");
-            self.update_keys(crypto, Some((number, now)), true);
+            self.update_keys(Some((number, now)), true);
             self.set_key_discard_timer(now);
         }
 
@@ -2834,9 +2836,7 @@ where
 
     #[doc(hidden)]
     pub fn initiate_key_update(&mut self) {
-        let space = self.space(SpaceId::Data);
-        let update = self.tls.update_keys(&space.crypto.as_ref().unwrap().packet);
-        self.update_keys(update, None, false);
+        self.update_keys(None, false);
     }
 
     /// Send data on the given stream
@@ -2940,14 +2940,18 @@ where
         Some(limit.min(max_size as u64) as usize)
     }
 
-    fn update_keys(&mut self, crypto: S::Keys, end_packet: Option<(u64, Instant)>, remote: bool) {
+    fn update_keys(&mut self, end_packet: Option<(u64, Instant)>, remote: bool) {
+        // Generate keys for the key phase after the one we're switching to, store them in
+        // `next_crypto`, make the contents of `next_crypto` current, and move the current keys into
+        // `prev_crypto`.
+        let new = self.tls.update_keys(self.next_crypto.as_ref().unwrap());
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize]
                 .crypto
                 .as_mut()
                 .unwrap() // safe because update_keys() can only be triggered by short packets
                 .packet,
-            crypto,
+            mem::replace(self.next_crypto.as_mut().unwrap(), new),
         );
         self.prev_crypto = Some(PrevCrypto {
             crypto: old,
