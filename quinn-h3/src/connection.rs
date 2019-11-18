@@ -249,7 +249,7 @@ impl ConnectionInner {
                 Poll::Ready(Some(Ok(frame))) => {
                     match (self.inner.remote_settings().is_some(), self.side, frame) {
                         (_, _, HttpFrame::Settings(s)) => {
-                            self.inner.set_remote_settings(s);
+                            self.inner.set_remote_settings(s)?;
                         }
                         (true, Side::Client, HttpFrame::Goaway(id)) => {
                             self.inner.leave(StreamId(id));
