@@ -47,8 +47,7 @@ impl Connection {
     pub fn with_settings(settings: Settings) -> Result<Self> {
         let mut decoder_table = DynamicTable::new();
         decoder_table.set_max_blocked(settings.qpack_blocked_streams as usize)?;
-        decoder_table
-            .set_max_size(settings.qpack_max_table_capacity as usize)?;
+        decoder_table.set_max_size(settings.qpack_max_table_capacity as usize)?;
 
         let mut pending_control = BytesMut::with_capacity(128);
         settings.encode(&mut pending_control);
@@ -114,8 +113,13 @@ impl Connection {
         &self.remote_settings
     }
 
-    pub fn set_remote_settings(&mut self, settings: Settings) {
+    pub fn set_remote_settings(&mut self, settings: Settings) -> Result<()> {
+        self.encoder_table
+            .set_max_blocked(settings.qpack_blocked_streams as usize)?;
+        self.encoder_table
+            .set_max_size(settings.qpack_max_table_capacity as usize)?;
         self.remote_settings = Some(settings);
+        Ok(())
     }
 
     pub fn pending_stream_take(&mut self, ty: PendingStreamType) -> Option<Bytes> {
