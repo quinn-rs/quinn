@@ -235,7 +235,7 @@ fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
     hkdf_expand(prk, label, hkdf::HKDF_SHA256)
 }
 
-fn hkdf_expand<L, K>(key: &hkdf::Prk, label: &[u8], len: L) -> K
+pub(crate) fn hkdf_expand<L, K>(key: &hkdf::Prk, label: &[u8], len: L) -> K
 where
     L: hkdf::KeyType,
     K: for<'b> From<hkdf::Okm<'b, L>>,
