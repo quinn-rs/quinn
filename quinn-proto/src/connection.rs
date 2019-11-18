@@ -2723,10 +2723,7 @@ where
     }
 
     fn congestion_blocked(&self) -> bool {
-        self.path
-            .congestion_window
-            .saturating_sub(self.in_flight.bytes)
-            < u64::from(self.mtu)
+        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion_window
     }
 
     fn blocked(&self) -> bool {
