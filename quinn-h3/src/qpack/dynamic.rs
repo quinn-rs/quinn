@@ -67,24 +67,8 @@ pub struct DynamicTableInserter<'a> {
 }
 
 impl<'a> DynamicTableInserter<'a> {
-    pub fn set_max_mem_size(&mut self, size: usize) -> Result<(), Error> {
-        if size > SETTINGS_MAX_TABLE_CAPACITY_MAX {
-            return Err(Error::MaximumTableSizeTooLarge);
-        }
-
-        if size >= self.table.mem_limit {
-            self.table.mem_limit = size;
-            return Ok(());
-        }
-
-        let required = self.table.mem_limit - size;
-
-        if let Some(to_evict) = self.table.can_free(required)? {
-            self.table.evict(to_evict)?;
-        }
-
-        self.table.mem_limit = size;
-        Ok(())
+    pub fn set_max_size(&mut self, size: usize) -> Result<(), Error> {
+        self.table.set_max_size(size)
     }
 
     pub(super) fn put_field(&mut self, field: HeaderField) -> Result<(), Error> {
@@ -150,8 +134,8 @@ impl<'a> Drop for DynamicTableEncoder<'a> {
 }
 
 impl<'a> DynamicTableEncoder<'a> {
-    pub(super) fn max_mem_size(&self) -> usize {
-        self.table.mem_limit
+    pub(super) fn max_size(&self) -> usize {
+        self.table.max_size
     }
 
     pub(super) fn base(&self) -> usize {
@@ -323,8 +307,8 @@ pub enum DynamicInsertionResult {
 #[derive(Default)]
 pub struct DynamicTable {
     fields: VecDeque<HeaderField>,
-    curr_mem_size: usize,
-    mem_limit: usize,
+    curr_size: usize,
+    max_size: usize,
     vas: VirtualAddressSpace,
     field_map: Option<HashMap<HeaderField, usize>>,
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
@@ -384,6 +368,26 @@ impl DynamicTable {
         Ok(())
     }
 
+    pub fn set_max_size(&mut self, size: usize) -> Result<(), Error> {
+        if size > SETTINGS_MAX_TABLE_CAPACITY_MAX {
+            return Err(Error::MaximumTableSizeTooLarge);
+        }
+
+        if size >= self.max_size {
+            self.max_size = size;
+            return Ok(());
+        }
+
+        let required = self.max_size - size;
+
+        if let Some(to_evict) = self.can_free(required)? {
+            self.evict(to_evict)?;
+        }
+
+        self.max_size = size;
+        Ok(())
+    }
+
     pub(super) fn total_inserted(&self) -> usize {
         self.vas.total_inserted()
     }
@@ -402,7 +406,7 @@ impl DynamicTable {
     }
 
     fn put_field(&mut self, field: HeaderField) -> Result<Option<usize>, Error> {
-        if self.mem_limit == 0 {
+        if self.max_size == 0 {
             return Ok(None);
         }
 
@@ -413,7 +417,7 @@ impl DynamicTable {
             }
         }
 
-        self.curr_mem_size += field.mem_size();
+        self.curr_size += field.mem_size();
         self.fields.push_back(field);
         let absolute = self.vas.add();
 
@@ -423,7 +427,7 @@ impl DynamicTable {
     fn evict(&mut self, to_evict: usize) -> Result<(), Error> {
         for _ in 0..to_evict {
             let field = self.fields.pop_front().ok_or(Error::MaxTableSizeReached)?; //TODO better type
-            self.curr_mem_size -= field.mem_size();
+            self.curr_size -= field.mem_size();
 
             self.vas.drop();
 
@@ -447,16 +451,16 @@ impl DynamicTable {
     }
 
     fn can_free(&mut self, required: usize) -> Result<Option<usize>, Error> {
-        if required > self.mem_limit {
+        if required > self.max_size {
             return Err(Error::MaxTableSizeReached);
         }
 
-        if self.mem_limit - self.curr_mem_size >= required {
+        if self.max_size - self.curr_size >= required {
             return Ok(Some(0));
         }
-        let lower_bound = self.mem_limit - required;
+        let lower_bound = self.max_size - required;
 
-        let mut hypothetic_mem_size = self.curr_mem_size;
+        let mut hypothetic_mem_size = self.curr_size;
         let mut evictable = 0;
 
         for (idx, to_evict) in self.fields.iter().enumerate() {
@@ -473,7 +477,7 @@ impl DynamicTable {
             hypothetic_mem_size -= to_evict.mem_size();
         }
 
-        if required <= self.mem_limit - hypothetic_mem_size {
+        if required <= self.max_size - hypothetic_mem_size {
             Ok(Some(evictable))
         } else {
             Ok(None)
@@ -585,7 +589,7 @@ impl DynamicTable {
     }
 
     pub(super) fn max_mem_size(&self) -> usize {
-        self.mem_limit
+        self.max_size
     }
 }
 
@@ -626,7 +630,7 @@ mod tests {
             table.inserter().put_field(field).unwrap();
         }
 
-        assert_eq!(table.curr_mem_size, table_size);
+        assert_eq!(table.curr_size, table_size);
     }
 
     /**
@@ -640,7 +644,7 @@ mod tests {
     fn test_try_set_too_large_maximum_table_size() {
         let mut table = build_table();
         let invalid_size = SETTINGS_MAX_TABLE_CAPACITY_MAX + 10;
-        let res_change = table.inserter().set_max_mem_size(invalid_size);
+        let res_change = table.set_max_size(invalid_size);
         assert_eq!(res_change, Err(Error::MaximumTableSizeTooLarge));
     }
 
@@ -653,7 +657,7 @@ mod tests {
     #[test]
     fn test_maximum_table_size_can_reach_zero() {
         let mut table = build_table();
-        let res_change = table.inserter().set_max_mem_size(0);
+        let res_change = table.set_max_size(0);
         assert!(res_change.is_ok());
         assert_eq!(table.max_mem_size(), 0);
     }
@@ -668,9 +672,7 @@ mod tests {
     #[test]
     fn test_maximum_table_size_can_reach_maximum() {
         let mut table = build_table();
-        let res_change = table
-            .inserter()
-            .set_max_mem_size(SETTINGS_MAX_TABLE_CAPACITY_MAX);
+        let res_change = table.set_max_size(SETTINGS_MAX_TABLE_CAPACITY_MAX);
         assert!(res_change.is_ok());
         assert_eq!(table.max_mem_size(), SETTINGS_MAX_TABLE_CAPACITY_MAX);
     }
@@ -717,8 +719,8 @@ mod tests {
         let mut table = build_table();
 
         let field = HeaderField::new("Name", "Value");
-        table.inserter().put_field(field.clone()).unwrap();
-        assert_eq!(table.curr_mem_size, field.mem_size());
+        table.put_field(field.clone()).unwrap();
+        assert_eq!(table.curr_size, field.mem_size());
     }
 
     /**
@@ -740,8 +742,8 @@ mod tests {
             .inserter()
             .put_field(HeaderField::new("Name-B", "Value-B"))
             .unwrap();
-        let perfect_size = table.curr_mem_size;
-        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
+        let perfect_size = table.curr_size;
+        assert!(table.set_max_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
         table.inserter().put_field(field).unwrap();
@@ -767,8 +769,8 @@ mod tests {
             .inserter()
             .put_field(HeaderField::new("Name-A", "Value-A"))
             .unwrap();
-        let perfect_size = table.curr_mem_size;
-        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
+        let perfect_size = table.curr_size;
+        assert!(table.set_max_size(perfect_size).is_ok());
 
         let field = HeaderField::new("Name-Large", "Value-Large");
         assert_eq!(
@@ -802,7 +804,7 @@ mod tests {
         );
         assert_eq!(table.fields.len(), 2);
 
-        table.inserter().set_max_mem_size(0).unwrap();
+        table.set_max_size(0).unwrap();
         assert_eq!(table.fields.len(), 0);
     }
 
@@ -818,8 +820,8 @@ mod tests {
                 HeaderField::new("Name-B", "Value-B"),
             ],
         );
-        let perfect_size = table.curr_mem_size;
-        assert!(table.inserter().set_max_mem_size(perfect_size).is_ok());
+        let perfect_size = table.curr_size;
+        assert!(table.set_max_size(perfect_size).is_ok());
 
         insert_fields(&mut table, vec![HeaderField::new("Name-C", "Value-C")]);
 
@@ -1034,7 +1036,7 @@ mod tests {
     #[test]
     fn cannot_insert_field_greater_than_total_size() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(33).unwrap();
+        table.set_max_size(33).unwrap();
         let mut encoder = table.encoder(4);
         assert_eq!(
             encoder.insert(&HeaderField::new("foo", "bar")),
@@ -1047,7 +1049,7 @@ mod tests {
     #[test]
     fn encoder_maps_are_cleaned_on_eviction() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(64).unwrap();
+        table.set_max_size(64).unwrap();
 
         {
             let mut encoder = table.encoder(4);
@@ -1083,7 +1085,7 @@ mod tests {
     #[test]
     fn encoder_can_evict_unreferenced() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(63).unwrap();
+        table.set_max_size(63).unwrap();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
 
         assert_eq!(table.fields.len(), 1);
@@ -1223,7 +1225,7 @@ mod tests {
     #[test]
     fn encoder_does_not_evict_referenced() {
         let mut table = build_table();
-        table.inserter().set_max_mem_size(95).unwrap();
+        table.set_max_size(95).unwrap();
         table.put_field(HeaderField::new("foo", "bar")).unwrap();
 
         let stream_id = 42;
