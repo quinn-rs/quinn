@@ -3,7 +3,7 @@ use std::{
     mem,
     net::SocketAddr,
     pin::Pin,
-    task::{Context, Pull},
+    task::{Context, Poll},
 };
 
 use futures::{ready, Stream};
