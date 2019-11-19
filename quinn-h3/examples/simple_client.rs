@@ -4,7 +4,7 @@ use std::{
 };
 use structopt::{self, StructOpt};
 
-use failure::{format_err, Error};
+use anyhow::{anyhow, Result};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request};
 use url::Url;
 
@@ -33,7 +33,7 @@ const INITIAL_CAPACITY: usize = 256;
 const MAX_LEN: usize = 256 * 1024;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -73,11 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn request(client: Client, remote: &SocketAddr) -> Result<(), Error> {
+async fn request(client: Client, remote: &SocketAddr) -> Result<()> {
     let (quic_driver, h3_driver, conn) = client
         .connect(&remote, "localhost")?
         .await
-        .map_err(|e| format_err!("failed ot connect: {:?}", e))?;
+        .map_err(|e| anyhow!("failed ot connect: {:?}", e))?;
 
     tokio::spawn(async move {
         if let Err(e) = h3_driver.await {

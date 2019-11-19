@@ -3,13 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use failure::{format_err, Error};
+use anyhow::{anyhow, Error, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
 use tracing::{info, warn};
-
-type Result<T> = std::result::Result<T, Error>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
@@ -59,7 +57,7 @@ impl State {
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
-            .map_err(|e| format_err!("failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
         self.results.lock().unwrap().handshake = true;
         let results = self.results.clone();
         tokio::runtime::current_thread::spawn(
@@ -74,10 +72,10 @@ impl State {
             .connection
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream)
             .await
-            .map_err(|e| format_err!("simple request failed: {}", e))?;
+            .map_err(|e| anyhow!("simple request failed: {}", e))?;
         self.results.lock().unwrap().stream_data = true;
         new_conn.connection.close(0u32.into(), b"done");
 
@@ -93,10 +91,10 @@ impl State {
                     .connection
                     .open_bi()
                     .await
-                    .map_err(|e| format_err!("failed to open 0-RTT stream: {}", e))?;
+                    .map_err(|e| anyhow!("failed to open 0-RTT stream: {}", e))?;
                 get(stream)
                     .await
-                    .map_err(|e| format_err!("0-RTT request failed: {}", e))?;
+                    .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
                 self.results.lock().unwrap().zero_rtt = true;
                 new_conn.connection
             }
@@ -104,7 +102,7 @@ impl State {
                 info!("0-RTT unsupported");
                 let new_conn = conn
                     .await
-                    .map_err(|e| format_err!("failed to connect: {}", e))?;
+                    .map_err(|e| anyhow!("failed to connect: {}", e))?;
                 tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 new_conn.connection
             }
@@ -123,20 +121,20 @@ impl State {
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
-            .map_err(|e| format_err!("failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let conn = new_conn.connection;
         // Make sure some traffic has gone both ways before the key update
         let stream = conn
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
         conn.force_key_update();
         let stream = conn
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
         self.results.lock().unwrap().key_update = true;
         conn.close(0u32.into(), b"done");
@@ -151,13 +149,13 @@ impl State {
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
-            .map_err(|e| format_err!("failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let stream = new_conn
             .connection
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
         self.results.lock().unwrap().retry = true;
         new_conn.connection.close(0u32.into(), b"done");
@@ -174,7 +172,7 @@ impl State {
         let new_conn = endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
-            .map_err(|e| format_err!("failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
         endpoint.rebind(socket, &tokio_net::driver::Handle::default())?;
@@ -182,7 +180,7 @@ impl State {
             .connection
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
         self.results.lock().unwrap().rebinding = true;
         new_conn.connection.close(0u32.into(), b"done");
@@ -194,14 +192,14 @@ impl State {
         let (quic_driver, h3_driver, conn) = h3_client
             .connect(&self.remote, &self.host)?
             .await
-            .map_err(|e| format_err!("h3 failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
 
         tokio::runtime::current_thread::spawn(h3_driver.unwrap_or_else(|_| ()));
         tokio::runtime::current_thread::spawn(quic_driver.unwrap_or_else(|_| ()));
 
         h3_get(&conn)
             .await
-            .map_err(|e| format_err!("h3 request failed: {}", e))?;
+            .map_err(|e| anyhow!("h3 request failed: {}", e))?;
         conn.close();
 
         self.results.lock().unwrap().h3 = true;
@@ -228,7 +226,7 @@ fn run(options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
         .next()
-        .ok_or_else(|| format_err!("couldn't resolve to an address"))?;
+        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
     let host = if webpki::DNSNameRef::try_from_ascii_str(&options.host).is_ok() {
         &options.host
     } else {
@@ -368,14 +366,14 @@ async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> 
     let (mut send, recv) = stream;
     send.write_all(b"GET /index.html\r\n")
         .await
-        .map_err(|e| format_err!("failed to send request: {}", e))?;
+        .map_err(|e| anyhow!("failed to send request: {}", e))?;
     send.finish()
         .await
-        .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
+        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
     let response = recv
         .read_to_end(usize::max_value())
         .await
-        .map_err(|e| format_err!("failed to read response: {}", e))?;
+        .map_err(|e| anyhow!("failed to read response: {}", e))?;
     Ok(response)
 }
 

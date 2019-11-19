@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate failure;
-
 use std::{
     fs,
     io::{self, Write},
@@ -9,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use failure::Error;
+use anyhow::{anyhow, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
 use tokio::runtime::current_thread::Runtime;
@@ -17,8 +14,6 @@ use tracing::{error, info};
 use url::Url;
 
 mod common;
-
-type Result<T> = std::result::Result<T, Error>;
 
 /// HTTP/0.9 over QUIC client
 #[derive(StructOpt, Debug)]
@@ -67,7 +62,7 @@ fn run(options: Opt) -> Result<()> {
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
-        .ok_or(format_err!("couldn't resolve to an address"))?;
+        .ok_or(anyhow!("couldn't resolve to an address"))?;
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
@@ -106,12 +101,12 @@ fn run(options: Opt) -> Result<()> {
         .host
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
-        .ok_or(format_err!("no hostname specified"))?;
+        .ok_or(anyhow!("no hostname specified"))?;
     let r: Result<()> = runtime.block_on(async {
         let new_conn = endpoint
             .connect(&remote, &host)?
             .await
-            .map_err(|e| format_err!("failed to connect: {}", e))?;
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
         eprintln!("connected at {:?}", start.elapsed());
         tokio::runtime::current_thread::spawn(
             new_conn
@@ -122,7 +117,7 @@ fn run(options: Opt) -> Result<()> {
         let (mut send, recv) = conn
             .open_bi()
             .await
-            .map_err(|e| format_err!("failed to open stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         if rebind {
             let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
             let addr = socket.local_addr().unwrap();
@@ -134,16 +129,16 @@ fn run(options: Opt) -> Result<()> {
 
         send.write_all(request.as_bytes())
             .await
-            .map_err(|e| format_err!("failed to send request: {}", e))?;
+            .map_err(|e| anyhow!("failed to send request: {}", e))?;
         send.finish()
             .await
-            .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
+            .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
         let response_start = Instant::now();
         eprintln!("request sent at {:?}", response_start - start);
         let resp = recv
             .read_to_end(usize::max_value())
             .await
-            .map_err(|e| format_err!("failed to read response: {}", e))?;
+            .map_err(|e| anyhow!("failed to read response: {}", e))?;
         let duration = response_start.elapsed();
         eprintln!(
             "response received in {:?} - {} KiB/s",

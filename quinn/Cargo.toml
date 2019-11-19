@@ -44,7 +44,6 @@ rustls-native-certs = { version = "0.1.0", optional = true }
 crc = "1.8.1"
 criterion = "0.3"
 directories = "2.0.0"
-failure = "0.1"
 rand = "0.7"
 rcgen = "0.7"
 tracing-subscriber = "0.1.5"
@@ -53,6 +52,7 @@ structopt = "0.3.0"
 tokio = "0.2.0-alpha.5"
 unwrap = "1.2.1"
 url = "2"
+anyhow = "1.0.22"
 
 [[example]]
 name = "server"

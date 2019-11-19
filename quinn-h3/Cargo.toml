@@ -39,7 +39,7 @@ tokio-codec = "0.2.0-alpha.5"
 [dev-dependencies]
 assert_matches = "1.1"
 directories = "2.0.1"
-failure = "0.1"
+anyhow = "1.0.22"
 proptest = "0.9.1"
 rand = "0.7.0"
 rcgen = "0.7"
