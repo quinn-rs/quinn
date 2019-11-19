@@ -11,56 +11,56 @@ use crate::{
     assembler::Assembler, crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
 };
 
-pub struct PacketSpace<K>
+pub(crate) struct PacketSpace<K>
 where
     K: crypto::Keys,
 {
-    pub crypto: Option<CryptoSpace<K>>,
-    pub dedup: Dedup,
+    pub(crate) crypto: Option<CryptoSpace<K>>,
+    pub(crate) dedup: Dedup,
     /// Highest received packet number
-    pub rx_packet: u64,
+    pub(crate) rx_packet: u64,
     /// Time at which the above was received
-    pub rx_packet_time: Instant,
+    pub(crate) rx_packet_time: Instant,
 
     /// Data to send
-    pub pending: Retransmits,
+    pub(crate) pending: Retransmits,
     /// Packet numbers to acknowledge
-    pub pending_acks: RangeSet,
+    pub(crate) pending_acks: RangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
-    pub permit_ack_only: bool,
+    pub(crate) permit_ack_only: bool,
 
     /// The packet number of the next packet that will be sent, if any.
-    pub next_packet_number: u64,
+    pub(crate) next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
-    pub largest_acked_packet: Option<u64>,
-    pub largest_acked_packet_sent: Instant,
+    pub(crate) largest_acked_packet: Option<u64>,
+    pub(crate) largest_acked_packet_sent: Instant,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    pub sent_packets: BTreeMap<u64, SentPacket>,
+    pub(crate) sent_packets: BTreeMap<u64, SentPacket>,
     /// Recent ECN counters sent by the peer in ACK frames
     ///
     /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
     /// number. Stored per-space to simplify verification, which would otherwise have difficulty
     /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
     /// ACK already processed in another space.
-    pub ecn_feedback: frame::EcnCounts,
+    pub(crate) ecn_feedback: frame::EcnCounts,
 
     /// Incoming cryptographic handshake stream
-    pub crypto_stream: Assembler,
+    pub(crate) crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
-    pub crypto_offset: u64,
+    pub(crate) crypto_offset: u64,
 
     /// The time at which the earliest sent packet in this space will be considered lost based on
     /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
     /// that has been acknowledged.
-    pub loss_time: Option<Instant>,
+    pub(crate) loss_time: Option<Instant>,
 }
 
 impl<K> PacketSpace<K>
 where
     K: crypto::Keys,
 {
-    pub fn new(now: Instant) -> Self {
+    pub(crate) fn new(now: Instant) -> Self {
         Self {
             crypto: None,
             dedup: Dedup::new(),
@@ -84,7 +84,7 @@ where
         }
     }
 
-    pub fn get_tx_number(&mut self) -> u64 {
+    pub(crate) fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
         let x = self.next_packet_number;
@@ -92,12 +92,12 @@ where
         x
     }
 
-    pub fn can_send(&self) -> bool {
+    pub(crate) fn can_send(&self) -> bool {
         !self.pending.is_empty() || (self.permit_ack_only && !self.pending_acks.is_empty())
     }
 
     /// Verifies sanity of an ECN block and returns whether congestion was encountered.
-    pub fn detect_ecn(
+    pub(crate) fn detect_ecn(
         &mut self,
         newly_acked: u64,
         ecn: frame::EcnCounts,
@@ -129,7 +129,7 @@ where
         Ok(ce_increase != 0)
     }
 
-    pub fn finish_stream(&mut self, id: StreamId, offset: u64) {
+    pub(crate) fn finish_stream(&mut self, id: StreamId, offset: u64) {
         for frame in &mut self.pending.stream {
             if frame.id == id && frame.offset + frame.data.len() as u64 == offset {
                 frame.fin = true;
@@ -147,32 +147,32 @@ where
 
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
-pub struct SentPacket {
+pub(crate) struct SentPacket {
     /// The time the packet was sent.
-    pub time_sent: Instant,
+    pub(crate) time_sent: Instant,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
     /// "in flight" packet.
-    pub size: u16,
+    pub(crate) size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
-    pub ack_eliciting: bool,
-    pub acks: RangeSet,
-    pub retransmits: Retransmits,
+    pub(crate) ack_eliciting: bool,
+    pub(crate) acks: RangeSet,
+    pub(crate) retransmits: Retransmits,
 }
 
 /// Retransmittable data queue
 #[derive(Debug, Clone)]
 pub struct Retransmits {
-    pub max_data: bool,
-    pub max_uni_stream_id: bool,
-    pub max_bi_stream_id: bool,
-    pub stream: VecDeque<frame::Stream>,
-    pub rst_stream: Vec<(StreamId, VarInt)>,
-    pub stop_sending: Vec<frame::StopSending>,
-    pub max_stream_data: HashSet<StreamId>,
-    pub crypto: VecDeque<frame::Crypto>,
-    pub new_cids: Vec<IssuedCid>,
-    pub retire_cids: Vec<u64>,
+    pub(crate) max_data: bool,
+    pub(crate) max_uni_stream_id: bool,
+    pub(crate) max_bi_stream_id: bool,
+    pub(crate) stream: VecDeque<frame::Stream>,
+    pub(crate) rst_stream: Vec<(StreamId, VarInt)>,
+    pub(crate) stop_sending: Vec<frame::StopSending>,
+    pub(crate) max_stream_data: HashSet<StreamId>,
+    pub(crate) crypto: VecDeque<frame::Crypto>,
+    pub(crate) new_cids: Vec<IssuedCid>,
+    pub(crate) retire_cids: Vec<u64>,
 }
 
 impl Retransmits {

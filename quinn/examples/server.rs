@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate failure;
-
 use std::{
     ascii, fs, io,
     net::SocketAddr,
@@ -9,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use failure::{Error, ResultExt};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
 use tokio::runtime::Runtime;
@@ -17,8 +14,6 @@ use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
 mod common;
-
-type Result<T> = std::result::Result<T, Error>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "server")]
@@ -163,30 +158,34 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         remote = %connection.remote_address(),
         protocol = %connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
     );
-    let _guard = span.enter();
-    info!("established");
+    tokio::spawn(driver.unwrap_or_else(|_| ()).instrument(span.clone()));
+    async {
+        info!("established");
 
-    // We ignore errors from the driver because they'll be reported by the `streams` handler anyway.
-    tokio::spawn(driver.unwrap_or_else(|_| ()));
+        // We ignore errors from the driver because they'll be reported by the `streams` handler anyway.
 
-    // Each stream initiated by the client constitutes a new request.
-    while let Some(stream) = bi_streams.next().await {
-        let stream = match stream {
-            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                info!("connection closed");
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-            Ok(s) => s,
-        };
-        tokio::spawn(
-            handle_request(root.clone(), stream)
-                .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
-                .instrument(info_span!("request")),
-        );
+        // Each stream initiated by the client constitutes a new request.
+        while let Some(stream) = bi_streams.next().await {
+            let stream = match stream {
+                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                    info!("connection closed");
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+                Ok(s) => s,
+            };
+            tokio::spawn(
+                handle_request(root.clone(), stream)
+                    .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
+                    .instrument(info_span!("request")),
+            );
+        }
+        Ok(())
     }
+        .instrument(span)
+        .await?;
     Ok(())
 }
 
@@ -197,7 +196,7 @@ async fn handle_request(
     let req = recv
         .read_to_end(64 * 1024)
         .await
-        .map_err(|e| format_err!("failed reading request: {}", e))?;
+        .map_err(|e| anyhow!("failed reading request: {}", e))?;
     let mut escaped = String::new();
     for &x in &req[..] {
         let part = ascii::escape_default(x).collect::<Vec<_>>();
@@ -214,11 +213,11 @@ async fn handle_request(
     // Write the response
     send.write_all(&resp)
         .await
-        .map_err(|e| format_err!("failed to send response: {}", e))?;
+        .map_err(|e| anyhow!("failed to send response: {}", e))?;
     // Gracefully terminate the stream
     send.finish()
         .await
-        .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
+        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
     info!("complete");
     Ok(())
 }

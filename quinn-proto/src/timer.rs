@@ -8,7 +8,7 @@ use std::{
 pub struct Timer(pub(crate) TimerKind);
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum TimerKind {
+pub(crate) enum TimerKind {
     /// When to send an ack-eliciting probe packet or declare unacked packets lost
     LossDetection = 0,
     /// When to close the connection after no activity
