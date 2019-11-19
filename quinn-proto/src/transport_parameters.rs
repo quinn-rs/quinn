@@ -104,6 +104,7 @@ impl TransportParameters {
             || cached.initial_max_stream_data_uni < self.initial_max_stream_data_uni
             || cached.initial_max_streams_bidi < self.initial_max_streams_bidi
             || cached.initial_max_streams_uni < self.initial_max_streams_uni
+            || cached.max_datagram_frame_size < self.max_datagram_frame_size
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
