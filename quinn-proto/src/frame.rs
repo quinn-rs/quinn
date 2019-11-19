@@ -40,7 +40,7 @@ impl coding::Codec for Type {
     }
 }
 
-pub trait FrameStruct {
+pub(crate) trait FrameStruct {
     /// Smallest number of bytes this type of frame is guaranteed to fit within.
     const SIZE_BOUND: usize;
 }

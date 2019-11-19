@@ -5,7 +5,7 @@ use bytes::Bytes;
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug)]
-pub struct Assembler {
+pub(crate) struct Assembler {
     offset: u64,
     data: BinaryHeap<Chunk>,
 }
@@ -18,7 +18,7 @@ impl Assembler {
         }
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> usize {
+    pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
         let mut read = 0;
         loop {
             if self.consume(buf, &mut read) {
@@ -84,21 +84,21 @@ impl Assembler {
         }
     }
 
-    pub fn pop(&mut self) -> Option<(u64, Bytes)> {
+    pub(crate) fn pop(&mut self) -> Option<(u64, Bytes)> {
         self.data.pop().map(|x| (x.offset, x.bytes))
     }
 
-    pub fn insert(&mut self, offset: u64, bytes: Bytes) {
+    pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
         self.data.push(Chunk { offset, bytes });
     }
 
     /// Current position in the stream
-    pub fn offset(&self) -> u64 {
+    pub(crate) fn offset(&self) -> u64 {
         self.offset
     }
 
     /// Discard all buffered data
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.data.clear();
     }
 }
