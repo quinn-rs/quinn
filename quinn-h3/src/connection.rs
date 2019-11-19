@@ -1,9 +1,11 @@
 use quinn_proto::StreamId;
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
+};
 
 use bytes::Bytes;
 use futures::Stream;

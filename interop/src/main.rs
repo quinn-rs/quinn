@@ -1,5 +1,7 @@
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, Mutex};
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    sync::{Arc, Mutex},
+};
 
 use failure::{format_err, Error};
 use futures::TryFutureExt;

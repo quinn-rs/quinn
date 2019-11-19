@@ -4,10 +4,9 @@ use bytes::Bytes;
 use err_derive::Error;
 use tracing::debug;
 
-use crate::assembler::Assembler;
-use crate::frame;
-use crate::range_set::RangeSet;
-use crate::{Dir, Side, StreamId, TransportError, VarInt};
+use crate::{
+    assembler::Assembler, frame, range_set::RangeSet, Dir, Side, StreamId, TransportError, VarInt,
+};
 
 pub struct Streams {
     // Set of streams that are currently open, or could be immediately opened by the peer

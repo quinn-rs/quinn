@@ -1,5 +1,7 @@
-use std::ops::{Index, IndexMut};
-use std::slice;
+use std::{
+    ops::{Index, IndexMut},
+    slice,
+};
 
 /// Kinds of timeouts needed to run the protocol logic
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]

@@ -1,6 +1,8 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::sync::Arc;
-use std::thread;
+use std::{
+    net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
+    sync::Arc,
+    thread,
+};
 
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};

@@ -1,8 +1,6 @@
 use bytes::{Buf, BufMut};
 
-use super::parse_error::ParseError;
-use super::prefix_int;
-use super::prefix_string;
+use super::{parse_error::ParseError, prefix_int, prefix_string};
 
 pub enum HeaderBlockField {
     Indexed,

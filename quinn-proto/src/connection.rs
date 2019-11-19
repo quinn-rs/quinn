@@ -1,32 +1,36 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::{cmp, fmt, io, mem};
+use std::{
+    cmp,
+    collections::{BTreeMap, HashSet, VecDeque},
+    fmt, io, mem,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
 
-use crate::coding::BufMutExt;
-use crate::crypto::{self, HeaderKeys, Keys};
-use crate::frame::{Close, Datagram, FrameStruct};
-use crate::packet::{
-    Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
-    SHORT_RESERVED_BITS,
-};
-use crate::range_set::RangeSet;
-use crate::shared::{
-    ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-    EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
-};
-use crate::spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
-use crate::streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError};
-use crate::timer::{Timer, TimerKind, TimerTable};
-use crate::transport_parameters::{self, TransportParameters};
 use crate::{
-    frame, Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
+    coding::BufMutExt,
+    crypto::{self, HeaderKeys, Keys},
+    frame,
+    frame::{Close, Datagram, FrameStruct},
+    packet::{
+        Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId, LONG_RESERVED_BITS,
+        SHORT_RESERVED_BITS,
+    },
+    range_set::RangeSet,
+    shared::{
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
+        EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
+    },
+    spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket},
+    streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError},
+    timer::{Timer, TimerKind, TimerTable},
+    transport_parameters::{self, TransportParameters},
+    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };
@@ -467,11 +471,13 @@ where
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
     fn on_packet_acked(&mut self, info: SentPacket) {
+        let was_congestion_blocked = self.congestion_blocked();
         self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
-            // Do not increase congestion window in recovery period or while migrating.
-            if !self.in_recovery(info.time_sent) && !self.migrating() {
+            // Do not increase congestion window in recovery period or while migrating, or if we
+            // weren't sending at max rate.
+            if !self.in_recovery(info.time_sent) && !self.migrating() && was_congestion_blocked {
                 if self.path.congestion_window < self.path.ssthresh {
                     // Slow start.
                     self.path.congestion_window += u64::from(info.size);
@@ -1434,23 +1440,7 @@ where
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
-                                    if params.initial_max_data < self.params.initial_max_data
-                                        || params.initial_max_stream_data_bidi_local
-                                            < self.params.initial_max_stream_data_bidi_local
-                                        || params.initial_max_stream_data_bidi_remote
-                                            < self.params.initial_max_stream_data_bidi_remote
-                                        || params.initial_max_stream_data_uni
-                                            < self.params.initial_max_stream_data_uni
-                                        || params.initial_max_streams_bidi
-                                            < self.params.initial_max_streams_bidi
-                                        || params.initial_max_streams_uni
-                                            < self.params.initial_max_streams_uni
-                                    {
-                                        return Err(TransportError::PROTOCOL_VIOLATION(
-                                            "flow control parameters were reduced wrt. 0-RTT",
-                                        )
-                                        .into());
-                                    }
+                                    params.validate_0rtt(&self.params)?;
                                 }
                             }
                             if let Some(token) = params.stateless_reset_token {
@@ -2723,10 +2713,7 @@ where
     }
 
     fn congestion_blocked(&self) -> bool {
-        self.path
-            .congestion_window
-            .saturating_sub(self.in_flight.bytes)
-            < u64::from(self.mtu)
+        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion_window
     }
 
     fn blocked(&self) -> bool {

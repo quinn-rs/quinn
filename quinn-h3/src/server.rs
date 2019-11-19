@@ -1,8 +1,10 @@
-use std::future::Future;
-use std::mem;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    future::Future,
+    mem,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Pull},
+};
 
 use futures::{ready, Stream};
 use http::{response, HeaderMap, Request, Response};

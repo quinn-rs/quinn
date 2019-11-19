@@ -1,11 +1,13 @@
 #[macro_use]
 extern crate failure;
 
-use std::fs;
-use std::io::{self, Write};
-use std::net::ToSocketAddrs;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::{
+    fs,
+    io::{self, Write},
+    net::ToSocketAddrs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use failure::Error;
 use futures::TryFutureExt;

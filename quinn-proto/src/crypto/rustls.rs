@@ -1,16 +1,25 @@
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-use std::{fmt, io, str};
+use std::{
+    fmt, io,
+    ops::{Deref, DerefMut},
+    str,
+    sync::Arc,
+};
 
-use ring::hmac;
-use rustls::quic::{ClientQuicExt, ServerQuicExt};
+use ring::{hkdf, hmac};
 pub use rustls::TLSError;
-use rustls::{self, internal::pemfile, KeyLogFile, NoClientAuth, ProtocolVersion, Session};
+use rustls::{
+    self,
+    internal::{msgs::enums::HashAlgorithm, pemfile},
+    quic::{ClientQuicExt, Secrets, ServerQuicExt},
+    KeyLogFile, NoClientAuth, ProtocolVersion, Session,
+};
 use webpki::DNSNameRef;
 
-use super::ring::Crypto;
-use crate::transport_parameters::TransportParameters;
-use crate::{crypto, ConnectError, Side, TransportError, TransportErrorCode};
+use super::ring::{hkdf_expand, Crypto};
+use crate::{
+    crypto, transport_parameters::TransportParameters, ConnectError, Side, TransportError,
+    TransportErrorCode,
+};
 
 /// A rustls TLS session
 pub enum TlsSession {
@@ -116,7 +125,11 @@ impl crypto::Session for TlsSession {
             Side::Server => (&keys.remote_secret, &keys.local_secret),
         };
 
-        let secrets = self.update_secrets(client_secret, server_secret);
+        let hash_alg = self
+            .get_negotiated_ciphersuite()
+            .expect("should not get secrets without cipher suite")
+            .hash;
+        let secrets = update_secrets(hash_alg, client_secret, server_secret);
         let suite = self.get_negotiated_ciphersuite().unwrap();
         Crypto::new(
             self.side(),
@@ -389,6 +402,20 @@ impl PrivateKey {
         Ok(Self {
             inner: rustls::PrivateKey(der.to_vec()),
         })
+    }
+}
+
+fn update_secrets(hash_alg: HashAlgorithm, client: &hkdf::Prk, server: &hkdf::Prk) -> Secrets {
+    let hkdf_alg = match hash_alg {
+        HashAlgorithm::SHA256 => hkdf::HKDF_SHA256,
+        HashAlgorithm::SHA384 => hkdf::HKDF_SHA384,
+        HashAlgorithm::SHA512 => hkdf::HKDF_SHA512,
+        _ => panic!("unknown HKDF algorithm for hash algorithm {:?}", hash_alg),
+    };
+
+    Secrets {
+        client: hkdf_expand(client, b"traffic upd", hkdf_alg),
+        server: hkdf_expand(server, b"traffic upd", hkdf_alg),
     }
 }
 

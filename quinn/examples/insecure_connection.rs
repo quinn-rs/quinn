@@ -6,9 +6,11 @@
 //! ```
 
 use futures::{StreamExt, TryFutureExt};
-use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
-use std::sync::Arc;
+use std::{
+    error::Error,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
+    sync::Arc,
+};
 use tokio::runtime::current_thread::Runtime;
 
 use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};

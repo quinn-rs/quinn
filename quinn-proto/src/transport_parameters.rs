@@ -3,11 +3,11 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use bytes::{Buf, BufMut};
 use err_derive::Error;
 
-use crate::coding::{BufExt, BufMutExt, UnexpectedEnd};
-use crate::shared::{ConnectionId, ResetToken, ServerConfig};
 use crate::{
-    crypto, Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT,
-    RESET_TOKEN_SIZE,
+    coding::{BufExt, BufMutExt, UnexpectedEnd},
+    crypto,
+    shared::{ConnectionId, ResetToken, ServerConfig},
+    Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -93,6 +93,25 @@ impl TransportParameters {
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
             ..Self::default()
         }
+    }
+
+    /// Check that these parameters are legal when resuming from
+    /// certain cached parameters
+    pub fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
+        if cached.initial_max_data < self.initial_max_data
+            || cached.initial_max_stream_data_bidi_local < self.initial_max_stream_data_bidi_local
+            || cached.initial_max_stream_data_bidi_remote < self.initial_max_stream_data_bidi_remote
+            || cached.initial_max_stream_data_uni < self.initial_max_stream_data_uni
+            || cached.initial_max_streams_bidi < self.initial_max_streams_bidi
+            || cached.initial_max_streams_uni < self.initial_max_streams_uni
+            || cached.max_datagram_frame_size < self.max_datagram_frame_size
+        {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "0-RTT accepted with incompatible transport parameters",
+            )
+            .into());
+        }
+        Ok(())
     }
 }
 

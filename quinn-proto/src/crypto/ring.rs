@@ -3,9 +3,12 @@ use std::io;
 use bytes::{Buf, BufMut, BytesMut};
 use ring::{aead, hkdf, hmac};
 
-use crate::packet::{PacketNumber, LONG_HEADER_FORM};
-use crate::shared::{ConfigError, ConnectionId};
-use crate::{crypto, Side};
+use crate::{
+    crypto,
+    packet::{PacketNumber, LONG_HEADER_FORM},
+    shared::{ConfigError, ConnectionId},
+    Side,
+};
 
 /// Keys for encrypting and decrypting packet payloads
 pub struct Crypto {
@@ -235,7 +238,7 @@ fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
     hkdf_expand(prk, label, hkdf::HKDF_SHA256)
 }
 
-fn hkdf_expand<L, K>(key: &hkdf::Prk, label: &[u8], len: L) -> K
+pub(crate) fn hkdf_expand<L, K>(key: &hkdf::Prk, label: &[u8], len: L) -> K
 where
     L: hkdf::KeyType,
     K: for<'b> From<hkdf::Okm<'b, L>>,
@@ -280,8 +283,10 @@ impl crypto::HmacKey for hmac::Key {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::crypto::{HeaderKeys, Keys};
-    use crate::MAX_CID_SIZE;
+    use crate::{
+        crypto::{HeaderKeys, Keys},
+        MAX_CID_SIZE,
+    };
     use hex_literal::hex;
     use rand;
 

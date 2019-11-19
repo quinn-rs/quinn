@@ -1,18 +1,21 @@
-use std::future::Future;
-use std::io;
-use std::pin::Pin;
-use std::str;
-use std::task::{Context, Poll};
+use std::{
+    future::Future,
+    io,
+    pin::Pin,
+    str,
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
 use err_derive::Error;
-use futures::channel::oneshot;
-use futures::io::{AsyncRead, AsyncWrite};
-use futures::{ready, FutureExt};
+use futures::{
+    channel::oneshot,
+    io::{AsyncRead, AsyncWrite},
+    ready, FutureExt,
+};
 use proto::{ConnectionError, StreamId};
 
-use crate::connection::ConnectionRef;
-use crate::VarInt;
+use crate::{connection::ConnectionRef, VarInt};
 
 /// A stream that can only be used to send data
 ///

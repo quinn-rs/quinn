@@ -1,7 +1,10 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::{io, str};
+use std::{
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    str,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures::{future, FutureExt, StreamExt, TryFutureExt};
 use tokio;

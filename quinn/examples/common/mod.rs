@@ -4,9 +4,7 @@ use quinn::{
     Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, EndpointDriver,
     Incoming, PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
 };
-use std::error::Error;
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
+use std::{error::Error, net::ToSocketAddrs, sync::Arc};
 
 /// Constructs a QUIC endpoint configured for use a client only.
 ///

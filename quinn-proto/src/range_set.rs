@@ -1,8 +1,11 @@
-use std::cmp;
-use std::collections::btree_map;
-use std::collections::BTreeMap;
-use std::collections::Bound::{Excluded, Included};
-use std::ops::Range;
+use std::{
+    cmp,
+    collections::{
+        btree_map, BTreeMap,
+        Bound::{Excluded, Included},
+    },
+    ops::Range,
+};
 
 /// A set of u64 values optimized for long runs and random insert/delete/contains
 #[derive(Debug, Default, Clone)]

@@ -1,27 +1,28 @@
-use std::cmp;
-use std::io::Cursor;
+use std::{cmp, io::Cursor};
 
 use bytes::{Buf, BufMut};
 
 use err_derive::Error;
 
-use super::block::{
-    HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
-    LiteralWithPostBaseNameRef,
+use super::{
+    block::{
+        HeaderPrefix, Indexed, IndexedWithPostBase, Literal, LiteralWithNameRef,
+        LiteralWithPostBaseNameRef,
+    },
+    dynamic::{
+        DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
+        Error as DynamicTableError,
+    },
+    parse_error::ParseError,
+    prefix_int::Error as IntError,
+    prefix_string::Error as StringError,
+    static_::StaticTable,
+    stream::{
+        DecoderInstruction, Duplicate, DynamicTableSizeUpdate, HeaderAck, InsertCountIncrement,
+        InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
+    },
+    HeaderField,
 };
-use super::dynamic::{
-    DynamicInsertionResult, DynamicLookupResult, DynamicTable, DynamicTableEncoder,
-    Error as DynamicTableError,
-};
-use super::parse_error::ParseError;
-use super::prefix_int::Error as IntError;
-use super::prefix_string::Error as StringError;
-use super::static_::StaticTable;
-use super::stream::{
-    DecoderInstruction, Duplicate, DynamicTableSizeUpdate, HeaderAck, InsertCountIncrement,
-    InsertWithNameRef, InsertWithoutNameRef, StreamCancel,
-};
-use super::HeaderField;
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {

@@ -1,6 +1,4 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use failure::{format_err, Error};
 use futures::StreamExt;
