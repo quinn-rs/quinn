@@ -37,7 +37,7 @@ pub enum Error {
     #[error(display = "invalid data prefix")]
     UnknownPrefix,
     #[error(display = "missing references from dynamic table to decode header block")]
-    MissingRefs,
+    MissingRefs(usize),
     #[error(display = "header prefix contains invalid base index: {:?}", _0)]
     BadBaseIndex(isize),
     #[error(display = "data is unexpectedly truncated")]
@@ -58,11 +58,7 @@ pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<He
         HeaderPrefix::decode(buf)?.get(table.total_inserted(), table.max_mem_size())?;
 
     if required_ref > table.total_inserted() {
-        // TODO here the header block cannot be decoded because it contains references to
-        //      dynamic table entries that have not been received yet. It should be saved
-        //      and then be decoded when the missing dynamic entries arrive on encoder
-        //      stream.
-        return Err(Error::MissingRefs);
+        return Err(Error::MissingRefs(required_ref));
     }
 
     let decoder_table = table.decoder(base);
@@ -443,7 +439,7 @@ mod tests {
         HeaderPrefix::new(8, 8, 10, TABLE_SIZE).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        assert_eq!(decode_header(&table, &mut read), Err(Error::MissingRefs));
+        assert_eq!(decode_header(&table, &mut read), Err(Error::MissingRefs(8)));
     }
 
     fn field(n: usize) -> HeaderField {

@@ -20,6 +20,12 @@ pub enum PendingStreamType {
     Decoder = 2,
 }
 
+#[derive(Debug)]
+pub enum DecodeResult {
+    Decoded(Header),
+    MissingRefs(usize),
+}
+
 impl PendingStreamType {
     pub fn iter() -> impl Iterator<Item = Self> {
         [
@@ -92,19 +98,19 @@ impl Connection {
         &mut self,
         stream_id: StreamId,
         header: &HeadersFrame,
-    ) -> Result<Option<Header>> {
+    ) -> Result<DecodeResult> {
         match qpack::decode_header(
             &self.decoder_table,
             &mut std::io::Cursor::new(&header.encoded),
         ) {
-            Err(DecoderError::MissingRefs) => Ok(None),
+            Err(DecoderError::MissingRefs(r)) => Ok(DecodeResult::MissingRefs(r)),
             Err(e) => Err(Error::DecodeError { reason: e }),
             Ok(decoded) => {
                 qpack::ack_header(
                     stream_id.0,
                     &mut self.pending_streams[PendingStreamType::Decoder as usize],
                 );
-                Ok(Some(Header::try_from(decoded)?))
+                Ok(DecodeResult::Decoded(Header::try_from(decoded)?))
             }
         }
     }
@@ -297,7 +303,7 @@ mod tests {
         let mut server = Connection::default();
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
-            Ok(Some(_header))
+            Ok(DecodeResult::Decoded(_header))
         );
         assert!(!server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
     }
@@ -330,7 +336,10 @@ mod tests {
         })
         .expect("create server");
 
-        assert_eq!(server.decode_header(StreamId(1), &encoded), Ok(None));
+        assert_matches!(
+            server.decode_header(StreamId(1), &encoded),
+            Ok(DecodeResult::MissingRefs(1))
+        );
         assert!(server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
     }
 }

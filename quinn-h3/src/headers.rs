@@ -7,7 +7,7 @@ use quinn_proto::StreamId;
 use crate::{
     connection::ConnectionRef,
     frame::WriteFrame,
-    proto::{frame::HeadersFrame, headers::Header, ErrorCode},
+    proto::{connection::DecodeResult, frame::HeadersFrame, headers::Header, ErrorCode},
     Error,
 };
 
@@ -43,8 +43,8 @@ impl Future for DecodeHeaders {
                     .decode_header(self.stream_id, frame);
 
                 match result {
-                    Ok(None) => Poll::Pending,
-                    Ok(Some(decoded)) => Poll::Ready(Ok(decoded)),
+                    Ok(DecodeResult::MissingRefs(_)) => Poll::Pending, // Stream is blocked
+                    Ok(DecodeResult::Decoded(decoded)) => Poll::Ready(Ok(decoded)),
                     Err(e) => {
                         Poll::Ready(Err(Error::peer(format!("decoding header failed: {:?}", e))))
                     }
