@@ -1,34 +1,8 @@
-use std::{fmt, fs, io, path::PathBuf};
+use std::{fs, io, path::PathBuf};
 
-use failure::{bail, Error, Fail, ResultExt};
+use anyhow::{bail, Context, Result};
 use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 use tracing::info;
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-pub struct PrettyErr<'a>(&'a dyn Fail);
-impl<'a> fmt::Display for PrettyErr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)?;
-        let mut x: &dyn Fail = self.0;
-        while let Some(cause) = x.cause() {
-            f.write_str(": ")?;
-            fmt::Display::fmt(&cause, f)?;
-            x = cause;
-        }
-        Ok(())
-    }
-}
-
-pub trait ErrorExt {
-    fn pretty(&self) -> PrettyErr<'_>;
-}
-
-impl ErrorExt for Error {
-    fn pretty(&self) -> PrettyErr<'_> {
-        PrettyErr(self.as_fail())
-    }
-}
 
 pub fn build_certs(
     key: &Option<PathBuf>,

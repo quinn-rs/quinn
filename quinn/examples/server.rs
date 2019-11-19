@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate failure;
-
 use std::{
     ascii, fs, io,
     net::SocketAddr,
@@ -9,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use failure::{Error, ResultExt};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
 use tokio::runtime::Runtime;
@@ -17,8 +14,6 @@ use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
 mod common;
-
-type Result<T> = std::result::Result<T, Error>;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "server")]
@@ -197,7 +192,7 @@ async fn handle_request(
     let req = recv
         .read_to_end(64 * 1024)
         .await
-        .map_err(|e| format_err!("failed reading request: {}", e))?;
+        .map_err(|e| anyhow!("failed reading request: {}", e))?;
     let mut escaped = String::new();
     for &x in &req[..] {
         let part = ascii::escape_default(x).collect::<Vec<_>>();
@@ -214,11 +209,11 @@ async fn handle_request(
     // Write the response
     send.write_all(&resp)
         .await
-        .map_err(|e| format_err!("failed to send response: {}", e))?;
+        .map_err(|e| anyhow!("failed to send response: {}", e))?;
     // Gracefully terminate the stream
     send.finish()
         .await
-        .map_err(|e| format_err!("failed to shutdown stream: {}", e))?;
+        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
     info!("complete");
     Ok(())
 }
