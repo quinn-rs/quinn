@@ -94,6 +94,24 @@ impl TransportParameters {
             ..Self::default()
         }
     }
+
+    /// Check that these parameters are legal when resuming from
+    /// certain cached parameters
+    pub fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
+        if cached.initial_max_data < self.initial_max_data
+            || cached.initial_max_stream_data_bidi_local < self.initial_max_stream_data_bidi_local
+            || cached.initial_max_stream_data_bidi_remote < self.initial_max_stream_data_bidi_remote
+            || cached.initial_max_stream_data_uni < self.initial_max_stream_data_uni
+            || cached.initial_max_streams_bidi < self.initial_max_streams_bidi
+            || cached.initial_max_streams_uni < self.initial_max_streams_uni
+        {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "0-RTT accepted with incompatible transport parameters",
+            )
+            .into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
