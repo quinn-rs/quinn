@@ -1436,23 +1436,7 @@ where
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
-                                    if params.initial_max_data < self.params.initial_max_data
-                                        || params.initial_max_stream_data_bidi_local
-                                            < self.params.initial_max_stream_data_bidi_local
-                                        || params.initial_max_stream_data_bidi_remote
-                                            < self.params.initial_max_stream_data_bidi_remote
-                                        || params.initial_max_stream_data_uni
-                                            < self.params.initial_max_stream_data_uni
-                                        || params.initial_max_streams_bidi
-                                            < self.params.initial_max_streams_bidi
-                                        || params.initial_max_streams_uni
-                                            < self.params.initial_max_streams_uni
-                                    {
-                                        return Err(TransportError::PROTOCOL_VIOLATION(
-                                            "flow control parameters were reduced wrt. 0-RTT",
-                                        )
-                                        .into());
-                                    }
+                                    params.validate_0rtt(&self.params)?;
                                 }
                             }
                             if let Some(token) = params.stateless_reset_token {
