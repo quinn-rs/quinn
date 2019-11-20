@@ -35,17 +35,12 @@ impl Future for DecodeHeaders {
             None => Poll::Ready(Err(crate::Error::Internal("frame none"))),
             Some(ref frame) => {
                 let mut conn = self.conn.h3.lock().unwrap();
-                let result = conn.inner.decode_header(self.stream_id, frame);
+                let result = conn.decode_header(cx, self.stream_id, frame);
 
                 match result {
-                    Ok(DecodeResult::MissingRefs(r)) => {
-                        conn.register_blocked(self.stream_id, r, cx);
-                        Poll::Pending
-                    }
+                    Ok(DecodeResult::MissingRefs(_)) => Poll::Pending,
                     Ok(DecodeResult::Decoded(decoded)) => Poll::Ready(Ok(decoded)),
-                    Err(e) => {
-                        Poll::Ready(Err(Error::peer(format!("decoding header failed: {:?}", e))))
-                    }
+                    Err(e) => Poll::Ready(Err(e.into())),
                 }
             }
         }
