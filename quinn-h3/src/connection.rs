@@ -24,6 +24,7 @@ use crate::{
 };
 
 const RECV_ENCODER_INITIAL_CAPACITY: usize = 20480;
+const RECV_DECODER_INITIAL_CAPACITY: usize = 2048;
 
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
@@ -37,6 +38,7 @@ impl Future for ConnectionDriver {
         conn.poll_send(cx)?;
         conn.poll_recv_control(cx)?;
         conn.poll_recv_encoder(cx)?;
+        conn.poll_recv_decoder(cx)?;
         conn.poll_incoming_bi(cx)?;
         conn.poll_send(cx)?;
 
@@ -227,7 +229,8 @@ impl ConnectionInner {
             },
             NewUni::Decoder(s) => match self.recv_decoder {
                 None => {
-                    self.recv_decoder = Some((s, BytesMut::with_capacity(2048)));
+                    self.recv_decoder =
+                        Some((s, BytesMut::with_capacity(RECV_DECODER_INITIAL_CAPACITY)));
                     Ok(())
                 }
                 Some(_) => {
@@ -343,6 +346,35 @@ impl ConnectionInner {
                     for (_, waker) in unblocked.into_iter().map(|(_, v)| v).flatten() {
                         waker.wake();
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn poll_recv_decoder(&mut self, cx: &mut Context) -> Result<(), Error> {
+        let (mut recv_decoder, mut buffer) = match self.recv_decoder.as_mut() {
+            None => return Ok(()),
+            Some((ref mut s, ref mut b)) => (s, b),
+        };
+
+        loop {
+            let mut read_buf = [0; RECV_DECODER_INITIAL_CAPACITY];
+            match Pin::new(&mut recv_decoder).poll_read(cx, &mut read_buf[..])? {
+                Poll::Pending => break,
+                Poll::Ready(0) => {
+                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "decoder closed");
+                    return Err(Error::Peer("decoder stream closed".into()));
+                }
+                Poll::Ready(n) => {
+                    buffer.extend_from_slice(&read_buf[..n]);
+                    let pos = {
+                        let mut cur = Cursor::new(&mut buffer);
+                        self.inner.on_recv_decoder(&mut cur)?;
+                        cur.position() as usize
+                    };
+                    buffer.advance(pos);
+                    buffer.reserve(buffer.capacity());
                 }
             }
         }
