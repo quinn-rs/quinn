@@ -123,6 +123,10 @@ impl Connection {
         )?)
     }
 
+    pub fn on_recv_decoder<R: Buf>(&mut self, read: &mut R) -> Result<()> {
+        Ok(qpack::on_decoder_recv(&mut self.encoder_table, read)?)
+    }
+
     pub fn remote_settings(&self) -> &Option<Settings> {
         &self.remote_settings
     }
