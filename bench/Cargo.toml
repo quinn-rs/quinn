@@ -1,0 +1,24 @@
+[package]
+name = "bench"
+version = "0.1.0"
+authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+publish = false
+
+[dependencies]
+quinn = { path = "../quinn" }
+tokio = { version = "0.2.0-alpha.6", default-features = false, features = ["rt-current-thread"] }
+tracing = "0.1.10"
+tracing-subscriber = "0.1.5"
+anyhow = "1.0.22"
+rcgen = "0.7"
+futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
+rustls = "0.16"
+
+[[bin]]
+name = "bulk"
+path = "src/bulk.rs"
+
+[profile.release]
+debug = true
