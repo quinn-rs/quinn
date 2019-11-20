@@ -15,8 +15,8 @@ use quinn_proto::{Side, StreamId};
 use crate::{
     frame::FrameStream,
     proto::{
-        connection::{Connection, Error as ProtoError, PendingStreamType},
-        frame::HttpFrame,
+        connection::{Connection, DecodeResult, Error as ProtoError, PendingStreamType},
+        frame::{HeadersFrame, HttpFrame},
         ErrorCode, StreamType,
     },
     streams::{NewUni, RecvUni, SendUni},
@@ -121,12 +121,28 @@ impl ConnectionInner {
         }
     }
 
-    pub fn register_blocked(&mut self, stream_id: StreamId, required_ref: usize, cx: &mut Context) {
-        self.blocked_streams
-            .entry(required_ref)
-            .or_insert(HashMap::new())
-            .entry(stream_id)
-            .or_insert(cx.waker().clone());
+    pub fn decode_header(
+        &mut self,
+        cx: &mut Context,
+        stream_id: StreamId,
+        header: &HeadersFrame,
+    ) -> Result<DecodeResult, Error> {
+        self.inner
+            .decode_header(stream_id, header)
+            .map_err(|e| Error::peer(format!("decoding header failed: {:?}", e)))
+            .map(|r| {
+                match &r {
+                    DecodeResult::Decoded(_) => self.wake(), // send header acknowledgement
+                    DecodeResult::MissingRefs(required_ref) => {
+                        self.blocked_streams
+                            .entry(*required_ref)
+                            .or_insert(HashMap::new())
+                            .entry(stream_id)
+                            .or_insert(cx.waker().clone());
+                    }
+                };
+                r
+            })
     }
 
     fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), Error> {
