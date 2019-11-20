@@ -3,3 +3,6 @@ members = ["quinn", "quinn-proto", "quinn-h3", "interop", "bench"]
 
 [profile.bench]
 debug = true
+
+[profile.release]
+debug = true
