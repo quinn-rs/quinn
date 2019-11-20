@@ -30,20 +30,18 @@ impl DecodeHeaders {
 impl Future for DecodeHeaders {
     type Output = Result<Header, Error>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match self.frame {
             None => Poll::Ready(Err(crate::Error::Internal("frame none"))),
             Some(ref frame) => {
-                let result = self
-                    .conn
-                    .h3
-                    .lock()
-                    .unwrap()
-                    .inner
-                    .decode_header(self.stream_id, frame);
+                let mut conn = self.conn.h3.lock().unwrap();
+                let result = conn.inner.decode_header(self.stream_id, frame);
 
                 match result {
-                    Ok(DecodeResult::MissingRefs(_)) => Poll::Pending, // Stream is blocked
+                    Ok(DecodeResult::MissingRefs(r)) => {
+                        conn.register_blocked(self.stream_id, r, cx);
+                        Poll::Pending
+                    }
                     Ok(DecodeResult::Decoded(decoded)) => Poll::Ready(Ok(decoded)),
                     Err(e) => {
                         Poll::Ready(Err(Error::peer(format!("decoding header failed: {:?}", e))))
@@ -63,10 +61,9 @@ impl SendHeaders {
         send: SendStream,
         stream_id: StreamId,
     ) -> Result<Self, Error> {
-        let frame = {
-            let conn = &mut conn.h3.lock().unwrap().inner;
-            conn.encode_header(stream_id, header)?
-        };
+        let conn = &mut conn.h3.lock().unwrap();
+        let frame = conn.inner.encode_header(stream_id, header)?;
+        conn.wake();
 
         Ok(Self(WriteFrame::new(send, frame)))
     }

@@ -1,16 +1,16 @@
-use crate::streams::SendUni;
-use quinn_proto::StreamId;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, HashMap, VecDeque},
+    io::Cursor,
+    mem,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Waker},
 };
 
 use bytes::{Bytes, BytesMut};
-use futures::{Future, Poll, Stream};
+use futures::{AsyncRead, Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
-use quinn_proto::Side;
+use quinn_proto::{Side, StreamId};
 
 use crate::{
     frame::FrameStream,
@@ -19,9 +19,11 @@ use crate::{
         frame::HttpFrame,
         ErrorCode, StreamType,
     },
-    streams::{NewUni, RecvUni},
+    streams::{NewUni, RecvUni, SendUni},
     Error, Settings,
 };
+
+const RECV_ENCODER_INITIAL_CAPACITY: usize = 20480;
 
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
@@ -34,7 +36,11 @@ impl Future for ConnectionDriver {
         conn.poll_incoming_uni(cx)?;
         conn.poll_send(cx)?;
         conn.poll_recv_control(cx)?;
+        conn.poll_recv_encoder(cx)?;
         conn.poll_incoming_bi(cx)?;
+        conn.poll_send(cx)?;
+
+        conn.reset_waker(cx);
 
         if conn.inner.is_closing() && conn.inner.requests_in_flight() == 0 {
             return Poll::Ready(Ok(()));
@@ -61,6 +67,7 @@ impl ConnectionRef {
             quic: quic.clone(),
             h3: Arc::new(Mutex::new(ConnectionInner {
                 side,
+                driver: None,
                 quic: quic.clone(),
                 incoming_bi: bi_streams,
                 incoming_uni: uni_streams,
@@ -71,6 +78,7 @@ impl ConnectionRef {
                 recv_control: None,
                 recv_encoder: None,
                 recv_decoder: None,
+                blocked_streams: BTreeMap::new(),
                 send_unis: [
                     SendUni::new(StreamType::CONTROL, quic.clone()),
                     SendUni::new(StreamType::ENCODER, quic.clone()),
@@ -86,6 +94,7 @@ pub(crate) struct ConnectionInner {
     pub requests: VecDeque<(SendStream, RecvStream)>,
     pub requests_task: Option<Waker>,
     side: Side,
+    driver: Option<Waker>,
     quic: quinn::Connection,
     incoming_bi: IncomingBiStreams,
     incoming_uni: IncomingUniStreams,
@@ -93,10 +102,31 @@ pub(crate) struct ConnectionInner {
     recv_control: Option<FrameStream>,
     recv_encoder: Option<(RecvStream, BytesMut)>,
     recv_decoder: Option<(RecvStream, BytesMut)>,
+    blocked_streams: BTreeMap<usize, HashMap<StreamId, Waker>>,
     send_unis: [SendUni; 3],
 }
 
 impl ConnectionInner {
+    pub fn wake(&mut self) {
+        if let Some(w) = self.driver.take() {
+            w.wake();
+        }
+    }
+
+    fn reset_waker(&mut self, cx: &mut Context) {
+        if self.driver.is_none() {
+            self.driver = Some(cx.waker().clone());
+        }
+    }
+
+    pub fn register_blocked(&mut self, stream_id: StreamId, required_ref: usize, cx: &mut Context) {
+        self.blocked_streams
+            .entry(required_ref)
+            .or_insert(HashMap::new())
+            .entry(stream_id)
+            .or_insert(cx.waker().clone());
+    }
+
     fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), Error> {
         loop {
             match Pin::new(&mut self.incoming_bi).poll_next(cx) {
@@ -210,7 +240,8 @@ impl ConnectionInner {
             },
             NewUni::Encoder(s) => match self.recv_encoder {
                 None => {
-                    self.recv_encoder = Some((s, BytesMut::with_capacity(2048)));
+                    self.recv_encoder =
+                        Some((s, BytesMut::with_capacity(RECV_ENCODER_INITIAL_CAPACITY)));
                     Ok(())
                 }
                 Some(_) => {
@@ -280,6 +311,42 @@ impl ConnectionInner {
                 }
             }
         }
+    }
+
+    fn poll_recv_encoder(&mut self, cx: &mut Context) -> Result<(), Error> {
+        let (mut recv_encoder, mut buffer) = match self.recv_encoder.as_mut() {
+            None => return Ok(()),
+            Some((ref mut s, ref mut b)) => (s, b),
+        };
+
+        loop {
+            let mut read_buf = [0; RECV_ENCODER_INITIAL_CAPACITY];
+            match Pin::new(&mut recv_encoder).poll_read(cx, &mut read_buf[..])? {
+                Poll::Pending => break,
+                Poll::Ready(0) => {
+                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "encoder closed");
+                    return Err(Error::Peer("encoder stream closed".into()));
+                }
+                Poll::Ready(n) => {
+                    buffer.extend_from_slice(&read_buf[..n]);
+                    let (pos, max_received_ref) = {
+                        let mut cur = Cursor::new(&mut buffer);
+                        let max_received_ref = self.inner.on_recv_encoder(&mut cur)?;
+                        (cur.position() as usize, max_received_ref + 1)
+                    };
+
+                    buffer.advance(pos);
+                    buffer.reserve(buffer.capacity());
+
+                    let blocked = self.blocked_streams.split_off(&max_received_ref);
+                    let unblocked = mem::replace(&mut self.blocked_streams, blocked);
+                    for (_, waker) in unblocked.into_iter().map(|(_, v)| v).flatten() {
+                        waker.wake();
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn poll_send(&mut self, cx: &mut Context) -> Result<(), Error> {
