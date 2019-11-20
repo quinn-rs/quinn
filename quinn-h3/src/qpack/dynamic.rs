@@ -571,8 +571,8 @@ impl DynamicTable {
         }
     }
 
-    pub fn update_largest_received(&mut self, index: usize) {
-        self.largest_known_received = std::cmp::max(index, self.largest_known_received);
+    pub fn update_largest_received(&mut self, increment: usize) {
+        self.largest_known_received += increment;
 
         if self.blocked_streams.is_none() || self.blocked_count == 0 {
             return;
