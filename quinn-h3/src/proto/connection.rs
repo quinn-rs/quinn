@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
 
@@ -115,6 +115,14 @@ impl Connection {
         }
     }
 
+    pub fn on_recv_encoder<R: Buf>(&mut self, read: &mut R) -> Result<usize> {
+        Ok(qpack::on_encoder_recv(
+            &mut self.decoder_table.inserter(),
+            read,
+            &mut self.pending_streams[PendingStreamType::Decoder as usize],
+        )?)
+    }
+
     pub fn remote_settings(&self) -> &Option<Settings> {
         &self.remote_settings
     }
@@ -192,6 +200,12 @@ pub enum Error {
 impl From<EncoderError> for Error {
     fn from(err: EncoderError) -> Error {
         Error::EncodeError { reason: err }
+    }
+}
+
+impl From<DecoderError> for Error {
+    fn from(err: DecoderError) -> Error {
+        Error::DecodeError { reason: err }
     }
 }
 

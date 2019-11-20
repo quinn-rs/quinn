@@ -111,7 +111,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
     table: &mut DynamicTableInserter,
     read: &mut R,
     write: &mut W,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let inserted_on_start = table.total_inserted();
 
     while let Some(instruction) = parse_instruction(&table, read)? {
@@ -127,7 +127,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
         InsertCountIncrement(table.total_inserted() - inserted_on_start).encode(write);
     }
 
-    Ok(())
+    Ok(table.total_inserted())
 }
 
 fn parse_instruction<R: Buf>(
@@ -351,7 +351,7 @@ mod tests {
         let mut enc = Cursor::new(&buf);
         let mut dec = vec![];
         let res = on_encoder_recv(&mut table.inserter(), &mut enc, &mut dec);
-        assert_eq!(res, Ok(()));
+        assert_eq!(res, Ok(3));
 
         let mut dec_cursor = Cursor::new(&dec);
         assert_eq!(
@@ -373,7 +373,7 @@ mod tests {
         let mut dec = vec![];
         let mut table = build_table_with_size(0);
         let res = on_encoder_recv(&mut table.inserter(), &mut enc, &mut dec);
-        assert_eq!(res, Ok(()));
+        assert_eq!(res, Ok(0));
 
         let actual_max_size = table.max_mem_size();
         assert_eq!(actual_max_size, 25);
