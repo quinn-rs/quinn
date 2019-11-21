@@ -15,11 +15,11 @@ structopt = "0.3.0"
 tokio = "0.2.0-alpha.5"
 tokio-net = "0.2.0-alpha.5" # tokio doesn't reexport everything we use
 rustls = { version = "0.16", features = ["dangerous_configuration"] }
-futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 webpki = "0.21"
 tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
 anyhow = "1.0.22"
+futures = "0.3.1"
 
 [[bin]]
 name = "main"

@@ -1,6 +1,6 @@
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, task::Poll};
 
-use futures::{ready, task::Context, Poll};
+use futures::{ready, task::Context};
 use mio;
 
 use tokio_net::{driver::Handle, util::PollEvented};

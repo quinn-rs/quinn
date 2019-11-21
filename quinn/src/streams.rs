@@ -1,4 +1,4 @@
-use std::{io, pin::Pin, str};
+use std::{io, pin::Pin, str, task::Poll};
 
 use bytes::Bytes;
 use err_derive::Error;
@@ -7,7 +7,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
     task::Context,
-    Future, FutureExt, Poll,
+    Future, FutureExt,
 };
 use proto::{ConnectionError, StreamId};
 

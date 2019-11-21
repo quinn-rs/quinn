@@ -28,7 +28,6 @@ azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" 
 bytes = "0.4.7"
 ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2"
-futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
@@ -39,6 +38,7 @@ tokio-timer = "0.3.0-alpha.5"
 tokio-io = "0.2.0-alpha.5"
 webpki = "0.21"
 rustls-native-certs = { version = "0.1.0", optional = true }
+futures = "0.3.1"
 
 [dev-dependencies]
 crc = "1.8.1"

@@ -5,6 +5,7 @@ use std::{
     pin::Pin,
     str,
     sync::{Arc, Mutex},
+    task::Poll,
     time::Instant,
 };
 
@@ -12,7 +13,7 @@ use bytes::Bytes;
 use futures::{
     channel::mpsc,
     task::{Context, Waker},
-    Future, FutureExt, Poll, StreamExt,
+    Future, FutureExt, StreamExt,
 };
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 

@@ -4,6 +4,7 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
+    task::Poll,
     time::Instant,
 };
 
@@ -12,7 +13,7 @@ use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
     task::{Context, Waker},
-    Future, FutureExt, Poll, StreamExt,
+    Future, FutureExt, StreamExt,
 };
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
 use tokio_timer::{delay, Delay};
