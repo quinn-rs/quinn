@@ -51,9 +51,7 @@ mod platform;
 mod udp;
 
 pub use proto::{
-    crypto,
-    crypto::rustls::{Certificate, CertificateChain, PrivateKey},
-    ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
+    crypto, ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
     Transmit, TransportConfig, VarInt,
 };
 
@@ -75,6 +73,9 @@ pub use streams::{
     Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream, SendStream,
     WriteError,
 };
+
+mod tls;
+pub use tls::{Certificate, CertificateChain, PrivateKey};
 
 #[cfg(test)]
 mod tests;

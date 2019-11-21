@@ -250,7 +250,7 @@ fn run(options: Opt) -> Result<()> {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let client_config = quinn::ClientConfig {
-        crypto: quinn::crypto::rustls::ClientConfig::new(tls_config),
+        crypto: Arc::new(tls_config),
         transport: Arc::new(quinn::TransportConfig {
             idle_timeout: 1_000,
             ..Default::default()

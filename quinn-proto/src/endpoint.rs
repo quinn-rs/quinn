@@ -349,7 +349,7 @@ where
     /// Initiate a connection
     pub fn connect(
         &mut self,
-        config: ClientConfig<S::ClientConfig>,
+        config: ClientConfig<S>,
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
@@ -405,7 +405,7 @@ where
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        opts: ConnectionOpts<S::ClientConfig>,
+        opts: ConnectionOpts<S>,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         let loc_cid = self.new_cid();
@@ -669,7 +669,6 @@ where
 impl<S> fmt::Debug for Endpoint<S>
 where
     S: crypto::Session,
-    S::ServerConfig: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
@@ -832,9 +831,9 @@ where
     NewConnection(Connection<S>),
 }
 
-enum ConnectionOpts<C> {
+enum ConnectionOpts<S: crypto::Session> {
     Client {
-        config: ClientConfig<C>,
+        config: ClientConfig<S>,
         server_name: String,
     },
     Server {

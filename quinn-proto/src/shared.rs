@@ -5,7 +5,11 @@ use err_derive::Error;
 use rand::{Rng, RngCore};
 use tracing::warn;
 
-use crate::{crypto, packet::PartialDecode, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{
+    crypto::{self, ClientConfig as _, ServerConfig as _},
+    packet::PartialDecode,
+    VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -285,12 +289,11 @@ where
 impl<S> fmt::Debug for ServerConfig<S>
 where
     S: crypto::Session,
-    S::ServerConfig: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ServerConfig<T>")
             .field("transport", &self.transport)
-            .field("crypto", &self.crypto)
+            .field("crypto", &"ServerConfig { elided }")
             .field("token_key", &"[ elided ]")
             .field("use_stateless_retry", &self.use_stateless_retry)
             .field("retry_token_lifetime", &self.retry_token_lifetime)
@@ -303,7 +306,6 @@ where
 impl<S> Default for ServerConfig<S>
 where
     S: crypto::Session,
-    S::ServerConfig: Default,
 {
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
@@ -313,7 +315,7 @@ where
 
         Self {
             transport: Arc::new(TransportConfig::default()),
-            crypto: S::ServerConfig::default(),
+            crypto: S::ServerConfig::new(),
 
             token_key,
             use_stateless_retry: false,
@@ -347,13 +349,52 @@ where
 /// Configuration for outgoing connections
 ///
 /// Default values should be suitable for most internet applications.
-#[derive(Clone, Debug, Default)]
-pub struct ClientConfig<C> {
+pub struct ClientConfig<S>
+where
+    S: crypto::Session,
+{
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use
-    pub crypto: C,
+    pub crypto: S::ClientConfig,
+}
+
+impl<S> Default for ClientConfig<S>
+where
+    S: crypto::Session,
+{
+    fn default() -> Self {
+        Self {
+            transport: Default::default(),
+            crypto: S::ClientConfig::new(),
+        }
+    }
+}
+
+impl<S> Clone for ClientConfig<S>
+where
+    S: crypto::Session,
+    S::ClientConfig: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transport: self.transport.clone(),
+            crypto: self.crypto.clone(),
+        }
+    }
+}
+
+impl<S> fmt::Debug for ClientConfig<S>
+where
+    S: crypto::Session,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("ClientConfig<T>")
+            .field("transport", &self.transport)
+            .field("crypto", &"ClientConfig { elided }")
+            .finish()
+    }
 }
 
 /// Errors in the configuration of an endpoint

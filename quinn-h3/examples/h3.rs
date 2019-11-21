@@ -12,7 +12,7 @@ use structopt::{self, StructOpt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
 
-use quinn::ConnectionDriver as QuicDriver;
+use quinn::{Certificate, CertificateChain, ConnectionDriver as QuicDriver, PrivateKey};
 use quinn_h3::{
     self,
     body::RecvBody,
@@ -20,7 +20,6 @@ use quinn_h3::{
     connection::ConnectionDriver,
     server::{Builder as ServerBuilder, IncomingRequest, Sender},
 };
-use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
 
 mod shared;
 use shared::build_certs;

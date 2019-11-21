@@ -16,10 +16,7 @@ use rustls::KeyLogFile;
 use tracing::{info_span, trace};
 
 use super::*;
-use crate::{
-    crypto::rustls::{CertificateChain, PrivateKey},
-    timer::TimerKind,
-};
+use crate::timer::TimerKind;
 
 pub struct Pair {
     pub server: TestEndpoint,
@@ -362,11 +359,11 @@ pub fn server_config() -> ServerConfig {
     let key = CERTIFICATE.serialize_private_key_der();
     let cert = CERTIFICATE.serialize_pem().unwrap();
 
-    let mut crypto = crypto::rustls::ServerConfig::default();
-    crypto
-        .set_certificate(
-            CertificateChain::from_pem(cert.as_bytes()).unwrap(),
-            PrivateKey::from_der(&key).unwrap(),
+    let mut crypto = crypto::ServerConfig::new();
+    Arc::make_mut(&mut crypto)
+        .set_single_cert(
+            rustls::internal::pemfile::certs(&mut cert.as_bytes()).unwrap(),
+            rustls::PrivateKey(key.to_vec()),
         )
         .unwrap();
     ServerConfig {
@@ -380,15 +377,15 @@ pub fn client_config() -> ClientConfig {
     let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(&cert).unwrap();
     let anchor_vec = vec![anchor];
 
-    let mut tls_client_config = crypto::rustls::ClientConfig::default();
-    Arc::make_mut(&mut tls_client_config)
+    let mut crypto = crypto::ClientConfig::new();
+    Arc::make_mut(&mut crypto)
         .root_store
         .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&anchor_vec));
-    Arc::make_mut(&mut tls_client_config).key_log = Arc::new(KeyLogFile::new());
-    Arc::make_mut(&mut tls_client_config).enable_early_data = true;
+    Arc::make_mut(&mut crypto).key_log = Arc::new(KeyLogFile::new());
+    Arc::make_mut(&mut crypto).enable_early_data = true;
     ClientConfig {
         transport: Default::default(),
-        crypto: tls_client_config,
+        crypto,
         ..Default::default()
     }
 }

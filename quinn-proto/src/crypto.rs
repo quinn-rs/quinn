@@ -20,10 +20,10 @@ use crate::{
 
 /// Cryptography interface based on *ring*
 #[cfg(feature = "ring")]
-pub mod ring;
+pub(crate) mod ring;
 /// TLS interface based on rustls
 #[cfg(feature = "rustls")]
-pub mod rustls;
+pub(crate) mod rustls;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Sized {
@@ -87,6 +87,11 @@ pub trait ClientConfig<S>
 where
     S: Session,
 {
+    /// Construct the default configuration
+    fn new() -> Self
+    where
+        Self: Sized;
+
     /// Start a client session with this configuration
     fn start_session(
         &self,
@@ -100,6 +105,11 @@ pub trait ServerConfig<S>
 where
     S: Session,
 {
+    /// Construct the default configuration
+    fn new() -> Self
+    where
+        Self: Sized;
+
     /// Start a server session with this configuration
     fn start_session(&self, params: &TransportParameters) -> S;
 }
