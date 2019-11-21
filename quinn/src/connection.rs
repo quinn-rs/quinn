@@ -106,6 +106,16 @@ impl Future for Connecting {
     }
 }
 
+impl Connecting {
+    /// Get the peer address of a `Connecting`.
+    ///
+    /// This must not be called after `poll` has returned `Ready`, or it will panic.
+    pub fn peer_address(&self) -> SocketAddr {
+        let conn_ref: &ConnectionRef = &self.0.as_ref().expect("used after yielding Ready").0;
+        conn_ref.lock().unwrap().inner.remote()
+    }
+}
+
 /// Future that completes when a connection is fully established
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
