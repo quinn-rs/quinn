@@ -59,7 +59,8 @@ fn codec_basic_get() {
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
 
     let mut block_cur = Cursor::new(&mut block_buf);
-    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
+    let (decoded, _) = decode_header(&dec_table, &mut block_cur).unwrap();
+    assert_eq!(decoded, header);
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();
@@ -123,7 +124,8 @@ fn codec_table_size_0() {
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
 
     let mut block_cur = Cursor::new(&mut block_buf);
-    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
+    let (decoded, _) = decode_header(&dec_table, &mut block_cur).unwrap();
+    assert_eq!(decoded, header);
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();
@@ -158,8 +160,8 @@ fn codec_table_full() {
     let mut block_cur = Cursor::new(&mut block_buf);
 
     on_encoder_recv(&mut dec_table.inserter(), &mut enc_cur, &mut dec_buf).unwrap();
-
-    assert_eq!(decode_header(&dec_table, &mut block_cur), Ok(header));
+    let (decoded, _) = decode_header(&dec_table, &mut block_cur).unwrap();
+    assert_eq!(decoded, header);
 
     let mut dec_cur = Cursor::new(&mut dec_buf);
     on_decoder_recv(&mut enc_table, &mut dec_cur).unwrap();

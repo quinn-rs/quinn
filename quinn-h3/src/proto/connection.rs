@@ -22,7 +22,7 @@ pub enum PendingStreamType {
 
 #[derive(Debug)]
 pub enum DecodeResult {
-    Decoded(Header),
+    Decoded(Header, bool),
     MissingRefs(usize),
 }
 
@@ -105,12 +105,14 @@ impl Connection {
         ) {
             Err(DecoderError::MissingRefs(r)) => Ok(DecodeResult::MissingRefs(r)),
             Err(e) => Err(Error::DecodeError { reason: e }),
-            Ok(decoded) => {
-                qpack::ack_header(
-                    stream_id.0,
-                    &mut self.pending_streams[PendingStreamType::Decoder as usize],
-                );
-                Ok(DecodeResult::Decoded(Header::try_from(decoded)?))
+            Ok((decoded, had_refs)) => {
+                if had_refs {
+                    qpack::ack_header(
+                        stream_id.0,
+                        &mut self.pending_streams[PendingStreamType::Decoder as usize],
+                    );
+                }
+                Ok(DecodeResult::Decoded(Header::try_from(decoded)?, had_refs))
             }
         }
     }
@@ -315,15 +317,17 @@ mod tests {
 
         let mut client = Connection::default();
         let encoded = client
-            .encode_header(StreamId(1), header)
+            .encode_header(StreamId(1), header.clone())
             .expect("encoding failed");
 
         let mut server = Connection::default();
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
-            Ok(DecodeResult::Decoded(_header))
+            Ok(DecodeResult::Decoded(decoded, false)) => {
+                assert_eq!(decoded, header);
+            }
         );
-        assert!(!server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
+        assert!(server.pending_streams[PendingStreamType::Decoder as usize].is_empty());
     }
 
     #[test]
