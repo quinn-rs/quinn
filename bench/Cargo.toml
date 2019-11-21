@@ -19,6 +19,3 @@ rustls = "0.16"
 [[bin]]
 name = "bulk"
 path = "src/bulk.rs"
-
-[profile.release]
-debug = true
