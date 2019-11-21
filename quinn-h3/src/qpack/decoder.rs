@@ -53,7 +53,10 @@ pub fn stream_canceled<W: BufMut>(stream_id: u64, decoder: &mut W) {
 }
 
 // Decode a header bloc received on Request of Push stream. (draft: 4.5)
-pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<HeaderField>, Error> {
+pub fn decode_header<T: Buf>(
+    table: &DynamicTable,
+    buf: &mut T,
+) -> Result<(Vec<HeaderField>, bool), Error> {
     let (required_ref, base) =
         HeaderPrefix::decode(buf)?.get(table.total_inserted(), table.max_mem_size())?;
 
@@ -68,7 +71,7 @@ pub fn decode_header<T: Buf>(table: &DynamicTable, buf: &mut T) -> Result<Vec<He
         fields.push(parse_header_field(&decoder_table, buf)?);
     }
 
-    Ok(fields)
+    Ok((fields, required_ref > 0))
 }
 
 fn parse_header_field<R: Buf>(
@@ -465,7 +468,8 @@ mod tests {
         Indexed::Static(18).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table_with_size(2), &mut read).unwrap();
+        let (headers, had_refs) = decode_header(&build_table_with_size(2), &mut read).unwrap();
+        assert!(had_refs);
         assert_eq!(
             headers,
             &[field(2), field(1), StaticTable::get(18).unwrap().clone()]
@@ -493,7 +497,8 @@ mod tests {
         IndexedWithPostBase(1).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        let (headers, had_refs) = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        assert!(had_refs);
         assert_eq!(headers, &[field(2), field(3), field(4)])
     }
 
@@ -509,7 +514,8 @@ mod tests {
             .unwrap();
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        let (headers, had_refs) = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        assert!(had_refs);
         assert_eq!(
             headers,
             &[
@@ -528,7 +534,7 @@ mod tests {
             .unwrap();
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        let (headers, _) = decode_header(&build_table_with_size(4), &mut read).unwrap();
         assert_eq!(headers, &[field(3).with_value("new bar3")]);
     }
 
@@ -540,7 +546,7 @@ mod tests {
 
         let mut read = Cursor::new(&buf);
         let table = build_table_with_size(0);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let (headers, _) = decode_header(&table, &mut read).unwrap();
         assert_eq!(
             headers,
             &[HeaderField::new(b"foo".to_vec(), b"bar".to_vec())]
@@ -569,7 +575,7 @@ mod tests {
         IndexedWithPostBase(3).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&build_table_with_size(4), &mut read).unwrap();
+        let (headers, _) = decode_header(&build_table_with_size(4), &mut read).unwrap();
         assert_eq!(headers, &[field(1), field(2), field(3), field(4)]);
     }
 
@@ -591,7 +597,7 @@ mod tests {
         Indexed::Dynamic(10).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers =
+        let (headers, _) =
             decode_header(&build_table_with_size(max_entries + 10), &mut read).expect("decode");
         assert_eq!(headers, &[field(max_entries - 5)]);
 
@@ -609,7 +615,7 @@ mod tests {
         IndexedWithPostBase(4).encode(&mut buf);
 
         let mut read = Cursor::new(&buf);
-        let headers = decode_header(&table, &mut read).unwrap();
+        let (headers, _) = decode_header(&table, &mut read).unwrap();
         assert_eq!(headers, &[field(max_entries + 6), field(max_entries + 10)]);
     }
 }

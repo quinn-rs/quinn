@@ -132,7 +132,8 @@ impl ConnectionInner {
             .map_err(|e| Error::peer(format!("decoding header failed: {:?}", e)))
             .map(|r| {
                 match &r {
-                    DecodeResult::Decoded(_) => self.wake(), // send header acknowledgement
+                    DecodeResult::Decoded(_, true) => self.wake(), // send header acknowledgement
+                    DecodeResult::Decoded(_, _) => (),
                     DecodeResult::MissingRefs(required_ref) => {
                         self.blocked_streams
                             .entry(*required_ref)

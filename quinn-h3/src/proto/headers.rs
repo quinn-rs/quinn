@@ -15,7 +15,7 @@ use string::String;
 use crate::qpack::HeaderField;
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Clone))]
 pub struct Header {
     pseudo: Pseudo,
     fields: HeaderMap,
@@ -142,11 +142,26 @@ impl TryFrom<Vec<HeaderField>> for Header {
         for field in headers.into_iter() {
             let (name, value) = field.into_inner();
             match Field::parse(name, value)? {
-                Field::Method(m) => pseudo.method = Some(m),
-                Field::Scheme(s) => pseudo.scheme = Some(s),
-                Field::Authority(a) => pseudo.authority = Some(a),
-                Field::Path(p) => pseudo.path = Some(p),
-                Field::Status(s) => pseudo.status = Some(s),
+                Field::Method(m) => {
+                    pseudo.method = Some(m);
+                    pseudo.len += 1;
+                }
+                Field::Scheme(s) => {
+                    pseudo.scheme = Some(s);
+                    pseudo.len += 1;
+                }
+                Field::Authority(a) => {
+                    pseudo.authority = Some(a);
+                    pseudo.len += 1;
+                }
+                Field::Path(p) => {
+                    pseudo.path = Some(p);
+                    pseudo.len += 1;
+                }
+                Field::Status(s) => {
+                    pseudo.status = Some(s);
+                    pseudo.len += 1;
+                }
                 Field::Header((n, v)) => {
                     fields.append(n, v);
                 }
@@ -220,7 +235,8 @@ where
 /// request, and ':status' in a response. They must be placed before all other fields,
 /// start with ':', and be lowercase.
 /// See RFC7540 section 8.1.2.1. for more details.
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq, Clone))]
 pub struct Pseudo {
     // Request
     method: Option<Method>,
