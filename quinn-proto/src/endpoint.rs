@@ -353,6 +353,9 @@ where
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
+        if self.is_full() {
+            return Err(ConnectError::TooManyConnections);
+        }
         config.transport.validate()?;
         let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
         trace!(initial_dcid = %remote_id);
@@ -501,6 +504,7 @@ where
 
         if self.incoming_handshakes == server_config.accept_buffer as usize
             || self.reject_new_connections
+            || self.is_full()
         {
             debug!("rejecting connection due to full accept buffer");
             self.transmits.push_back(Transmit {
@@ -648,6 +652,17 @@ where
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
         self.connection_ids.len()
+    }
+
+    /// Whether we've used up 3/4 of the available CID space
+    ///
+    /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
+    /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
+    fn is_full(&self) -> bool {
+        self.config.local_cid_len <= 4
+            && self.config.local_cid_len != 0
+            && (2usize.pow(self.config.local_cid_len as u32 * 8) - self.connection_ids.len())
+                < 2usize.pow(self.config.local_cid_len as u32 * 8 - 2)
     }
 }
 
@@ -837,6 +852,11 @@ pub enum ConnectError {
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
     #[error(display = "endpoint stopping")]
     EndpointStopping,
+    /// The number of active connections on the local endpoint is at the limit
+    ///
+    /// Try a larger `EndpointConfig::local_cid_len`.
+    #[error(display = "too many connections")]
+    TooManyConnections,
     /// The domain name supplied was malformed
     #[error(display = "invalid DNS name: {}", _0)]
     InvalidDnsName(String),
