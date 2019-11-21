@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
-use failure::{format_err, Error};
+use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use http::{Request, Response, StatusCode};
 use structopt::{self, StructOpt};
@@ -32,7 +32,7 @@ struct Opt {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("server received connection");
         let connection = connecting
             .await
-            .map_err(|e| format_err!("accept failed: {:?}", e))
+            .map_err(|e| anyhow!("accept failed: {:?}", e))
             .expect("server failed");
 
         handle_connection(connection)
@@ -87,9 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_connection(
-    conn: (QuicDriver, ConnectionDriver, IncomingRequest),
-) -> Result<(), Error> {
+async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)) -> Result<()> {
     let (quic_driver, h3_driver, mut incoming) = conn;
 
     tokio::spawn(async move {
@@ -119,7 +117,7 @@ async fn handle_connection(
 const INITIAL_CAPACITY: usize = 256;
 const MAX_LEN: usize = 256;
 
-async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<(), Error> {
+async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()> {
     println!("received request: {:?}", request);
 
     let (_, body) = request.into_parts();
@@ -127,7 +125,7 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
     let (content, trailers) = body
         .read_to_end(INITIAL_CAPACITY, MAX_LEN)
         .await
-        .map_err(|e| format_err!("failed to send response headers: {:?}", e))?;
+        .map_err(|e| anyhow!("failed to send response headers: {:?}", e))?;
 
     if let Some(content) = content {
         println!("received body: {}", String::from_utf8_lossy(&content));
@@ -146,7 +144,7 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
         .response(response)
         .send()
         .await
-        .map_err(|e| format_err!("failed to send response: {:?}", e))?;
+        .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
 
     Ok(())
 }

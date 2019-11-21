@@ -1,5 +1,6 @@
 use std::{mem, ptr};
 
+#[derive(Copy, Clone)]
 #[repr(align(8))] // Conservative bound for align_of<cmsghdr>
 pub struct Aligned<T>(pub T);
 

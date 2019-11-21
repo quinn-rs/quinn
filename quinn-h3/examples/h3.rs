@@ -5,7 +5,7 @@ use std::{
     time::Instant,
 };
 
-use failure::{format_err, Error};
+use anyhow::{anyhow, Result};
 use futures::{StreamExt, TryFutureExt};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request, Response, StatusCode};
 use structopt::{self, StructOpt};
@@ -42,7 +42,7 @@ struct Opt {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -85,10 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ::std::process::exit(0);
 }
 
-fn server(
-    options: Opt,
-    certs: (CertificateChain, PrivateKey),
-) -> Result<quinn::EndpointDriver, Error> {
+fn server(options: Opt, certs: (CertificateChain, PrivateKey)) -> Result<quinn::EndpointDriver> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 513,
@@ -116,7 +113,7 @@ fn server(
             println!("server received connection");
             let connection = connecting
                 .await
-                .map_err(|e| format_err!("accept failed: {:?}", e))
+                .map_err(|e| anyhow!("accept failed: {:?}", e))
                 .expect("server failed");
             println!("received connection");
             handle_connection(connection).await
@@ -148,13 +145,13 @@ async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)
     }
 }
 
-async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<(), Error> {
+async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()> {
     println!("received request: {:?}", request);
     let (_, body) = request.into_parts();
     let (content, trailers) = body
         .read_to_end(1024, 10 * 1024)
         .await
-        .map_err(|e| format_err!("receive body failed: {:?}", e))?;
+        .map_err(|e| anyhow!("receive body failed: {:?}", e))?;
 
     if let Some(content) = content {
         println!("server received body len: {:?}", content.len());
@@ -179,7 +176,7 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
         .trailers(trailer)
         .stream()
         .await
-        .map_err(|e| format_err!("receive response failed: {:?}", e))?;
+        .map_err(|e| anyhow!("receive response failed: {:?}", e))?;
 
     let response_body = "r".repeat(1024);
     println!("sending body");
@@ -187,12 +184,12 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
     println!("sent body");
     writer
         .close()
-        .map_err(|e| format_err!("close failed: {:?}", e))
+        .map_err(|e| anyhow!("close failed: {:?}", e))
         .await?;
     Ok(())
 }
 
-fn build_client(cert: Certificate) -> Result<(Client, quinn::EndpointDriver), Error> {
+fn build_client(cert: Certificate) -> Result<(Client, quinn::EndpointDriver)> {
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(&[quinn_h3::ALPN]);
@@ -207,12 +204,12 @@ fn build_client(cert: Certificate) -> Result<(Client, quinn::EndpointDriver), Er
     ))
 }
 
-async fn client_request(client: Client, remote: &SocketAddr) -> Result<(), Error> {
+async fn client_request(client: Client, remote: &SocketAddr) -> Result<()> {
     let start = Instant::now();
     let (quic_driver, h3_driver, conn) = client
         .connect(&remote, "localhost")?
         .await
-        .map_err(|e| format_err!("failed ot connect: {:?}", e))?;
+        .map_err(|e| anyhow!("failed ot connect: {:?}", e))?;
     eprintln!("client connected at {:?}", start.elapsed());
 
     tokio::spawn(async move {

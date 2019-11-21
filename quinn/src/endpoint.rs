@@ -257,35 +257,36 @@ impl EndpointInner {
     }
 
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
-        let mut sent = 0;
-        while let Some(t) = self
-            .outgoing
-            .pop_front()
-            .or_else(|| self.inner.poll_transmit())
-        {
-            match self
-                .socket
-                .poll_send(cx, &t.destination, t.ecn, &t.contents)
-            {
-                Poll::Ready(Ok(_)) => {}
+        let mut calls = 0;
+        loop {
+            while self.outgoing.len() < crate::udp::BATCH_SIZE {
+                match self.inner.poll_transmit() {
+                    Some(x) => self.outgoing.push_back(x),
+                    None => break,
+                }
+            }
+            if self.outgoing.is_empty() {
+                return Ok(false);
+            }
+            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+                Poll::Ready(Ok(n)) => {
+                    self.outgoing.drain(..n);
+                    calls += 1;
+                    if calls == IO_LOOP_BOUND {
+                        return Ok(true);
+                    }
+                }
                 Poll::Pending => {
-                    self.outgoing.push_front(t);
-                    break;
+                    return Ok(false);
                 }
                 Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::PermissionDenied => {
-                    self.outgoing.push_front(t);
-                    break;
+                    return Ok(false);
                 }
                 Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
-            sent += 1;
-            if sent == IO_LOOP_BOUND {
-                return Ok(true);
-            }
         }
-        Ok(false)
     }
 
     fn handle_events(&mut self, cx: &mut Context) {
