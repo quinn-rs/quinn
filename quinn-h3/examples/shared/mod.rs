@@ -1,7 +1,7 @@
 use std::{fs, io, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
-use quinn_proto::crypto::rustls::{Certificate, CertificateChain, PrivateKey};
+use quinn::{Certificate, CertificateChain, PrivateKey};
 use tracing::info;
 
 pub fn build_certs(

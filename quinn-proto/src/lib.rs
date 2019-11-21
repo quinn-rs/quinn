@@ -76,7 +76,7 @@ mod rustls_impls {
     /// A `Connection` using rustls for the cryptography protocol
     pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
     /// A `ClientConfig` containing client-side rustls configuration
-    pub type ClientConfig = generic::ClientConfig<crypto::rustls::ClientConfig>;
+    pub type ClientConfig = generic::ClientConfig<crypto::rustls::TlsSession>;
     /// An `Endpoint` using rustls for the cryptography protocol
     pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
     /// A `ServerConfig` containing server-side rustls configuration
