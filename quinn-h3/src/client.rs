@@ -8,7 +8,7 @@ use std::{
 
 use futures::{ready, Stream};
 use http::{request, HeaderMap, Request, Response};
-use quinn::{Endpoint, OpenBi};
+use quinn::{Certificate, Endpoint, OpenBi};
 use quinn_proto::{Side, StreamId};
 
 use crate::{
@@ -25,14 +25,28 @@ use crate::{
     try_take, Error, Settings,
 };
 
-#[derive(Clone, Debug, Default)]
 pub struct Builder {
     settings: Settings,
+    client_config: quinn::ClientConfigBuilder,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        let mut client_config = quinn::ClientConfigBuilder::default();
+        client_config.protocols(&[crate::ALPN]);
+
+        Self {
+            client_config,
+            settings: Settings::default(),
+        }
+    }
 }
 
 impl Builder {
-    pub fn new() -> Self {
+    pub fn with_quic_config(mut client_config: quinn::ClientConfigBuilder) -> Self {
+        client_config.protocols(&[crate::ALPN]);
         Self {
+            client_config,
             settings: Settings::default(),
         }
     }
@@ -42,11 +56,33 @@ impl Builder {
         self
     }
 
+    pub fn add_certificate_authority(
+        &mut self,
+        cert: Certificate,
+    ) -> Result<&mut Self, webpki::Error> {
+        self.client_config.add_certificate_authority(cert)?;
+        Ok(self)
+    }
+
     pub fn endpoint(self, endpoint: Endpoint) -> Client {
         Client {
             endpoint,
             settings: self.settings,
         }
+    }
+
+    pub fn build(self) -> Result<(quinn::EndpointDriver, Client), quinn::EndpointError> {
+        let mut endpoint_builder = quinn::Endpoint::builder();
+        endpoint_builder.default_client_config(self.client_config.build());
+        let (endpoint_driver, endpoint, _) = endpoint_builder.bind(&"[::]:0".parse().unwrap())?;
+
+        Ok((
+            endpoint_driver,
+            Client {
+                endpoint,
+                settings: self.settings,
+            },
+        ))
     }
 }
 
