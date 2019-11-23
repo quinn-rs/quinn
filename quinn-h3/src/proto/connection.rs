@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use bytes::{Buf, Bytes, BytesMut};
 use quinn_proto::StreamId;
 use std::convert::TryFrom;
+use tracing::trace;
 
 use crate::{
     proto::{
@@ -103,7 +104,10 @@ impl Connection {
             &self.decoder_table,
             &mut std::io::Cursor::new(&header.encoded),
         ) {
-            Err(DecoderError::MissingRefs(r)) => Ok(DecodeResult::MissingRefs(r)),
+            Err(DecoderError::MissingRefs(r)) => {
+                trace!("header blocked on {}", r);
+                Ok(DecodeResult::MissingRefs(r))
+            }
             Err(e) => Err(Error::DecodeError { reason: e }),
             Ok((decoded, had_refs)) => {
                 if had_refs {
@@ -112,6 +116,11 @@ impl Connection {
                         &mut self.pending_streams[PendingStreamType::Decoder as usize],
                     );
                 }
+                trace!(
+                    "decoded {} fields, required ref {}",
+                    decoded.len(),
+                    had_refs
+                );
                 Ok(DecodeResult::Decoded(Header::try_from(decoded)?, had_refs))
             }
         }

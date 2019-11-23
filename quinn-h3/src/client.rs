@@ -10,6 +10,7 @@ use futures::{ready, Stream};
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Certificate, Endpoint, OpenBi};
 use quinn_proto::{Side, StreamId};
+use tracing::trace;
 
 use crate::{
     body::{Body, BodyWriter, RecvBody},
@@ -107,15 +108,48 @@ impl Client {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
-    pub fn request<T: Into<Body>>(&self, request: Request<T>) -> RequestBuilder<T> {
-        RequestBuilder {
-            request,
-            trailers: None,
-            conn: self.0.clone(),
+    pub async fn send_request<T: Into<Body>>(
+        &self,
+        request: Request<T>,
+    ) -> Result<(RecvResponse, BodyWriter), Error> {
+        let (
+            request::Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            body,
+        ) = request.into_parts();
+        let (send, recv) = self.0.quic.open_bi().await?;
+
+        let stream_id = send.id();
+        let send = SendHeaders::new(
+            Header::request(method, uri, headers),
+            &self.0,
+            send,
+            stream_id,
+        )?
+        .await?;
+
+        let recv = RecvResponse::new(FrameDecoder::stream(recv), self.0.clone(), stream_id);
+        match body.into() {
+            Body::Buf(payload) => {
+                let send = WriteFrame::new(send, DataFrame { payload }).await?;
+                Ok((
+                    recv,
+                    BodyWriter::new(send, self.0.clone(), stream_id, false),
+                ))
+            }
+            Body::None => Ok((
+                recv,
+                BodyWriter::new(send, self.0.clone(), stream_id, false),
+            )),
         }
     }
 
     pub fn close(self) {
+        trace!("connection closed by user");
         self.0
             .quic
             .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
@@ -314,6 +348,11 @@ impl Future for SendRequest {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
+            let span = match self.stream_id {
+                None => trace_span!("request opening"),
+                Some(id) => trace_span!("request", ?id),
+            };
+            let _guard = span.enter();
             match self.state {
                 SendRequestState::Aborted => return Poll::Ready(Err(Error::Aborted)),
                 SendRequestState::Opening(ref mut o) => {
