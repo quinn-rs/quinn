@@ -186,7 +186,7 @@ impl State {
     }
 
     async fn h3(self: Arc<Self>) -> Result<()> {
-        let h3_client = quinn_h3::client::Builder::new().endpoint(self.endpoint.clone());
+        let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
         let (quic_driver, h3_driver, conn) = h3_client
             .connect(&self.remote, &self.host)?
             .await

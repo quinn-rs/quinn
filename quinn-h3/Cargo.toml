@@ -33,6 +33,8 @@ quinn-proto = { path = "../quinn-proto", version = "0.5.0" }
 quinn = { path = "../quinn", version = "0.5.0" }
 tokio = "0.2.2"
 tokio-util = { version = "0.2.0", features = ["codec"] }
+tracing = "0.1.10"
+webpki = "0.21"
 
 [dev-dependencies]
 anyhow = "1.0.22"
