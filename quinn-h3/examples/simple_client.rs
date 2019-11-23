@@ -1,11 +1,9 @@
-use std::{
-    net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
-};
+use std::{fs, io, net::ToSocketAddrs, path::PathBuf};
 use structopt::{self, StructOpt};
 
 use anyhow::{anyhow, Result};
 use http::{header::HeaderValue, method::Method, HeaderMap, Request};
+use tracing::{error, info};
 use url::Url;
 
 use quinn_h3::{
@@ -13,20 +11,15 @@ use quinn_h3::{
     client::{Builder as ClientBuilder, Client},
 };
 
-mod shared;
-use shared::build_certs;
-
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_client")]
 struct Opt {
-    #[structopt(default_value = "http://127.0.0.1:4433/Cargo.toml")]
+    #[structopt(default_value = "http://localhost:4433/Cargo.toml")]
     url: Url,
-    /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
-    key: Option<PathBuf>,
-    /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
-    cert: Option<PathBuf>,
+
+    /// Custom certificate authority to trust, in DER format
+    #[structopt(parse(from_os_str), long = "ca")]
+    ca: Option<PathBuf>,
 }
 
 const INITIAL_CAPACITY: usize = 256;
@@ -40,32 +33,34 @@ async fn main() -> Result<()> {
             .finish(),
     )
     .unwrap();
-    let opt = Opt::from_args();
-    let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
+    let options = Opt::from_args();
 
-    let remote = (opt.url.host_str().unwrap(), opt.url.port().unwrap_or(4433))
-        .to_socket_addrs()
-        .expect("invalid address")
-        .next()
-        .expect("couldn't resolve to an address");
+    let mut client = ClientBuilder::default();
+    if let Some(ca_path) = options.ca {
+        client.add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
+    } else {
+        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        match fs::read(dirs.data_local_dir().join("cert.der")) {
+            Ok(cert) => {
+                client.add_certificate_authority(quinn::Certificate::from_der(&cert)?)?;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                info!("local server certificate not found");
+            }
+            Err(e) => {
+                error!("failed to open local server certificate: {}", e);
+            }
+        }
+    }
 
-    let mut endpoint = quinn::Endpoint::builder();
-    let mut client_config = quinn::ClientConfigBuilder::default();
-
-    client_config.protocols(&[quinn_h3::ALPN]);
-    client_config
-        .add_certificate_authority(certs.1)
-        .expect("failed to ad cert");
-    endpoint.default_client_config(client_config.build());
-
-    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
+    let (endpoint_driver, client) = client.build()?;
     tokio::spawn(async move {
         if let Err(e) = endpoint_driver.await {
-            eprintln!("quic client error: {}", e)
+            eprintln!("quic driver error: {}", e)
         }
     });
 
-    match request(ClientBuilder::new().endpoint(endpoint), &remote).await {
+    match request(client, &options.url).await {
         Ok(_) => println!("client finished"),
         Err(e) => println!("client failed: {:?}", e),
     }
@@ -73,9 +68,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn request(client: Client, remote: &SocketAddr) -> Result<()> {
+async fn request(client: Client, url: &Url) -> Result<()> {
+    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
+        .to_socket_addrs()?
+        .next()
+        .ok_or(anyhow!("couldn't resolve to an address"))?;
     let (quic_driver, h3_driver, conn) = client
-        .connect(&remote, "localhost")?
+        .connect(&remote, url.host_str().unwrap_or("localhost"))?
         .await
         .map_err(|e| anyhow!("failed ot connect: {:?}", e))?;
 
@@ -86,45 +85,45 @@ async fn request(client: Client, remote: &SocketAddr) -> Result<()> {
     });
 
     tokio::spawn(async move {
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/hello")
-            .body(())
-            .expect("failed to build request");
-
-        let mut trailer = HeaderMap::with_capacity(2);
-        trailer.append(
-            "request",
-            HeaderValue::from_str("trailer").expect("trailer value"),
-        );
-
-        let (response, body) = conn
-            .request(request)
-            .send()
-            .await
-            .expect("send request failed: {:?}")
-            .into_parts();
-
-        println!("received response: {:?}", response);
-
-        let (content, trailers) = body
-            .read_to_end(INITIAL_CAPACITY, MAX_LEN)
-            .await
-            .expect("read body");
-
-        if let Some(content) = content {
-            println!("received body: {}", String::from_utf8_lossy(&content));
+        if let Err(e) = quic_driver.await {
+            eprintln!("h3 client error: {}", e)
         }
-        if let Some(trailers) = trailers {
-            println!("received trailers: {:?}", trailers);
-        }
-
-        conn.close();
     });
 
-    if let Err(e) = quic_driver.await {
-        eprintln!("h3 client error: {}", e)
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(url.path())
+        .header("client", "quinn-h3:0.0.1")
+        .body(())
+        .expect("failed to build request");
+
+    let mut trailer = HeaderMap::with_capacity(2);
+    trailer.append(
+        "request",
+        HeaderValue::from_str("trailer").expect("trailer value"),
+    );
+
+    let (response, body) = conn
+        .request(request)
+        .send()
+        .await
+        .expect("send request failed: {:?}")
+        .into_parts();
+
+    println!("received response: {:?}", response);
+
+    let (content, trailers) = body
+        .read_to_end(INITIAL_CAPACITY, MAX_LEN)
+        .await
+        .expect("read body");
+
+    if let Some(content) = content {
+        println!("received body: {}", String::from_utf8_lossy(&content));
     }
+    if let Some(trailers) = trailers {
+        println!("received trailers: {:?}", trailers);
+    }
+    conn.close();
 
     Ok(())
 }
