@@ -36,13 +36,13 @@ impl TryFrom<(StreamType, RecvStream)> for NewUni {
 }
 
 pub struct RecvUni {
-    inner: Option<(RecvStream, Vec<u8>, usize)>,
+    inner: Option<(RecvStream, [u8; VarInt::MAX_SIZE], usize, usize)>,
 }
 
 impl RecvUni {
     pub fn new(recv: RecvStream) -> Self {
         Self {
-            inner: Some((recv, vec![0u8; VarInt::MAX.size()], 0)),
+            inner: Some((recv, [0u8; VarInt::MAX_SIZE], 1, 0)),
         }
     }
 }
@@ -54,24 +54,29 @@ impl Future for RecvUni {
         loop {
             match self.inner {
                 None => panic!("polled after resolved"),
-                Some((ref mut recv, ref mut buf, ref mut len)) => {
-                    match ready!(Pin::new(recv).poll_read(cx, &mut buf[..=*len]))? {
+                Some((ref mut recv, ref mut buf, ref mut expected, ref mut len)) => {
+                    match ready!(Pin::new(recv).poll_read(cx, &mut buf[*len..*expected]))? {
                         0 => {
                             return Poll::Ready(Err(Error::Peer(
                                 "Uni stream closed before type received".into(),
                             )))
                         }
-                        _ => {
-                            *len += 1;
-                            let mut cur = io::Cursor::new(&buf);
-                            if let Ok(ty) = StreamType::decode(&mut cur) {
+                        read => {
+                            *len += read;
+                            if *len == 1 {
+                                *expected = VarInt::encoded_size(buf[0]);
+                            }
+                            if len == expected {
+                                let mut cur = io::Cursor::new(&buf);
+                                let ty = StreamType::decode(&mut cur)
+                                    .map_err(|_| Error::Internal("stream type decode"))?;
                                 match mem::replace(&mut self.inner, None) {
-                                    Some((recv, _, _)) => {
+                                    Some((recv, _, _, _)) => {
                                         return Poll::Ready(NewUni::try_from((ty, recv)))
                                     }
                                     _ => unreachable!(),
                                 };
-                            };
+                            }
                         }
                     }
                 }
