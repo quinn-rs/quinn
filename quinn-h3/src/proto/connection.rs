@@ -40,8 +40,6 @@ impl PendingStreamType {
 }
 
 pub struct Connection {
-    #[allow(dead_code)]
-    local_settings: Settings,
     remote_settings: Option<Settings>,
     decoder_table: DynamicTable,
     encoder_table: DynamicTable,
@@ -67,7 +65,6 @@ impl Connection {
         Ok(Self {
             decoder_table,
             pending_streams,
-            local_settings: settings,
             remote_settings: None,
             encoder_table: DynamicTable::new(),
             requests_in_flight: VecDeque::with_capacity(32),
@@ -256,7 +253,6 @@ mod tests {
     impl Default for Connection {
         fn default() -> Self {
             Self {
-                local_settings: Settings::default(),
                 remote_settings: None,
                 decoder_table: DynamicTable::new(),
                 encoder_table: DynamicTable::new(),
