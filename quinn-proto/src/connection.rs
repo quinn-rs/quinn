@@ -1571,7 +1571,7 @@ where
             }
             // Process frames
             match frame {
-                Frame::Padding => {}
+                Frame::Padding | Frame::Ping => {}
                 Frame::Crypto(frame) => {
                     self.read_tls(packet.header.space(), &frame)?;
                 }
