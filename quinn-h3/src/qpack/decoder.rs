@@ -1,7 +1,8 @@
 use bytes::{Buf, BufMut};
-use std::io::Cursor;
+use std::{fmt, io::Cursor};
 
 use err_derive::Error;
+use tracing::trace;
 
 use super::{
     static_::{Error as StaticError, StaticTable},
@@ -118,6 +119,7 @@ pub fn on_encoder_recv<R: Buf, W: BufMut>(
     let inserted_on_start = table.total_inserted();
 
     while let Some(instruction) = parse_instruction(&table, read)? {
+        trace!("instruction {:?}", instruction);
         match instruction {
             Instruction::Insert(field) => table.put_field(field)?,
             Instruction::TableSizeUpdate(size) => {
@@ -173,10 +175,21 @@ fn parse_instruction<R: Buf>(
     Ok(instruction)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum Instruction {
     Insert(HeaderField),
     TableSizeUpdate(usize),
+}
+
+impl fmt::Debug for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instruction::Insert(h) => write!(f, "Instruction::Insert {{ {} }}", h),
+            Instruction::TableSizeUpdate(n) => {
+                write!(f, "Instruction::TableSizeUpdate {{ {} }}", n)
+            }
+        }
+    }
 }
 
 impl From<prefix_int::Error> for Error {

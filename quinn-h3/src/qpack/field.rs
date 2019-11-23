@@ -56,7 +56,7 @@ impl Display for HeaderField {
     fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
         write!(
             f,
-            "{}\t{}",
+            "\"{}\": \"{}\"",
             String::from_utf8_lossy(&self.name),
             String::from_utf8_lossy(&self.value)
         )?;

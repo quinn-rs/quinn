@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures::{ready, Stream};
-use http::{response, HeaderMap, Request, Response};
+use http::{response, Request, Response};
 use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
 
@@ -304,51 +304,7 @@ where
             Body::None => send,
             Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
         };
-        Ok(BodyWriter::new(send, conn, stream_id, trailers, true))
-    }
-}
-
-enum SendResponseState {
-    SendingHeader(SendHeaders),
-    SendingBody(WriteFrame),
-    SendingTrailers(SendHeaders),
-    Finished,
-}
-
-pub struct SendResponse {
-    state: SendResponseState,
-    body: Option<Body>,
-    trailer: Option<Header>,
-    conn: ConnectionRef,
-    stream_id: StreamId,
-}
-
-impl SendResponse {
-    fn new<T: Into<Body>>(
-        response: Response<T>,
-        trailers: Option<HeaderMap>,
-        send: SendStream,
-        stream_id: StreamId,
-        conn: ConnectionRef,
-    ) -> Result<Self, Error> {
-        let (
-            response::Parts {
-                status, headers, ..
-            },
-            body,
-        ) = response.into_parts();
-
-        let headers = Header::response(status, headers);
-        let state =
-            SendResponseState::SendingHeader(SendHeaders::new(headers, &conn, send, stream_id)?);
-
-        Ok(Self {
-            conn,
-            state,
-            stream_id,
-            body: Some(body.into()),
-            trailer: trailers.map(Header::trailer),
-        })
+        Ok(BodyWriter::new(send, self.conn, self.stream_id, true))
     }
 
     pub fn cancel(mut self) {
