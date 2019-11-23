@@ -348,8 +348,8 @@ impl Default for SettingsFrame {
         SettingsFrame {
             num_placeholders: 16,
             max_header_list_size: 65536,
-            qpack_max_table_capacity: 0,
-            qpack_blocked_streams: 0,
+            qpack_max_table_capacity: 4096,
+            qpack_blocked_streams: 128,
         }
     }
 }
@@ -480,13 +480,12 @@ mod tests {
 
         let mut cur = Cursor::new(&buf);
         let decoded = HttpFrame::decode(&mut cur).unwrap();
-        assert_eq!(
+        assert_matches!(
             decoded,
             HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 0xfada,
                 max_header_list_size: 0xfada,
-                qpack_max_table_capacity: 0,
-                qpack_blocked_streams: 0,
+                ..
             })
         );
     }
@@ -509,13 +508,12 @@ mod tests {
     fn settings_frame_ignores_unknown_id() {
         let mut buf = Cursor::new(&[4, 10, 0xA, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(
+        assert_matches!(
             decoded,
             Ok(HttpFrame::Settings(SettingsFrame {
                 num_placeholders: 16,
                 max_header_list_size: 0xFADA,
-                qpack_max_table_capacity: 0,
-                qpack_blocked_streams: 0,
+                ..
             }))
         );
     }
