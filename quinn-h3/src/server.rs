@@ -12,7 +12,7 @@ use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStre
 use quinn_proto::{Side, StreamId};
 
 use crate::{
-    body::{Body, BodyWriter, RecvBody},
+    body::{Body, BodyReader, BodyWriter},
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream, WriteFrame},
     headers::{DecodeHeaders, SendHeaders},
@@ -153,22 +153,13 @@ impl RecvRequest {
         }
     }
 
-    fn build_request(
-        &self,
-        headers: Header,
-        recv: FrameStream,
-    ) -> Result<Request<RecvBody>, Error> {
+    fn build_request(&self, headers: Header) -> Result<Request<()>, Error> {
         let (method, uri, headers) = headers.into_request_parts()?;
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
             .version(http::version::Version::HTTP_3)
-            .body(RecvBody::new(
-                recv,
-                self.conn.clone(),
-                self.stream_id,
-                false,
-            ))
+            .body(())
             .unwrap();
         *request.headers_mut() = headers;
         Ok(request)
@@ -184,7 +175,7 @@ impl RecvRequest {
 }
 
 impl Future for RecvRequest {
-    type Output = Result<(Request<RecvBody>, Sender), Error>;
+    type Output = Result<(Request<()>, BodyReader, Sender), Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
@@ -221,7 +212,8 @@ impl Future for RecvRequest {
                     self.state = RecvRequestState::Finished;
                     let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
                     return Poll::Ready(Ok((
-                        self.build_request(header, recv)?,
+                        self.build_request(header)?,
+                        BodyReader::new(recv, self.conn.clone(), self.stream_id, false),
                         Sender {
                             send,
                             stream_id: self.stream_id,
@@ -244,62 +236,24 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn response<T>(self, response: Response<T>) -> ResponseBuilder<T> {
-        ResponseBuilder {
-            response,
-            sender: self,
-            trailers: None,
-        }
-    }
-
-    pub fn cancel(mut self) {
-        self.send.reset(ErrorCode::REQUEST_REJECTED.into());
-    }
-}
-
-pub struct ResponseBuilder<T> {
-    sender: Sender,
-    response: Response<T>,
-    trailers: Option<HeaderMap>,
-}
-
-impl<T> ResponseBuilder<T>
-where
-    T: Into<Body>,
-{
-    pub fn trailers(mut self, trailers: HeaderMap) -> Self {
-        self.trailers = Some(trailers);
-        self
-    }
-
-    pub async fn send(self) -> Result<(), Error> {
-        let Sender {
-            send,
-            stream_id,
-            conn,
-        } = self.sender;
-        SendResponse::new(self.response, self.trailers, send, stream_id, conn)?.await?;
-        Ok(())
-    }
-
-    pub async fn stream(self) -> Result<BodyWriter, Error> {
-        let Sender {
-            send,
-            stream_id,
-            conn,
-        } = self.sender;
-
+    pub async fn send_response<T: Into<Body>>(
+        self,
+        response: Response<T>,
+    ) -> Result<BodyWriter, Error> {
         let (
             response::Parts {
                 status, headers, ..
             },
             body,
-        ) = self.response.into_parts();
+        ) = response.into_parts();
 
-        let trailers = self.trailers;
-
-        let send =
-            SendHeaders::new(Header::response(status, headers), &conn, send, stream_id)?.await?;
+        let send = SendHeaders::new(
+            Header::response(status, headers),
+            &self.conn,
+            self.send,
+            self.stream_id,
+        )?
+        .await?;
         let send = match body.into() {
             Body::None => send,
             Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
@@ -308,78 +262,6 @@ where
     }
 
     pub fn cancel(mut self) {
-        let state = mem::replace(&mut self.state, SendResponseState::Finished);
-        match state {
-            SendResponseState::SendingHeader(send) => {
-                send.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            SendResponseState::SendingBody(write) => {
-                write.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            SendResponseState::SendingTrailers(send) => {
-                send.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            _ => (),
-        }
-    }
-}
-
-impl Future for SendResponse {
-    type Output = Result<(), Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        loop {
-            match self.state {
-                SendResponseState::Finished => panic!("polled after finished"),
-                SendResponseState::SendingTrailers(ref mut write) => {
-                    ready!(Pin::new(write).poll(cx))?; // drop send
-                    self.state = SendResponseState::Finished;
-                    return Poll::Ready(Ok(()));
-                }
-                SendResponseState::SendingHeader(ref mut write) => {
-                    let send = ready!(Pin::new(write).poll(cx))?;
-                    match self.body.take() {
-                        Some(Body::Buf(payload)) => {
-                            self.state = SendResponseState::SendingBody(WriteFrame::new(
-                                send,
-                                DataFrame { payload },
-                            ));
-                        }
-                        _ => {
-                            self.state = SendResponseState::Finished;
-                            return Poll::Ready(Ok(()));
-                        }
-                    };
-                }
-                SendResponseState::SendingBody(ref mut body) => {
-                    let send = ready!(Pin::new(body).poll(cx))?;
-                    match self.trailer.take() {
-                        None => {
-                            self.state = SendResponseState::Finished;
-                            return Poll::Ready(Ok(()));
-                        }
-                        Some(trailer) => {
-                            self.state = SendResponseState::SendingTrailers(SendHeaders::new(
-                                trailer,
-                                &self.conn,
-                                send,
-                                self.stream_id,
-                            )?);
-                        }
-                    };
-                }
-            }
-        }
-    }
-}
-
-impl Drop for SendResponse {
-    fn drop(&mut self) {
-        self.conn
-            .h3
-            .lock()
-            .unwrap()
-            .inner
-            .request_finished(self.stream_id);
+        self.send.reset(ErrorCode::REQUEST_REJECTED.into());
     }
 }

@@ -1,16 +1,15 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
-use http::{Request, Response, StatusCode};
+use futures::{AsyncReadExt, StreamExt};
+use http::{Response, StatusCode};
 use structopt::{self, StructOpt};
 
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
-    body::RecvBody,
     connection::ConnectionDriver,
-    server::{Builder as ServerBuilder, IncomingRequest, Sender},
+    server::{Builder as ServerBuilder, IncomingRequest, RecvRequest},
 };
 
 mod shared;
@@ -98,9 +97,8 @@ async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)
 
     tokio::spawn(async move {
         while let Some(request) = incoming.next().await {
-            let (req, send) = request.await.expect("recv request failed");
             tokio::spawn(async move {
-                if let Err(e) = handle_request(req, send).await {
+                if let Err(e) = handle_request(request).await {
                     eprintln!("request error: {}", e)
                 }
             });
@@ -114,23 +112,18 @@ async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)
     Ok(())
 }
 
-const INITIAL_CAPACITY: usize = 256;
-const MAX_LEN: usize = 256;
-
-async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()> {
+async fn handle_request(recv_request: RecvRequest) -> Result<()> {
+    let (request, mut recv_body, sender) = recv_request.await.expect("recv request failed");
     println!("received request: {:?}", request);
 
-    let (_, body) = request.into_parts();
-
-    let (content, trailers) = body
-        .read_to_end(INITIAL_CAPACITY, MAX_LEN)
+    let mut body = Vec::with_capacity(1024);
+    recv_body
+        .read_to_end(&mut body)
         .await
         .map_err(|e| anyhow!("failed to send response headers: {:?}", e))?;
 
-    if let Some(content) = content {
-        println!("received body: {}", String::from_utf8_lossy(&content));
-    }
-    if let Some(trailers) = trailers {
+    println!("received body: {}", String::from_utf8_lossy(&body));
+    if let Some(trailers) = recv_body.trailers().await {
         println!("received trailers: {:?}", trailers);
     }
 
@@ -141,8 +134,7 @@ async fn handle_request(request: Request<RecvBody>, sender: Sender) -> Result<()
         .expect("failed to build response");
 
     sender
-        .response(response)
-        .send()
+        .send_response(response)
         .await
         .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
 
