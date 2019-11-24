@@ -2,7 +2,8 @@ use std::{fs, io, net::ToSocketAddrs, path::PathBuf};
 use structopt::{self, StructOpt};
 
 use anyhow::{anyhow, Result};
-use http::{header::HeaderValue, method::Method, HeaderMap, Request};
+use futures::AsyncReadExt;
+use http::{method::Method, Request};
 use tracing::{error, info};
 use url::Url;
 
@@ -21,9 +22,6 @@ struct Opt {
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
 }
-
-const INITIAL_CAPACITY: usize = 256;
-const MAX_LEN: usize = 256 * 1024;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -97,30 +95,17 @@ async fn request(client: Client, url: &Url) -> Result<()> {
         .body(())
         .expect("failed to build request");
 
-    let mut trailer = HeaderMap::with_capacity(2);
-    trailer.append(
-        "request",
-        HeaderValue::from_str("trailer").expect("trailer value"),
-    );
-
-    let (response, body) = conn
-        .request(request)
-        .send()
-        .await
-        .expect("send request failed: {:?}")
-        .into_parts();
+    let (recv_response, _) = conn.send_request(request).await?;
+    let (response, mut recv_body) = recv_response.await?;
 
     println!("received response: {:?}", response);
 
-    let (content, trailers) = body
-        .read_to_end(INITIAL_CAPACITY, MAX_LEN)
-        .await
-        .expect("read body");
+    let mut body = Vec::with_capacity(1024);
+    recv_body.read_to_end(&mut body).await?;
 
-    if let Some(content) = content {
-        println!("received body: {}", String::from_utf8_lossy(&content));
-    }
-    if let Some(trailers) = trailers {
+    println!("received body: {}", String::from_utf8_lossy(&body));
+
+    if let Some(trailers) = recv_body.trailers().await {
         println!("received trailers: {:?}", trailers);
     }
     conn.close();
