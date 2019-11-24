@@ -79,6 +79,51 @@ impl BodyReader {
         }
     }
 
+    pub async fn trailers(&mut self) -> Option<Result<Header, Error>> {
+        let trailers = self.trailers.take();
+        let Self {
+            conn, stream_id, ..
+        } = &self;
+        match trailers {
+            None => None,
+            Some(t) => Some(DecodeHeaders::new(t, conn.clone(), *stream_id).await),
+        }
+    }
+
+    pub fn cancel(mut self) {
+        if let Some(recv) = self.recv.take() {
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn poll_read(&mut self, cx: &mut Context) -> Poll<Option<Result<Bytes, Error>>> {
+        if let Some(data) = self.buf.take() {
+            return Poll::Ready(Some(Ok(data))); // return buffered data in case user called AsyncRead before
+        }
+
+        match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(Some(Ok(HttpFrame::Data(d)))) => Poll::Ready(Some(Ok(d.payload))),
+            Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
+                self.trailers = Some(d);
+                Poll::Ready(None)
+            }
+            Poll::Ready(Some(Err(e))) => {
+                self.recv.take().unwrap().reset(e.code());
+                Poll::Ready(Some(Err(e.into())))
+            }
+            Poll::Ready(Some(Ok(f))) => {
+                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                Poll::Ready(Some(Err(Error::Peer(format!(
+                    "Invalid frame type in body: {:?}",
+                    f
+                )))))
+            }
+        }
+    }
+
     fn buf_read(&mut self, buf: &mut [u8]) -> usize {
         match self.buf {
             None => 0,
@@ -96,20 +141,6 @@ impl BodyReader {
     fn buf_put(&mut self, buf: Bytes) {
         assert!(self.buf.is_none());
         self.buf = Some(buf)
-    }
-
-    pub fn trailers(&mut self) -> Option<DecodeHeaders> {
-        let trailers = self.trailers.take();
-        let Self {
-            conn, stream_id, ..
-        } = &self;
-        trailers.map(|t| DecodeHeaders::new(t, conn.clone(), *stream_id))
-    }
-
-    pub fn cancel(mut self) {
-        if let Some(recv) = self.recv.take() {
-            recv.reset(ErrorCode::REQUEST_CANCELLED);
-        }
     }
 }
 
