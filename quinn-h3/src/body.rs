@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
@@ -27,7 +27,7 @@ use crate::{
         ErrorCode,
     },
     streams::Reset,
-    try_take, Error,
+    Error,
 };
 
 pub enum Body {
