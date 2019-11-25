@@ -1284,12 +1284,12 @@ fn large_initial() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let mut cfg = client_config();
-    let way_too_many_protocols = (0..1000u32).map(|x| x.to_be_bytes()).collect::<Vec<_>>();
-    let refs = way_too_many_protocols
-        .iter()
-        .map(|x| &x[..])
+    let protocols = (0..1000u32)
+        .map(|x| x.to_be_bytes().to_vec())
         .collect::<Vec<_>>();
-    cfg.crypto.set_protocols(&refs);
+    Arc::get_mut(&mut cfg.crypto)
+        .unwrap()
+        .set_protocols(&protocols);
     let client_ch = pair.begin_connect(cfg);
     pair.drive();
     let server_ch = pair.server.assert_accept();
