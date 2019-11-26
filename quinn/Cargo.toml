@@ -25,7 +25,7 @@ maintenance = { status = "experimental" }
 azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" }
 
 [dependencies]
-bytes = "0.4.7"
+bytes = "0.5.0"
 ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2"
 futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
