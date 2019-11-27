@@ -457,7 +457,8 @@ impl PartialEncode {
         if write_len {
             let len = buf.len() - header_len + pn_len;
             assert!(len < 2usize.pow(14)); // Fits in reserved space
-            (&mut &mut buf[pn_pos - 2..pn_pos]).put_u16(len as u16 | 0b01 << 14);
+            let mut slice = &mut buf[pn_pos - 2..pn_pos];
+            slice.put_u16(len as u16 | 0b01 << 14);
         }
 
         if let Some((number, crypto)) = crypto {

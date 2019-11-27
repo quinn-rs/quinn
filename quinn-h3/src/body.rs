@@ -49,7 +49,7 @@ impl From<Bytes> for Body {
 
 impl From<&str> for Body {
     fn from(buf: &str) -> Self {
-        Body::Buf(Bytes::copy_from_slice(buf.as_bytes()))
+        Body::Buf(Bytes::copy_from_slice(buf.as_ref()))
     }
 }
 

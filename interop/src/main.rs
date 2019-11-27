@@ -22,7 +22,7 @@ struct Opt {
     keylog: bool,
 }
 
-#[tokio::main]
+#[tokio::main(basic_scheduler)]
 async fn main() {
     let opt = Opt::from_args();
     let code = {
@@ -256,11 +256,7 @@ async fn run(options: Opt) -> Result<()> {
 
     let (endpoint_driver, endpoint, _) =
         quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-
-    let mut tasks = Vec::new();
-    tasks.push(tokio::spawn(
-        endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
-    ));
+    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
         endpoint,
@@ -271,44 +267,42 @@ async fn run(options: Opt) -> Result<()> {
         results,
     });
 
-    tasks.push(tokio::spawn(state.clone().core().unwrap_or_else(
-        |e: Error| eprintln!("core functionality failed: {}", e),
-    )));
+    tokio::spawn(
+        state
+            .clone()
+            .core()
+            .unwrap_or_else(|e: Error| eprintln!("core functionality failed: {}", e)),
+    );
 
-    tasks.push(tokio::spawn(
+    tokio::spawn(
         state
             .clone()
             .key_update()
             .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e)),
-    ));
+    );
 
-    tasks.push(tokio::spawn(
+    tokio::spawn(
         state
             .clone()
             .rebind()
             .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e)),
-    ));
+    );
 
-    tasks.push(tokio::spawn(
+    tokio::spawn(
         state
             .clone()
             .retry()
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    ));
+    );
 
-    tasks.push(tokio::spawn(
-        state
-            .clone()
-            .h3()
-            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    ));
+    state
+        .clone()
+        .h3()
+        .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
+        .await;
 
     let results = state.results.clone();
     drop(state); // Ensure the drivers will shut down once idle
-
-    for task in tasks {
-        task.await.unwrap()
-    }
 
     let r = results.lock().unwrap();
     if r.handshake {

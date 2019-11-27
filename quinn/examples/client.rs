@@ -37,7 +37,7 @@ struct Opt {
     rebind: bool,
 }
 
-#[tokio::main]
+#[tokio::main(basic_scheduler)]
 async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
@@ -103,8 +103,7 @@ async fn run(options: Opt) -> Result<()> {
         .ok_or(anyhow!("no hostname specified"))?
         .to_owned();
 
-    //let mut runtime = Runtime::new()?;
-    let r: Result<()> = tokio::spawn(async move {
+    let r: Result<()> = async {
         let new_conn = endpoint
             .connect(&remote, &host)?
             .await
@@ -149,10 +148,12 @@ async fn run(options: Opt) -> Result<()> {
         io::stdout().flush().unwrap();
         conn.close(0u32.into(), b"done");
         Ok(())
-    })
-    .await
-    .unwrap();
+    }
+    .await;
     r?;
+
+    // Allow the endpoint driver to automatically shut down
+    drop(endpoint);
 
     Ok(())
 }

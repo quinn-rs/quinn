@@ -3,10 +3,10 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
-use tokio::runtime::Runtime;
 use tracing::trace;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -29,23 +29,21 @@ fn main() {
         .unwrap();
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
-    let thread = std::thread::spawn(|| {
-        let mut runtime = Runtime::new().unwrap();
-        let driver = runtime.spawn(async {
+    let thread = tokio::spawn(async {
+        let driver = tokio::spawn(async {
             driver.await.expect("server endpoint driver");
         });
-        if let Err(e) = runtime.block_on(server(incoming)) {
+        if let Err(e) = tokio::spawn(server(incoming)).await {
             eprintln!("server failed: {:#}", e);
         }
-        runtime.block_on(driver).expect("server run");
+        driver.await.expect("server run");
     });
 
-    let mut runtime = Runtime::new().unwrap();
-    if let Err(e) = runtime.block_on(client(server_addr, cert)) {
+    if let Err(e) = tokio::spawn(client(server_addr, cert)).await {
         eprintln!("client failed: {:#}", e);
     }
 
-    thread.join().expect("server thread");
+    thread.await.expect("server thread");
 }
 
 async fn server(mut incoming: quinn::Incoming) -> Result<()> {

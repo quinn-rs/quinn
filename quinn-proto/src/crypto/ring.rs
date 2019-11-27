@@ -1,6 +1,4 @@
-use std::io;
-
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{buf::ext::BufMutExt, BufMut, BytesMut};
 use ring::{aead, hkdf, hmac};
 
 use crate::{
@@ -46,13 +44,10 @@ impl Crypto {
     }
 
     fn write_nonce(&self, iv: &Iv, number: u64, out: &mut [u8]) {
-        let out = {
-            let mut write = io::Cursor::new(out);
-            write.get_mut().put_u32(0);
-            write.get_mut().put_u64(number);
-            debug_assert_eq!(write.remaining(), 0);
-            write.into_inner()
-        };
+        let mut write = out.limit(out.len());
+        write.put_u32(0);
+        write.put_u64(number);
+        debug_assert_eq!(write.remaining_mut(), 0);
         debug_assert_eq!(out.len(), iv.len());
         for (out, inp) in out.iter_mut().zip(iv.0.iter()) {
             *out ^= inp;

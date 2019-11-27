@@ -7,7 +7,7 @@ use std::{
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
@@ -139,9 +139,9 @@ impl Context {
             let mut endpoint = Endpoint::builder();
             endpoint.listen(config);
             let (driver, _, mut incoming) = endpoint.with_socket(sock).unwrap();
-            let mut runtime = Runtime::new().unwrap();
+            let mut runtime = Builder::new().basic_scheduler().build().unwrap();
             runtime.spawn(async { driver.instrument(error_span!("server")).await.unwrap() });
-            runtime.spawn(
+            runtime.block_on(
                 async move {
                     let quinn::NewConnection {
                         driver,
@@ -164,9 +164,8 @@ impl Context {
                         while let Some(_) = stream.read_unordered().await.unwrap() {}
                     }
                 }
-                    .instrument(error_span!("server")),
+                .instrument(error_span!("server")),
             );
-            runtime.run().unwrap();
         });
         (addr, handle)
     }
@@ -175,7 +174,7 @@ impl Context {
         let (endpoint_driver, endpoint, _) = Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
             .unwrap();
-        let mut runtime = Runtime::new().unwrap();
+        let mut runtime = Builder::new().basic_scheduler().build().unwrap();
         runtime.spawn(async move {
             endpoint_driver
                 .instrument(error_span!("client"))

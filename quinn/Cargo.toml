@@ -50,7 +50,7 @@ tracing-futures = { version = "0.1.0", default-features = false, features = ["st
 structopt = "0.3.0"
 unwrap = "1.2.1"
 url = "2"
-anyhow = "1.0.23"
+anyhow = "1.0.22"
 
 [[example]]
 name = "server"

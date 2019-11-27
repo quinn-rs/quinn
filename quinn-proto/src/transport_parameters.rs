@@ -363,7 +363,6 @@ impl TransportParameters {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bytes::Bytes;
 
     #[test]
     fn coding() {
@@ -383,7 +382,7 @@ mod test {
         };
         params.write(&mut buf);
         assert_eq!(
-            TransportParameters::read(Side::Client, &mut Bytes::from(buf)).unwrap(),
+            TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
     }
