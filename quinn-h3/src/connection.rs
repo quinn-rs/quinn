@@ -1,14 +1,15 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    future::Future,
     io::{self, Cursor},
     mem,
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use bytes::BytesMut;
-use futures::{AsyncRead, Future, Poll, Stream};
+use futures::Stream;
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
 

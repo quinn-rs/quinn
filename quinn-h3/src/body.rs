@@ -3,6 +3,7 @@ use std::{
     io::{self, ErrorKind},
     mem,
     pin::Pin,
+    task::{Context, Poll},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -10,14 +11,11 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
     stream::Stream,
-    task::Context,
-    Poll,
 };
 use http::HeaderMap;
 use quinn::SendStream;
 use quinn_proto::StreamId;
 use std::future::Future;
-use tokio_io;
 
 use crate::{
     connection::ConnectionRef,
@@ -51,7 +49,7 @@ impl From<Bytes> for Body {
 
 impl From<&str> for Body {
     fn from(buf: &str) -> Self {
-        Body::Buf(buf.into())
+        Body::Buf(Bytes::copy_from_slice(buf.as_bytes()))
     }
 }
 
@@ -179,7 +177,7 @@ impl Future for ReadToEnd {
                                 ReadToEndState::Decoding(decode_trailer),
                             );
                             match old_state {
-                                ReadToEndState::Receiving(_, b, _) => self.body = Some(b.into()),
+                                ReadToEndState::Receiving(_, b, _) => self.body = Some(b.freeze()),
                                 _ => unreachable!(),
                             };
                         }
@@ -188,7 +186,7 @@ impl Future for ReadToEnd {
                             {
                                 ReadToEndState::Receiving(_, b, _) => match b.len() {
                                     0 => None,
-                                    _ => Some(b.into()),
+                                    _ => Some(b.freeze()),
                                 },
                                 _ => unreachable!(),
                             };
@@ -430,7 +428,7 @@ impl AsyncRead for BodyReader {
     }
 }
 
-impl tokio_io::AsyncRead for BodyReader {
+impl tokio::io::AsyncRead for BodyReader {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -542,7 +540,7 @@ impl AsyncWrite for BodyWriter {
                 BodyWriterState::Finished => panic!(),
                 BodyWriterState::Idle(_) => {
                     let frame = DataFrame {
-                        payload: buf.into(),
+                        payload: Bytes::copy_from_slice(buf),
                     };
                     self.state = match mem::replace(&mut self.state, BodyWriterState::Finished) {
                         BodyWriterState::Idle(send) => {
@@ -593,7 +591,7 @@ impl AsyncWrite for BodyWriter {
     }
 }
 
-impl tokio_io::AsyncWrite for BodyWriter {
+impl tokio::io::AsyncWrite for BodyWriter {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,

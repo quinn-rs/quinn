@@ -9,7 +9,6 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
-use tokio::runtime::Runtime;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -38,7 +37,8 @@ struct Opt {
     listen: SocketAddr,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -47,7 +47,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -57,7 +57,7 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(options: Opt) -> Result<()> {
+async fn run(options: Opt) -> Result<()> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 0,
@@ -130,8 +130,7 @@ fn run(options: Opt) -> Result<()> {
         (driver, incoming)
     };
 
-    let runtime = Runtime::new()?;
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         while let Some(conn) = incoming.next().await {
             info!("connection incoming");
             tokio::spawn(
@@ -141,7 +140,7 @@ fn run(options: Opt) -> Result<()> {
             );
         }
     });
-    runtime.block_on(endpoint_driver)?;
+    endpoint_driver.await?;
 
     Ok(())
 }

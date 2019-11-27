@@ -1,9 +1,16 @@
-use std::{collections::VecDeque, convert::TryFrom, io, mem, pin::Pin, task::Context};
+use std::{
+    collections::VecDeque,
+    convert::TryFrom,
+    future::Future,
+    io, mem,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use futures::{
     io::{AsyncRead, AsyncWrite},
-    ready, Future, Poll,
+    ready,
 };
 use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;

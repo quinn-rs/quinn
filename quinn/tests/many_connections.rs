@@ -37,7 +37,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared2 = shared.clone();
     let read_incoming_data = incoming_conns
         .filter_map(|connect| connect.map(|x| x.ok()))
-        .take(expected_messages as u64)
+        .take(expected_messages as usize)
         .for_each(move |new_conn| {
             let conn = new_conn.connection;
             current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));

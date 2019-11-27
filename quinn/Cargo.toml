@@ -25,18 +25,16 @@ maintenance = { status = "experimental" }
 azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" }
 
 [dependencies]
-bytes = "0.4.7"
+bytes = "0.5.1"
 ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2"
-futures = { package = "futures-preview", version = "0.3.0-alpha.18" }
+futures = "0.3.1"
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
 rustls = { version = "0.16", features = ["quic"] }
-tracing = "0.1.10"
-tokio-net = { version = "0.2.0-alpha.5", default-features = false }
-tokio-timer = "0.3.0-alpha.5"
-tokio-io = "0.2.0-alpha.5"
+tracing = "0.1.9"
+tokio = { version = "0.2.1", features = ["io-driver", "time"] }
 webpki = "0.21"
 rustls-native-certs = { version = "0.1.0", optional = true }
 
@@ -46,13 +44,13 @@ criterion = "0.3"
 directories = "2.0.0"
 rand = "0.7"
 rcgen = "0.7"
+tokio = { version = "0.2.1", features = ["rt-core", "rt-util"] }
 tracing-subscriber = "0.1.5"
 tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 structopt = "0.3.0"
-tokio = "0.2.0-alpha.5"
 unwrap = "1.2.1"
 url = "2"
-anyhow = "1.0.22"
+anyhow = "1.0.23"
 
 [[example]]
 name = "server"

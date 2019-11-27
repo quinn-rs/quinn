@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::Runtime;
 use tracing::trace;
 
 fn main() {
@@ -31,20 +31,19 @@ fn main() {
     drop(endpoint); // Ensure server shuts down when finished
     let thread = std::thread::spawn(|| {
         let mut runtime = Runtime::new().unwrap();
-        runtime.spawn(async {
+        let driver = runtime.spawn(async {
             driver.await.expect("server endpoint driver");
         });
         if let Err(e) = runtime.block_on(server(incoming)) {
             eprintln!("server failed: {:#}", e);
         }
-        runtime.run().expect("server run");
+        runtime.block_on(driver).expect("server run");
     });
 
     let mut runtime = Runtime::new().unwrap();
     if let Err(e) = runtime.block_on(client(server_addr, cert)) {
         eprintln!("client failed: {:#}", e);
     }
-    runtime.run().expect("client run");
 
     thread.join().expect("server thread");
 }

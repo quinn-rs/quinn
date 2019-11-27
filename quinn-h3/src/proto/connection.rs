@@ -90,7 +90,7 @@ impl Connection {
         )?;
 
         Ok(HeadersFrame {
-            encoded: block.into(),
+            encoded: block.freeze(),
         })
     }
 
@@ -146,7 +146,7 @@ impl Connection {
         if self.pending_streams[ty as usize].is_empty() {
             return None;
         }
-        Some(self.pending_streams[ty as usize].take().freeze())
+        Some(self.pending_streams[ty as usize].split().freeze())
     }
 
     pub fn pending_stream_release(&mut self, ty: PendingStreamType) {

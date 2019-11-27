@@ -9,7 +9,6 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
 use tracing::{error, info};
 use url::Url;
 
@@ -38,7 +37,8 @@ struct Opt {
     rebind: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -47,7 +47,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -57,7 +57,7 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(options: Opt) -> Result<()> {
+async fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
@@ -91,8 +91,7 @@ fn run(options: Opt) -> Result<()> {
     endpoint.default_client_config(client_config.build());
 
     let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-    let mut runtime = Runtime::new()?;
-    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -101,8 +100,11 @@ fn run(options: Opt) -> Result<()> {
         .host
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
-        .ok_or(anyhow!("no hostname specified"))?;
-    let r: Result<()> = runtime.block_on(async {
+        .ok_or(anyhow!("no hostname specified"))?
+        .to_owned();
+
+    //let mut runtime = Runtime::new()?;
+    let r: Result<()> = tokio::spawn(async move {
         let new_conn = endpoint
             .connect(&remote, &host)?
             .await
@@ -113,9 +115,7 @@ fn run(options: Opt) -> Result<()> {
             connection: conn,
             ..
         } = { new_conn };
-        tokio::runtime::current_thread::spawn(
-            driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)),
-        );
+        tokio::spawn(driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)));
         let (mut send, recv) = conn
             .open_bi()
             .await
@@ -124,9 +124,7 @@ fn run(options: Opt) -> Result<()> {
             let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
             let addr = socket.local_addr().unwrap();
             eprintln!("rebinding to {}", addr);
-            endpoint
-                .rebind(socket, &tokio_net::driver::Handle::default())
-                .expect("rebind failed");
+            endpoint.rebind(socket).expect("rebind failed");
         }
 
         send.write_all(request.as_bytes())
@@ -151,14 +149,10 @@ fn run(options: Opt) -> Result<()> {
         io::stdout().flush().unwrap();
         conn.close(0u32.into(), b"done");
         Ok(())
-    });
+    })
+    .await
+    .unwrap();
     r?;
-
-    // Allow the endpoint driver to automatically shut down
-    drop(endpoint);
-
-    // Let the connection finish closing gracefully
-    runtime.run()?;
 
     Ok(())
 }

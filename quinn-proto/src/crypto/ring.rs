@@ -48,8 +48,8 @@ impl Crypto {
     fn write_nonce(&self, iv: &Iv, number: u64, out: &mut [u8]) {
         let out = {
             let mut write = io::Cursor::new(out);
-            write.put_u32_be(0);
-            write.put_u64_be(number);
+            write.get_mut().put_u32(0);
+            write.get_mut().put_u64(number);
             debug_assert_eq!(write.remaining(), 0);
             write.into_inner()
         };
@@ -300,7 +300,7 @@ mod test {
         buf.resize(buf.len() + client.tag_len(), 0);
         client.encrypt(0, &mut buf, 6);
 
-        let mut header = BytesMut::from(buf);
+        let mut header = BytesMut::from(buf.as_slice());
         let mut payload = header.split_off(6);
         server.decrypt(0, &header, &mut payload).unwrap();
         assert_eq!(&*payload, b"payload");

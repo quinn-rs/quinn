@@ -6,7 +6,6 @@ use std::{
 use anyhow::{anyhow, Error, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
 use tracing::{info, warn};
 
 #[derive(StructOpt, Debug)]
@@ -23,7 +22,8 @@ struct Opt {
     keylog: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let opt = Opt::from_args();
     let code = {
         tracing::subscriber::set_global_default(
@@ -32,7 +32,7 @@ fn main() {
                 .finish(),
         )
         .unwrap();
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -60,7 +60,7 @@ impl State {
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         self.results.lock().unwrap().handshake = true;
         let results = self.results.clone();
-        tokio::runtime::current_thread::spawn(
+        tokio::spawn(
             new_conn
                 .driver
                 .map_ok(move |()| {
@@ -86,7 +86,7 @@ impl State {
             .into_0rtt()
         {
             Ok((new_conn, _)) => {
-                tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 let stream = new_conn
                     .connection
                     .open_bi()
@@ -103,7 +103,7 @@ impl State {
                 let new_conn = conn
                     .await
                     .map_err(|e| anyhow!("failed to connect: {}", e))?;
-                tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 new_conn.connection
             }
         };
@@ -122,7 +122,7 @@ impl State {
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let conn = new_conn.connection;
         // Make sure some traffic has gone both ways before the key update
         let stream = conn
@@ -150,7 +150,7 @@ impl State {
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let stream = new_conn
             .connection
             .open_bi()
@@ -165,17 +165,15 @@ impl State {
     async fn rebind(self: Arc<Self>) -> Result<()> {
         let (endpoint_driver, endpoint, _) =
             quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-        tokio::runtime::current_thread::spawn(
-            endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
-        );
+        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
         let new_conn = endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::runtime::current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-        endpoint.rebind(socket, &tokio_net::driver::Handle::default())?;
+        endpoint.rebind(socket)?;
         let stream = new_conn
             .connection
             .open_bi()
@@ -194,8 +192,8 @@ impl State {
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
 
-        tokio::runtime::current_thread::spawn(h3_driver.unwrap_or_else(|_| ()));
-        tokio::runtime::current_thread::spawn(quic_driver.unwrap_or_else(|_| ()));
+        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
+        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
 
         h3_get(&conn)
             .await
@@ -222,7 +220,7 @@ struct Results {
     h3: bool,
 }
 
-fn run(options: Opt) -> Result<()> {
+async fn run(options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
         .next()
@@ -233,8 +231,6 @@ fn run(options: Opt) -> Result<()> {
         warn!("invalid hostname, using \"example.com\"");
         "example.com"
     };
-
-    let mut runtime = Runtime::new()?;
 
     let results = Arc::new(Mutex::new(Results::default()));
     let protocols = vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()];
@@ -260,7 +256,11 @@ fn run(options: Opt) -> Result<()> {
 
     let (endpoint_driver, endpoint, _) =
         quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+
+    let mut tasks = Vec::new();
+    tasks.push(tokio::spawn(
+        endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
+    ));
 
     let state = Arc::new(State {
         endpoint,
@@ -271,44 +271,44 @@ fn run(options: Opt) -> Result<()> {
         results,
     });
 
-    runtime.spawn(
-        state
-            .clone()
-            .core()
-            .unwrap_or_else(|e: Error| eprintln!("core functionality failed: {}", e)),
-    );
+    tasks.push(tokio::spawn(state.clone().core().unwrap_or_else(
+        |e: Error| eprintln!("core functionality failed: {}", e),
+    )));
 
-    runtime.spawn(
+    tasks.push(tokio::spawn(
         state
             .clone()
             .key_update()
             .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e)),
-    );
+    ));
 
-    runtime.spawn(
+    tasks.push(tokio::spawn(
         state
             .clone()
             .rebind()
             .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e)),
-    );
+    ));
 
-    runtime.spawn(
+    tasks.push(tokio::spawn(
         state
             .clone()
             .retry()
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    );
+    ));
 
-    runtime.spawn(
+    tasks.push(tokio::spawn(
         state
             .clone()
             .h3()
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    );
+    ));
 
     let results = state.results.clone();
     drop(state); // Ensure the drivers will shut down once idle
-    runtime.run().unwrap();
+
+    for task in tasks {
+        task.await.unwrap()
+    }
 
     let r = results.lock().unwrap();
     if r.handshake {

@@ -15,7 +15,6 @@ use crate::{
 /// See `ClientConfigBuilder` for details on trust defaults.
 #[derive(Clone, Debug)]
 pub struct EndpointBuilder {
-    reactor: Option<tokio_net::driver::Handle>,
     server_config: Option<ServerConfig>,
     config: EndpointConfig,
     client_config: ClientConfig,
@@ -47,11 +46,8 @@ impl EndpointBuilder {
         self,
         socket: std::net::UdpSocket,
     ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
-        let reactor = self
-            .reactor
-            .unwrap_or_else(|| tokio_net::driver::Handle::default());
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
-        let socket = UdpSocket::from_std(socket, &reactor).map_err(EndpointError::Socket)?;
+        let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
             proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new))?,
@@ -73,11 +69,6 @@ impl EndpointBuilder {
         self
     }
 
-    pub fn reactor(&mut self, handle: tokio_net::driver::Handle) -> &mut Self {
-        self.reactor = Some(handle);
-        self
-    }
-
     /// Set the default configuration used for outgoing connections.
     ///
     /// The default can be overriden by using `Endpoint::connect_with`.
@@ -90,7 +81,6 @@ impl EndpointBuilder {
 impl Default for EndpointBuilder {
     fn default() -> Self {
         Self {
-            reactor: None,
             server_config: None,
             config: EndpointConfig::default(),
             client_config: ClientConfig::default(),

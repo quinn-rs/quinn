@@ -33,10 +33,10 @@ impl Codec for u16 {
         if buf.remaining() < 2 {
             return Err(UnexpectedEnd);
         }
-        Ok(buf.get_u16_be())
+        Ok(buf.get_u16())
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u16_be(*self);
+        buf.put_u16(*self);
     }
 }
 
@@ -45,10 +45,10 @@ impl Codec for u32 {
         if buf.remaining() < 4 {
             return Err(UnexpectedEnd);
         }
-        Ok(buf.get_u32_be())
+        Ok(buf.get_u32())
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u32_be(*self);
+        buf.put_u32(*self);
     }
 }
 
@@ -57,10 +57,10 @@ impl Codec for u64 {
         if buf.remaining() < 8 {
             return Err(UnexpectedEnd);
         }
-        Ok(buf.get_u64_be())
+        Ok(buf.get_u64())
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.put_u64_be(*self);
+        buf.put_u64(*self);
     }
 }
 

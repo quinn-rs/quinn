@@ -1,19 +1,17 @@
 use std::{
     collections::{HashMap, VecDeque},
+    future::Future,
     io,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
     sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
     time::Instant,
 };
 
 use bytes::Bytes;
-use futures::{
-    channel::mpsc,
-    task::{Context, Waker},
-    Future, FutureExt, Poll, StreamExt,
-};
+use futures::{channel::mpsc, FutureExt, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
@@ -85,13 +83,9 @@ impl Endpoint {
     /// connections and connections to servers unreachable from the new address will be lost.
     ///
     /// On error, the old UDP socket is retained.
-    pub fn rebind(
-        &self,
-        socket: std::net::UdpSocket,
-        reactor: &tokio_net::driver::Handle,
-    ) -> io::Result<()> {
+    pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let socket = UdpSocket::from_std(socket, &reactor)?;
+        let socket = UdpSocket::from_std(socket)?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
@@ -107,7 +101,7 @@ impl Endpoint {
     ///
     /// See `Connection::close` for details.
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        let reason = Bytes::from(reason);
+        let reason = Bytes::copy_from_slice(reason);
         let mut endpoint = self.inner.lock().unwrap();
         endpoint.close = Some((error_code, reason.clone()));
         for sender in endpoint.connections.values() {

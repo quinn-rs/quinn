@@ -1,6 +1,12 @@
-use std::{mem, net::SocketAddr, pin::Pin, task::Context};
+use std::{
+    future::Future,
+    mem,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use futures::{ready, stream::Stream, Future, Poll};
+use futures::{ready, Stream};
 use http::{request, HeaderMap, Request, Response};
 use quinn::{Endpoint, OpenBi};
 use quinn_proto::{Side, StreamId};

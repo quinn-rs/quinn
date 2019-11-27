@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, io, ops::Range, str};
 
-use bytes::{BigEndian, Buf, BufMut, ByteOrder, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use err_derive::Error;
 
 use crate::{
@@ -122,7 +122,7 @@ impl PartialDecode {
             let mut bytes = buf.into_inner();
 
             let header_data = bytes.split_to(header_len).freeze();
-            let token = header_data.slice(token_pos.start, token_pos.end);
+            let token = header_data.slice(token_pos.start..token_pos.end);
             return Ok(Packet {
                 header: Header::Initial {
                     dst_cid,
@@ -352,9 +352,9 @@ impl Header {
     }
 
     fn encode_cids<W: BufMut>(w: &mut W, dst_cid: &ConnectionId, src_cid: &ConnectionId) {
-        w.put(dst_cid.len() as u8);
+        w.put_u8(dst_cid.len() as u8);
         w.put_slice(dst_cid);
-        w.put(src_cid.len() as u8);
+        w.put_u8(src_cid.len() as u8);
         w.put_slice(src_cid);
     }
 
@@ -457,7 +457,7 @@ impl PartialEncode {
         if write_len {
             let len = buf.len() - header_len + pn_len;
             assert!(len < 2usize.pow(14)); // Fits in reserved space
-            BigEndian::write_u16(&mut buf[pn_pos - 2..pn_pos], len as u16 | 0b01 << 14);
+            (&mut &mut buf[pn_pos - 2..pn_pos]).put_u16(len as u16 | 0b01 << 14);
         }
 
         if let Some((number, crypto)) = crypto {
@@ -655,7 +655,7 @@ impl PacketNumber {
         match self {
             U8(x) => w.write(x),
             U16(x) => w.write(x),
-            U24(x) => w.put_uint_be(u64::from(x), 3),
+            U24(x) => w.put_uint(u64::from(x), 3),
             U32(x) => w.write(x),
         }
     }
@@ -665,7 +665,7 @@ impl PacketNumber {
         let pn = match len {
             1 => U8(r.get()?),
             2 => U16(r.get()?),
-            3 => U24(r.get_uint_be(3) as u32),
+            3 => U24(r.get_uint(3) as u32),
             4 => U32(r.get()?),
             _ => unreachable!(),
         };
@@ -880,7 +880,7 @@ mod tests {
 
         let server_crypto = Crypto::new_initial(&dcid, Side::Server);
         let server_header_crypto = server_crypto.header_keys();
-        let decode = PartialDecode::new(buf.clone().into(), 0).unwrap().0;
+        let decode = PartialDecode::new(buf.as_slice().into(), 0).unwrap().0;
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],

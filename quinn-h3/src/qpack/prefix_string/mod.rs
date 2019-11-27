@@ -10,7 +10,7 @@ pub use self::{
 };
 
 use crate::qpack::prefix_int::{self, Error as IntegerError};
-use bytes::{Buf, BufMut};
+use bytes::{buf::ext::BufExt, Buf, BufMut};
 use quinn_proto::coding::BufMutExt;
 
 #[derive(Debug, PartialEq)]
@@ -27,12 +27,12 @@ pub fn decode<B: Buf>(size: u8, buf: &mut B) -> Result<Vec<u8>, Error> {
         return Err(Error::UnexpectedEnd);
     }
 
-    let payload = buf.take(len);
+    let payload = buf.take(len).to_bytes();
     let value = if flags & 1 == 0 {
-        payload.collect()
+        payload.into_iter().collect()
     } else {
         let mut decoded = Vec::new();
-        for byte in payload.collect::<Vec<u8>>().hpack_decode() {
+        for byte in payload.into_iter().collect::<Vec<u8>>().hpack_decode() {
             decoded.push(byte?);
         }
         decoded

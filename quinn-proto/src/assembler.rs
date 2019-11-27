@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug)]
