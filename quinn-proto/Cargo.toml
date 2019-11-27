@@ -21,14 +21,14 @@ default = ["tls-rustls"]
 tls-rustls = ["rustls", "webpki", "ring"]
 
 [dependencies]
-bytes = "0.5.1"
+bytes = "0.5.2"
 err-derive = "0.2"
 lazy_static = "1"
 rand = "0.7"
 ring = { version = "0.16.7", optional = true }
 rustls = { version = "0.16", features = ["quic"], optional = true }
 slab = "0.4"
-tracing = "0.1.9"
+tracing = "0.1.10"
 webpki = { version = "0.21", optional = true }
 
 [dev-dependencies]

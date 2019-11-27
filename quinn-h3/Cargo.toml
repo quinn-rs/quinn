@@ -31,7 +31,7 @@ http = { git = "https://github.com/hyperium/http", rev = "43dffa1eb79f6801e5e07f
 lazy_static = "1"
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
-string = { git = "https://github.com/carllerche/string/", branch = "bytes-up" }
+string = { git = "https://github.com/carllerche/string" }
 tokio = "0.2.1"
 tokio-util = { version = "0.2.0", features = ["codec"] }
 
@@ -44,7 +44,7 @@ rand = "0.7.0"
 rcgen = "0.7"
 structopt = "0.3.0"
 url = "2"
-tracing = "0.1.9"
+tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
 
 [[example]]

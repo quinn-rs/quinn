@@ -10,13 +10,13 @@ quinn = { path = "../quinn" }
 quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
 http = { git = "https://github.com/hyperium/http/", rev = "43dffa1eb79f6801e5e07f3338fa56191dc454bb" }
-bytes = "0.5.1"
+bytes = "0.5.2"
 structopt = "0.3.0"
-tokio = { version = "0.2.1", features = ["macros", "rt-threaded"] }
+tokio = { version = "0.2.1", features = ["macros"] }
 rustls = { version = "0.16", features = ["dangerous_configuration"] }
 futures = "0.3.1"
 webpki = "0.21"
-tracing = "0.1.9"
+tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
 anyhow = "1.0.22"
 

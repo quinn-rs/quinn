@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use tracing::trace;
 
-#[tokio::main]
+#[tokio::main(threaded_scheduler)]
 async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
@@ -33,13 +33,13 @@ async fn main() {
         let driver = tokio::spawn(async {
             driver.await.expect("server endpoint driver");
         });
-        if let Err(e) = tokio::spawn(server(incoming)).await {
+        if let Err(e) = server(incoming).await {
             eprintln!("server failed: {:#}", e);
         }
         driver.await.expect("server run");
     });
 
-    if let Err(e) = tokio::spawn(client(server_addr, cert)).await {
+    if let Err(e) = client(server_addr, cert).await {
         eprintln!("client failed: {:#}", e);
     }
 
