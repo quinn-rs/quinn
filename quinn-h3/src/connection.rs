@@ -23,8 +23,6 @@ use crate::{
     Error, Settings,
 };
 
-const RECV_ENCODER_INITIAL_CAPACITY: usize = 20480;
-const RECV_DECODER_INITIAL_CAPACITY: usize = 2048;
 
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
@@ -421,3 +419,6 @@ impl ConnectionInner {
         self.quic.close(code.into(), &reason.into());
     }
 }
+
+const RECV_ENCODER_INITIAL_CAPACITY: usize = 20480;
+const RECV_DECODER_INITIAL_CAPACITY: usize = 2048;
