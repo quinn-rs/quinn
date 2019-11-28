@@ -132,6 +132,23 @@ impl Future for ZeroRttAccepted {
 /// Components of a newly established connection
 ///
 /// Ensure `driver` runs or the connection will not work.
+///
+/// All fields of this struct, in addition to any other handles constructed later, must be dropped
+/// for a connection to be implicitly closed. If the `NewConnection` is stored in a long-lived
+/// variable, moving individual fields won't cause remaining unused fields to be dropped, even with
+/// pattern-matching. The easiest way to ensure unused fields are dropped is to pattern-match on the
+/// variable wrapped in brackets, which forces the entire `NewConnection` to be moved out of the
+/// variable and into a temporary, ensuring all unused fields are dropped at the end of the
+/// statement:
+///
+/// ```rust
+/// # use quinn::NewConnection;
+/// # fn dummy(new_connection: NewConnection) {
+/// let NewConnection { driver, connection, .. } = { new_connection };
+/// # }
+/// ```
+///
+/// You can also explicitly invoke `Connection::close` at any time.
 #[derive(Debug)]
 pub struct NewConnection {
     /// The future responsible for handling I/O on the connection

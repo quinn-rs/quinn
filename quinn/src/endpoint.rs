@@ -43,6 +43,10 @@ impl Endpoint {
 
     /// Connect to a remote endpoint. Be sure to spawn the `ConnectionDriver` after connecting.
     ///
+    /// `server_name` must be covered by the certificate presented by the server. This prevents a
+    /// connection from being intercepted by an attacker with a valid certificate for some other
+    /// server.
+    ///
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
     pub fn connect(
@@ -55,8 +59,7 @@ impl Endpoint {
 
     /// Connect to a remote endpoint using a custom configuration.
     ///
-    /// May fail immediately due to configuration errors, or in the future if the connection could
-    /// not be established.
+    /// See `connect` for details.
     pub fn connect_with(
         &self,
         config: ClientConfig,

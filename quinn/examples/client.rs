@@ -108,12 +108,14 @@ fn run(options: Opt) -> Result<()> {
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         eprintln!("connected at {:?}", start.elapsed());
+        let quinn::NewConnection {
+            driver,
+            connection: conn,
+            ..
+        } = { new_conn };
         tokio::runtime::current_thread::spawn(
-            new_conn
-                .driver
-                .unwrap_or_else(|e| eprintln!("connection lost: {}", e)),
+            driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)),
         );
-        let conn = new_conn.connection;
         let (mut send, recv) = conn
             .open_bi()
             .await
