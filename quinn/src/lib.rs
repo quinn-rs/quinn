@@ -61,8 +61,8 @@ pub use crate::builders::{
 
 mod connection;
 pub use connection::{
-    Connecting, Connection, ConnectionDriver, IncomingBiStreams, IncomingUniStreams, NewConnection,
-    OpenBi, OpenUni,
+    Connecting, Connection, ConnectionDriver, Datagrams, IncomingBiStreams, IncomingUniStreams,
+    NewConnection, OpenBi, OpenUni,
 };
 
 mod endpoint;
