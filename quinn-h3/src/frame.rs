@@ -93,7 +93,7 @@ impl Decoder for FrameDecoder {
                 self.expected = Some(min);
                 Ok(None)
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => Err(e.into()),
             Ok(frame) => {
                 src.advance(pos);
                 self.expected = None;

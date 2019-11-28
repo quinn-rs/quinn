@@ -222,11 +222,10 @@ impl ConnectionInner {
             })
             .collect();
 
-        let mut removed = 0;
+        let keep_going = !resolved.is_empty();
 
-        for (i, res) in resolved {
+        for (removed, (i, res)) in resolved.into_iter().enumerate() {
             self.pending_uni.remove(i - removed);
-            removed += 1;
             match res {
                 Err(Error::UnknownStream(ty)) => {
                     return Err(DriverError::peer(

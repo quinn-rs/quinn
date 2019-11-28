@@ -253,7 +253,6 @@ fn run(options: Opt) -> Result<()> {
             idle_timeout: 1_000,
             ..Default::default()
         }),
-        ..Default::default()
     };
 
     let (endpoint_driver, endpoint, _) =

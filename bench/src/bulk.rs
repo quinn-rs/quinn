@@ -63,7 +63,7 @@ async fn server(mut incoming: quinn::Incoming) -> Result<()> {
     let mut stream = uni_streams
         .next()
         .await
-        .ok_or(anyhow!("accepting stream failed"))??;
+        .ok_or_else(|| anyhow!("accepting stream failed"))??;
     trace!("stream established");
     let start = Instant::now();
     let mut n = 0;

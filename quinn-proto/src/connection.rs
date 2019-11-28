@@ -287,9 +287,8 @@ where
     /// - an incoming packet is handled, or
     /// - the idle timer expires
     pub fn poll(&mut self) -> Option<Event> {
-        if let Some(dir) = Dir::iter()
-            .filter(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
-            .next()
+        if let Some(dir) =
+            Dir::iter().find(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
         {
             return Some(Event::StreamOpened { dir });
         }
@@ -1539,14 +1538,11 @@ where
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.freeze()) {
-                    match frame {
-                        Frame::Close(_) => {
-                            trace!("draining");
-                            self.state = State::Draining;
-                            return Ok(());
-                        }
-                        _ => {}
-                    };
+                    if let Frame::Close(_) = frame {
+                        trace!("draining");
+                        self.state = State::Draining;
+                        break;
+                    }
                 }
                 Ok(())
             }
@@ -2945,7 +2941,7 @@ where
             - 1                 // flags byte
             - self.rem_cid.len()
             - 4                 // worst-case packet number size
-            - self.space(SpaceId::Data).crypto.as_ref().or(self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
+            - self.space(SpaceId::Data).crypto.as_ref().or_else(|| self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
             - Datagram::SIZE_BOUND;
         self.config.datagram_receive_buffer_size?;
         let limit = self.params.max_datagram_frame_size?.into_inner();

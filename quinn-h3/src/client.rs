@@ -451,7 +451,7 @@ impl Future for RecvResponse {
                         self.stream_id,
                     );
                     match response {
-                        Err(e) => return Poll::Ready(Err(e).into()),
+                        Err(e) => return Poll::Ready(Err(e)),
                         Ok(r) => {
                             self.state = RecvResponseState::Finished;
                             return Poll::Ready(Ok(r));

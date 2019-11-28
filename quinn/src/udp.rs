@@ -53,7 +53,7 @@ impl UdpSocket {
     ) -> Poll<Result<(usize, SocketAddr, Option<EcnCodepoint>), io::Error>> {
         ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
         match self.io.get_ref().recv_ext(buf) {
-            Ok(n) => Poll::Ready(Ok(n.into())),
+            Ok(n) => Poll::Ready(Ok(n)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.io.clear_read_ready(cx, mio::Ready::readable())?;
                 Poll::Pending
