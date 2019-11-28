@@ -156,6 +156,10 @@ pub struct NewConnection {
     /// Handle for interacting with the connection
     pub connection: Connection,
     /// Unidirectional streams initiated by the peer, in the order they were opened
+    ///
+    /// Note that data for separate streams may be delivered in any order. In other words, reading
+    /// from streams in the order they're opened is not optimal. See `IncomingUniStreams` for
+    /// details.
     pub uni_streams: IncomingUniStreams,
     /// Bidirectional streams initiated by the peer, in the order they were opened
     pub bi_streams: IncomingBiStreams,
