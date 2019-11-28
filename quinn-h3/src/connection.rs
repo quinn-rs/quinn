@@ -30,22 +30,14 @@ impl Future for ConnectionDriver {
     type Output = Result<(), Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut conn = self.0.h3.lock().unwrap();
-
-        conn.poll_incoming_uni(cx)?;
-        conn.poll_send(cx)?;
-        conn.poll_recv_control(cx)?;
-        conn.poll_recv_encoder(cx)?;
-        conn.poll_recv_decoder(cx)?;
-        conn.poll_incoming_bi(cx)?;
-        conn.poll_send(cx)?;
-
-        conn.reset_waker(cx);
-
-        if conn.inner.is_closing() && conn.inner.requests_in_flight() == 0 {
-            return Poll::Ready(Ok(()));
+        let res = self.0.h3.lock().unwrap().drive(cx);
+        match res {
+            Ok(false) => Poll::Pending,
+            Ok(true) => Poll::Ready(Ok(())),
+            Err(e) => {
+                Poll::Ready(Err(e))
+            }
         }
-        Poll::Pending
     }
 }
 
@@ -107,6 +99,20 @@ pub(crate) struct ConnectionInner {
 }
 
 impl ConnectionInner {
+    fn drive(&mut self, cx: &mut Context) -> Result<bool, Error> {
+        self.poll_incoming_uni(cx)?;
+        self.poll_send(cx)?;
+        self.poll_recv_control(cx)?;
+        self.poll_recv_encoder(cx)?;
+        self.poll_recv_decoder(cx)?;
+        self.poll_incoming_bi(cx)?;
+        self.poll_send(cx)?;
+
+        self.reset_waker(cx);
+
+        Ok(self.inner.is_closing() && self.inner.requests_in_flight() == 0)
+    }
+
     pub fn wake(&mut self) {
         if let Some(w) = self.driver.take() {
             w.wake();
