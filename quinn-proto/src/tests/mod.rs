@@ -201,20 +201,23 @@ fn finish_stream() {
 
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == stream_id
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 0))) if data == MSG
     );
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -240,9 +243,9 @@ fn reset_stream() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Err(ReadError::Reset { error_code: ERROR })
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
@@ -272,18 +275,18 @@ fn stop_stream() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Err(ReadError::Reset { error_code: ERROR })
     );
 
     assert_matches!(
-        pair.client_conn_mut(client_ch).write(s, b"foo"),
+        pair.client_conn_mut(client_ch).write(stream_id, b"foo"),
         Err(WriteError::Stopped { error_code: ERROR })
     );
     assert_matches!(
-        pair.client_conn_mut(client_ch).finish(s),
+        pair.client_conn_mut(client_ch).finish(stream_id),
         Err(FinishError::UnknownStream)
     );
 }
@@ -383,7 +386,7 @@ fn zero_rtt_happypath() {
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 0))) if data == MSG
     );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -511,15 +514,18 @@ fn stream_id_backpressure() {
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == stream_id
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
+        Ok(None)
+    );
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -543,9 +549,12 @@ fn stream_id_backpressure() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -571,10 +580,10 @@ fn key_update() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Bi })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == stream_id);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 0))) if data == MSG1
     );
 
@@ -586,10 +595,10 @@ fn key_update() {
         .unwrap();
     pair.drive();
 
-    assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::StreamReadable { stream }) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::StreamReadable { stream }) if stream == stream_id);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 6))) if data == MSG2
     );
 
@@ -634,9 +643,9 @@ fn key_update_reordered() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Bi })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == stream_id);
     let mut buf = [0; 32];
-    assert_matches!(pair.server_conn_mut(server_ch).read(s, &mut buf),
+    assert_matches!(pair.server_conn_mut(server_ch).read(stream_id, &mut buf),
                     Ok(Some(n)) if n == MSG1.len() + MSG2.len());
     assert_eq!(&buf[0..MSG1.len()], MSG1);
     assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
@@ -948,13 +957,13 @@ fn stop_opens_bidi() {
         pair.server_conn_mut(server_conn).poll(),
         Some(Event::StreamOpened { dir: Dir::Bi })
     );
-    assert_matches!(pair.server_conn_mut(server_conn).accept(Dir::Bi), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_conn).accept(Dir::Bi), Some(stream) if stream == stream_id);
     assert_matches!(
-        pair.server_conn_mut(server_conn).read_unordered(s),
+        pair.server_conn_mut(server_conn).read_unordered(stream_id),
         Err(ReadError::Blocked)
     );
     assert_matches!(
-        pair.server_conn_mut(server_conn).write(s, b"foo"),
+        pair.server_conn_mut(server_conn).write(stream_id, b"foo"),
         Err(WriteError::Stopped { error_code: ERROR })
     );
 }
@@ -1056,7 +1065,7 @@ fn finish_stream_flow_control_reordered() {
 
     // Issue flow control credit
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 0))) if data == MSG
     );
     pair.server.drive(pair.time, pair.client.addr);
@@ -1070,15 +1079,18 @@ fn finish_stream_flow_control_reordered() {
 
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == stream_id
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -1110,7 +1122,7 @@ fn handshake_1rtt_handling() {
 
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(stream_id),
         Ok(Some((ref data, 0))) if data == MSG
     );
 }
@@ -1136,7 +1148,7 @@ fn stop_before_finish() {
     pair.drive();
 
     assert_matches!(
-        pair.client_conn_mut(client_ch).finish(s),
+        pair.client_conn_mut(client_ch).finish(stream_id),
         Err(FinishError::Stopped { error_code: ERROR })
     );
 }
@@ -1154,7 +1166,7 @@ fn stop_during_finish() {
         .unwrap();
     pair.drive();
 
-    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == stream_id);
     info!("stopping and finishing stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
@@ -1165,7 +1177,7 @@ fn stop_during_finish() {
     pair.drive_client();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::StreamFinished { stream, stop_reason: Some(ERROR) }) if stream == s
+        Some(Event::StreamFinished { stream, stop_reason: Some(ERROR) }) if stream == stream_id
     );
 }
 

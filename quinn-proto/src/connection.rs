@@ -1014,12 +1014,12 @@ where
             .insert(crypto.offset, crypto.data.clone());
         let mut buf = [0; 8192];
         loop {
-            let size = space.crypto_stream.read(&mut buf);
-            if size == 0 {
+            let read = space.crypto_stream.read(&mut buf);
+            if read == 0 {
                 return Ok(());
             }
-            trace!("read {} TLS bytes", size);
-            self.tls.read_handshake(&buf[..size])?;
+            trace!("read {} TLS bytes", read);
+            self.tls.read_handshake(&buf[..read])?;
         }
     }
 
@@ -2891,7 +2891,7 @@ where
         );
         let budget = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
         self.queue_stream_data(stream, (&data[0..budget]).into())?;
-        trace!(%stream, "wrote {} bytes", n);
+        trace!(%stream, "wrote {} bytes", budget);
         Ok(budget)
     }
 
