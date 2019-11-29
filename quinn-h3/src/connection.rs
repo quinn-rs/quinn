@@ -103,7 +103,7 @@ pub(crate) struct ConnectionInner {
 }
 
 impl ConnectionInner {
-    fn drive(&mut self, cx: &mut Context) -> Result<bool, Error> {
+    fn drive(&mut self, cx: &mut Context) -> Result<bool, DriverError> {
         self.poll_incoming_uni(cx)?;
         self.poll_send(cx)?;
         self.poll_recv_control(cx)?;
@@ -154,22 +154,25 @@ impl ConnectionInner {
             })
     }
 
-    fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         loop {
             match Pin::new(&mut self.incoming_bi).poll_next(cx) {
                 Poll::Pending => return Ok(()),
-                Poll::Ready(Some(Err(e))) => return Err(e.into()),
+                Poll::Ready(Some(Err(e))) => {
+                    return Err(DriverError::new(
+                        e,
+                        ErrorCode::INTERNAL_ERROR,
+                        "incoming bi error",
+                    ))
+                }
                 Poll::Ready(None) => {
-                    return Err(Error::Peer("closed incoming bi".into()));
+                    return Err(DriverError::internal("closed incoming bi"));
                 }
                 Poll::Ready(Some(Ok((mut send, mut recv)))) => match self.side {
                     Side::Client => {
-                        self.set_error(
+                        return Err(DriverError::peer(
                             ErrorCode::STREAM_CREATION_ERROR,
                             "client does not accept bidirectional streams",
-                        );
-                        return Err(Error::Peer(
-                            "client does not accept bidirectional streams".into(),
                         ));
                     }
                     Side::Server => {
@@ -189,11 +192,11 @@ impl ConnectionInner {
         }
     }
 
-    fn poll_incoming_uni(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_incoming_uni(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         loop {
             match Pin::new(&mut self.incoming_uni).poll_next(cx)? {
                 Poll::Pending => break,
-                Poll::Ready(None) => return Err(Error::Peer("closed incoming uni".into())),
+                Poll::Ready(None) => return Err(DriverError::internal("closed incoming uni")),
                 Poll::Ready(Some(recv)) => self.pending_uni.push_back(Some(RecvUni::new(recv))),
             }
         }
@@ -203,7 +206,7 @@ impl ConnectionInner {
         Ok(())
     }
 
-    fn poll_resolve_uni(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_resolve_uni(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         let resolved: Vec<(usize, Result<NewUni, Error>)> = self
             .pending_uni
             .iter_mut()
@@ -226,10 +229,15 @@ impl ConnectionInner {
             self.pending_uni.remove(i - removed);
             removed += 1;
             match res {
-                Err(Error::UnknownStream(ty)) => println!("unknown stream type {}", ty),
+                Err(Error::UnknownStream(ty)) => {
+                    return Err(DriverError::peer(
+                        ErrorCode::STREAM_CREATION_ERROR,
+                        format!("unknown stream type {}", ty),
+                    ))
+                }
                 Err(e) => {
-                    self.set_error(ErrorCode::STREAM_CREATION_ERROR, format!("{:?}", e));
-                    return Err(e);
+                    let msg = format!("{:?}", e);
+                    return Err(DriverError::new(e, ErrorCode::STREAM_CREATION_ERROR, msg));
                 }
                 Ok(n) => self.on_uni_resolved(n)?,
             }
@@ -237,20 +245,17 @@ impl ConnectionInner {
         Ok(())
     }
 
-    fn on_uni_resolved(&mut self, new_stream: NewUni) -> Result<(), Error> {
+    fn on_uni_resolved(&mut self, new_stream: NewUni) -> Result<(), DriverError> {
         match new_stream {
             NewUni::Control(stream) => match self.recv_control {
                 None => {
                     self.recv_control = Some(stream);
                     Ok(())
                 }
-                Some(_) => {
-                    self.set_error(
-                        ErrorCode::STREAM_CREATION_ERROR,
-                        "control stream already open",
-                    );
-                    Err(Error::Peer("control stream already open".into()))
-                }
+                Some(_) => Err(DriverError::peer(
+                    ErrorCode::STREAM_CREATION_ERROR,
+                    "control stream already open",
+                )),
             },
             NewUni::Decoder(s) => match self.recv_decoder {
                 None => {
@@ -258,13 +263,10 @@ impl ConnectionInner {
                         Some((s, BytesMut::with_capacity(RECV_DECODER_INITIAL_CAPACITY)));
                     Ok(())
                 }
-                Some(_) => {
-                    self.set_error(
-                        ErrorCode::STREAM_CREATION_ERROR,
-                        "decoder stream already open",
-                    );
-                    Err(Error::Peer("decoder stream already open".into()))
-                }
+                Some(_) => Err(DriverError::peer(
+                    ErrorCode::STREAM_CREATION_ERROR,
+                    "decoder stream already open",
+                )),
             },
             NewUni::Encoder(s) => match self.recv_encoder {
                 None => {
@@ -272,13 +274,10 @@ impl ConnectionInner {
                         Some((s, BytesMut::with_capacity(RECV_ENCODER_INITIAL_CAPACITY)));
                     Ok(())
                 }
-                Some(_) => {
-                    self.set_error(
-                        ErrorCode::STREAM_CREATION_ERROR,
-                        "encoder stream already open",
-                    );
-                    Err(Error::Peer("encoder stream already open".into()))
-                }
+                Some(_) => Err(DriverError::peer(
+                    ErrorCode::STREAM_CREATION_ERROR,
+                    "encoder stream already open",
+                )),
             },
             NewUni::Push(_) => {
                 println!("push stream ignored");
@@ -287,7 +286,7 @@ impl ConnectionInner {
         }
     }
 
-    fn poll_recv_control(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_recv_control(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         let mut control = match self.recv_control.as_mut() {
             None => return Ok(()),
             Some(c) => c,
@@ -297,13 +296,14 @@ impl ConnectionInner {
             match Pin::new(&mut control).poll_next(cx) {
                 Poll::Pending => return Ok(()),
                 Poll::Ready(None) => {
-                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "control in closed");
-                    return Err(Error::Peer("control in closed".into()));
+                    return Err(DriverError::peer(
+                        ErrorCode::CLOSED_CRITICAL_STREAM,
+                        "control in closed",
+                    ));
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    let (code, msg, err) = e.into();
-                    self.set_error(code, msg.clone());
-                    return Err(err);
+                    let code = e.code();
+                    return Err(DriverError::new(e, code, ""));
                 }
                 Poll::Ready(Some(Ok(frame))) => {
                     match (self.inner.remote_settings().is_some(), self.side, frame) {
@@ -322,18 +322,16 @@ impl ConnectionInner {
                         (false, Side::Server, HttpFrame::CancelPush(_))
                         | (false, Side::Server, HttpFrame::MaxPushId(_))
                         | (false, Side::Client, HttpFrame::Goaway(_)) => {
-                            self.set_error(ErrorCode::MISSING_SETTINGS, "missing settings");
-                            return Err(Error::Peer("missing settings".into()));
+                            return Err(DriverError::peer(
+                                ErrorCode::MISSING_SETTINGS,
+                                "missing settings",
+                            ));
                         }
                         f => {
-                            self.set_error(
+                            return Err(DriverError::peer(
                                 ErrorCode::FRAME_UNEXPECTED,
-                                "unexpected frame type on control stream",
-                            );
-                            return Err(Error::Peer(format!(
-                                "frame {:?} unexpected on control stream",
-                                f
-                            )));
+                                format!("frame {:?} unexpected on control stream", f),
+                            ));
                         }
                     }
                 }
@@ -341,7 +339,7 @@ impl ConnectionInner {
         }
     }
 
-    fn poll_recv_encoder(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_recv_encoder(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         let (mut recv_encoder, mut buffer) = match self.recv_encoder.as_mut() {
             None => return Ok(()),
             Some((ref mut s, ref mut b)) => (s, b),
@@ -352,8 +350,10 @@ impl ConnectionInner {
             match Pin::new(&mut recv_encoder).poll_read(cx, &mut read_buf[..])? {
                 Poll::Pending => break,
                 Poll::Ready(0) => {
-                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "encoder closed");
-                    return Err(Error::Peer("encoder stream closed".into()));
+                    return Err(DriverError::peer(
+                        ErrorCode::CLOSED_CRITICAL_STREAM,
+                        "encoder closed",
+                    ));
                 }
                 Poll::Ready(n) => {
                     buffer.extend_from_slice(&read_buf[..n]);
@@ -377,7 +377,7 @@ impl ConnectionInner {
         Ok(())
     }
 
-    fn poll_recv_decoder(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_recv_decoder(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         let (mut recv_decoder, mut buffer) = match self.recv_decoder.as_mut() {
             None => return Ok(()),
             Some((ref mut s, ref mut b)) => (s, b),
@@ -388,8 +388,10 @@ impl ConnectionInner {
             match Pin::new(&mut recv_decoder).poll_read(cx, &mut read_buf[..])? {
                 Poll::Pending => break,
                 Poll::Ready(0) => {
-                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, "decoder closed");
-                    return Err(Error::Peer("decoder stream closed".into()));
+                    return Err(DriverError::peer(
+                        ErrorCode::CLOSED_CRITICAL_STREAM,
+                        "decoder closed",
+                    ));
                 }
                 Poll::Ready(n) => {
                     buffer.extend_from_slice(&read_buf[..n]);
@@ -406,15 +408,17 @@ impl ConnectionInner {
         Ok(())
     }
 
-    fn poll_send(&mut self, cx: &mut Context) -> Result<(), Error> {
+    fn poll_send(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         for ty in PendingStreamType::iter() {
             if let Some(data) = self.inner.pending_stream_take(ty) {
                 self.send_unis[ty as usize].push(data);
             }
             match Pin::new(&mut self.send_unis[ty as usize]).poll(cx) {
                 Poll::Ready(Err(err)) => {
-                    self.set_error(ErrorCode::CLOSED_CRITICAL_STREAM, format!("{:?}", err));
-                    return Err(err);
+                    return Err(DriverError::peer(
+                        ErrorCode::CLOSED_CRITICAL_STREAM,
+                        format!("{:?}", err),
+                    ));
                 }
                 Poll::Ready(Ok(_)) => {
                     self.inner.pending_stream_release(ty);
