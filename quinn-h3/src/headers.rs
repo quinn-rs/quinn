@@ -32,7 +32,7 @@ impl Future for DecodeHeaders {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match self.frame {
-            None => Poll::Ready(Err(crate::Error::Internal("frame none"))),
+            None => Poll::Ready(Err(crate::Error::internal("frame none"))),
             Some(ref frame) => {
                 let mut conn = self.conn.h3.lock().unwrap();
                 let result = conn.decode_header(cx, self.stream_id, frame);

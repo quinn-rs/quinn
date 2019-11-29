@@ -318,7 +318,7 @@ impl Future for SendRequest {
                             &self.conn,
                             send,
                             self.stream_id
-                                .ok_or_else(|| Error::Internal("stream_id is none"))?,
+                                .ok_or_else(|| Error::internal("stream_id is none"))?,
                         )?),
                     }
                 }
@@ -334,7 +334,7 @@ impl Future for SendRequest {
                         Some(Ok(f)) => match f {
                             HttpFrame::Headers(h) => {
                                 let stream_id =
-                                    self.stream_id.ok_or(Error::Internal("Stream id is none"))?;
+                                    self.stream_id.ok_or(Error::internal("Stream id is none"))?;
                                 let decode = DecodeHeaders::new(h, self.conn.clone(), stream_id);
                                 if let SendRequestState::Receiving(frames) = mem::replace(
                                     &mut self.state,
@@ -403,7 +403,7 @@ impl Future for RecvResponse {
         loop {
             match self.state {
                 RecvResponseState::Finished => {
-                    return Poll::Ready(Err(crate::Error::Internal(
+                    return Poll::Ready(Err(crate::Error::internal(
                         "recv response polled after finish",
                     )))
                 }
