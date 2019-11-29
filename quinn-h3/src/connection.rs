@@ -75,9 +75,9 @@ impl ConnectionRef {
                 recv_decoder: None,
                 blocked_streams: BTreeMap::new(),
                 send_unis: [
-                    SendUni::new(StreamType::CONTROL, quic.clone()),
-                    SendUni::new(StreamType::ENCODER, quic.clone()),
-                    SendUni::new(StreamType::DECODER, quic),
+                    SendUni::new(StreamType::CONTROL, quic.open_uni()),
+                    SendUni::new(StreamType::ENCODER, quic.open_uni()),
+                    SendUni::new(StreamType::DECODER, quic.open_uni()),
                 ],
             })),
         })
