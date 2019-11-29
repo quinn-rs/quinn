@@ -520,11 +520,11 @@ impl Iter {
             Type::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
                 error_code: self.bytes.get()?,
                 frame_type: {
-                    let x = self.bytes.get_var()?;
-                    if x == 0 {
+                    let var_int = self.bytes.get_var()?;
+                    if var_int == 0 {
                         None
                     } else {
-                        Some(Type(x))
+                        Some(Type(var_int))
                     }
                 },
                 reason: self.take_len()?,

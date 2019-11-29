@@ -86,7 +86,7 @@ impl super::UdpExt for UdpSocket {
             );
         }
         loop {
-            let n = unsafe {
+            let result_code = unsafe {
                 libc::sendmmsg(
                     self.as_raw_fd(),
                     msgs.as_mut_ptr(),
@@ -94,14 +94,14 @@ impl super::UdpExt for UdpSocket {
                     0,
                 )
             };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
+            if result_code == -1 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
-                return Err(e);
+                return Err(error);
             }
-            return Ok(n as usize);
+            return Ok(result_code as usize);
         }
     }
 
@@ -113,10 +113,10 @@ impl super::UdpExt for UdpSocket {
         let mut sent = 0;
         while sent < transmits.len() {
             prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
-            let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
+            let result_code = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
+            if result_code == -1 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
                 if sent != 0 {
@@ -125,7 +125,7 @@ impl super::UdpExt for UdpSocket {
                     // recurring on the next call.
                     return Ok(sent);
                 }
-                return Err(e);
+                return Err(error);
             } else {
                 sent += 1;
             }
@@ -148,19 +148,19 @@ impl super::UdpExt for UdpSocket {
         hdr.msg_control = ctrl.0.as_mut_ptr() as _;
         hdr.msg_controllen = CMSG_LEN as _;
         hdr.msg_flags = 0;
-        let n = loop {
-            let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
+        let result_code = loop {
+            let result_code = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
+            if result_code == -1 {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
-                return Err(e);
+                return Err(error);
             }
             if hdr.msg_flags & libc::MSG_TRUNC != 0 {
                 continue;
             }
-            break n;
+            break result_code;
         };
         let name = unsafe { name.assume_init() };
         let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
@@ -190,7 +190,11 @@ impl super::UdpExt for UdpSocket {
             libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
             _ => unreachable!(),
         };
-        Ok((n as usize, addr, EcnCodepoint::from_bits(ecn_bits)))
+        Ok((
+            result_code as usize,
+            addr,
+            EcnCodepoint::from_bits(ecn_bits),
+        ))
     }
 }
 

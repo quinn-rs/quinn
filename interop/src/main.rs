@@ -310,32 +310,32 @@ fn run(options: Opt) -> Result<()> {
     drop(state); // Ensure the drivers will shut down once idle
     runtime.run().unwrap();
 
-    let r = results.lock().unwrap();
-    if r.handshake {
+    let results = results.lock().unwrap();
+    if results.handshake {
         print!("VH");
     }
-    if r.stream_data {
+    if results.stream_data {
         print!("D");
     }
-    if r.close {
+    if results.close {
         print!("C");
     }
-    if r.resumption {
+    if results.resumption {
         print!("R");
     }
-    if r.zero_rtt {
+    if results.zero_rtt {
         print!("Z");
     }
-    if r.retry {
+    if results.retry {
         print!("S");
     }
-    if r.rebinding {
+    if results.rebinding {
         print!("B");
     }
-    if r.key_update {
+    if results.key_update {
         print!("U");
     }
-    if r.h3 {
+    if results.h3 {
         print!("3");
     }
 

@@ -47,14 +47,14 @@ impl VarInt {
 
     /// Compute the number of bytes needed to encode this value
     pub fn size(self) -> usize {
-        let x = self.0;
-        if x < 2u64.pow(6) {
+        let int = self.0;
+        if int < 2u64.pow(6) {
             1
-        } else if x < 2u64.pow(14) {
+        } else if int < 2u64.pow(14) {
             2
-        } else if x < 2u64.pow(30) {
+        } else if int < 2u64.pow(30) {
             4
-        } else if x < 2u64.pow(62) {
+        } else if int < 2u64.pow(62) {
             8
         } else {
             unreachable!("malformed VarInt");
@@ -128,7 +128,7 @@ impl Codec for VarInt {
         buf[0] = r.get_u8();
         let tag = buf[0] >> 6;
         buf[0] &= 0b0011_1111;
-        let x = match tag {
+        let int = match tag {
             0b00 => u64::from(buf[0]),
             0b01 => {
                 if r.remaining() < 1 {
@@ -153,19 +153,19 @@ impl Codec for VarInt {
             }
             _ => unreachable!(),
         };
-        Ok(VarInt(x))
+        Ok(VarInt(int))
     }
 
     fn encode<B: BufMut>(&self, w: &mut B) {
-        let x = self.0;
-        if x < 2u64.pow(6) {
-            w.put_u8(x as u8);
-        } else if x < 2u64.pow(14) {
-            w.put_u16_be(0b01 << 14 | x as u16);
-        } else if x < 2u64.pow(30) {
-            w.put_u32_be(0b10 << 30 | x as u32);
-        } else if x < 2u64.pow(62) {
-            w.put_u64_be(0b11 << 62 | x);
+        let int = self.0;
+        if int < 2u64.pow(6) {
+            w.put_u8(int as u8);
+        } else if int < 2u64.pow(14) {
+            w.put_u16_be(0b01 << 14 | int as u16);
+        } else if int < 2u64.pow(30) {
+            w.put_u32_be(0b10 << 30 | int as u32);
+        } else if int < 2u64.pow(62) {
+            w.put_u64_be(0b11 << 62 | int);
         } else {
             unreachable!("malformed VarInt")
         }

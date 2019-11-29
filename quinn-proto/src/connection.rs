@@ -1014,12 +1014,12 @@ where
             .insert(crypto.offset, crypto.data.clone());
         let mut buf = [0; 8192];
         loop {
-            let n = space.crypto_stream.read(&mut buf);
-            if n == 0 {
+            let size = space.crypto_stream.read(&mut buf);
+            if size == 0 {
                 return Ok(());
             }
-            trace!("read {} TLS bytes", n);
-            self.tls.read_handshake(&buf[..n])?;
+            trace!("read {} TLS bytes", size);
+            self.tls.read_handshake(&buf[..size])?;
         }
     }
 
@@ -2889,10 +2889,10 @@ where
             self.max_data - self.data_sent,
             self.config.send_window - self.unacked_data,
         );
-        let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.queue_stream_data(stream, (&data[0..n]).into())?;
+        let budget = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
+        self.queue_stream_data(stream, (&data[0..budget]).into())?;
         trace!(%stream, "wrote {} bytes", n);
-        Ok(n)
+        Ok(budget)
     }
 
     /// Prepare to transmit an unreliable, unordered datagram
@@ -2920,9 +2920,9 @@ where
 
     /// Receive an unreliable, unordered datagram
     pub fn recv_datagram(&mut self) -> Option<Bytes> {
-        let x = self.datagrams.incoming.pop_front()?.data;
-        self.datagrams.recv_buffered -= x.len();
-        Some(x)
+        let data = self.datagrams.incoming.pop_front()?.data;
+        self.datagrams.recv_buffered -= data.len();
+        Some(data)
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`

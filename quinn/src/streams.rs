@@ -55,7 +55,7 @@ impl SendStream {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
-        let n = match conn.inner.write(self.stream, buf) {
+        let written = match conn.inner.write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
                 if let Some(ref x) = conn.error {
@@ -72,7 +72,7 @@ impl SendStream {
             }
         };
         conn.wake();
-        Poll::Ready(Ok(n))
+        Poll::Ready(Ok(written))
     }
 
     /// Shut down the send stream gracefully.
@@ -99,8 +99,8 @@ impl SendStream {
             conn.finishing.insert(self.stream, send);
             conn.wake();
         }
-        let r = ready!(self.finishing.as_mut().unwrap().poll_unpin(cx)).unwrap();
-        match r {
+        let result = ready!(self.finishing.as_mut().unwrap().poll_unpin(cx)).unwrap();
+        match result {
             None => Poll::Ready(Ok(())),
             Some(e) => Poll::Ready(Err(e)),
         }
@@ -609,8 +609,8 @@ impl<'a> Future for WriteAll<'a> {
             if this.buf.is_empty() {
                 return Poll::Ready(Ok(()));
             }
-            let n = ready!(this.stream.poll_write(cx, this.buf))?;
-            this.buf = &this.buf[n..];
+            let written = ready!(this.stream.poll_write(cx, this.buf))?;
+            this.buf = &this.buf[written..];
         }
     }
 }

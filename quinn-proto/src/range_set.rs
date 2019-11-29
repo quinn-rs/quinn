@@ -213,9 +213,9 @@ impl<'a> Iterator for EltIter<'a> {
             self.next = start;
             self.end = end;
         }
-        let x = self.next;
+        let int = self.next;
         self.next += 1;
-        Some(x)
+        Some(int)
     }
 }
 

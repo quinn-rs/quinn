@@ -296,8 +296,9 @@ impl TestEndpoint {
     }
 
     fn is_idle(&self) -> bool {
-        let t = self.next_wakeup();
-        t == self.timers[Timer(TimerKind::Idle)] || t == self.timers[Timer(TimerKind::KeepAlive)]
+        let instant = self.next_wakeup();
+        instant == self.timers[Timer(TimerKind::Idle)]
+            || instant == self.timers[Timer(TimerKind::KeepAlive)]
     }
 
     pub fn delay_outbound(&mut self) {

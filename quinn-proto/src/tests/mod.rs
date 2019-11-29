@@ -190,11 +190,13 @@ fn finish_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.drive();
 
     assert_matches!(
@@ -221,15 +223,17 @@ fn reset_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
 
     info!("resetting stream");
     const ERROR: VarInt = VarInt(42);
-    pair.client_conn_mut(client_ch).reset(s, ERROR);
+    pair.client_conn_mut(client_ch).reset(stream_id, ERROR);
     pair.drive();
 
     assert_matches!(
@@ -250,15 +254,17 @@ fn stop_stream() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
 
     info!("stopping stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
-        .stop_sending(s, ERROR)
+        .stop_sending(stream_id, ERROR)
         .unwrap();
     pair.drive();
 
@@ -301,9 +307,12 @@ fn congestion() {
     let (client_ch, _) = pair.connect();
 
     let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     loop {
-        match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
+        match pair
+            .client_conn_mut(client_ch)
+            .write(stream_id, &[42; 1024])
+        {
             Ok(n) => {
                 assert!(n <= 1024);
                 pair.drive_client();
@@ -319,7 +328,7 @@ fn congestion() {
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
     pair.client_conn_mut(client_ch)
-        .write(s, &[42; 1024])
+        .write(stream_id, &[42; 1024])
         .unwrap();
 }
 
@@ -365,9 +374,11 @@ fn zero_rtt_happypath() {
     info!("resuming session");
     let client_ch = pair.begin_connect(config.clone());
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
@@ -421,9 +432,11 @@ fn zero_rtt_rejection() {
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_conn = pair.server.assert_accept();
@@ -433,7 +446,7 @@ fn zero_rtt_rejection() {
     );
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
     let s2 = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
-    assert_eq!(s, s2);
+    assert_eq!(stream_id, s2);
     assert_eq!(
         pair.server_conn_mut(server_conn).read_unordered(s2),
         Err(ReadError::Blocked)
@@ -481,7 +494,7 @@ fn stream_id_backpressure() {
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair
+    let stream_id = pair
         .client
         .connections
         .get_mut(&client_ch)
@@ -494,7 +507,7 @@ fn stream_id_backpressure() {
         "only one stream is permitted at a time"
     );
     // Close the first stream to make room for the second
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
@@ -516,14 +529,14 @@ fn stream_id_backpressure() {
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 
     // Try opening the second stream again, now that we've made room
-    let s = pair
+    let stream_id = pair
         .client
         .connections
         .get_mut(&client_ch)
         .unwrap()
         .open(Dir::Uni)
         .expect("didn't get stream id budget");
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.drive();
     // Make sure the server actually processes data on the newly-available stream
     assert_matches!(
@@ -540,7 +553,7 @@ fn key_update() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
-    let s = pair
+    let stream_id = pair
         .client
         .connections
         .get_mut(&client_ch)
@@ -549,7 +562,9 @@ fn key_update() {
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"hello1";
-    pair.client_conn_mut(client_ch).write(s, MSG1).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG1)
+        .unwrap();
     pair.drive();
 
     assert_matches!(
@@ -566,7 +581,9 @@ fn key_update() {
     pair.client_conn_mut(client_ch).initiate_key_update();
 
     const MSG2: &[u8] = b"hello2";
-    pair.client_conn_mut(client_ch).write(s, MSG2).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG2)
+        .unwrap();
     pair.drive();
 
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::StreamReadable { stream }) if stream == s);
@@ -585,7 +602,7 @@ fn key_update_reordered() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
-    let s = pair
+    let stream_id = pair
         .client
         .connections
         .get_mut(&client_ch)
@@ -594,7 +611,9 @@ fn key_update_reordered() {
         .expect("couldn't open first stream");
 
     const MSG1: &[u8] = b"1";
-    pair.client_conn_mut(client_ch).write(s, MSG1).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG1)
+        .unwrap();
     pair.client.drive(pair.time, pair.server.addr);
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
@@ -603,7 +622,9 @@ fn key_update_reordered() {
     info!("updated keys");
 
     const MSG2: &[u8] = b"two";
-    pair.client_conn_mut(client_ch).write(s, MSG2).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG2)
+        .unwrap();
     pair.client.drive(pair.time, pair.server.addr);
     pair.client.finish_delay();
     pair.drive();
@@ -798,35 +819,36 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut buf = [0; 4096];
 
     // Stream reset before read
-    let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     assert_eq!(
-        pair.client_conn_mut(client_conn).write(s, &msg),
+        pair.client_conn_mut(client_conn).write(stream_id, &msg),
         Ok(window_size)
     );
     assert_eq!(
         pair.client_conn_mut(client_conn)
-            .write(s, &msg[window_size..]),
+            .write(stream_id, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
     pair.drive();
-    pair.client_conn_mut(client_conn).reset(s, VarInt(42));
+    pair.client_conn_mut(client_conn)
+        .reset(stream_id, VarInt(42));
     pair.drive();
     assert_eq!(
-        pair.server_conn_mut(server_conn).read(s, &mut buf),
+        pair.server_conn_mut(server_conn).read(stream_id, &mut buf),
         Err(ReadError::Reset {
             error_code: VarInt(42)
         })
     );
 
     // Happy path
-    let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     assert_eq!(
-        pair.client_conn_mut(client_conn).write(s, &msg),
+        pair.client_conn_mut(client_conn).write(stream_id, &msg),
         Ok(window_size)
     );
     assert_eq!(
         pair.client_conn_mut(client_conn)
-            .write(s, &msg[window_size..]),
+            .write(stream_id, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
     pair.drive();
@@ -834,7 +856,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     loop {
         match pair
             .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
+            .read(stream_id, &mut buf[cursor..])
         {
             Ok(Some(n)) => {
                 cursor += n;
@@ -853,12 +875,12 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     assert_eq!(cursor, window_size);
     pair.drive();
     assert_eq!(
-        pair.client_conn_mut(client_conn).write(s, &msg),
+        pair.client_conn_mut(client_conn).write(stream_id, &msg),
         Ok(window_size)
     );
     assert_eq!(
         pair.client_conn_mut(client_conn)
-            .write(s, &msg[window_size..]),
+            .write(stream_id, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
     pair.drive();
@@ -866,7 +888,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     loop {
         match pair
             .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
+            .read(stream_id, &mut buf[cursor..])
         {
             Ok(Some(n)) => {
                 cursor += n;
@@ -912,13 +934,13 @@ fn stop_opens_bidi() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
-    let s = pair.client_conn_mut(client_conn).open(Dir::Bi).unwrap();
+    let stream_id = pair.client_conn_mut(client_conn).open(Dir::Bi).unwrap();
     const ERROR: VarInt = VarInt(42);
     pair.client
         .connections
         .get_mut(&server_conn)
         .unwrap()
-        .stop_sending(s, ERROR)
+        .stop_sending(stream_id, ERROR)
         .unwrap();
     pair.drive();
 
@@ -942,18 +964,24 @@ fn implicit_open() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
-    let s1 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
-    let s2 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
+    let stream_id_1 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
+    let stream_id_2 = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
     pair.client_conn_mut(client_conn)
-        .write(s2, b"hello")
+        .write(stream_id_2, b"hello")
         .unwrap();
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_conn).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
-    assert_eq!(pair.server_conn_mut(server_conn).accept(Dir::Uni), Some(s1));
-    assert_eq!(pair.server_conn_mut(server_conn).accept(Dir::Uni), Some(s2));
+    assert_eq!(
+        pair.server_conn_mut(server_conn).accept(Dir::Uni),
+        Some(stream_id_1)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_conn).accept(Dir::Uni),
+        Some(stream_id_2)
+    );
     assert_eq!(pair.server_conn_mut(server_conn).accept(Dir::Uni), None);
 }
 
@@ -1017,10 +1045,12 @@ fn finish_stream_flow_control_reordered() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
 
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive_client(); // Send stream data
     pair.server.drive(pair.time, pair.client.addr); // Receive
 
@@ -1032,7 +1062,7 @@ fn finish_stream_flow_control_reordered() {
     pair.server.drive(pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
 
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.drive_client(); // Send FIN
     pair.server.drive(pair.time, pair.client.addr); // Acknowledge
     pair.server.finish_delay(); // Add flow control packets after
@@ -1065,10 +1095,12 @@ fn handshake_1rtt_handling() {
     pair.client.delay_outbound();
 
     // Send some 1-RTT data which will be received first.
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.client.drive(pair.time, pair.server.addr);
 
     // Add the handshake flight back on.
@@ -1089,15 +1121,17 @@ fn stop_before_finish() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
 
     info!("stopping stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
-        .stop_sending(s, ERROR)
+        .stop_sending(stream_id, ERROR)
         .unwrap();
     pair.drive();
 
@@ -1113,19 +1147,21 @@ fn stop_during_finish() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"hello";
-    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch)
+        .write(stream_id, MSG)
+        .unwrap();
     pair.drive();
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     info!("stopping and finishing stream");
     const ERROR: VarInt = VarInt(42);
     pair.server_conn_mut(server_ch)
-        .stop_sending(s, ERROR)
+        .stop_sending(stream_id, ERROR)
         .unwrap();
     pair.drive_server();
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    pair.client_conn_mut(client_ch).finish(stream_id).unwrap();
     pair.drive_client();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
@@ -1141,9 +1177,12 @@ fn congested_tail_loss() {
     let (client_ch, _) = pair.connect();
 
     let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
-    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+    let stream_id = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     loop {
-        match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
+        match pair
+            .client_conn_mut(client_ch)
+            .write(stream_id, &[42; 1024])
+        {
             Ok(n) => {
                 assert!(n <= 1024);
                 pair.drive_client();
@@ -1162,7 +1201,7 @@ fn congested_tail_loss() {
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
     pair.client_conn_mut(client_ch)
-        .write(s, &[42; 1024])
+        .write(stream_id, &[42; 1024])
         .unwrap();
 }
 

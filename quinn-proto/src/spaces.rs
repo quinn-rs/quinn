@@ -95,9 +95,9 @@ where
     pub(crate) fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
-        let x = self.next_packet_number;
+        let packet_number = self.next_packet_number;
         self.next_packet_number += 1;
-        x
+        packet_number
     }
 
     pub(crate) fn can_send(&self) -> bool {

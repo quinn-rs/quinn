@@ -86,9 +86,9 @@ impl Future for Connecting {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let connected = match self.0 {
             Some(ref mut driver) => {
-                let r = driver.poll_unpin(cx)?;
+                let result = driver.poll_unpin(cx)?;
                 let driver = self.0.as_mut().unwrap().0.lock().unwrap(); // borrowck workaround
-                match r {
+                match result {
                     Poll::Ready(()) => {
                         return Poll::Ready(Err(driver.error.as_ref().unwrap().clone()));
                     }
