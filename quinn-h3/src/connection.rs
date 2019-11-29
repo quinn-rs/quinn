@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    io::Cursor,
+    io::{self, Cursor},
     mem,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -13,9 +13,13 @@ use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
 
 use crate::{
-    frame::FrameStream,
+    frame::{self, FrameStream},
     proto::{
-        connection::{Connection, DecodeResult, Error as ProtoError, PendingStreamType},
+        self,
+        connection::{
+            Connection, DecodeResult, Error as ProtoError, Error as ConnectionError,
+            PendingStreamType,
+        },
         frame::{HeadersFrame, HttpFrame},
         ErrorCode, StreamType,
     },
@@ -423,6 +427,78 @@ impl ConnectionInner {
 
     fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
         self.quic.close(code.into(), &reason.into());
+    }
+}
+
+struct DriverError(Error, ErrorCode, String);
+
+impl DriverError {
+    fn new<E: Into<Error>, T: Into<String>>(err: E, code: ErrorCode, msg: T) -> Self {
+        DriverError(err.into(), code, msg.into())
+    }
+
+    fn peer<T: Into<String>>(code: ErrorCode, msg: T) -> Self {
+        let msg = msg.into();
+        DriverError(Error::Peer(msg.clone()), code, msg)
+    }
+
+    fn internal<T: Into<String>>(msg: T) -> Self {
+        DriverError::new(
+            Error::internal(msg),
+            ErrorCode::INTERNAL_ERROR,
+            "internal Error",
+        )
+    }
+}
+
+impl From<quinn::ConnectionError> for DriverError {
+    fn from(err: quinn::ConnectionError) -> DriverError {
+        DriverError::new(Error::Quic(err), ErrorCode::INTERNAL_ERROR, "")
+    }
+}
+
+impl From<io::Error> for DriverError {
+    fn from(err: io::Error) -> DriverError {
+        DriverError::new(Error::Io(err), ErrorCode::INTERNAL_ERROR, "")
+    }
+}
+
+impl From<frame::Error> for DriverError {
+    fn from(err: frame::Error) -> DriverError {
+        match err {
+            frame::Error::Io(e) => e.into(),
+            frame::Error::Proto(proto::frame::Error::Malformed) => {
+                DriverError::peer(ErrorCode::FRAME_ERROR, "Malformed frame received")
+            }
+            frame::Error::Proto(proto::frame::Error::UnsupportedFrame) => {
+                DriverError::peer(ErrorCode::FRAME_ERROR, "Unsupported frame received")
+            }
+            frame::Error::Proto(e) => DriverError::internal(format!("frame: {:?}", e)),
+        }
+    }
+}
+
+impl From<ConnectionError> for DriverError {
+    fn from(err: ConnectionError) -> DriverError {
+        match err {
+            ConnectionError::Settings { reason } => {
+                DriverError::peer(ErrorCode::SETTINGS_ERROR, reason)
+            }
+            ConnectionError::EncodeError { reason } => {
+                DriverError::peer(ErrorCode::QPACK_DECODER_STREAM_ERROR, format!("{}", reason))
+            }
+            ConnectionError::DecodeError { reason } => {
+                DriverError::peer(ErrorCode::QPACK_ENCODER_STREAM_ERROR, format!("{}", reason))
+            }
+            // Those are excepted to happen on in Requests / Responses, just return internal error
+            ConnectionError::HeaderListTooLarge
+            | ConnectionError::InvalidHeaderName(_)
+            | ConnectionError::InvalidHeaderValue(_)
+            | ConnectionError::InvalidRequest(_)
+            | ConnectionError::InvalidResponse(_) => {
+                DriverError::internal(format!("unexpected on driver: {:?}", err))
+            }
+        }
     }
 }
 
