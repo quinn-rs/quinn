@@ -27,7 +27,6 @@ use crate::{
     Error, Settings,
 };
 
-
 pub struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
@@ -427,7 +426,6 @@ impl ConnectionInner {
         }
         Ok(())
     }
-
 }
 
 struct DriverError(Error, ErrorCode, String);
