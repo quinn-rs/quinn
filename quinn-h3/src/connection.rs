@@ -361,8 +361,8 @@ impl ConnectionInner {
                         (cur.position() as usize, max_received_ref + 1)
                     };
 
-                    buffer.advance(pos);
-                    buffer.reserve(buffer.capacity());
+                    buffer.split_to(pos);
+                    buffer.reserve(RECV_ENCODER_INITIAL_CAPACITY);
 
                     let blocked = self.blocked_streams.split_off(&max_received_ref);
                     let unblocked = mem::replace(&mut self.blocked_streams, blocked);
@@ -398,8 +398,8 @@ impl ConnectionInner {
                         self.inner.on_recv_decoder(&mut cur)?;
                         cur.position() as usize
                     };
-                    buffer.advance(pos);
-                    buffer.reserve(buffer.capacity());
+                    buffer.split_to(pos);
+                    buffer.reserve(RECV_DECODER_INITIAL_CAPACITY);
                 }
             }
         }
