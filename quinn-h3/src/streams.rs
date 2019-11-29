@@ -69,7 +69,7 @@ impl Future for RecvUni {
                             if len == expected {
                                 let mut cur = io::Cursor::new(&buf);
                                 let ty = StreamType::decode(&mut cur)
-                                    .map_err(|_| Error::Internal("stream type decode"))?;
+                                    .map_err(|_| Error::internal("stream type decode"))?;
                                 match mem::replace(&mut self.inner, None) {
                                     Some((recv, _, _, _)) => {
                                         return Poll::Ready(NewUni::try_from((ty, recv)))

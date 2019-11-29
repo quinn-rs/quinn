@@ -39,7 +39,7 @@ pub enum Error {
     #[error(display = "QUIC write error: {}", _0)] // TODO to be refined
     Write(quinn::WriteError),
     #[error(display = "Internal error: {}", _0)]
-    Internal(&'static str),
+    Internal(String),
     #[error(display = "Incorrect peer behavior: {}", _0)]
     Peer(String),
     #[error(display = "unknown stream type {}", _0)]
@@ -55,6 +55,10 @@ pub enum Error {
 impl Error {
     pub fn peer<T: Into<String>>(msg: T) -> Self {
         Error::Peer(msg.into())
+    }
+
+    pub fn internal<T: Into<String>>(msg: T) -> Self {
+        Error::Internal(msg.into())
     }
 }
 
@@ -98,7 +102,7 @@ impl From<proto::headers::Error> for Error {
 }
 
 fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
-    item.take().ok_or_else(|| Error::Internal(msg))
+    item.take().ok_or_else(|| Error::internal(msg))
 }
 
 /// TLS ALPN value for H3
