@@ -94,17 +94,16 @@ pub struct SendUni {
 }
 
 impl SendUni {
-    pub(super) fn new(ty: StreamType, quic: quinn::Connection) -> Self {
+    pub(super) fn new(ty: StreamType, open_uni: quinn::OpenUni) -> Self {
         Self {
             ty,
-            state: SendUniState::New(quic),
+            state: SendUniState::Opening(open_uni),
             data: VecDeque::with_capacity(2),
         }
     }
 }
 
 enum SendUniState {
-    New(quinn::Connection),
     Opening(OpenUni),
     Idle(SendStream),
     Sending(SendStream, Bytes),
@@ -124,13 +123,10 @@ impl Future for SendUni {
         let is_empty = self.data.is_empty();
         loop {
             match self.state {
-                SendUniState::New(ref mut c) => {
+                SendUniState::Opening(ref mut o) => {
                     if is_empty {
                         return Poll::Ready(Ok(()));
                     }
-                    self.state = SendUniState::Opening(c.open_uni());
-                }
-                SendUniState::Opening(ref mut o) => {
                     let send = ready!(Pin::new(o).poll(cx))?;
                     self.state = SendUniState::Sending(send, self.ty.encoded());
                 }
