@@ -7,7 +7,7 @@ use std::{
     task::{Context, Waker},
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::{AsyncRead, Future, Poll, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
@@ -38,8 +38,9 @@ impl Future for ConnectionDriver {
         match res {
             Ok(false) => Poll::Pending,
             Ok(true) => Poll::Ready(Ok(())),
-            Err(e) => {
-                Poll::Ready(Err(e))
+            Err(DriverError(err, code, msg)) => {
+                self.0.quic.close(code.into(), msg.as_bytes());
+                Poll::Ready(Err(err))
             }
         }
     }
@@ -64,7 +65,6 @@ impl ConnectionRef {
             h3: Arc::new(Mutex::new(ConnectionInner {
                 side,
                 driver: None,
-                quic: quic.clone(),
                 incoming_bi: bi_streams,
                 incoming_uni: uni_streams,
                 pending_uni: VecDeque::with_capacity(3),
@@ -91,7 +91,6 @@ pub(crate) struct ConnectionInner {
     pub requests_task: Option<Waker>,
     side: Side,
     driver: Option<Waker>,
-    quic: quinn::Connection,
     incoming_bi: IncomingBiStreams,
     incoming_uni: IncomingUniStreams,
     pending_uni: VecDeque<Option<RecvUni>>,
@@ -429,9 +428,6 @@ impl ConnectionInner {
         Ok(())
     }
 
-    fn set_error<T: Into<Bytes>>(&mut self, code: ErrorCode, reason: T) {
-        self.quic.close(code.into(), &reason.into());
-    }
 }
 
 struct DriverError(Error, ErrorCode, String);
