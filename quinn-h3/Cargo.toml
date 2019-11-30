@@ -46,7 +46,7 @@ structopt = "0.3.0"
 url = "2"
 tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
-tokio = { version = "0.2.2", features = ["io-util"] }
+tokio = { version = "0.2.2", features = ["io-util", "macros", "rt-threaded"] }
 
 [[example]]
 name = "h3"
