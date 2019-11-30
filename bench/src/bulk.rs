@@ -3,10 +3,10 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
+use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
-#[tokio::main(threaded_scheduler)]
-async fn main() {
+fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -24,26 +24,30 @@ async fn main() {
         .unwrap();
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config.build());
-    let (driver, endpoint, incoming) = endpoint
-        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-        .unwrap();
+    let mut runtime = rt();
+    let (driver, endpoint, incoming) = runtime.enter(|| {
+        endpoint
+            .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
+            .unwrap()
+    });
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
-    let server = tokio::spawn(async {
-        let driver = tokio::spawn(async {
+    let thread = std::thread::spawn(move || {
+        let handle = runtime.spawn(async {
             driver.await.expect("server endpoint driver");
         });
-        if let Err(e) = server(incoming).await {
+        if let Err(e) = runtime.block_on(server(incoming)) {
             eprintln!("server failed: {:#}", e);
         }
-        driver.await.expect("server run")
+        runtime.block_on(handle).expect("server run");
     });
 
-    if let Err(e) = tokio::spawn(client(server_addr, cert)).await {
+    let mut runtime = rt();
+    if let Err(e) = runtime.block_on(client(server_addr, cert)) {
         eprintln!("client failed: {:#}", e);
     }
 
-    server.await.expect("server thread");
+    thread.join().expect("server thread");
 }
 
 async fn server(mut incoming: quinn::Incoming) -> Result<()> {
@@ -109,4 +113,12 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Res
     stream.finish().await.context("failed finishing stream")?;
     println!("sent {} bytes in {:?}", 1024 * DATA.len(), start.elapsed());
     Ok(())
+}
+
+fn rt() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
 }

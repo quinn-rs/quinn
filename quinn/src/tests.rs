@@ -123,24 +123,29 @@ fn close_endpoint() {
             .unwrap()
     });
 
-    runtime.spawn(incoming.for_each(|_| future::ready(())));
-    let handle = runtime.spawn(
-        endpoint
-            .connect(
-                &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
-                "localhost",
-            )
-            .unwrap()
-            .map(|x| match x {
-                Err(crate::ConnectionError::LocallyClosed) => (),
-                Err(e) => panic!("unexpected error: {}", e),
-                Ok(_) => {
-                    panic!("unexpected success");
-                }
-            }),
+    let handle = runtime.spawn(incoming.for_each(|_| future::ready(())));
+    let handle = future::join(
+        handle,
+        runtime.spawn(
+            endpoint
+                .connect(
+                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+                    "localhost",
+                )
+                .unwrap()
+                .map(|x| match x {
+                    Err(crate::ConnectionError::LocallyClosed) => (),
+                    Err(e) => panic!("unexpected error: {}", e),
+                    Ok(_) => {
+                        panic!("unexpected success");
+                    }
+                }),
+        ),
     );
     endpoint.close(0u32.into(), &[]);
-    runtime.block_on(handle).unwrap();
+    let (r1, r2) = runtime.block_on(handle);
+    r1.unwrap();
+    r2.unwrap();
 }
 
 #[test]
@@ -347,7 +352,7 @@ fn echo_dualstack() {
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let _guard = subscribe();
     let mut runtime = rt_basic();
-    let handler = {
+    let handle = {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
         let mut server_config = ServerConfigBuilder::default();
@@ -371,31 +376,37 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         client.default_client_config(client_config.build());
         let (client_driver, client, _) = runtime.enter(|| client.bind(&client_addr).unwrap());
 
-        runtime.spawn(
+        let handle = runtime.spawn(
             server_driver
                 .unwrap_or_else(|e| panic!("server driver failed: {}", e))
                 .instrument(info_span!("server endpoint")),
         );
-        runtime.spawn(
-            client_driver
-                .unwrap_or_else(|e| panic!("client driver failed: {}", e))
-                .instrument(info_span!("client endpoint")),
+        let handle = future::join(
+            handle,
+            runtime.spawn(
+                client_driver
+                    .unwrap_or_else(|e| panic!("client driver failed: {}", e))
+                    .instrument(info_span!("client endpoint")),
+            ),
         );
-        let handler = runtime.spawn(async move {
-            let incoming = server_incoming.next().await.unwrap();
-            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
-            tokio::spawn(
+        let handle = future::join(
+            handle,
+            runtime.spawn(async move {
+                let incoming = server_incoming.next().await.unwrap();
+                let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
+                tokio::spawn(
+                    new_conn
+                        .bi_streams
+                        .take_while(|x| future::ready(x.is_ok()))
+                        .for_each(|s| echo(s.unwrap())),
+                );
                 new_conn
-                    .bi_streams
-                    .take_while(|x| future::ready(x.is_ok()))
-                    .for_each(|s| echo(s.unwrap())),
-            );
-            new_conn
-                .driver
-                .unwrap_or_else(|_| ())
-                .instrument(info_span!("server"))
-                .await
-        });
+                    .driver
+                    .unwrap_or_else(|_| ())
+                    .instrument(info_span!("server"))
+                    .await
+            }),
+        );
 
         info!("connecting from {} to {}", client_addr, server_addr);
         runtime.block_on(async move {
@@ -418,9 +429,12 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             assert_eq!(&data[..], b"foo");
             new_conn.connection.close(0u32.into(), b"done");
         });
-        handler
+        handle
     };
-    runtime.block_on(handler).unwrap();
+    let ((r1, r2), r3) = runtime.block_on(handle);
+    r1.unwrap();
+    r2.unwrap();
+    r3.unwrap();
 }
 
 async fn echo((mut send, recv): (SendStream, RecvStream)) {
@@ -465,7 +479,7 @@ fn rt_basic() -> Runtime {
 
 fn rt_threaded() -> Runtime {
     Builder::new()
-        .basic_scheduler()
+        .threaded_scheduler()
         .enable_all()
         .build()
         .unwrap()
