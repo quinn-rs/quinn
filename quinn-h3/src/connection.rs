@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use futures::Stream;
+use futures::{io::AsyncRead, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
 
