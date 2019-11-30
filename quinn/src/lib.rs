@@ -9,10 +9,10 @@
 //! ```
 //! # use futures::TryFutureExt;
 //! # fn main() {
-//! let mut runtime = tokio::runtime::Runtime::new().unwrap();
+//! let mut runtime = tokio::runtime::Builder::new().basic_scheduler().enable_all().build().unwrap();
 //! let mut builder = quinn::Endpoint::builder();
 //! // <configure builder>
-//! let (endpoint_driver, endpoint, _) = builder.bind(&"[::]:0".parse().unwrap()).unwrap();
+//! let (endpoint_driver, endpoint, _) = runtime.enter(|| builder.bind(&"[::]:0".parse().unwrap()).unwrap());
 //! runtime.spawn(endpoint_driver.unwrap_or_else(|e| panic!("I/O error: {}", e)));
 //! // <use endpoint>
 //! # }

@@ -4,7 +4,7 @@ use crc::crc32;
 use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
-use tokio::runtime::current_thread::{self, Runtime};
+use tokio::runtime::Builder;
 use unwrap::unwrap;
 
 struct Shared {
@@ -21,7 +21,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     )
     .unwrap();
 
-    let mut runtime = unwrap!(Runtime::new());
+    let mut runtime = unwrap!(Builder::new().basic_scheduler().build());
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
@@ -40,7 +40,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         .take(expected_messages)
         .for_each(move |new_conn| {
             let conn = new_conn.connection;
-            current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+            tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
 
             let shared = shared2.clone();
             let task = new_conn
@@ -55,11 +55,11 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                 .unwrap_or_else(move |e| {
                     shared.lock().unwrap().errors.push(e);
                 });
-            current_thread::spawn(task);
+            tokio::spawn(task);
 
             future::ready(())
         });
-    runtime.spawn(read_incoming_data);
+    let handle = runtime.spawn(read_incoming_data);
 
     let client_cfg = configure_connector(&listener_cert);
 
@@ -68,7 +68,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
             .and_then(move |new_conn| {
-                current_thread::spawn(write_to_peer(new_conn.connection, data).unwrap_or_else(
+                tokio::spawn(write_to_peer(new_conn.connection, data).unwrap_or_else(
                     move |e| {
                         // Error will also be propagated to the driver
                         eprintln!("write failed: {}", e);
@@ -94,7 +94,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     // finished.
     drop(endpoint);
 
-    unwrap!(runtime.run());
+    unwrap!(runtime.block_on(handle));
     let shared = shared.lock().unwrap();
     if !shared.errors.is_empty() {
         panic!("some connections failed: {:?}", shared.errors);

@@ -29,7 +29,7 @@ use std::{
     error::Error,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
 };
-use tokio::runtime::current_thread::{self, Runtime};
+use tokio::runtime::{Builder, Runtime};
 
 use quinn::Endpoint;
 
@@ -37,15 +37,16 @@ mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut runtime = Runtime::new()?;
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
     let server1_cert = run_server(&mut runtime, "0.0.0.0:5000")?;
     let server2_cert = run_server(&mut runtime, "0.0.0.0:5001")?;
     let server3_cert = run_server(&mut runtime, "0.0.0.0:5002")?;
 
-    let (client, driver) =
-        make_client_endpoint("0.0.0.0:0", &[&server1_cert, &server2_cert, &server3_cert])?;
+    let (client, driver) = runtime.enter(|| {
+        make_client_endpoint("0.0.0.0:0", &[&server1_cert, &server2_cert, &server3_cert])
+    })?;
     // drive UDP socket
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    let handle = runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
 
     // connect to multiple endpoints using the same socket/endpoint
     run_client(&mut runtime, &client, 5000)?;
@@ -53,13 +54,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_client(&mut runtime, &client, 5002)?;
     drop(client);
 
-    runtime.run()?;
+    runtime.block_on(handle)?;
     Ok(())
 }
 
 /// Runs a QUIC server bound to given address and returns server certificate.
 fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8>, Box<dyn Error>> {
-    let (driver, mut incoming, server_cert) = make_server_endpoint(addr)?;
+    let (driver, mut incoming, server_cert) = runtime.enter(|| make_server_endpoint(addr))?;
     // drive UDP socket
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
     // accept a single connection
@@ -89,7 +90,7 @@ fn run_client(
         endpoint
             .connect(&server_addr, "localhost")?
             .map_ok(|new_conn| {
-                current_thread::spawn(new_conn.driver.unwrap_or_else(|_| ()));
+                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 let conn = new_conn.connection;
                 println!(
                     "[client] connected: id={}, addr={}",

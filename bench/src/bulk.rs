@@ -29,21 +29,21 @@ async fn main() {
         .unwrap();
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
-    let thread = tokio::spawn(async {
+    let server = tokio::spawn(async {
         let driver = tokio::spawn(async {
             driver.await.expect("server endpoint driver");
         });
         if let Err(e) = server(incoming).await {
             eprintln!("server failed: {:#}", e);
         }
-        driver.await.expect("server run");
+        driver.await.expect("server run")
     });
 
-    if let Err(e) = client(server_addr, cert).await {
+    if let Err(e) = tokio::spawn(client(server_addr, cert)).await {
         eprintln!("client failed: {:#}", e);
     }
 
-    thread.await.expect("server thread");
+    server.await.expect("server thread");
 }
 
 async fn server(mut incoming: quinn::Incoming) -> Result<()> {

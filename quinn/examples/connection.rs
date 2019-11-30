@@ -15,7 +15,7 @@
 
 use futures::{StreamExt, TryFutureExt};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::Builder;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
@@ -23,10 +23,11 @@ use common::{make_client_endpoint, make_server_endpoint};
 const SERVER_PORT: u16 = 5000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut runtime = Runtime::new()?;
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), SERVER_PORT));
-    let (driver, mut incoming, server_cert) = make_server_endpoint(server_addr)?;
+    let (driver, mut incoming, server_cert) =
+        runtime.enter(|| make_server_endpoint(server_addr))?;
     // drive server's UDP socket
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
     // accept a single connection
@@ -44,11 +45,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let (endpoint, driver) = make_client_endpoint("0.0.0.0:0", &[&server_cert])?;
+    let (endpoint, driver) =
+        runtime.enter(|| make_client_endpoint("0.0.0.0:0", &[&server_cert]))?;
     // drive client's UDP socket
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
     // connect to server
-    runtime.spawn(async move {
+    let handle = runtime.spawn(async move {
         let quinn::NewConnection {
             driver, connection, ..
         } = endpoint
@@ -67,6 +69,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         driver.await.unwrap();
     });
 
-    runtime.run()?;
+    runtime.block_on(handle)?;
     Ok(())
 }

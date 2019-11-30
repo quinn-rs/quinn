@@ -44,7 +44,7 @@ criterion = "0.3"
 directories = "2.0.0"
 rand = "0.7"
 rcgen = "0.7"
-tokio = { version = "0.2.1", features = ["macros", "rt-core"] }
+tokio = { version = "0.2.2", features = ["macros", "rt-core", "rt-threaded", "time"] }
 tracing-subscriber = "0.1.5"
 tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 structopt = "0.3.0"

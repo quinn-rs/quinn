@@ -11,7 +11,10 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     sync::Arc,
 };
-use tokio::runtime::current_thread::Runtime;
+use tokio::{
+    runtime::{Builder, Runtime},
+    task::JoinHandle,
+};
 
 use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
 
@@ -21,19 +24,19 @@ use common::make_server_endpoint;
 const SERVER_PORT: u16 = 5000;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut runtime = Runtime::new()?;
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
     // server and client are running on the same thread asynchronously
     run_server(&mut runtime, ("0.0.0.0", SERVER_PORT))?;
-    run_client(&mut runtime, SERVER_PORT)?;
+    let handle = run_client(&mut runtime, SERVER_PORT)?;
 
-    runtime.run()?;
+    runtime.block_on(handle)?;
     Ok(())
 }
 
 /// Runs a QUIC server bound to given address.
 fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Box<dyn Error>> {
-    let (driver, mut incoming, _server_cert) = make_server_endpoint(addr)?;
+    let (driver, mut incoming, _server_cert) = runtime.enter(|| make_server_endpoint(addr))?;
     // drive UDP socket
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
     // accept a single connection
@@ -53,17 +56,18 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Bo
     Ok(())
 }
 
-fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<dyn Error>> {
+fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<JoinHandle<()>, Box<dyn Error>> {
     let client_cfg = configure_client();
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
 
-    let (driver, endpoint, _) = endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap())?;
+    let (driver, endpoint, _) =
+        runtime.enter(|| endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap()))?;
     runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
 
     let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
     // connect to server
-    runtime.spawn(async move {
+    let handle = runtime.spawn(async move {
         let quinn::NewConnection {
             driver, connection, ..
         } = endpoint
@@ -82,7 +86,7 @@ fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<(), Box<dyn Err
         driver.await.unwrap();
     });
 
-    Ok(())
+    Ok(handle)
 }
 
 /// Dummy certificate verifier that treats any certificate as valid.

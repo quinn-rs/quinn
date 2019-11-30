@@ -165,7 +165,9 @@ impl State {
     async fn rebind(self: Arc<Self>) -> Result<()> {
         let (endpoint_driver, endpoint, _) =
             quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        tokio::spawn(
+            endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)),
+        );
 
         let new_conn = endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
@@ -295,14 +297,16 @@ async fn run(options: Opt) -> Result<()> {
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
     );
 
-    state
-        .clone()
-        .h3()
-        .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e))
-        .await;
+    let runtime = tokio::spawn(
+        state
+            .clone()
+            .h3()
+            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
+    );
 
     let results = state.results.clone();
     drop(state); // Ensure the drivers will shut down once idle
+    runtime.await.unwrap();
 
     let r = results.lock().unwrap();
     if r.handshake {
