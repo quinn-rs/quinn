@@ -6,6 +6,7 @@ use std::{
 use anyhow::{anyhow, Error, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
+use tokio::runtime::Builder;
 use tracing::{info, warn};
 
 #[derive(StructOpt, Debug)]
@@ -22,8 +23,7 @@ struct Opt {
     keylog: bool,
 }
 
-#[tokio::main(basic_scheduler)]
-async fn main() {
+fn main() {
     let opt = Opt::from_args();
     let code = {
         tracing::subscriber::set_global_default(
@@ -32,7 +32,7 @@ async fn main() {
                 .finish(),
         )
         .unwrap();
-        if let Err(e) = run(opt).await {
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -220,7 +220,7 @@ struct Results {
     h3: bool,
 }
 
-async fn run(options: Opt) -> Result<()> {
+fn run(options: Opt) -> Result<()> {
     let remote = format!("{}:{}", options.host, options.port)
         .to_socket_addrs()?
         .next()
@@ -231,6 +231,8 @@ async fn run(options: Opt) -> Result<()> {
         warn!("invalid hostname, using \"example.com\"");
         "example.com"
     };
+
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
     let results = Arc::new(Mutex::new(Results::default()));
     let protocols = vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()];
@@ -255,8 +257,8 @@ async fn run(options: Opt) -> Result<()> {
     };
 
     let (endpoint_driver, endpoint, _) =
-        quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        runtime.enter(|| quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap()))?;
+    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
         endpoint,
@@ -267,35 +269,35 @@ async fn run(options: Opt) -> Result<()> {
         results,
     });
 
-    tokio::spawn(
+    runtime.spawn(
         state
             .clone()
             .core()
             .unwrap_or_else(|e: Error| eprintln!("core functionality failed: {}", e)),
     );
 
-    tokio::spawn(
+    runtime.spawn(
         state
             .clone()
             .key_update()
             .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e)),
     );
 
-    tokio::spawn(
+    runtime.spawn(
         state
             .clone()
             .rebind()
             .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e)),
     );
 
-    tokio::spawn(
+    runtime.spawn(
         state
             .clone()
             .retry()
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
     );
 
-    let runtime = tokio::spawn(
+    let handle = runtime.spawn(
         state
             .clone()
             .h3()
@@ -304,7 +306,7 @@ async fn run(options: Opt) -> Result<()> {
 
     let results = state.results.clone();
     drop(state); // Ensure the drivers will shut down once idle
-    runtime.await.unwrap();
+    runtime.block_on(handle).unwrap();
 
     let r = results.lock().unwrap();
     if r.handshake {

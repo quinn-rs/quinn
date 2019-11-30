@@ -9,6 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
+use tokio::runtime::Builder;
 use tracing::{error, info};
 use url::Url;
 
@@ -37,8 +38,7 @@ struct Opt {
     rebind: bool,
 }
 
-#[tokio::main(basic_scheduler)]
-async fn main() {
+fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -47,7 +47,7 @@ async fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt).await {
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -57,7 +57,7 @@ async fn main() {
     ::std::process::exit(code);
 }
 
-async fn run(options: Opt) -> Result<()> {
+fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
@@ -90,8 +90,10 @@ async fn run(options: Opt) -> Result<()> {
 
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
+    let (endpoint_driver, endpoint, _) =
+        runtime.enter(|| endpoint.bind(&"[::]:0".parse().unwrap()))?;
+    let handle = runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -100,10 +102,8 @@ async fn run(options: Opt) -> Result<()> {
         .host
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
-        .ok_or(anyhow!("no hostname specified"))?
-        .to_owned();
-
-    let r: Result<()> = {
+        .ok_or(anyhow!("no hostname specified"))?;
+    let r: Result<()> = runtime.block_on(async {
         let new_conn = endpoint
             .connect(&remote, &host)?
             .await
@@ -148,11 +148,14 @@ async fn run(options: Opt) -> Result<()> {
         io::stdout().flush().unwrap();
         conn.close(0u32.into(), b"done");
         Ok(())
-    };
+    });
     r?;
 
     // Allow the endpoint driver to automatically shut down
     drop(endpoint);
+
+    // Let the connection finish closing gracefully
+    runtime.block_on(handle).unwrap();
 
     Ok(())
 }

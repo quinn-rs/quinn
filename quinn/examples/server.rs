@@ -9,6 +9,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
+use tokio::runtime::Builder;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -37,8 +38,7 @@ struct Opt {
     listen: SocketAddr,
 }
 
-#[tokio::main(threaded_scheduler)]
-async fn main() {
+fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -47,7 +47,7 @@ async fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt).await {
+        if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -57,7 +57,7 @@ async fn main() {
     ::std::process::exit(code);
 }
 
-async fn run(options: Opt) -> Result<()> {
+fn run(options: Opt) -> Result<()> {
     let server_config = quinn::ServerConfig {
         transport: Arc::new(quinn::TransportConfig {
             stream_window_uni: 0,
@@ -76,7 +76,7 @@ async fn run(options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
+    if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
         let key = if key_path.extension().map_or(false, |x| x == "der") {
             quinn::PrivateKey::from_der(&key)?
@@ -119,18 +119,20 @@ async fn run(options: Opt) -> Result<()> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let root = Arc::<Path>::from(options.root);
+    let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
         bail!("root path does not exist");
     }
 
+    let mut runtime = Builder::new().threaded_scheduler().enable_all().build()?;
+
     let (endpoint_driver, mut incoming) = {
-        let (driver, endpoint, incoming) = endpoint.bind(&options.listen)?;
+        let (driver, endpoint, incoming) = runtime.enter(|| endpoint.bind(&options.listen))?;
         info!("listening on {}", endpoint.local_addr()?);
         (driver, incoming)
     };
 
-    tokio::spawn(async move {
+    runtime.spawn(async move {
         while let Some(conn) = incoming.next().await {
             info!("connection incoming");
             tokio::spawn(
@@ -140,7 +142,7 @@ async fn run(options: Opt) -> Result<()> {
             );
         }
     });
-    endpoint_driver.await?;
+    runtime.block_on(endpoint_driver)?;
 
     Ok(())
 }

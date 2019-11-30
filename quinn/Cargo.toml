@@ -47,7 +47,7 @@ rcgen = "0.7"
 tracing-subscriber = "0.1.5"
 tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 structopt = "0.3.0"
-tokio = { version = "0.2.2", features = ["macros", "rt-core", "rt-threaded", "time"] }
+tokio = { version = "0.2.2", features = ["rt-core", "rt-threaded", "time"] }
 unwrap = "1.2.1"
 url = "2"
 anyhow = "1.0.22"

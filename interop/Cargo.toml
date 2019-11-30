@@ -12,7 +12,7 @@ quinn-proto = { path = "../quinn-proto" }
 http = { git = "https://github.com/hyperium/http/", rev = "43dffa1eb79f6801e5e07f3338fa56191dc454bb" }
 bytes = "0.5.2"
 structopt = "0.3.0"
-tokio = { version = "0.2.2", features = ["macros", "rt-core"] }
+tokio = { version = "0.2.2", features = ["rt-core"] }
 rustls = { version = "0.16", features = ["dangerous_configuration"] }
 futures = "0.3.1"
 webpki = "0.21"
