@@ -141,11 +141,7 @@ impl Context {
         let handle = thread::spawn(move || {
             let mut endpoint = Endpoint::builder();
             endpoint.listen(config);
-            let mut runtime = Builder::new()
-                .basic_scheduler()
-                .enable_all()
-                .build()
-                .unwrap();
+            let mut runtime = rt();
             let (driver, _, mut incoming) = runtime.enter(|| endpoint.with_socket(sock).unwrap());
             runtime.spawn(async { driver.instrument(error_span!("server")).await.unwrap() });
             let handle = runtime.spawn(
@@ -182,11 +178,7 @@ impl Context {
         &self,
         server_addr: SocketAddr,
     ) -> (quinn::Connection, Runtime, JoinHandle<()>) {
-        let mut runtime = Builder::new()
-            .basic_scheduler()
-            .enable_all()
-            .build()
-            .unwrap();
+        let mut runtime = rt();
         let (endpoint_driver, endpoint, _) = runtime.enter(|| {
             Endpoint::builder()
                 .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
@@ -213,4 +205,12 @@ impl Context {
         });
         (connection, runtime, handle)
     }
+}
+
+fn rt() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
 }

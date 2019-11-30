@@ -37,7 +37,7 @@ struct Opt {
     listen: SocketAddr,
 }
 
-#[tokio::main]
+#[tokio::main(threaded_scheduler)]
 async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
@@ -183,8 +183,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         }
         Ok(())
     }
-        .instrument(span)
-        .await?;
+    .instrument(span)
+    .await?;
     Ok(())
 }
 

@@ -6,8 +6,10 @@ use std::{
 };
 
 use futures::{future, FutureExt, StreamExt, TryFutureExt};
-use tokio::runtime::Builder;
-use tokio::time::{Duration, Instant};
+use tokio::{
+    runtime::{Builder, Runtime},
+    time::{Duration, Instant},
+};
 use tracing::{info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -19,11 +21,7 @@ use super::{
 #[test]
 fn handshake_timeout() {
     let _guard = subscribe();
-    let mut runtime = Builder::new()
-        .threaded_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_threaded();
     let (client_driver, client, _) = runtime.enter(|| {
         Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -65,11 +63,7 @@ fn handshake_timeout() {
 #[test]
 fn drop_endpoint() {
     let _guard = subscribe();
-    let mut runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_basic();
     let (driver, endpoint, _) = runtime.enter(|| {
         Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -103,11 +97,7 @@ fn drop_endpoint() {
 fn drop_endpoint_driver() {
     let _guard = subscribe();
     let endpoint = Endpoint::builder();
-    let runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = rt_basic();
     let (_, endpoint, _) = runtime.enter(|| {
         endpoint
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -126,11 +116,7 @@ fn drop_endpoint_driver() {
 fn close_endpoint() {
     let _guard = subscribe();
     let endpoint = Endpoint::builder();
-    let mut runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_basic();
     let (_driver, endpoint, incoming) = runtime.enter(|| {
         endpoint
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -161,11 +147,7 @@ fn close_endpoint() {
 fn local_addr() {
     let socket = UdpSocket::bind("[::1]:0").unwrap();
     let addr = socket.local_addr().unwrap();
-    let runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = rt_basic();
     let (_, ep, _) = runtime.enter(|| Endpoint::builder().with_socket(socket).unwrap());
     assert_eq!(
         addr,
@@ -177,11 +159,7 @@ fn local_addr() {
 #[test]
 fn read_after_close() {
     let _guard = subscribe();
-    let mut runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_basic();
     let (driver, endpoint, mut incoming) = runtime.enter(|| endpoint());
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
@@ -244,11 +222,7 @@ fn endpoint() -> (EndpointDriver, Endpoint, Incoming) {
 #[test]
 fn zero_rtt() {
     let _guard = subscribe();
-    let mut runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_basic();
     let (driver, endpoint, incoming) = runtime.enter(|| endpoint());
 
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
@@ -372,11 +346,7 @@ fn echo_dualstack() {
 
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let _guard = subscribe();
-    let mut runtime = Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let mut runtime = rt_basic();
     let handler = {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
@@ -483,4 +453,20 @@ impl std::io::Write for TestWriter {
     fn flush(&mut self) -> io::Result<()> {
         io::stdout().flush()
     }
+}
+
+fn rt_basic() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+fn rt_threaded() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
 }

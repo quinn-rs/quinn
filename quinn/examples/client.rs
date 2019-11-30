@@ -103,7 +103,7 @@ async fn run(options: Opt) -> Result<()> {
         .ok_or(anyhow!("no hostname specified"))?
         .to_owned();
 
-    let r: Result<()> = async {
+    let r: Result<()> = {
         let new_conn = endpoint
             .connect(&remote, &host)?
             .await
@@ -148,8 +148,7 @@ async fn run(options: Opt) -> Result<()> {
         io::stdout().flush().unwrap();
         conn.close(0u32.into(), b"done");
         Ok(())
-    }
-    .await;
+    };
     r?;
 
     // Allow the endpoint driver to automatically shut down

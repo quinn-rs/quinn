@@ -68,12 +68,12 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
             .and_then(move |new_conn| {
-                tokio::spawn(write_to_peer(new_conn.connection, data).unwrap_or_else(
-                    move |e| {
+                tokio::spawn(
+                    write_to_peer(new_conn.connection, data).unwrap_or_else(move |e| {
                         // Error will also be propagated to the driver
                         eprintln!("write failed: {}", e);
-                    },
-                ));
+                    }),
+                );
                 new_conn.driver
             })
             .unwrap_or_else(move |e| {
