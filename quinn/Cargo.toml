@@ -33,24 +33,24 @@ libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
 rustls = { version = "0.16", features = ["quic"] }
+rustls-native-certs = { version = "0.1.0", optional = true }
 tracing = "0.1.10"
 tokio = { version = "0.2.1", features = ["io-driver", "time"] }
 webpki = "0.21"
-rustls-native-certs = { version = "0.1.0", optional = true }
 
 [dev-dependencies]
+anyhow = "1.0.22"
 crc = "1.8.1"
 criterion = "0.3"
 directories = "2.0.0"
 rand = "0.7"
 rcgen = "0.7"
-tracing-subscriber = "0.1.5"
-tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 structopt = "0.3.0"
 tokio = { version = "0.2.2", features = ["rt-core", "rt-threaded", "time"] }
+tracing-subscriber = "0.1.5"
+tracing-futures = { version = "0.1.0", default-features = false, features = ["std-future"] }
 unwrap = "1.2.1"
 url = "2"
-anyhow = "1.0.22"
 
 [[example]]
 name = "server"
