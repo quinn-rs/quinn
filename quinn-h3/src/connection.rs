@@ -222,8 +222,6 @@ impl ConnectionInner {
             })
             .collect();
 
-        let keep_going = !resolved.is_empty();
-
         for (removed, (i, res)) in resolved.into_iter().enumerate() {
             self.pending_uni.remove(i - removed);
             match res {
