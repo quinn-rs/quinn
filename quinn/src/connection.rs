@@ -1,9 +1,12 @@
 use std::{
     collections::HashMap,
-    fmt, mem,
+    fmt,
+    future::Future,
+    mem,
     net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
     time::Instant,
 };
 
@@ -11,11 +14,10 @@ use bytes::Bytes;
 use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
-    task::{Context, Waker},
-    Future, FutureExt, Poll, StreamExt,
+    FutureExt, StreamExt,
 };
 use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
-use tokio_timer::{delay, Delay};
+use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::{info_span, trace};
 
 use crate::{
@@ -281,7 +283,7 @@ impl Connection {
     /// is preserved in full, it should be kept under 1KiB.
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
-        conn.close(error_code, reason.into());
+        conn.close(error_code, Bytes::copy_from_slice(reason));
     }
 
     /// Transmit `data` as an unreliable, unordered application datagram
@@ -775,11 +777,11 @@ impl ConnectionInner {
                 } => match self.timers[timer] {
                     ref mut x @ None => {
                         trace!(time = ?time.duration_since(self.epoch), "{:?} timer start", timer);
-                        *x = Some(delay(time));
+                        *x = Some(delay_until(TokioInstant::from_std(time)));
                     }
                     Some(ref mut x) => {
                         trace!(time = ?time.duration_since(self.epoch), "{:?} timer reset", timer);
-                        x.reset(time);
+                        x.reset(TokioInstant::from_std(time));
                     }
                 },
                 TimerUpdate {

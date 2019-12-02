@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
 fn main() {
@@ -24,27 +24,28 @@ fn main() {
         .unwrap();
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config.build());
-    let (driver, endpoint, incoming) = endpoint
-        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-        .unwrap();
+    let mut runtime = rt();
+    let (driver, endpoint, incoming) = runtime.enter(|| {
+        endpoint
+            .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
+            .unwrap()
+    });
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
-    let thread = std::thread::spawn(|| {
-        let mut runtime = Runtime::new().unwrap();
-        runtime.spawn(async {
+    let thread = std::thread::spawn(move || {
+        let handle = runtime.spawn(async {
             driver.await.expect("server endpoint driver");
         });
         if let Err(e) = runtime.block_on(server(incoming)) {
             eprintln!("server failed: {:#}", e);
         }
-        runtime.run().expect("server run");
+        runtime.block_on(handle).expect("server run");
     });
 
-    let mut runtime = Runtime::new().unwrap();
+    let mut runtime = rt();
     if let Err(e) = runtime.block_on(client(server_addr, cert)) {
         eprintln!("client failed: {:#}", e);
     }
-    runtime.run().expect("client run");
 
     thread.join().expect("server thread");
 }
@@ -112,4 +113,12 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Res
     stream.finish().await.context("failed finishing stream")?;
     println!("sent {} bytes in {:?}", 1024 * DATA.len(), start.elapsed());
     Ok(())
+}
+
+fn rt() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
 }

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
-use tokio::runtime::Runtime;
+use tokio::runtime::Builder;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -76,7 +76,7 @@ fn run(options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    if let (Some(ref key_path), Some(ref cert_path)) = (options.key, options.cert) {
+    if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
         let key = if key_path.extension().map_or(false, |x| x == "der") {
             quinn::PrivateKey::from_der(&key)?
@@ -119,18 +119,19 @@ fn run(options: Opt) -> Result<()> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let root = Arc::<Path>::from(options.root);
+    let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
         bail!("root path does not exist");
     }
 
+    let mut runtime = Builder::new().threaded_scheduler().enable_all().build()?;
+
     let (endpoint_driver, mut incoming) = {
-        let (driver, endpoint, incoming) = endpoint.bind(&options.listen)?;
+        let (driver, endpoint, incoming) = runtime.enter(|| endpoint.bind(&options.listen))?;
         info!("listening on {}", endpoint.local_addr()?);
         (driver, incoming)
     };
 
-    let runtime = Runtime::new()?;
     runtime.spawn(async move {
         while let Some(conn) = incoming.next().await {
             info!("connection incoming");

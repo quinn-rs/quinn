@@ -63,7 +63,7 @@ where
         table.max_size(),
     )
     .encode(block);
-    block.put(block_buf);
+    block.put(block_buf.as_slice());
 
     table.commit(required_ref);
 

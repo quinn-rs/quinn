@@ -1,9 +1,13 @@
-use std::{io, net::SocketAddr};
+use std::{
+    io,
+    net::SocketAddr,
+    task::{Context, Poll},
+};
 
-use futures::{ready, task::Context, Poll};
+use futures::ready;
 use mio;
 
-use tokio_net::{driver::Handle, util::PollEvented};
+use tokio::io::PollEvented;
 
 use proto::{EcnCodepoint, Transmit};
 
@@ -19,10 +23,10 @@ pub struct UdpSocket {
 }
 
 impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket, handle: &Handle) -> io::Result<UdpSocket> {
+    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         let io = mio::net::UdpSocket::from_socket(socket)?;
         io.init_ext()?;
-        let io = PollEvented::new_with_handle(io, handle)?;
+        let io = PollEvented::new(io)?;
         Ok(UdpSocket { io })
     }
 

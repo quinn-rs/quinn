@@ -21,7 +21,7 @@ default = ["tls-rustls"]
 tls-rustls = ["rustls", "webpki", "ring"]
 
 [dependencies]
-bytes = "0.4.7"
+bytes = "0.5.2"
 err-derive = "0.2"
 lazy_static = "1"
 rand = "0.7"

@@ -1,13 +1,18 @@
-use std::{io, pin::Pin, str};
+use std::{
+    future::Future,
+    io,
+    mem::MaybeUninit,
+    pin::Pin,
+    str,
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
 use err_derive::Error;
 use futures::{
     channel::oneshot,
     io::{AsyncRead, AsyncWrite},
-    ready,
-    task::Context,
-    Future, FutureExt, Poll,
+    ready, FutureExt,
 };
 use proto::{ConnectionError, StreamId};
 
@@ -141,7 +146,7 @@ impl AsyncWrite for SendStream {
     }
 }
 
-impl tokio_io::AsyncWrite for SendStream {
+impl tokio::io::AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -419,8 +424,8 @@ impl AsyncRead for RecvStream {
     }
 }
 
-impl tokio_io::AsyncRead for RecvStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
+impl tokio::io::AsyncRead for RecvStream {
+    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [MaybeUninit<u8>]) -> bool {
         false
     }
 

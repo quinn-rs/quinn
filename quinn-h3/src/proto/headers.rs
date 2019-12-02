@@ -48,15 +48,15 @@ impl Header {
         let mut uri = Uri::builder();
 
         if let Some(path) = self.pseudo.path {
-            uri.path_and_query(path.as_bytes());
+            uri = uri.path_and_query(path.as_bytes());
         }
 
         if let Some(scheme) = self.pseudo.scheme {
-            uri.scheme(scheme.as_bytes());
+            uri = uri.scheme(scheme.as_bytes());
         }
 
         if let Some(authority) = self.pseudo.authority {
-            uri.authority(authority.as_bytes());
+            uri = uri.authority(authority.as_bytes());
         }
 
         Ok((
@@ -226,7 +226,7 @@ where
     N: AsRef<[u8]>,
     V: AsRef<[u8]>,
 {
-    string::TryFrom::<Bytes>::try_from(Bytes::from(value.as_ref()))
+    string::TryFrom::<Bytes>::try_from(Bytes::from(value.as_ref().to_owned()))
         .or_else(|_| Err(Error::invalid_value(name, value)))
 }
 
@@ -363,7 +363,7 @@ impl Error {
     {
         Error::InvalidHeaderValue(format!(
             "{:?} {:?}",
-            to_string(name.as_ref().into()),
+            to_string(Bytes::from(name.as_ref().to_owned())),
             value.as_ref()
         ))
     }

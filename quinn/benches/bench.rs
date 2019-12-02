@@ -7,7 +7,10 @@ use std::{
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::{
+    runtime::{Builder, Runtime},
+    task::JoinHandle,
+};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
@@ -28,7 +31,7 @@ fn throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime) = ctx.make_client(addr);
+        let (client, mut runtime, handle) = ctx.make_client(addr);
         const DATA: &[u8] = &[0xAB; 128 * 1024];
         group.throughput(Throughput::Bytes(DATA.len() as u64));
         group.bench_function("large streams", |b| {
@@ -41,13 +44,13 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.run().unwrap();
+        runtime.block_on(handle).unwrap();
         thread.join().unwrap();
     }
 
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime) = ctx.make_client(addr);
+        let (client, mut runtime, handle) = ctx.make_client(addr);
         const DATA: &[u8] = &[0xAB; 1];
         group.throughput(Throughput::Elements(1));
         group.bench_function("small streams", |b| {
@@ -59,13 +62,13 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.run().unwrap();
+        runtime.block_on(handle).unwrap();
         thread.join().unwrap();
     }
 
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime) = ctx.make_client(addr);
+        let (client, mut runtime, handle) = ctx.make_client(addr);
         let data = Bytes::from(&[0xAB; 1][..]);
         group.throughput(Throughput::Elements(1));
         group.bench_function("small datagrams", |b| {
@@ -76,13 +79,13 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.run().unwrap();
+        runtime.block_on(handle).unwrap();
         thread.join().unwrap();
     }
 
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime) = ctx.make_client(addr);
+        let (client, mut runtime, handle) = ctx.make_client(addr);
         let data = Bytes::from(&[0xAB; 1182][..]);
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_function("medium datagrams", |b| {
@@ -93,7 +96,7 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.run().unwrap();
+        runtime.block_on(handle).unwrap();
         thread.join().unwrap();
     }
 
@@ -138,10 +141,10 @@ impl Context {
         let handle = thread::spawn(move || {
             let mut endpoint = Endpoint::builder();
             endpoint.listen(config);
-            let (driver, _, mut incoming) = endpoint.with_socket(sock).unwrap();
-            let mut runtime = Runtime::new().unwrap();
+            let mut runtime = rt();
+            let (driver, _, mut incoming) = runtime.enter(|| endpoint.with_socket(sock).unwrap());
             runtime.spawn(async { driver.instrument(error_span!("server")).await.unwrap() });
-            runtime.spawn(
+            let handle = runtime.spawn(
                 async move {
                     let quinn::NewConnection {
                         driver,
@@ -166,16 +169,21 @@ impl Context {
                 }
                     .instrument(error_span!("server")),
             );
-            runtime.run().unwrap();
+            runtime.block_on(handle).unwrap();
         });
         (addr, handle)
     }
 
-    pub fn make_client(&self, server_addr: SocketAddr) -> (quinn::Connection, Runtime) {
-        let (endpoint_driver, endpoint, _) = Endpoint::builder()
-            .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-            .unwrap();
-        let mut runtime = Runtime::new().unwrap();
+    pub fn make_client(
+        &self,
+        server_addr: SocketAddr,
+    ) -> (quinn::Connection, Runtime, JoinHandle<()>) {
+        let mut runtime = rt();
+        let (endpoint_driver, endpoint, _) = runtime.enter(|| {
+            Endpoint::builder()
+                .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
+                .unwrap()
+        });
         runtime.spawn(async move {
             endpoint_driver
                 .instrument(error_span!("client"))
@@ -192,9 +200,17 @@ impl Context {
                     .instrument(error_span!("client")),
             )
             .unwrap();
-        runtime.spawn(async move {
+        let handle = runtime.spawn(async move {
             driver.instrument(error_span!("client")).await.unwrap();
         });
-        (connection, runtime)
+        (connection, runtime, handle)
     }
+}
+
+fn rt() -> Runtime {
+    Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()
+        .unwrap()
 }

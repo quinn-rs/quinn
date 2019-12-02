@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{buf::ext::BufExt as _, Buf, BufMut, Bytes};
 use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
     VarInt,
@@ -60,7 +60,7 @@ impl HttpFrame {
         let mut payload = buf.take(len as usize);
         match ty {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
-                payload: payload.collect(),
+                payload: payload.to_bytes(),
             })),
             Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload)?)),
             Type::PRIORITY => Ok(HttpFrame::Priority(PriorityFrame::decode(&mut payload)?)),
@@ -131,7 +131,7 @@ pub struct DataFrame {
 impl DataFrame {
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
-        buf.put(&self.payload);
+        buf.put(self.payload.clone());
     }
 }
 
@@ -159,7 +159,7 @@ impl PartialData {
         }
 
         let len = buf.get_var()? as usize;
-        let payload = buf.collect::<Bytes>();
+        let payload = buf.to_bytes();
 
         Ok((
             Self {
@@ -170,7 +170,7 @@ impl PartialData {
     }
 
     pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame {
-        let payload = buf.take(self.remaining).collect::<Bytes>();
+        let payload = buf.take(self.remaining).to_bytes();
         self.remaining -= payload.len();
         DataFrame { payload }
     }
@@ -195,13 +195,13 @@ impl FrameHeader for HeadersFrame {
 impl HeadersFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(HeadersFrame {
-            encoded: buf.collect(),
+            encoded: buf.to_bytes(),
         })
     }
 
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
-        buf.put(&self.encoded);
+        buf.put(self.encoded.clone());
     }
 }
 
@@ -228,13 +228,13 @@ impl PushPromiseFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(PushPromiseFrame {
             push_id: buf.get_var()?,
-            encoded: buf.collect(),
+            encoded: buf.to_bytes(),
         })
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
         buf.write_var(self.push_id);
-        buf.put(&self.encoded);
+        buf.put(self.encoded.clone());
     }
 }
 

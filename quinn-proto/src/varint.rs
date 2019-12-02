@@ -168,11 +168,11 @@ impl Codec for VarInt {
         if x < 2u64.pow(6) {
             w.put_u8(x as u8);
         } else if x < 2u64.pow(14) {
-            w.put_u16_be(0b01 << 14 | x as u16);
+            w.put_u16(0b01 << 14 | x as u16);
         } else if x < 2u64.pow(30) {
-            w.put_u32_be(0b10 << 30 | x as u32);
+            w.put_u32(0b10 << 30 | x as u32);
         } else if x < 2u64.pow(62) {
-            w.put_u64_be(0b11 << 62 | x);
+            w.put_u64(0b11 << 62 | x);
         } else {
             unreachable!("malformed VarInt")
         }

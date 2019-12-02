@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
-use bytes::{Buf, BufMut};
+use bytes::{buf::ext::BufExt as _, Buf, BufMut};
 use err_derive::Error;
 
 use crate::{
@@ -363,7 +363,6 @@ impl TransportParameters {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bytes::IntoBuf;
 
     #[test]
     fn coding() {
@@ -383,7 +382,7 @@ mod test {
         };
         params.write(&mut buf);
         assert_eq!(
-            TransportParameters::read(Side::Client, &mut buf.into_buf()).unwrap(),
+            TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
     }

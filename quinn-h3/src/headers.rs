@@ -1,6 +1,9 @@
-use std::{pin::Pin, task::Context};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use futures::{Future, Poll};
 use quinn::SendStream;
 use quinn_proto::StreamId;
 

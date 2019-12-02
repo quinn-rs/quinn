@@ -1384,7 +1384,7 @@ where
                         }
 
                         self.state = State::Handshake(state::Handshake {
-                            token: Some(packet.payload.into()),
+                            token: Some(packet.payload.freeze()),
                             rem_cid_set: false,
                             client_hello: None,
                         });
@@ -1511,7 +1511,12 @@ where
                         ty: LongType::ZeroRtt,
                         ..
                     } => {
-                        self.process_payload(now, remote, number.unwrap(), packet.payload.into())?;
+                        self.process_payload(
+                            now,
+                            remote,
+                            number.unwrap(),
+                            packet.payload.freeze(),
+                        )?;
                         Ok(())
                     }
                     Header::VersionNegotiate { .. } => {
@@ -1526,14 +1531,14 @@ where
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => {
-                        self.process_payload(now, remote, number.unwrap(), packet.payload.into())?
+                        self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?
                     }
                     _ => self.process_early_payload(now, packet)?,
                 }
                 Ok(())
             }
             State::Closed(_) => {
-                for frame in frame::Iter::new(packet.payload.into()) {
+                for frame in frame::Iter::new(packet.payload.freeze()) {
                     match frame {
                         Frame::Close(_) => {
                             trace!("draining");
@@ -1556,7 +1561,7 @@ where
         packet: Packet,
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
-        for frame in frame::Iter::new(packet.payload.into()) {
+        for frame in frame::Iter::new(packet.payload.freeze()) {
             let span = match frame {
                 Frame::Padding => None,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
@@ -2890,7 +2895,7 @@ where
             self.config.send_window - self.unacked_data,
         );
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.queue_stream_data(stream, (&data[0..n]).into())?;
+        self.queue_stream_data(stream, Bytes::copy_from_slice(&data[0..n]))?;
         trace!(%stream, "wrote {} bytes", n);
         Ok(n)
     }

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::Builder;
 use tracing::{error, info};
 use url::Url;
 
@@ -90,9 +90,10 @@ fn run(options: Opt) -> Result<()> {
 
     endpoint.default_client_config(client_config.build());
 
-    let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-    let mut runtime = Runtime::new()?;
-    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
+    let (endpoint_driver, endpoint, _) =
+        runtime.enter(|| endpoint.bind(&"[::]:0".parse().unwrap()))?;
+    let handle = runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -113,9 +114,7 @@ fn run(options: Opt) -> Result<()> {
             connection: conn,
             ..
         } = { new_conn };
-        tokio::runtime::current_thread::spawn(
-            driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)),
-        );
+        tokio::spawn(driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)));
         let (mut send, recv) = conn
             .open_bi()
             .await
@@ -124,9 +123,7 @@ fn run(options: Opt) -> Result<()> {
             let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
             let addr = socket.local_addr().unwrap();
             eprintln!("rebinding to {}", addr);
-            endpoint
-                .rebind(socket, &tokio_net::driver::Handle::default())
-                .expect("rebind failed");
+            endpoint.rebind(socket).expect("rebind failed");
         }
 
         send.write_all(request.as_bytes())
@@ -158,7 +155,7 @@ fn run(options: Opt) -> Result<()> {
     drop(endpoint);
 
     // Let the connection finish closing gracefully
-    runtime.run()?;
+    runtime.block_on(handle).unwrap();
 
     Ok(())
 }

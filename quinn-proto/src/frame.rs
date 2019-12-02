@@ -504,7 +504,7 @@ impl Iter {
         }
         let start = self.bytes.position() as usize;
         self.bytes.advance(len as usize);
-        Ok(self.bytes.get_ref().slice(start, start + len as usize))
+        Ok(self.bytes.get_ref().slice(start..(start + len as usize)))
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
@@ -580,7 +580,7 @@ impl Iter {
                 Frame::Ack(Ack {
                     delay,
                     largest,
-                    additional: self.bytes.get_ref().slice(start, start + len),
+                    additional: self.bytes.get_ref().slice(start..(start + len)),
                     ecn: if ty != Type::ACK_ECN {
                         None
                     } else {
