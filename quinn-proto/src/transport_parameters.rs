@@ -108,8 +108,7 @@ impl TransportParameters {
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
-            )
-            .into());
+            ));
         }
         Ok(())
     }
