@@ -7,14 +7,14 @@ license = "MIT/Apache-2.0"
 publish = false
 
 [dependencies]
+anyhow = "1.0.22"
+futures = "0.3.1"
 quinn = { path = "../quinn" }
+rcgen = "0.7"
+rustls = "0.16"
 tokio = { version = "0.2.2", features = ["rt-core"] }
 tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
-anyhow = "1.0.22"
-rcgen = "0.7"
-futures = "0.3.1"
-rustls = "0.16"
 
 [[bin]]
 name = "bulk"
