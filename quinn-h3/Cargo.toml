@@ -29,8 +29,8 @@ err-derive = "0.2"
 futures = "0.3.1"
 http = "0.2"
 lazy_static = "1"
-quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
-quinn = { path = "../quinn", version = "0.4.0" }
+quinn-proto = { path = "../quinn-proto", version = "0.5.0" }
+quinn = { path = "../quinn", version = "0.5.0" }
 tokio = "0.2.2"
 tokio-util = { version = "0.2.0", features = ["codec"] }
 

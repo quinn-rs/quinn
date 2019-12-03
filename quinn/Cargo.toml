@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/djc/quinn"
@@ -31,7 +31,7 @@ err-derive = "0.2"
 futures = "0.3.1"
 libc = "0.2.49"
 mio = "0.6"
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.4.0" }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.5.0" }
 rustls = { version = "0.16", features = ["quic"] }
 rustls-native-certs = { version = "0.1.0", optional = true }
 tracing = "0.1.10"
