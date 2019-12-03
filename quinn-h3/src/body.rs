@@ -79,6 +79,10 @@ impl BodyReader {
         }
     }
 
+    pub async fn data(&mut self) -> Option<Result<Bytes, Error>> {
+        futures_util::future::poll_fn(move |cx| self.poll_read(cx)).await
+    }
+
     pub async fn trailers(&mut self) -> Option<Result<Header, Error>> {
         let trailers = self.trailers.take();
         let Self {
