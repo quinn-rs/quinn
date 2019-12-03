@@ -9,7 +9,7 @@ default-run = "main"
 anyhow = "1.0.22"
 bytes = "0.5.2"
 futures = "0.3.1"
-http = { git = "https://github.com/hyperium/http/", rev = "43dffa1eb79f6801e5e07f3338fa56191dc454bb" }
+http = "0.2"
 quinn = { path = "../quinn" }
 quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
