@@ -9,10 +9,19 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
 Quinn is an implementation of the [QUIC][quic] transport protocol undergoing
-standardization by the IETF. It is suitable for experimental use. The
-implementation is split up into the state machine crate `quinn-proto` which
-performs no I/O internally and is suitable for use with custom event loops, and
-a high-level tokio-compatible API in `quinn`. See `quinn/examples/` for usage.
+standardization by the IETF. It is suitable for experimental use. This repository
+contains the following crates:
+
+* `quinn` contains a high-level async API based on tokio, see
+[quinn/examples/](https://github.com/djc/quinn/tree/master/quinn/examples) for
+usage. This will be used by most Rust developers. (Basic benchmarks are included.)
+* `quinn-proto` contains a deterministic state machine of the protocol which performs
+no I/O internally and is suitable for use with custom event loops (and potentially
+a C or C++ API).
+* `quinn-h3` contains an implementation of HTTP 3 and QPACK. It is split internally
+in a deterministatic state machine and a tokio-based high-level async API.
+* `bench` contains some extra benchmarks without any framework.
+* `interop` contains tooling that helps the Quinn team run interoperability tests.
 
 Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can
 also get the [slides][slides] (and the [animation][animation] about head-of-line
