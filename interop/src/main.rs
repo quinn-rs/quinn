@@ -6,7 +6,7 @@ use std::{
 use anyhow::{anyhow, Error, Result};
 use futures::TryFutureExt;
 use structopt::StructOpt;
-use tokio::runtime::Builder;
+use tokio::{io::AsyncReadExt, runtime::Builder};
 use tracing::{info, warn};
 
 #[derive(StructOpt, Debug)]
@@ -340,22 +340,21 @@ fn run(options: Opt) -> Result<()> {
 
     Ok(())
 }
-const H3_INITIAL_CAPACITY: usize = 256;
-const H3_MAX_LEN: usize = 256 * 1024;
 
 async fn h3_get(conn: &quinn_h3::client::Connection) -> Result<()> {
-    let (_, body) = conn
-        .request(
+    let (response, _) = conn
+        .send_request(
             http::Request::builder()
                 .method(http::Method::GET)
                 .uri("/")
                 .body(())?,
         )
-        .send()
-        .await?
-        .into_parts();
+        .await?;
 
-    body.read_to_end(H3_INITIAL_CAPACITY, H3_MAX_LEN).await?;
+    let (_, mut recv_body) = response.await?;
+
+    let mut body = Vec::with_capacity(1024);
+    recv_body.read_to_end(&mut body).await?;
     Ok(())
 }
 
