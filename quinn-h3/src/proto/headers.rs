@@ -182,7 +182,7 @@ enum Field {
 }
 
 impl Field {
-    pub fn parse<N, V>(name: N, value: V) -> Result<Self, Error>
+    fn parse<N, V>(name: N, value: V) -> Result<Self, Error>
     where
         N: AsRef<[u8]>,
         V: AsRef<[u8]>,
@@ -239,7 +239,7 @@ where
 /// See RFC7540 section 8.1.2.1. for more details.
 #[derive(Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Clone))]
-pub struct Pseudo {
+struct Pseudo {
     // Request
     method: Option<Method>,
     scheme: Option<Scheme>,
@@ -254,7 +254,7 @@ pub struct Pseudo {
 
 #[allow(clippy::len_without_is_empty)]
 impl Pseudo {
-    pub fn request(method: Method, uri: Uri) -> Self {
+    fn request(method: Method, uri: Uri) -> Self {
         let Parts {
             scheme,
             authority,
@@ -283,7 +283,7 @@ impl Pseudo {
         }
     }
 
-    pub fn response(status: StatusCode) -> Self {
+    fn response(status: StatusCode) -> Self {
         Pseudo {
             method: None,
             scheme: None,
@@ -294,7 +294,7 @@ impl Pseudo {
         }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.len
     }
 }
