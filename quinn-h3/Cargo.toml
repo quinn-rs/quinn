@@ -50,10 +50,7 @@ tokio = { version = "0.2.2", features = ["io-util", "macros", "rt-threaded"] }
 url = "2"
 
 [[example]]
-name = "h3"
+name = "h3_server"
 
-# [[example]]
-# name = "simple_server"
-
-# [[example]]
-# name = "simple_client"
+[[example]]
+name = "h3_client"
