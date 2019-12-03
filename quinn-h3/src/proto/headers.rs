@@ -3,12 +3,14 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     iter::{IntoIterator, Iterator},
+    str::FromStr,
 };
 
 use bytes::Bytes;
 use http::{
     header::{self, HeaderName, HeaderValue},
-    uri, HeaderMap, Method, StatusCode, Uri,
+    uri::{self, Authority, Parts, PathAndQuery, Scheme, Uri},
+    HeaderMap, Method, StatusCode,
 };
 use string::String;
 
@@ -48,15 +50,15 @@ impl Header {
         let mut uri = Uri::builder();
 
         if let Some(path) = self.pseudo.path {
-            uri = uri.path_and_query(path.as_bytes());
+            uri = uri.path_and_query(path.as_str().as_bytes());
         }
 
         if let Some(scheme) = self.pseudo.scheme {
-            uri = uri.scheme(scheme.as_bytes());
+            uri = uri.scheme(scheme.as_str().as_bytes());
         }
 
         if let Some(authority) = self.pseudo.authority {
-            uri = uri.authority(authority.as_bytes());
+            uri = uri.authority(authority.as_str().as_bytes());
         }
 
         Ok((
@@ -105,15 +107,15 @@ impl Iterator for HeaderIter {
             }
 
             if let Some(scheme) = pseudo.scheme.take() {
-                return Some((":scheme", scheme.as_bytes()).into());
+                return Some((":scheme", scheme.as_str().as_bytes()).into());
             }
 
             if let Some(authority) = pseudo.authority.take() {
-                return Some((":authority", authority.as_bytes()).into());
+                return Some((":authority", authority.as_str().as_bytes()).into());
             }
 
             if let Some(path) = pseudo.path.take() {
-                return Some((":path", path.as_bytes()).into());
+                return Some((":path", path.as_str().as_bytes()).into());
             }
 
             if let Some(status) = pseudo.status.take() {
@@ -174,9 +176,9 @@ impl TryFrom<Vec<HeaderField>> for Header {
 
 enum Field {
     Method(Method),
-    Scheme(String<Bytes>),
-    Authority(String<Bytes>),
-    Path(String<Bytes>),
+    Scheme(Scheme),
+    Authority(Authority),
+    Path(PathAndQuery),
     Status(StatusCode),
     Header((HeaderName, HeaderValue)),
 }
@@ -221,13 +223,15 @@ impl Field {
     }
 }
 
-fn try_value<N, V>(name: N, value: V) -> Result<String<Bytes>, Error>
+fn try_value<N, V, R>(name: N, value: V) -> Result<R, Error>
 where
     N: AsRef<[u8]>,
     V: AsRef<[u8]>,
+    R: FromStr,
 {
-    string::TryFrom::<Bytes>::try_from(Bytes::from(value.as_ref().to_owned()))
-        .or_else(|_| Err(Error::invalid_value(name, value)))
+    let (name, value) = (name.as_ref(), value.as_ref());
+    let s = std::str::from_utf8(value).map_err(|_| Error::invalid_value(name, value))?;
+    R::from_str(s).map_err(|_| Error::invalid_value(name, value))
 }
 
 /// Pseudo-header fields have the same purpose as data from the first line of HTTP/1.X,
@@ -240,9 +244,9 @@ where
 pub struct Pseudo {
     // Request
     method: Option<Method>,
-    scheme: Option<String<Bytes>>,
-    authority: Option<String<Bytes>>,
-    path: Option<String<Bytes>>,
+    scheme: Option<Scheme>,
+    authority: Option<Authority>,
+    path: Option<PathAndQuery>,
 
     // Response
     status: Option<StatusCode>,
@@ -253,35 +257,32 @@ pub struct Pseudo {
 #[allow(clippy::len_without_is_empty)]
 impl Pseudo {
     pub fn request(method: Method, uri: Uri) -> Self {
-        let parts = uri::Parts::from(uri);
+        let Parts {
+            scheme,
+            authority,
+            path_and_query,
+            ..
+        } = uri::Parts::from(uri);
 
-        let mut path = parts
-            .path_and_query
-            .map(|v| v.into())
-            .unwrap_or_else(Bytes::new);
+        let path = path_and_query.map_or_else(
+            || PathAndQuery::from_static(""),
+            |path| {
+                if path.path().is_empty() && method != Method::OPTIONS {
+                    PathAndQuery::from_static("/")
+                } else {
+                    path
+                }
+            },
+        );
 
-        if path.is_empty() && method != Method::OPTIONS {
-            path = Bytes::from_static(b"/");
-        }
-
-        let mut pseudo = Pseudo {
+        Self {
             method: Some(method),
-            scheme: None,
-            authority: None,
-            path: Some(to_string(path)),
+            scheme,
+            authority,
+            path: Some(path),
             status: None,
             len: 2,
-        };
-
-        if let Some(scheme) = parts.scheme {
-            pseudo.set_scheme(scheme);
         }
-
-        if let Some(authority) = parts.authority {
-            pseudo.set_authority(to_string(authority.into()));
-        }
-
-        pseudo
     }
 
     pub fn response(status: StatusCode) -> Self {
@@ -293,16 +294,6 @@ impl Pseudo {
             status: Some(status),
             len: 1,
         }
-    }
-
-    pub fn set_scheme(&mut self, scheme: uri::Scheme) {
-        self.scheme = Some(to_string(scheme.into()));
-        self.len += 1;
-    }
-
-    pub fn set_authority(&mut self, authority: String<Bytes>) {
-        self.authority = Some(authority);
-        self.len += 1;
     }
 
     pub fn len(&self) -> usize {

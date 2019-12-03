@@ -27,7 +27,7 @@ bitlab = "0.8.1"
 bytes = "0.5.2"
 err-derive = "0.2"
 futures = "0.3.1"
-http = { git = "https://github.com/hyperium/http", rev = "43dffa1eb79f6801e5e07f3338fa56191dc454bb" }
+http = "0.2"
 lazy_static = "1"
 quinn-proto = { path = "../quinn-proto", version = "0.4.0" }
 quinn = { path = "../quinn", version = "0.4.0" }
