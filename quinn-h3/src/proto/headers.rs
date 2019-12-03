@@ -6,13 +6,11 @@ use std::{
     str::FromStr,
 };
 
-use bytes::Bytes;
 use http::{
     header::{self, HeaderName, HeaderValue},
     uri::{self, Authority, Parts, PathAndQuery, Scheme, Uri},
     HeaderMap, Method, StatusCode,
 };
-use string::String;
 
 use crate::qpack::HeaderField;
 
@@ -301,10 +299,6 @@ impl Pseudo {
     }
 }
 
-fn to_string(src: Bytes) -> String<Bytes> {
-    unsafe { String::from_utf8_unchecked(src) }
-}
-
 macro_rules! pseudo_type {
     (
         $(
@@ -332,8 +326,8 @@ pseudo_type![
 
 #[derive(Debug)]
 pub enum Error {
-    InvalidHeaderName(std::string::String),
-    InvalidHeaderValue(std::string::String),
+    InvalidHeaderName(String),
+    InvalidHeaderValue(String),
     InvalidRequest(http::Error),
     MissingMethod,
     MissingStatus,
@@ -354,7 +348,7 @@ impl Error {
     {
         Error::InvalidHeaderValue(format!(
             "{:?} {:?}",
-            to_string(Bytes::from(name.as_ref().to_owned())),
+            String::from_utf8_lossy(name.as_ref()),
             value.as_ref()
         ))
     }
