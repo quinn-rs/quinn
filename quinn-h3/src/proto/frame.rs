@@ -3,6 +3,7 @@ use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
     VarInt,
 };
+use std::collections::HashSet;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -12,6 +13,7 @@ pub enum Error {
     InvalidFrameValue,
     Incomplete(usize),
     IncompleteData,
+    Settings(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -232,7 +234,6 @@ impl PushPromiseFrame {
     }
 }
 
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct SettingsFrame {
     pub num_placeholders: u64,
@@ -244,13 +245,18 @@ pub struct SettingsFrame {
 impl Default for SettingsFrame {
     fn default() -> SettingsFrame {
         SettingsFrame {
-            num_placeholders: 16,
-            max_header_list_size: 65536,
-            qpack_max_table_capacity: 4096,
-            qpack_blocked_streams: 128,
+            num_placeholders: DEFAULT_NUM_PLACE_HOLDER,
+            max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
+            qpack_max_table_capacity: DEFAULT_QPACK_MAX_TABLE_CAPACITY,
+            qpack_blocked_streams: DEFAULT_QPACK_BLOCKED_STREAMS,
         }
     }
 }
+
+const DEFAULT_NUM_PLACE_HOLDER: u64 = 16;
+const DEFAULT_MAX_HEADER_LIST_SIZE: u64 = 6;
+const DEFAULT_QPACK_MAX_TABLE_CAPACITY: u64 = 4096;
+const DEFAULT_QPACK_BLOCKED_STREAMS: u64 = 129;
 
 impl SettingsFrame {
     pub fn encode<T: BufMut>(&self, buf: &mut T) {
@@ -267,6 +273,7 @@ impl SettingsFrame {
 
     fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
         let mut settings = SettingsFrame::default();
+        let mut received = HashSet::with_capacity(4);
         while buf.has_remaining() {
             if buf.remaining() < 2 {
                 // remains less than 2 * minimum-size varint
@@ -274,6 +281,14 @@ impl SettingsFrame {
             }
             let identifier = SettingId::decode(buf).map_err(|_| Error::Malformed)?;
             let value = buf.get_var().map_err(|_| Error::InvalidFrameValue)?;
+
+            if !received.insert(identifier) {
+                return Err(Error::Settings(format!(
+                    "Recieved setting '0x{:X}' twice",
+                    identifier.0
+                )));
+            }
+
             match identifier {
                 id if id.0 & 0x0f0f == 0x0a0a => continue,
                 SettingId::NUM_PLACEHOLDERS => {
@@ -312,7 +327,7 @@ impl FrameHeader for SettingsFrame {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 struct SettingId(u64);
 
 impl Codec for SettingId {
@@ -400,6 +415,16 @@ mod tests {
         let mut buf = Cursor::new(&[4, 8, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Malformed));
+    }
+
+    #[test]
+    fn settings_frame_identifier_twice() {
+        let mut buf = Cursor::new(&[4, 10, 6, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
+        let decoded = HttpFrame::decode(&mut buf);
+        assert_eq!(
+            decoded,
+            Err(Error::Settings("Recieved setting '0x6' twice".to_string()))
+        );
     }
 
     #[test]

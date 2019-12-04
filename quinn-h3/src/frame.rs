@@ -180,6 +180,7 @@ impl Error {
     pub fn code(&self) -> ErrorCode {
         match self {
             Error::Io(_) => ErrorCode::GENERAL_PROTOCOL_ERROR,
+            Error::Proto(frame::Error::Settings(_)) => ErrorCode::SETTINGS_ERROR,
             Error::Proto(_) => ErrorCode::FRAME_ERROR,
         }
     }
