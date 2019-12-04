@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, StreamExt};
@@ -41,26 +41,13 @@ async fn main() -> Result<()> {
     let opt = Opt::from_args();
     let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
 
-    let server_config = quinn::ServerConfig {
-        transport: Arc::new(quinn::TransportConfig {
-            stream_window_uni: 513,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(&[quinn_h3::ALPN]);
-    server_config
+    let mut server = ServerBuilder::default();
+    server
         .certificate(certs.0, certs.2)
         .expect("failed to add cert");
 
-    let mut endpoint = quinn::Endpoint::builder();
-    endpoint.listen(server_config.build());
-
-    let server = ServerBuilder::new(endpoint);
-
     let (endpoint_driver, mut incoming) = {
-        let (driver, _server, incoming) = server.bind(&opt.listen).expect("bind failed");
+        let (driver, _server, incoming) = server.build().expect("bind failed");
         (driver, incoming)
     };
 
