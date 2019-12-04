@@ -1,15 +1,16 @@
 use std::{
     future::Future,
-    mem,
-    net::SocketAddr,
+    io, mem,
+    net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     task::{Context, Poll},
 };
 
 use futures::{ready, Stream};
 use http::{response, Request, Response};
-use quinn::{EndpointBuilder, EndpointDriver, EndpointError, RecvStream, SendStream};
+use quinn::{CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
+use rustls::TLSError;
 
 use crate::{
     body::{Body, BodyReader, BodyWriter},
@@ -26,16 +27,51 @@ use crate::{
 };
 
 pub struct Builder {
-    endpoint: EndpointBuilder,
+    config: quinn::ServerConfigBuilder,
+    listen: Option<SocketAddr>,
     settings: Settings,
 }
 
-impl Builder {
-    pub fn new(endpoint: EndpointBuilder) -> Self {
+impl Default for Builder {
+    fn default() -> Self {
+        let mut config = quinn::ServerConfigBuilder::default();
+        config.protocols(&[crate::ALPN]);
+
         Self {
-            endpoint,
+            config,
+            listen: None,
             settings: Settings::default(),
         }
+    }
+}
+
+impl Builder {
+    pub fn with_quic_config(mut config: quinn::ServerConfigBuilder) -> Self {
+        config.protocols(&[crate::ALPN]);
+        Self {
+            config,
+            listen: None,
+            settings: Settings::default(),
+        }
+    }
+
+    pub fn listen<S: ToSocketAddrs>(&mut self, socket: S) -> Result<&mut Self, io::Error> {
+        self.listen = Some(
+            socket
+                .to_socket_addrs()?
+                .next()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no socket found"))?,
+        );
+        Ok(self)
+    }
+
+    pub fn certificate(
+        &mut self,
+        cert_chain: CertificateChain,
+        key: PrivateKey,
+    ) -> Result<&mut Self, TLSError> {
+        self.config.certificate(cert_chain, key)?;
+        Ok(self)
     }
 
     pub fn settings(&mut self, settings: Settings) -> &mut Self {
@@ -43,17 +79,42 @@ impl Builder {
         self
     }
 
-    pub fn bind(
+    pub fn endpoint(
         self,
-        addr: &SocketAddr,
-    ) -> Result<(EndpointDriver, Server, IncomingConnection), EndpointError> {
-        let (endpoint_driver, _endpoint, incoming) = self.endpoint.bind(addr)?;
+        endpoint: EndpointBuilder,
+    ) -> Result<(quinn::EndpointDriver, Server, IncomingConnection), quinn::EndpointError> {
+        let listen = self
+            .listen
+            .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
+        let (endpoint_driver, _, incoming) = endpoint.bind(&listen)?;
+
         Ok((
             endpoint_driver,
             Server,
             IncomingConnection {
                 incoming,
-                settings: self.settings.clone(),
+                settings: self.settings,
+            },
+        ))
+    }
+
+    pub fn build(
+        self,
+    ) -> Result<(quinn::EndpointDriver, Server, IncomingConnection), quinn::EndpointError> {
+        let mut endpoint_builder = quinn::Endpoint::builder();
+        endpoint_builder.listen(self.config.build());
+
+        let listen = self
+            .listen
+            .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
+        let (endpoint_driver, _, incoming) = endpoint_builder.bind(&listen)?;
+
+        Ok((
+            endpoint_driver,
+            Server,
+            IncomingConnection {
+                incoming,
+                settings: self.settings,
             },
         ))
     }
