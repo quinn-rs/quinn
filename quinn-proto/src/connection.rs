@@ -896,12 +896,12 @@ where
                 stream.state = ResetSent { stop_reason: None };
             }
             _ => {
+                // After we finish up here, we no longer care whether a reset stream was blocked.
+                let was_blocked = self.blocked_streams.remove(&stream_id);
                 // If this is an implicit reset due to `STOP_SENDING` and the caller might have a
                 // blocked write task, notify the caller to try writing again so they'll receive the
                 // `WriteError::Stopped` and the stream can be disposed of.
-                if stopped
-                    && (self.blocked_streams.remove(&stream_id) || stream.offset == stream.max_data)
-                {
+                if stopped && (was_blocked || stream.offset == stream.max_data) {
                     self.events
                         .push_back(Event::StreamWritable { stream: stream_id });
                 }
@@ -1732,7 +1732,8 @@ where
                         ));
                     }
                     if let Some(ss) = self.streams.send_mut(id) {
-                        if offset > ss.max_data {
+                        // We only care about budget *increases* for *live* streams
+                        if offset > ss.max_data && ss.state == streams::SendState::Ready {
                             trace!(stream = %id, old = ss.max_data, new = offset, current_offset = ss.offset, "stream limit increased");
                             if ss.offset == ss.max_data {
                                 self.events.push_back(Event::StreamWritable { stream: id });
@@ -2697,6 +2698,8 @@ where
             .ok_or(FinishError::UnknownStream)?;
         ss.finish()?;
         self.spaces[SpaceId::Data as usize].finish_stream(id, ss.offset);
+        // We no longer need to notify the application of capacity for additional writes.
+        self.blocked_streams.remove(&id);
         Ok(())
     }
 
@@ -3435,12 +3438,14 @@ pub enum Event {
         /// Directionality for which streams have been opened
         dir: Dir,
     },
-    /// An existing stream has data or errors waiting to be read
+    /// A currently open stream has data or errors waiting to be read
     StreamReadable {
         /// Which stream is now readable
         stream: StreamId,
     },
-    /// A formerly write-blocked stream might now accept a write
+    /// A formerly write-blocked stream might be ready for a write or have been stopped
+    ///
+    /// Only generated for streams that are currently open.
     StreamWritable {
         /// Which stream is now writable
         stream: StreamId,
