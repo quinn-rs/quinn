@@ -190,16 +190,19 @@ pub(crate) struct EndpointInner {
     /// Set if the endpoint has been manually closed
     close: Option<(VarInt, Bytes)>,
     driver_lost: bool,
+    recv_buf: Box<[u8]>,
 }
 
 impl EndpointInner {
     fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
-        let mut buf = [0; 64 * 1024];
         let mut recvd = 0;
         loop {
-            match self.socket.poll_recv(cx, &mut buf) {
+            match self.socket.poll_recv(cx, &mut self.recv_buf) {
                 Poll::Ready(Ok((n, addr, ecn))) => {
-                    match self.inner.handle(now, addr, ecn, (&buf[0..n]).into()) {
+                    match self
+                        .inner
+                        .handle(now, addr, ecn, (&self.recv_buf[0..n]).into())
+                    {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
                             let conn = ConnectionDriver(self.create_connection(handle, conn));
                             if !self.incoming_live {
@@ -400,6 +403,7 @@ impl EndpointRef {
             ref_count: 0,
             close: None,
             driver_lost: false,
+            recv_buf: vec![0; 64 * 1024].into(),
         })))
     }
 }
