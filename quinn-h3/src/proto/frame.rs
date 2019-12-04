@@ -1,5 +1,3 @@
-use std::mem::size_of;
-
 use bytes::{buf::ext::BufExt as _, Buf, BufMut, Bytes};
 use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
@@ -20,7 +18,6 @@ pub enum Error {
 pub enum HttpFrame {
     Data(DataFrame),
     Headers(HeadersFrame),
-    Priority(PriorityFrame),
     CancelPush(u64),
     Settings(SettingsFrame),
     PushPromise(PushPromiseFrame),
@@ -35,7 +32,6 @@ impl HttpFrame {
         match self {
             HttpFrame::Data(f) => f.encode(buf),
             HttpFrame::Headers(f) => f.encode(buf),
-            HttpFrame::Priority(f) => f.encode(buf),
             HttpFrame::Settings(f) => f.encode(buf),
             HttpFrame::CancelPush(id) => simple_frame_encode(Type::CANCEL_PUSH, *id, buf),
             HttpFrame::PushPromise(f) => f.encode(buf),
@@ -63,7 +59,6 @@ impl HttpFrame {
                 payload: payload.to_bytes(),
             })),
             Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload)?)),
-            Type::PRIORITY => Ok(HttpFrame::Priority(PriorityFrame::decode(&mut payload)?)),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
             Type::CANCEL_PUSH => Ok(HttpFrame::CancelPush(payload.get_var()?)),
             Type::PUSH_PROMISE => Ok(HttpFrame::PushPromise(PushPromiseFrame::decode(
@@ -89,7 +84,6 @@ macro_rules! frame_types {
 frame_types! {
     DATA = 0x0,
     HEADERS = 0x1,
-    PRIORITY = 0x2,
     CANCEL_PUSH = 0x3,
     SETTINGS = 0x4,
     PUSH_PROMISE = 0x5,
@@ -238,102 +232,6 @@ impl PushPromiseFrame {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Priority {
-    RequestStream(u64),
-    PushStream(u64),
-    Placeholder(u64),
-    CurrentStream,
-    TreeRoot,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct PriorityFrame {
-    prioritized: Priority,
-    dependency: Priority,
-    weight: u8,
-}
-
-impl Codec for PriorityFrame {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
-        let first = buf.get_u8();
-        let pt = (0b1100_0000 & first) >> 6;
-        let dt = (0b0011_0000 & first) >> 4;
-
-        let prioritized = match pt {
-            0b00 => Priority::RequestStream(buf.get_var()?),
-            0b01 => Priority::PushStream(buf.get_var()?),
-            0b10 => Priority::Placeholder(buf.get_var()?),
-            0b11 => Priority::CurrentStream,
-            _ => unreachable!(),
-        };
-
-        let dependency = match dt {
-            0b00 => Priority::RequestStream(buf.get_var()?),
-            0b01 => Priority::PushStream(buf.get_var()?),
-            0b10 => Priority::Placeholder(buf.get_var()?),
-            0b11 => Priority::TreeRoot,
-            _ => unreachable!(),
-        };
-
-        Ok(PriorityFrame {
-            prioritized,
-            dependency,
-            weight: buf.get_u8(),
-        })
-    }
-    fn encode<B: BufMut>(&self, buf: &mut B) {
-        let (pt, prioritized) = match self.prioritized {
-            Priority::RequestStream(id) => (0b00, Some(id)),
-            Priority::PushStream(id) => (0b01, Some(id)),
-            Priority::Placeholder(id) => (0b10, Some(id)),
-            Priority::CurrentStream => (0b11, None),
-            _ => unreachable!(),
-        };
-
-        let (dt, dependency) = match self.dependency {
-            Priority::RequestStream(id) => (0b00, Some(id)),
-            Priority::PushStream(id) => (0b01, Some(id)),
-            Priority::Placeholder(id) => (0b10, Some(id)),
-            Priority::CurrentStream => (0b11, None),
-            _ => unreachable!(),
-        };
-
-        let first: u8 = (pt << 6) | (dt << 4);
-
-        self.encode_header(buf);
-        buf.write(first);
-        if let Some(prioritized) = prioritized {
-            buf.write_var(prioritized)
-        }
-        if let Some(dependency) = dependency {
-            buf.write_var(dependency)
-        }
-        buf.write(self.weight);
-    }
-}
-
-impl FrameHeader for PriorityFrame {
-    const TYPE: Type = Type::PRIORITY;
-    fn len(&self) -> usize {
-        let mut size = size_of::<u8>() * 2;
-
-        size += match self.prioritized {
-            Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
-                VarInt::from_u64(id).unwrap().size()
-            }
-            _ => 0,
-        };
-        size += match self.dependency {
-            Priority::RequestStream(id) | Priority::PushStream(id) | Priority::Placeholder(id) => {
-                VarInt::from_u64(id).unwrap().size()
-            }
-            _ => 0,
-        };
-
-        size
-    }
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SettingsFrame {
@@ -552,18 +450,6 @@ mod tests {
                 payload: Bytes::from("foo bar"),
             }),
             &[0, 7, 102, 111, 111, 32, 98, 97, 114],
-        );
-    }
-
-    #[test]
-    fn priority_frame() {
-        codec_frame_check(
-            HttpFrame::Priority(PriorityFrame {
-                prioritized: Priority::PushStream(21),
-                dependency: Priority::RequestStream(42),
-                weight: 2,
-            }),
-            &[2, 4, 64, 21, 42, 2],
         );
     }
 
