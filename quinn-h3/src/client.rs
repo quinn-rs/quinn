@@ -233,6 +233,7 @@ impl Future for RecvResponse {
                         None => return Poll::Ready(Err(Error::peer("received an empty response"))),
                         Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         Some(Ok(f)) => match f {
+                            HttpFrame::Reserved => (),
                             HttpFrame::Headers(h) => {
                                 let decode =
                                     DecodeHeaders::new(h, self.conn.clone(), self.stream_id);

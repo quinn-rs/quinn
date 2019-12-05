@@ -106,25 +106,28 @@ impl BodyReader {
             return Poll::Ready(Some(Ok(data))); // return buffered data in case user called AsyncRead before
         }
 
-        match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Ok(HttpFrame::Data(d)))) => Poll::Ready(Some(Ok(d.payload))),
-            Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
-                self.trailers = Some(d);
-                Poll::Ready(None)
-            }
-            Poll::Ready(Some(Err(e))) => {
-                self.recv.take().unwrap().reset(e.code());
-                Poll::Ready(Some(Err(e.into())))
-            }
-            Poll::Ready(Some(Ok(f))) => {
-                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
-                Poll::Ready(Some(Err(Error::Peer(format!(
-                    "Invalid frame type in body: {:?}",
-                    f
-                )))))
-            }
+        loop {
+            return match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Some(Ok(HttpFrame::Reserved))) => continue,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(Ok(HttpFrame::Data(d)))) => Poll::Ready(Some(Ok(d.payload))),
+                Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
+                    self.trailers = Some(d);
+                    Poll::Ready(None)
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    self.recv.take().unwrap().reset(e.code());
+                    Poll::Ready(Some(Err(e.into())))
+                }
+                Poll::Ready(Some(Ok(f))) => {
+                    self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                    Poll::Ready(Some(Err(Error::Peer(format!(
+                        "Invalid frame type in body: {:?}",
+                        f
+                    )))))
+                }
+            };
         }
     }
 
@@ -159,41 +162,44 @@ impl AsyncRead for BodyReader {
             return Poll::Ready(Ok(size));
         }
 
-        match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
-            Poll::Ready(None) => Poll::Ready(Ok(size)),
-            Poll::Pending => {
-                if size > 0 {
+        loop {
+            return match Pin::new(self.recv.as_mut().unwrap()).poll_next(cx) {
+                Poll::Ready(Some(Ok(HttpFrame::Reserved))) => continue,
+                Poll::Ready(None) => Poll::Ready(Ok(size)),
+                Poll::Pending => {
+                    if size > 0 {
+                        Poll::Ready(Ok(size))
+                    } else {
+                        Poll::Ready(Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")))
+                    }
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    self.recv.take().unwrap().reset(e.code());
+                    Poll::Ready(Err(io::Error::new(
+                        ErrorKind::Other,
+                        format!("read error: {:?}", e),
+                    )))
+                }
+                Poll::Ready(Some(Ok(HttpFrame::Data(mut d)))) => {
+                    if d.payload.len() >= buf.len() - size {
+                        let tail = d.payload.split_off(buf.len() - size);
+                        self.buf_put(tail);
+                    }
+                    buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
+                    Poll::Ready(Ok(size + d.payload.len()))
+                }
+                Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
+                    self.trailers = Some(d);
                     Poll::Ready(Ok(size))
-                } else {
-                    Poll::Ready(Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")))
                 }
-            }
-            Poll::Ready(Some(Err(e))) => {
-                self.recv.take().unwrap().reset(e.code());
-                Poll::Ready(Err(io::Error::new(
-                    ErrorKind::Other,
-                    format!("read error: {:?}", e),
-                )))
-            }
-            Poll::Ready(Some(Ok(HttpFrame::Data(mut d)))) => {
-                if d.payload.len() >= buf.len() - size {
-                    let tail = d.payload.split_off(buf.len() - size);
-                    self.buf_put(tail);
+                Poll::Ready(Some(Ok(_))) => {
+                    self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
+                    Poll::Ready(Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "received an invalid frame type",
+                    )))
                 }
-                buf[size..size + d.payload.len()].copy_from_slice(&d.payload);
-                Poll::Ready(Ok(size + d.payload.len()))
-            }
-            Poll::Ready(Some(Ok(HttpFrame::Headers(d)))) => {
-                self.trailers = Some(d);
-                Poll::Ready(Ok(size))
-            }
-            Poll::Ready(Some(Ok(_))) => {
-                self.recv.take().unwrap().reset(ErrorCode::FRAME_UNEXPECTED);
-                Poll::Ready(Err(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "received an invalid frame type",
-                )))
-            }
+            };
         }
     }
 }

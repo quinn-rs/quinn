@@ -325,8 +325,10 @@ impl ConnectionInner {
                         (true, Side::Server, HttpFrame::MaxPushId(_)) => {
                             warn!("MAX_PUSH_ID frame ignored");
                         }
+                        (true, _, HttpFrame::Reserved) => (),
                         (false, Side::Server, HttpFrame::CancelPush(_))
                         | (false, Side::Server, HttpFrame::MaxPushId(_))
+                        | (false, _, HttpFrame::Reserved)
                         | (false, Side::Client, HttpFrame::Goaway(_)) => {
                             return Err(DriverError::peer(
                                 ErrorCode::MISSING_SETTINGS,
