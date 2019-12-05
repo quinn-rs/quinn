@@ -297,7 +297,7 @@ impl SettingsFrame {
             }
 
             match identifier {
-                id if id.0 & 0x0f0f == 0x0a0a => continue,
+                t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => continue,
                 SettingId::NUM_PLACEHOLDERS => {
                     settings.num_placeholders = value;
                 }
