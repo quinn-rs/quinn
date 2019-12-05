@@ -69,6 +69,9 @@ impl HttpFrame {
             Type::GOAWAY => Ok(HttpFrame::Goaway(payload.get_var()?)),
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
+            Type::H2_PRIORITY | Type::H2_PING | Type::H2_WINDOW_UPDATE | Type::H2_CONTINUATION => {
+                Err(Error::UnsupportedFrame)
+            }
             t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => Ok(HttpFrame::Reserved),
             _ => Err(Error::UnsupportedFrame),
         }
@@ -86,10 +89,14 @@ macro_rules! frame_types {
 frame_types! {
     DATA = 0x0,
     HEADERS = 0x1,
+    H2_PRIORITY = 0x2,
     CANCEL_PUSH = 0x3,
     SETTINGS = 0x4,
     PUSH_PROMISE = 0x5,
+    H2_PING = 0x6,
     GOAWAY = 0x7,
+    H2_WINDOW_UPDATE = 0x8,
+    H2_CONTINUATION = 0x9,
     MAX_PUSH_ID = 0xD,
     DUPLICATE_PUSH = 0xE,
 }
