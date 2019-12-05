@@ -244,6 +244,7 @@ impl Future for RecvRequest {
                 RecvRequestState::Receiving(ref mut frames, _) => {
                     match ready!(Pin::new(frames).poll_next(cx)) {
                         None => return Poll::Ready(Err(Error::peer("received an empty request"))),
+                        Some(Ok(HttpFrame::Reserved)) => (),
                         Some(Ok(HttpFrame::Headers(f))) => {
                             let decode = DecodeHeaders::new(f, self.conn.clone(), self.stream_id);
                             match mem::replace(&mut self.state, RecvRequestState::Decoding(decode))
