@@ -26,6 +26,7 @@ pub enum NewUni {
     Push(PushStream),
     Encoder(RecvStream),
     Decoder(RecvStream),
+    Reserved,
 }
 
 impl TryFrom<(StreamType, RecvStream)> for NewUni {
@@ -37,6 +38,7 @@ impl TryFrom<(StreamType, RecvStream)> for NewUni {
             StreamType::PUSH => NewUni::Push(PushStream(FrameDecoder::stream(recv))),
             StreamType::ENCODER => NewUni::Encoder(recv),
             StreamType::DECODER => NewUni::Decoder(recv),
+            t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => NewUni::Reserved,
             _ => return Err(Error::UnknownStream(ty.0)),
         })
     }

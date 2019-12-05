@@ -283,6 +283,7 @@ impl ConnectionInner {
                 warn!("push stream ignored");
                 Ok(())
             }
+            NewUni::Reserved => Ok(()),
         }
     }
 
