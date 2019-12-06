@@ -493,7 +493,7 @@ pub(crate) enum RecvState {
 }
 
 /// Reasons why attempting to finish a stream might fail
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FinishError {
     /// The peer is no longer accepting data on this stream.
     #[error(display = "stopped by peer: error {}", error_code)]
