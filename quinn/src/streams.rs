@@ -399,7 +399,7 @@ impl Future for ReadToEnd {
 }
 
 /// Error from the ReadToEnd future
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
     #[error(display = "read error")]
@@ -453,7 +453,7 @@ impl Drop for RecvStream {
 }
 
 /// Errors that arise from reading from a stream.
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
     #[error(display = "stream reset by peer: error {}", error_code)]
@@ -489,7 +489,7 @@ impl From<ReadError> for io::Error {
 }
 
 /// Errors that arise from writing to a stream
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
     #[error(display = "sending stopped by peer: error {}", error_code)]
@@ -562,7 +562,7 @@ impl<'a> Future for ReadExact<'a> {
 }
 
 /// Errors that arise from reading from a stream.
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadExactError {
     /// The stream finished before all bytes were read
     #[error(display = "stream finished early")]

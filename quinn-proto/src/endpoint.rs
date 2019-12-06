@@ -857,7 +857,7 @@ enum ConnectionOpts<S: crypto::Session> {
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectError {
     /// The endpoint can no longer create new connections
     ///

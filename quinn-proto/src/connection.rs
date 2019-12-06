@@ -3137,7 +3137,7 @@ where
 }
 
 /// Reasons why a connection might be lost.
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
     /// The peer doesn't implement any supported version.
     #[error(display = "peer doesn't implement any supported version")]

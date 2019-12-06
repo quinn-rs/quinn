@@ -535,7 +535,7 @@ impl<'a> Future for SendDatagram<'a> {
 }
 
 /// Errors that arise from sending a datagram
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SendDatagramError {
     /// The connection was closed.
     #[error(display = "connection closed: {}", 0)]
