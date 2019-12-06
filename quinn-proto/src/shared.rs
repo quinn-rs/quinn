@@ -399,7 +399,7 @@ where
 }
 
 /// Errors in the configuration of an endpoint
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     /// The supplied configuration contained an invalid value
     #[error(display = "illegal configuration value: {}", _0)]

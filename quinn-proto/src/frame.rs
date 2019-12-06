@@ -229,7 +229,7 @@ impl From<ApplicationClose> for Close {
 /// Reason for closing the connection
 ///
 /// This is distinct from the `ApplicationClose` type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionClose {
     /// Class of error as encoded in the specification
     pub error_code: TransportErrorCode,
@@ -283,7 +283,7 @@ impl ConnectionClose {
 /// Reason for closing the connection
 ///
 /// This is distinct from the `ConnectionClose` type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationClose {
     /// Application-specific reason code
     pub error_code: VarInt,
