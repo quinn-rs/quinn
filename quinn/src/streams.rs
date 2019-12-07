@@ -69,8 +69,8 @@ impl SendStream {
                 conn.blocked_writers.insert(self.stream, cx.waker().clone());
                 return Poll::Pending;
             }
-            Err(Stopped { error_code }) => {
-                return Poll::Ready(Err(WriteError::Stopped { error_code }));
+            Err(Stopped(error_code)) => {
+                return Poll::Ready(Err(WriteError::Stopped(error_code)));
             }
             Err(UnknownStream) => {
                 return Poll::Ready(Err(WriteError::UnknownStream));
@@ -97,7 +97,7 @@ impl SendStream {
         if self.finishing.is_none() {
             conn.inner.finish(self.stream).map_err(|e| match e {
                 proto::FinishError::UnknownStream => WriteError::UnknownStream,
-                proto::FinishError::Stopped { error_code } => WriteError::Stopped { error_code },
+                proto::FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
             })?;
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
@@ -267,9 +267,9 @@ impl RecvStream {
                 conn.blocked_readers.insert(self.stream, cx.waker().clone());
                 Poll::Pending
             }
-            Err(Reset { error_code }) => {
+            Err(Reset(error_code)) => {
                 self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset { error_code }))
+                Poll::Ready(Err(ReadError::Reset(error_code)))
             }
             Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
         }
@@ -309,9 +309,9 @@ impl RecvStream {
                 conn.blocked_readers.insert(self.stream, cx.waker().clone());
                 Poll::Pending
             }
-            Err(Reset { error_code }) => {
+            Err(Reset(error_code)) => {
                 self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset { error_code }))
+                Poll::Ready(Err(ReadError::Reset(error_code)))
             }
             Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
         }
@@ -456,11 +456,10 @@ impl Drop for RecvStream {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
-    #[error(display = "stream reset by peer: error {}", error_code)]
-    Reset {
-        /// The error code supplied by the peer.
-        error_code: VarInt,
-    },
+    ///
+    /// Carries an application-defined error code.
+    #[error(display = "stream reset by peer: error {}", 0)]
+    Reset(VarInt),
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
@@ -492,11 +491,10 @@ impl From<ReadError> for io::Error {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
-    #[error(display = "sending stopped by peer: error {}", error_code)]
-    Stopped {
-        /// The error code supplied by the peer.
-        error_code: VarInt,
-    },
+    ///
+    /// Carries an application-defined error code.
+    #[error(display = "sending stopped by peer: error {}", 0)]
+    Stopped(VarInt),
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),
@@ -517,7 +515,7 @@ impl From<WriteError> for io::Error {
             ConnectionClosed(e) => {
                 return e.into();
             }
-            Stopped { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
+            Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)

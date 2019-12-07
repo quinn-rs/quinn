@@ -736,8 +736,7 @@ impl ConnectionInner {
                 } => {
                     if let Some(finishing) = self.finishing.remove(&stream) {
                         // If the finishing stream was already dropped, there's nothing more to do.
-                        let _ = finishing
-                            .send(stop_reason.map(|e| WriteError::Stopped { error_code: e }));
+                        let _ = finishing.send(stop_reason.map(|e| WriteError::Stopped(e)));
                     }
                 }
                 DatagramSendUnblocked => {

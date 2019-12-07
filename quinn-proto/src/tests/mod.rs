@@ -99,9 +99,9 @@ fn lifecycle() {
     );
     pair.drive();
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
-                    Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed {
-                        reason: ApplicationClose { error_code: VarInt(42), ref reason }
-                    }}) if reason == REASON);
+                    Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
+                        ApplicationClose { error_code: VarInt(42), ref reason }
+                    )}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(pair.client.known_connections(), 0);
     assert_eq!(pair.client.known_cids(), 0);
@@ -239,7 +239,7 @@ fn reset_stream() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Reset { error_code: ERROR })
+        Err(ReadError::Reset(ERROR))
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 }
@@ -269,12 +269,12 @@ fn stop_stream() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
         pair.server_conn_mut(server_ch).read_unordered(s),
-        Err(ReadError::Reset { error_code: ERROR })
+        Err(ReadError::Reset(ERROR))
     );
 
     assert_matches!(
         pair.client_conn_mut(client_ch).write(s, b"foo"),
-        Err(WriteError::Stopped { error_code: ERROR })
+        Err(WriteError::Stopped(ERROR))
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).finish(s),
@@ -653,9 +653,9 @@ fn instant_close() {
     let server_ch = pair.server.assert_accept();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
-        reason: ConnectionError::ApplicationClosed {
-            reason: ApplicationClose { error_code: VarInt(0), ref reason }
-        }
+        reason: ConnectionError::ApplicationClosed(
+            ApplicationClose { error_code: VarInt(0), ref reason }
+        )
     }) if reason.is_empty());
 }
 
@@ -676,9 +676,9 @@ fn instant_close_2() {
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     let server_ch = pair.server.assert_accept();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
-        reason: ConnectionError::ApplicationClosed {
-            reason: ApplicationClose { error_code: VarInt(42), ref reason }
-        }
+        reason: ConnectionError::ApplicationClosed(
+            ApplicationClose { error_code: VarInt(42), ref reason }
+        )
     }) if reason.is_empty());
 }
 
@@ -740,13 +740,10 @@ fn server_busy() {
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::ConnectionLost {
             reason:
-                ConnectionError::ConnectionClosed {
-                    reason:
-                        frame::ConnectionClose {
-                            error_code: TransportErrorCode::SERVER_BUSY,
-                            ..
-                        },
-                },
+                ConnectionError::ConnectionClosed(frame::ConnectionClose {
+                    error_code: TransportErrorCode::SERVER_BUSY,
+                    ..
+                }),
         })
     );
     assert_eq!(pair.server.connections.len(), 0);
@@ -813,9 +810,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     pair.drive();
     assert_eq!(
         pair.server_conn_mut(server_conn).read(s, &mut buf),
-        Err(ReadError::Reset {
-            error_code: VarInt(42)
-        })
+        Err(ReadError::Reset(VarInt(42)))
     );
 
     // Happy path
@@ -933,7 +928,7 @@ fn stop_opens_bidi() {
     );
     assert_matches!(
         pair.server_conn_mut(server_conn).write(s, b"foo"),
-        Err(WriteError::Stopped { error_code: ERROR })
+        Err(WriteError::Stopped(ERROR))
     );
 }
 
@@ -1103,7 +1098,7 @@ fn stop_before_finish() {
 
     assert_matches!(
         pair.client_conn_mut(client_ch).finish(s),
-        Err(FinishError::Stopped { error_code: ERROR })
+        Err(FinishError::Stopped(ERROR))
     );
 }
 
