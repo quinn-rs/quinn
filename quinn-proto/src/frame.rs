@@ -226,9 +226,7 @@ impl From<ApplicationClose> for Close {
     }
 }
 
-/// Reason for closing the connection
-///
-/// This is distinct from the `ApplicationClose` type.
+/// Reason given by the transport for closing the connection
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionClose {
     /// Class of error as encoded in the specification
@@ -280,9 +278,7 @@ impl ConnectionClose {
     }
 }
 
-/// Reason for closing the connection
-///
-/// This is distinct from the `ConnectionClose` type.
+/// Reason given by an application for closing the connection
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationClose {
     /// Application-specific reason code
