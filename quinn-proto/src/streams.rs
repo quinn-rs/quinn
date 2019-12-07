@@ -221,7 +221,7 @@ impl Send {
 
     pub(crate) fn write_budget(&mut self) -> Result<u64, WriteError> {
         if let Some(error_code) = self.take_stop_reason() {
-            return Err(WriteError::Stopped { error_code });
+            return Err(WriteError::Stopped(error_code));
         }
         let budget = self.max_data - self.offset;
         if budget == 0 {
@@ -245,7 +245,7 @@ impl Send {
             self.state = SendState::DataSent;
             Ok(())
         } else if let Some(error_code) = self.take_stop_reason() {
-            Err(FinishError::Stopped { error_code })
+            Err(FinishError::Stopped(error_code))
         } else {
             Err(FinishError::UnknownStream)
         }
@@ -271,11 +271,10 @@ pub enum WriteError {
     #[error(display = "unable to accept further writes")]
     Blocked,
     /// The peer is no longer accepting data on this stream.
-    #[error(display = "stopped by peer: error {}", error_code)]
-    Stopped {
-        /// Application-defined reason for stopping the stream
-        error_code: VarInt,
-    },
+    ///
+    /// Carries an application-defined error code.
+    #[error(display = "stopped by peer: code {}", 0)]
+    Stopped(VarInt),
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
@@ -385,7 +384,7 @@ impl Recv {
         match self.state {
             RecvState::ResetRecvd { error_code, .. } => {
                 self.state = RecvState::Closed;
-                Err(ReadError::Reset { error_code })
+                Err(ReadError::Reset(error_code))
             }
             RecvState::Closed => panic!("tried to read from a closed stream"),
             RecvState::Recv { .. } => Err(ReadError::Blocked),
@@ -453,11 +452,10 @@ pub enum ReadError {
     #[error(display = "blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
-    #[error(display = "reset by peer: error {}", error_code)]
-    Reset {
-        /// Application-defined reason for resetting the stream
-        error_code: VarInt,
-    },
+    ///
+    /// Carries an application-defined error code.
+    #[error(display = "reset by peer: code {}", 0)]
+    Reset(VarInt),
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
@@ -496,11 +494,10 @@ pub(crate) enum RecvState {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FinishError {
     /// The peer is no longer accepting data on this stream.
-    #[error(display = "stopped by peer: error {}", error_code)]
-    Stopped {
-        /// Application-defined reason for stopping the stream
-        error_code: VarInt,
-    },
+    ///
+    /// Carries an application-defined error code.
+    #[error(display = "stopped by peer: code {}", 0)]
+    Stopped(VarInt),
     /// The stream has not yet been created or is already considered destroyed
     #[error(display = "unknown stream")]
     UnknownStream,
