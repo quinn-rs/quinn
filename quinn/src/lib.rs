@@ -51,8 +51,8 @@ mod platform;
 mod udp;
 
 pub use proto::{
-    crypto, ClientConfig, ConnectError, ConnectionError, ConnectionId, DatagramEvent, ServerConfig,
-    Transmit, TransportConfig, VarInt,
+    crypto, ApplicationClose, ClientConfig, ConnectError, ConnectionClose, ConnectionError,
+    ConnectionId, DatagramEvent, ServerConfig, Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::{
