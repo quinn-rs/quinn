@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{anyhow, Error, Result};
 use futures::TryFutureExt;
+use lazy_static::lazy_static;
 use structopt::StructOpt;
 use tokio::{io::AsyncReadExt, runtime::Builder};
 use tracing::{info, warn};
@@ -12,7 +13,7 @@ use tracing::{info, warn};
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
 struct Opt {
-    host: String,
+    host: Option<String>,
     #[structopt(default_value = "4433")]
     port: u16,
     #[structopt(default_value = "4434")]
@@ -23,22 +24,89 @@ struct Opt {
     keylog: bool,
 }
 
+#[derive(Clone)]
+struct Peer {
+    name: String,
+    host: String,
+    port: u16,
+    retry_port: u16,
+}
+
+impl Peer {
+    fn new<T: Into<String>>(host: T) -> Self {
+        let host_str = host.into();
+        Self {
+            name: host_str.clone(),
+            host: host_str,
+            port: 4433,
+            retry_port: 4434,
+        }
+    }
+
+    fn name<T: Into<String>>(mut self, name: T) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    fn retry_port(mut self, port: u16) -> Self {
+        self.retry_port = port;
+        self
+    }
+}
+
+lazy_static! {
+    static ref PEERS: Vec<Peer> = vec![
+        Peer::new("quant.eggert.org").name("quant"),
+        Peer::new("nghttp2.org").name("nghttp2"),
+        Peer::new("fb.mvfst.net").name("mvfst"),
+        Peer::new("test.privateoctopus.com").name("picoquic"),
+        Peer::new("quic.westus.cloudapp.azure.com").name("msquic"),
+        Peer::new("f5quic.com").name("f5"),
+        Peer::new("quic.ogre.com").name("ATS"),
+        Peer::new("quic.tech").name("quiche-http/0.9"),
+        Peer::new("quic.tech")
+            .name("quiche")
+            .port(8443)
+            .retry_port(8444),
+        Peer::new("http3-test.litespeedtech.com").name("lsquic"),
+        Peer::new("cloudflare-quic.com").name("ngx_quic").port(443),
+        Peer::new("quic.aiortc.org").name("aioquic"),
+        Peer::new("quic.rocks").name("gQuic"),
+    ];
+}
+
 fn main() {
     let opt = Opt::from_args();
-    let code = {
-        tracing::subscriber::set_global_default(
-            tracing_subscriber::FmtSubscriber::builder()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .finish(),
-        )
-        .unwrap();
-        if let Err(e) = run(opt) {
-            eprintln!("ERROR: {}", e);
-            1
-        } else {
-            0
-        }
+    let mut code = 0;
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
+    let peers = if let Some(host) = opt.host {
+        vec![Peer {
+            name: host.clone(),
+            host,
+            port: opt.port,
+            retry_port: opt.retry_port,
+        }]
+    } else {
+        Vec::from(&PEERS[..])
     };
+
+    for peer in peers.into_iter() {
+        let name = peer.name.clone();
+        if let Err(e) = run(peer, opt.keylog) {
+            eprintln!("ERROR: {}: {}", name, e);
+            code = 1;
+        }
+    }
     ::std::process::exit(code);
 }
 
@@ -47,7 +115,7 @@ struct State {
     client_config: quinn::ClientConfig,
     remote: SocketAddr,
     host: String,
-    options: Opt,
+    peer: Peer,
     results: Arc<Mutex<Results>>,
 }
 
@@ -143,7 +211,7 @@ impl State {
 
     async fn retry(self: Arc<Self>) -> Result<()> {
         let mut remote = self.remote;
-        remote.set_port(self.options.retry_port);
+        remote.set_port(self.peer.retry_port);
 
         let new_conn = self
             .endpoint
@@ -220,13 +288,13 @@ struct Results {
     h3: bool,
 }
 
-fn run(options: Opt) -> Result<()> {
-    let remote = format!("{}:{}", options.host, options.port)
+fn run(peer: Peer, keylog: bool) -> Result<()> {
+    let remote = format!("{}:{}", peer.host, peer.port)
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
-    let host = if webpki::DNSNameRef::try_from_ascii_str(&options.host).is_ok() {
-        &options.host
+    let host = if webpki::DNSNameRef::try_from_ascii_str(&peer.host).is_ok() {
+        &peer.host
     } else {
         warn!("invalid hostname, using \"example.com\"");
         "example.com"
@@ -244,7 +312,7 @@ fn run(options: Opt) -> Result<()> {
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(results.clone())));
     tls_config.alpn_protocols = protocols.clone();
-    if options.keylog {
+    if keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
     let client_config = quinn::ClientConfig {
@@ -260,11 +328,11 @@ fn run(options: Opt) -> Result<()> {
     runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
+        host: host.into(),
+        peer: peer.clone(),
         endpoint,
         client_config,
         remote,
-        host: host.into(),
-        options,
         results,
     });
 
@@ -307,6 +375,7 @@ fn run(options: Opt) -> Result<()> {
     drop(state); // Ensure the drivers will shut down once idle
     runtime.block_on(handle).unwrap();
 
+    print!("{}: ", peer.name);
     let r = results.lock().unwrap();
     if r.handshake {
         print!("VH");

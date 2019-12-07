@@ -10,6 +10,7 @@ anyhow = "1.0.22"
 bytes = "0.5.2"
 futures = "0.3.1"
 http = "0.2"
+lazy_static = "1"
 quinn = { path = "../quinn" }
 quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
