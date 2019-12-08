@@ -1,14 +1,15 @@
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
-use anyhow::{anyhow, Error, Result};
-use futures::TryFutureExt;
+use anyhow::{anyhow, Result};
+use futures::{future, TryFutureExt};
 use lazy_static::lazy_static;
 use structopt::StructOpt;
-use tokio::{io::AsyncReadExt, runtime::Builder};
-use tracing::{info, warn};
+use tokio::io::AsyncReadExt;
+use tracing::{error, info, warn};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
@@ -124,7 +125,8 @@ lazy_static! {
     ];
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let opt = Opt::from_args();
     let mut code = 0;
     tracing::subscriber::set_global_default(
@@ -151,7 +153,7 @@ fn main() {
 
     for peer in peers.into_iter() {
         let name = peer.name.clone();
-        if let Err(e) = run(peer, opt.keylog) {
+        if let Err(e) = run(peer, opt.keylog).await {
             eprintln!("ERROR: {}: {}", name, e);
             code = 1;
         }
@@ -165,26 +167,21 @@ struct State {
     remote: SocketAddr,
     host: String,
     peer: Peer,
-    results: Arc<Mutex<InteropResult>>,
 }
 
 impl State {
-    async fn core(self: Arc<Self>) -> Result<()> {
+    async fn core(&self) -> Result<InteropResult> {
+        let mut result = InteropResult::default();
         let new_conn = self
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        self.results.lock().unwrap().handshake = true;
-        let results = self.results.clone();
-        tokio::spawn(
-            new_conn
-                .driver
-                .map_ok(move |()| {
-                    results.lock().unwrap().close = true;
-                })
-                .unwrap_or_else(|_| ()),
-        );
+        result.handshake = true;
+        let close_handle = tokio::spawn(tokio::time::timeout(
+            Duration::from_secs(2),
+            new_conn.driver,
+        ));
         let stream = new_conn
             .connection
             .open_bi()
@@ -193,10 +190,10 @@ impl State {
         get(stream)
             .await
             .map_err(|e| anyhow!("simple request failed: {}", e))?;
-        self.results.lock().unwrap().stream_data = true;
+        result.stream_data = true;
         new_conn.connection.close(0u32.into(), b"done");
 
-        self.results.lock().unwrap().saw_cert = false;
+        result.saw_cert = false;
         let conn = match self
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
@@ -212,7 +209,7 @@ impl State {
                 get(stream)
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
-                self.results.lock().unwrap().zero_rtt = true;
+                result.zero_rtt;
                 new_conn.connection
             }
             Err(conn) => {
@@ -224,16 +221,15 @@ impl State {
                 new_conn.connection
             }
         };
-        {
-            let mut results = self.results.lock().unwrap();
-            results.resumption = !results.saw_cert;
-        }
+        result.resumption = !result.saw_cert;
         conn.close(0u32.into(), b"done");
 
-        Ok(())
+        result.close = close_handle.await.is_ok();
+
+        Ok(result)
     }
 
-    async fn key_update(self: Arc<Self>) -> Result<()> {
+    async fn key_update(&self) -> Result<()> {
         let new_conn = self
             .endpoint
             .connect_with(self.client_config.clone(), &self.remote, &self.host)?
@@ -253,12 +249,11 @@ impl State {
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
-        self.results.lock().unwrap().key_update = true;
         conn.close(0u32.into(), b"done");
         Ok(())
     }
 
-    async fn retry(self: Arc<Self>) -> Result<()> {
+    async fn retry(&self) -> Result<()> {
         let mut remote = self.remote;
         remote.set_port(self.peer.retry_port);
 
@@ -274,12 +269,11 @@ impl State {
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
-        self.results.lock().unwrap().retry = true;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
 
-    async fn rebind(self: Arc<Self>) -> Result<()> {
+    async fn rebind(&self) -> Result<()> {
         let (endpoint_driver, endpoint, _) =
             quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
         tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
@@ -297,12 +291,11 @@ impl State {
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
         get(stream).await?;
-        self.results.lock().unwrap().rebinding = true;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
 
-    async fn h3(self: Arc<Self>) -> Result<()> {
+    async fn h3(&self) -> Result<()> {
         let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
         let (quic_driver, h3_driver, conn) = h3_client
             .connect(&self.remote, &self.host)?
@@ -316,9 +309,6 @@ impl State {
             .await
             .map_err(|e| anyhow!("h3 request failed: {}", e))?;
         conn.close();
-
-        self.results.lock().unwrap().h3 = true;
-
         Ok(())
     }
 }
@@ -371,7 +361,7 @@ impl InteropResult {
     }
 }
 
-fn run(peer: Peer, keylog: bool) -> Result<()> {
+async fn run(peer: Peer, keylog: bool) -> Result<()> {
     let remote = format!("{}:{}", peer.host, peer.port)
         .to_socket_addrs()?
         .next()
@@ -382,8 +372,6 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
         warn!("invalid hostname, using \"example.com\"");
         "example.com"
     };
-
-    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
     let results = Arc::new(Mutex::new(InteropResult::default()));
 
@@ -406,58 +394,47 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
     };
 
     let (endpoint_driver, endpoint, _) =
-        runtime.enter(|| quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap()))?;
-    runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
+    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
         host: host.into(),
         peer: peer.clone(),
-        results: results.clone(),
         endpoint,
         client_config,
         remote,
     });
 
-    runtime.spawn(
-        state
-            .clone()
-            .core()
-            .unwrap_or_else(|e: Error| eprintln!("core functionality failed: {}", e)),
-    );
+    let (core, key_update, rebind, retry, h3) = future::join5(
+        state.core(),
+        state.key_update(),
+        state.rebind(),
+        state.retry(),
+        state.h3(),
+    )
+    .await;
+    let mut result = core.unwrap_or_else(|e| {
+        error!("core functionality failed: {}", e);
+        InteropResult::default()
+    });
+    match key_update {
+        Ok(_) => result.key_update = true,
+        Err(e) => error!("key update failed: {}", e),
+    };
+    match rebind {
+        Ok(_) => result.rebinding = true,
+        Err(e) => error!("rebinding failed: {}", e),
+    }
+    match retry {
+        Ok(_) => result.retry = true,
+        Err(e) => error!("retry failed: {}", e),
+    }
+    match h3 {
+        Ok(_) => result.h3 = true,
+        Err(e) => error!("retry failed: {}", e),
+    }
 
-    runtime.spawn(
-        state
-            .clone()
-            .key_update()
-            .unwrap_or_else(|e: Error| eprintln!("key update failed: {}", e)),
-    );
-
-    runtime.spawn(
-        state
-            .clone()
-            .rebind()
-            .unwrap_or_else(|e: Error| eprintln!("rebinding failed: {}", e)),
-    );
-
-    runtime.spawn(
-        state
-            .clone()
-            .retry()
-            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    );
-
-    let handle = runtime.spawn(
-        state
-            .clone()
-            .h3()
-            .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
-    );
-
-    let results = results.clone();
-    drop(state); // Ensure the drivers will shut down once idle
-    runtime.block_on(handle).unwrap();
-
-    print!("{}: {}", peer.name, results.lock().unwrap().format());
+    println!("{}: {}", peer.name, results.lock().unwrap().format());
 
     Ok(())
 }
