@@ -165,7 +165,7 @@ struct State {
     remote: SocketAddr,
     host: String,
     peer: Peer,
-    results: Arc<Mutex<Results>>,
+    results: Arc<Mutex<InteropResult>>,
 }
 
 impl State {
@@ -324,7 +324,7 @@ impl State {
 }
 
 #[derive(Default)]
-struct Results {
+struct InteropResult {
     saw_cert: bool,
     handshake: bool,
     stream_data: bool,
@@ -335,6 +335,40 @@ struct Results {
     zero_rtt: bool,
     retry: bool,
     h3: bool,
+}
+
+impl InteropResult {
+    fn format(&self) -> String {
+        let mut string = String::with_capacity(10);
+        if self.handshake {
+            string.push_str("VH");
+        }
+        if self.stream_data {
+            string.push_str("D");
+        }
+        if self.close {
+            string.push_str("C");
+        }
+        if self.resumption {
+            string.push_str("R");
+        }
+        if self.zero_rtt {
+            string.push_str("Z");
+        }
+        if self.retry {
+            string.push_str("S");
+        }
+        if self.rebinding {
+            string.push_str("B");
+        }
+        if self.key_update {
+            string.push_str("U");
+        }
+        if self.h3 {
+            string.push_str("3");
+        }
+        string
+    }
 }
 
 fn run(peer: Peer, keylog: bool) -> Result<()> {
@@ -351,7 +385,7 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
 
     let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
-    let results = Arc::new(Mutex::new(Results::default()));
+    let results = Arc::new(Mutex::new(InteropResult::default()));
 
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
@@ -378,10 +412,10 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
     let state = Arc::new(State {
         host: host.into(),
         peer: peer.clone(),
+        results: results.clone(),
         endpoint,
         client_config,
         remote,
-        results,
     });
 
     runtime.spawn(
@@ -419,41 +453,11 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
             .unwrap_or_else(|e: Error| eprintln!("retry failed: {}", e)),
     );
 
-    let results = state.results.clone();
+    let results = results.clone();
     drop(state); // Ensure the drivers will shut down once idle
     runtime.block_on(handle).unwrap();
 
-    print!("{}: ", peer.name);
-    let r = results.lock().unwrap();
-    if r.handshake {
-        print!("VH");
-    }
-    if r.stream_data {
-        print!("D");
-    }
-    if r.close {
-        print!("C");
-    }
-    if r.resumption {
-        print!("R");
-    }
-    if r.zero_rtt {
-        print!("Z");
-    }
-    if r.retry {
-        print!("S");
-    }
-    if r.rebinding {
-        print!("B");
-    }
-    if r.key_update {
-        print!("U");
-    }
-    if r.h3 {
-        print!("3");
-    }
-
-    println!();
+    print!("{}: {}", peer.name, results.lock().unwrap().format());
 
     Ok(())
 }
@@ -490,7 +494,7 @@ async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> 
     Ok(response)
 }
 
-struct InteropVerifier(Arc<Mutex<Results>>);
+struct InteropVerifier(Arc<Mutex<InteropResult>>);
 impl rustls::ServerCertVerifier for InteropVerifier {
     fn verify_server_cert(
         &self,
