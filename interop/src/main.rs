@@ -18,10 +18,30 @@ struct Opt {
     port: u16,
     #[structopt(default_value = "4434")]
     retry_port: u16,
-
+    #[structopt(long)]
+    h3: bool,
+    #[structopt(long)]
+    hq: bool,
     /// Enable key logging
     #[structopt(long = "keylog")]
     keylog: bool,
+}
+
+#[derive(Clone)]
+enum Alpn {
+    Hq,
+    H3,
+    HqH3,
+}
+
+impl From<&Alpn> for Vec<Vec<u8>> {
+    fn from(alpn: &Alpn) -> Vec<Vec<u8>> {
+        match alpn {
+            Alpn::H3 => vec![quinn_h3::ALPN.into()],
+            Alpn::Hq => vec![b"hq-24"[..].into()],
+            Alpn::HqH3 => vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()],
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -30,6 +50,7 @@ struct Peer {
     host: String,
     port: u16,
     retry_port: u16,
+    alpn: Alpn,
 }
 
 impl Peer {
@@ -40,6 +61,7 @@ impl Peer {
             host: host_str,
             port: 4433,
             retry_port: 4434,
+            alpn: Alpn::HqH3,
         }
     }
 
@@ -57,24 +79,46 @@ impl Peer {
         self.retry_port = port;
         self
     }
+
+    fn h3(mut self) -> Self {
+        self.alpn = Alpn::H3;
+        self
+    }
+
+    fn hq(mut self) -> Self {
+        self.alpn = Alpn::Hq;
+        self
+    }
 }
 
 lazy_static! {
     static ref PEERS: Vec<Peer> = vec![
-        Peer::new("quant.eggert.org").name("quant"),
-        Peer::new("nghttp2.org").name("nghttp2"),
-        Peer::new("fb.mvfst.net").name("mvfst"),
+        Peer::new("quant.eggert.org").name("quant").hq(),
+        Peer::new("nghttp2.org").name("nghttp2").h3(),
+        Peer::new("fb.mvfst.net").name("mvfst").h3(),
         Peer::new("test.privateoctopus.com").name("picoquic"),
-        Peer::new("quic.westus.cloudapp.azure.com").name("msquic"),
+        Peer::new("quic.westus.cloudapp.azure.com")
+            .name("msquic")
+            .h3()
+            .port(443),
+        Peer::new("quic.westus.cloudapp.azure.com")
+            .name("msquic-hq")
+            .hq(),
         Peer::new("f5quic.com").name("f5"),
         Peer::new("quic.ogre.com").name("ATS"),
-        Peer::new("quic.tech").name("quiche-http/0.9"),
+        Peer::new("quic.tech").name("quiche-http/0.9").hq(),
         Peer::new("quic.tech")
             .name("quiche")
+            .h3()
             .port(8443)
             .retry_port(8444),
-        Peer::new("http3-test.litespeedtech.com").name("lsquic"),
-        Peer::new("cloudflare-quic.com").name("ngx_quic").port(443),
+        Peer::new("http3-test.litespeedtech.com")
+            .name("lsquic")
+            .h3(),
+        Peer::new("cloudflare-quic.com")
+            .name("ngx_quic")
+            .h3()
+            .port(443),
         Peer::new("quic.aiortc.org").name("aioquic"),
         Peer::new("quic.rocks").name("gQuic"),
     ];
@@ -95,6 +139,11 @@ fn main() {
             host,
             port: opt.port,
             retry_port: opt.retry_port,
+            alpn: match (opt.h3, opt.hq) {
+                (false, true) => Alpn::Hq,
+                (true, false) => Alpn::H3,
+                _ => Alpn::HqH3,
+            },
         }]
     } else {
         Vec::from(&PEERS[..])
@@ -303,7 +352,6 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
     let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
 
     let results = Arc::new(Mutex::new(Results::default()));
-    let protocols = vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()];
 
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
@@ -311,7 +359,7 @@ fn run(peer: Peer, keylog: bool) -> Result<()> {
     tls_config
         .dangerous()
         .set_certificate_verifier(Arc::new(InteropVerifier(results.clone())));
-    tls_config.alpn_protocols = protocols.clone();
+    tls_config.alpn_protocols = (&peer.alpn).into();
     if keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
     }
