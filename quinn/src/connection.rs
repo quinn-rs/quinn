@@ -523,7 +523,10 @@ impl<'a> Future for SendDatagram<'a> {
         }
         match conn.inner.send_datagram() {
             Ok(sender) => match sender.send(mem::replace(&mut this.data, Bytes::new())) {
-                Ok(()) => Poll::Ready(Ok(())),
+                Ok(()) => {
+                    conn.wake();
+                    Poll::Ready(Ok(()))
+                }
                 Err(proto::DatagramTooLarge) => Poll::Ready(Err(SendDatagramError::TooLarge)),
             },
             Err(e) => conn.handle_datagram_err(cx, &mut this.state, e),
