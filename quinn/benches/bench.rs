@@ -74,7 +74,7 @@ fn throughput(c: &mut Criterion) {
         group.bench_function("small datagrams", |b| {
             b.iter(|| {
                 runtime.block_on(async {
-                    client.send_datagram(data.clone()).await.unwrap();
+                    client.send_datagram(data.clone()).unwrap();
                 });
             })
         });
@@ -91,7 +91,7 @@ fn throughput(c: &mut Criterion) {
         group.bench_function("medium datagrams", |b| {
             b.iter(|| {
                 runtime.block_on(async {
-                    client.send_datagram(data.clone()).await.unwrap();
+                    client.send_datagram(data.clone()).unwrap();
                 });
             })
         });

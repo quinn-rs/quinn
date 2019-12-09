@@ -1171,9 +1171,7 @@ fn datagram_send_recv() {
 
     const DATA: &[u8] = b"whee";
     pair.client_conn_mut(client_ch)
-        .send_datagram()
-        .unwrap()
-        .send(DATA.into())
+        .send_datagram(DATA.into())
         .unwrap();
     pair.drive();
     assert_matches!(
@@ -1188,7 +1186,7 @@ fn datagram_send_recv() {
 }
 
 #[test]
-fn datagram_window() {
+fn datagram_recv_buffer_overflow() {
     let _guard = subscribe();
     const WINDOW: usize = 100;
     let server = ServerConfig {
@@ -1210,19 +1208,13 @@ fn datagram_window() {
     const DATA2: &[u8] = &[0xBC; (WINDOW / 3) + 1];
     const DATA3: &[u8] = &[0xCD; (WINDOW / 3) + 1];
     pair.client_conn_mut(client_ch)
-        .send_datagram()
-        .unwrap()
-        .send(DATA1.into())
+        .send_datagram(DATA1.into())
         .unwrap();
     pair.client_conn_mut(client_ch)
-        .send_datagram()
-        .unwrap()
-        .send(DATA2.into())
+        .send_datagram(DATA2.into())
         .unwrap();
     pair.client_conn_mut(client_ch)
-        .send_datagram()
-        .unwrap()
-        .send(DATA3.into())
+        .send_datagram(DATA3.into())
         .unwrap();
     pair.drive();
     assert_matches!(
@@ -1240,9 +1232,7 @@ fn datagram_window() {
     assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
 
     pair.client_conn_mut(client_ch)
-        .send_datagram()
-        .unwrap()
-        .send(DATA1.into())
+        .send_datagram(DATA1.into())
         .unwrap();
     pair.drive();
     assert_eq!(
@@ -1267,7 +1257,7 @@ fn datagram_unsupported() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(pair.client_conn_mut(client_ch).max_datagram_size(), None);
 
-    match pair.client_conn_mut(client_ch).send_datagram() {
+    match pair.client_conn_mut(client_ch).send_datagram(Bytes::new()) {
         Err(SendDatagramError::UnsupportedByPeer) => {}
         Err(e) => panic!("unexpected error: {}", e),
         Ok(_) => panic!("unexpected success"),

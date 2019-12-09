@@ -2542,9 +2542,6 @@ where
                 self.datagrams.outgoing.push_front(datagram);
                 break;
             }
-            if self.datagrams.outgoing_total >= self.config.datagram_send_buffer_size {
-                self.events.push_back(Event::DatagramSendUnblocked);
-            }
             self.datagrams.outgoing_total -= datagram.data.len();
             datagram.encode(true, buf);
         }
@@ -2915,20 +2912,28 @@ where
     /// checks
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    ///
-    /// If `Err(SendDatagramError::Blocked)` is returned, `Event::DatagramSendUnblocked` may be
-    /// emitted in the future.
-    pub fn send_datagram(&mut self) -> Result<DatagramSender<'_, S>, SendDatagramError> {
+    pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
         if self.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
         let max = self
             .max_datagram_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        if self.datagrams.outgoing_total >= self.config.datagram_send_buffer_size {
-            return Err(SendDatagramError::Blocked);
+        while self.datagrams.outgoing_total > self.config.datagram_send_buffer_size {
+            let prev = self
+                .datagrams
+                .outgoing
+                .pop_front()
+                .expect("datagrams.outgoing_total desynchronized");
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+            self.datagrams.outgoing_total -= prev.data.len();
         }
-        Ok(DatagramSender { max, conn: self })
+        if data.len() > max {
+            return Err(SendDatagramError::TooLarge);
+        }
+        self.datagrams.outgoing_total += data.len();
+        self.datagrams.outgoing.push_back(Datagram { data });
+        Ok(())
     }
 
     /// Receive an unreliable, unordered datagram
@@ -3467,10 +3472,6 @@ pub enum Event {
     },
     /// One or more application datagrams have been received
     DatagramReceived,
-    /// Outgoing application datagrams are no longer blocked by congestion control
-    ///
-    /// Emitted after `send_datagram` returns `Err(SendDatagramError::Blocked)`
-    DatagramSendUnblocked,
 }
 
 impl From<ConnectionError> for Event {
@@ -3514,41 +3515,18 @@ struct PathData {
 /// Errors that can arise when sending a datagram
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SendDatagramError {
-    /// The connection does not have capacity for an additional datagram at this time
-    #[error(display = "sending blocked")]
-    Blocked,
     /// The peer does not support receiving datagram frames
     #[error(display = "datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
     #[error(display = "datagram support disabled")]
     Disabled,
-}
-
-/// The datagram is larger than the connection can currently accommodate
-///
-/// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
-/// exceeded.
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[error(display = "datagram too large")]
-pub struct DatagramTooLarge;
-
-/// Handle used to send a datagram
-pub struct DatagramSender<'a, S: crypto::Session> {
-    max: usize,
-    conn: &'a mut Connection<S>,
-}
-
-impl<S: crypto::Session> DatagramSender<'_, S> {
-    /// Send a datagram consisting of `data`
-    pub fn send(self, data: Bytes) -> Result<(), DatagramTooLarge> {
-        if data.len() > self.max {
-            return Err(DatagramTooLarge);
-        }
-        self.conn.datagrams.outgoing_total += data.len();
-        self.conn.datagrams.outgoing.push_back(Datagram { data });
-        Ok(())
-    }
+    /// The datagram is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+    /// exceeded.
+    #[error(display = "datagram too large")]
+    TooLarge,
 }
 
 struct DatagramState {
