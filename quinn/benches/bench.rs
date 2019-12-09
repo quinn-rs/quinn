@@ -66,40 +66,6 @@ fn throughput(c: &mut Criterion) {
         thread.join().unwrap();
     }
 
-    {
-        let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime, handle) = ctx.make_client(addr);
-        let data = Bytes::from(&[0xAB; 1][..]);
-        group.throughput(Throughput::Elements(1));
-        group.bench_function("small datagrams", |b| {
-            b.iter(|| {
-                runtime.block_on(async {
-                    client.send_datagram(data.clone()).unwrap();
-                });
-            })
-        });
-        drop(client);
-        runtime.block_on(handle).unwrap();
-        thread.join().unwrap();
-    }
-
-    {
-        let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime, handle) = ctx.make_client(addr);
-        let data = Bytes::from(&[0xAB; 1182][..]);
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_function("medium datagrams", |b| {
-            b.iter(|| {
-                runtime.block_on(async {
-                    client.send_datagram(data.clone()).unwrap();
-                });
-            })
-        });
-        drop(client);
-        runtime.block_on(handle).unwrap();
-        thread.join().unwrap();
-    }
-
     group.finish();
 }
 
