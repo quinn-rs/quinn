@@ -52,7 +52,7 @@ mod udp;
 
 pub use proto::{
     crypto, ApplicationClose, ClientConfig, ConnectError, ConnectionClose, ConnectionError,
-    ConnectionId, ServerConfig, Transmit, TransportConfig, VarInt,
+    ConnectionId, SendDatagramError, ServerConfig, Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::{

@@ -129,7 +129,8 @@ pub struct TransportConfig {
     ///
     /// While datagrams are sent ASAP, it is possible for an application to generate data faster
     /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
-    /// memory that may be consumed in that case.
+    /// memory that may be consumed in that case. When the send buffer is full and a new datagram is
+    /// sent, older datagrams are dropped until sufficient space is available.
     pub datagram_send_buffer_size: usize,
 }
 

@@ -11,7 +11,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
@@ -23,7 +22,7 @@ use tracing::{info_span, trace};
 use crate::{
     broadcast::{self, Broadcast},
     streams::{RecvStream, SendStream, WriteError},
-    ConnectionEvent, EndpointEvent, VarInt,
+    ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
 };
 
 /// In-progress connection attempt future
@@ -291,26 +290,11 @@ impl Connection {
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
-    ///
-    /// Will not wait unless the link is congested. The first call on a connection after
-    /// `send_datagram_ready` completes successfully is guaranteed not to wait.
-    pub fn send_datagram(&self, data: Bytes) -> SendDatagram<'_> {
-        SendDatagram {
-            conn: &self.0,
-            data,
-            state: broadcast::State::default(),
-        }
-    }
-
-    /// Wait until the next `send_datagram` won't need to wait
-    ///
-    /// Useful when you don't want to materialize a datagram until the last possible moment before
-    /// sending. Has no impact unless the link is congested.
-    pub fn send_datagram_ready(&self) -> SendDatagramReady<'_> {
-        SendDatagramReady {
-            conn: &self.0,
-            state: broadcast::State::default(),
-        }
+    pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
+        let conn = &mut *self.0.lock().unwrap();
+        let result = conn.inner.send_datagram(data);
+        conn.wake();
+        result
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
@@ -485,75 +469,6 @@ impl Future for OpenBi {
     }
 }
 
-pub struct SendDatagramReady<'a> {
-    conn: &'a ConnectionRef,
-    state: broadcast::State,
-}
-
-impl<'a> Future for SendDatagramReady<'a> {
-    type Output = Result<(), SendDatagramError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
-        if let Some(ref e) = conn.error {
-            return Poll::Ready(Err(SendDatagramError::ConnectionClosed(e.clone())));
-        }
-        match conn.inner.send_datagram() {
-            Ok(_) => Poll::Ready(Ok(())),
-            Err(e) => conn.handle_datagram_err(cx, &mut this.state, e),
-        }
-    }
-}
-
-pub struct SendDatagram<'a> {
-    conn: &'a ConnectionRef,
-    data: Bytes,
-    state: broadcast::State,
-}
-
-impl<'a> Future for SendDatagram<'a> {
-    type Output = Result<(), SendDatagramError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
-        if let Some(ref e) = conn.error {
-            return Poll::Ready(Err(SendDatagramError::ConnectionClosed(e.clone())));
-        }
-        match conn.inner.send_datagram() {
-            Ok(sender) => match sender.send(mem::replace(&mut this.data, Bytes::new())) {
-                Ok(()) => {
-                    conn.wake();
-                    Poll::Ready(Ok(()))
-                }
-                Err(proto::DatagramTooLarge) => Poll::Ready(Err(SendDatagramError::TooLarge)),
-            },
-            Err(e) => conn.handle_datagram_err(cx, &mut this.state, e),
-        }
-    }
-}
-
-/// Errors that arise from sending a datagram
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum SendDatagramError {
-    /// The connection was closed.
-    #[error(display = "connection closed: {}", 0)]
-    ConnectionClosed(ConnectionError),
-    /// The datagram is larger than the connection can currently accommodate
-    ///
-    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
-    /// exceeded.
-    #[error(display = "datagram too large")]
-    TooLarge,
-    /// The peer does not support receiving datagram frames
-    #[error(display = "datagrams not supported by peer")]
-    UnsupportedByPeer,
-    /// Datagram support is disabled locally
-    #[error(display = "datagram support disabled")]
-    Disabled,
-}
-
 #[derive(Debug)]
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
@@ -584,7 +499,6 @@ impl ConnectionRef {
             finishing: HashMap::new(),
             error: None,
             ref_count: 0,
-            send_datagram_blocked: Broadcast::new(),
         })))
     }
 }
@@ -641,7 +555,6 @@ pub struct ConnectionInner {
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    send_datagram_blocked: Broadcast,
 }
 
 impl ConnectionInner {
@@ -742,9 +655,6 @@ impl ConnectionInner {
                         let _ = finishing.send(stop_reason.map(|e| WriteError::Stopped(e)));
                     }
                 }
-                DatagramSendUnblocked => {
-                    self.send_datagram_blocked.wake();
-                }
             }
         }
     }
@@ -829,7 +739,6 @@ impl ConnectionInner {
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(WriteError::ConnectionClosed(reason.clone())));
         }
-        self.send_datagram_blocked.wake();
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
@@ -851,24 +760,6 @@ impl ConnectionInner {
             Ok(())
         } else {
             Err(())
-        }
-    }
-
-    fn handle_datagram_err(
-        &mut self,
-        cx: &mut Context,
-        state: &mut broadcast::State,
-        e: proto::SendDatagramError,
-    ) -> Poll<Result<(), SendDatagramError>> {
-        match e {
-            proto::SendDatagramError::Blocked => {
-                self.send_datagram_blocked.register(cx, state);
-                Poll::Pending
-            }
-            proto::SendDatagramError::UnsupportedByPeer => {
-                Poll::Ready(Err(SendDatagramError::UnsupportedByPeer))
-            }
-            proto::SendDatagramError::Disabled => Poll::Ready(Err(SendDatagramError::Disabled)),
         }
     }
 }

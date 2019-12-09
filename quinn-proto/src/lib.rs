@@ -34,10 +34,7 @@ mod timer;
 pub use timer::{Timer, TimerTable, TimerTableIter, TimerTableIterMut};
 
 mod connection;
-pub use crate::connection::{
-    ConnectionError, DatagramSender, DatagramTooLarge, Event, SendDatagramError, TimerSetting,
-    TimerUpdate,
-};
+pub use crate::connection::{ConnectionError, Event, SendDatagramError, TimerSetting, TimerUpdate};
 
 pub mod crypto;
 
