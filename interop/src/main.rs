@@ -193,10 +193,20 @@ impl State {
         result.stream_data = true;
         new_conn.connection.close(0u32.into(), b"done");
 
-        result.saw_cert = false;
+        let saw_cert = Arc::new(Mutex::new(false));
+        let quinn::ClientConfig {
+            mut crypto,
+            transport,
+        } = self.client_config.clone();
+        Arc::get_mut(&mut crypto)
+            .unwrap()
+            .dangerous()
+            .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
+        let client_config = quinn::ClientConfig { crypto, transport };
+
         let conn = match self
             .endpoint
-            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .connect_with(client_config, &self.remote, &self.host)?
             .into_0rtt()
         {
             Ok((new_conn, _)) => {
@@ -221,7 +231,7 @@ impl State {
                 new_conn.connection
             }
         };
-        result.resumption = !result.saw_cert;
+        result.resumption = !*saw_cert.lock().unwrap();
         conn.close(0u32.into(), b"done");
 
         result.close = close_handle.await.is_ok();
@@ -315,7 +325,6 @@ impl State {
 
 #[derive(Default)]
 struct InteropResult {
-    saw_cert: bool,
     handshake: bool,
     stream_data: bool,
     close: bool,
@@ -373,14 +382,12 @@ async fn run(peer: Peer, keylog: bool) -> Result<()> {
         "example.com"
     };
 
-    let results = Arc::new(Mutex::new(InteropResult::default()));
-
     let mut tls_config = rustls::ClientConfig::new();
     tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
     tls_config.enable_early_data = true;
     tls_config
         .dangerous()
-        .set_certificate_verifier(Arc::new(InteropVerifier(results.clone())));
+        .set_certificate_verifier(Arc::new(InteropVerifier(Arc::new(Mutex::new(false)))));
     tls_config.alpn_protocols = (&peer.alpn).into();
     if keylog {
         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -398,7 +405,7 @@ async fn run(peer: Peer, keylog: bool) -> Result<()> {
     tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
     let state = Arc::new(State {
-        host: host.into(),
+        host: peer.host.clone(),
         peer: peer.clone(),
         endpoint,
         client_config,
@@ -434,7 +441,7 @@ async fn run(peer: Peer, keylog: bool) -> Result<()> {
         Err(e) => error!("retry failed: {}", e),
     }
 
-    println!("{}: {}", peer.name, results.lock().unwrap().format());
+    println!("{}: {}", peer.name, result.format());
 
     Ok(())
 }
@@ -471,7 +478,7 @@ async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> 
     Ok(response)
 }
 
-struct InteropVerifier(Arc<Mutex<InteropResult>>);
+struct InteropVerifier(Arc<Mutex<bool>>);
 impl rustls::ServerCertVerifier for InteropVerifier {
     fn verify_server_cert(
         &self,
@@ -480,7 +487,7 @@ impl rustls::ServerCertVerifier for InteropVerifier {
         _dns_name: webpki::DNSNameRef,
         _ocsp_response: &[u8],
     ) -> std::result::Result<rustls::ServerCertVerified, rustls::TLSError> {
-        self.0.lock().unwrap().saw_cert = true;
+        *self.0.lock().unwrap() = true;
         Ok(rustls::ServerCertVerified::assertion())
     }
 }
