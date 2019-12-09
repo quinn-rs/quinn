@@ -151,13 +151,17 @@ async fn main() {
         Vec::from(&PEERS[..])
     };
 
-    for peer in peers.into_iter() {
-        let name = peer.name.clone();
-        if let Err(e) = run(peer, opt.keylog).await {
-            eprintln!("ERROR: {}: {}", name, e);
-            code = 1;
+    let keylog = opt.keylog;
+    future::join_all(peers.into_iter().map(|peer| {
+        async move {
+            let name = peer.name.clone();
+            if let Err(e) = run(peer, keylog).await {
+                eprintln!("ERROR: {}: {}", name, e);
+                code = 1;
+            }
         }
-    }
+    }))
+    .await;
     ::std::process::exit(code);
 }
 
