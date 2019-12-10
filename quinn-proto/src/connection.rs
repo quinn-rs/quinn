@@ -581,9 +581,18 @@ where
         }
 
         // Send two probes to improve odds of getting through under lossy conditions
-        let (_, space) = self
+        let space = self
             .earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
-            .unwrap();
+            .map(|(_, space)| space)
+            .unwrap_or_else(|| {
+                // PTO expired with no sent ack-eliciting packets! This should only happen on a
+                // client that's discarded the initial packet space but hasn't received enough data
+                // from the server to send an ack-eliciting handshake packet
+                // yet. https://github.com/quicwg/base-drafts/pull/3162 will change the behavior
+                // here, but for now we generate an anti-amplification packet at handshake level.
+                debug_assert!(self.side.is_client() && self.highest_space == SpaceId::Handshake);
+                SpaceId::Handshake
+            });
         trace!(
             in_flight = self.in_flight.bytes,
             count = self.pto_count,
