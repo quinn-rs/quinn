@@ -15,6 +15,8 @@ use tracing::{error, info, warn};
 #[structopt(name = "interop")]
 struct Opt {
     host: Option<String>,
+    #[structopt(short, long)]
+    name: Option<String>,
     #[structopt(default_value = "4433")]
     port: u16,
     #[structopt(default_value = "4434")]
@@ -147,6 +149,13 @@ async fn main() {
                 _ => Alpn::HqH3,
             },
         }]
+    } else if opt.name.is_some() {
+        let name = opt.name.as_ref().unwrap();
+        PEERS[..]
+            .iter()
+            .filter(|p| &p.name == name)
+            .cloned()
+            .collect()
     } else {
         Vec::from(&PEERS[..])
     };
