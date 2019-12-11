@@ -181,6 +181,54 @@ pub struct Connecting {
     settings: Settings,
 }
 
+impl Connecting {
+    pub fn into_0rtt(
+        self,
+    ) -> Result<
+        (
+            quinn::ConnectionDriver,
+            ConnectionDriver,
+            Connection,
+            ZeroRttAccepted,
+        ),
+        Self,
+    > {
+        let Self {
+            connecting,
+            settings,
+        } = self;
+        match connecting.into_0rtt() {
+            Err(connecting) => Err(Self {
+                connecting,
+                settings,
+            }),
+            Ok((new_conn, zero_rtt)) => {
+                let quinn::NewConnection {
+                    driver,
+                    connection,
+                    uni_streams,
+                    bi_streams,
+                    ..
+                } = new_conn;
+                let conn_ref = ConnectionRef::new(
+                    connection,
+                    Side::Client,
+                    uni_streams,
+                    bi_streams,
+                    settings.clone(),
+                )
+                .expect("error in h3 settings"); // FIXME return an error type
+                Ok((
+                    driver,
+                    ConnectionDriver(conn_ref.clone()),
+                    Connection(conn_ref),
+                    ZeroRttAccepted(zero_rtt),
+                ))
+            }
+        }
+    }
+}
+
 impl Future for Connecting {
     type Output = Result<(quinn::ConnectionDriver, ConnectionDriver, Connection), Error>;
 
@@ -206,6 +254,8 @@ impl Future for Connecting {
         )))
     }
 }
+
+pub struct ZeroRttAccepted(quinn::ZeroRttAccepted);
 
 pub struct RecvResponse {
     state: RecvResponseState,
