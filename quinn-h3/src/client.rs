@@ -168,6 +168,12 @@ impl Connection {
             .quic
             .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
     }
+
+    // Update traffic keys spontaneously for testing purposes.
+    #[doc(hidden)]
+    pub fn force_key_update(&self) {
+        self.0.quic.force_key_update();
+    }
 }
 
 pub struct Connecting {
