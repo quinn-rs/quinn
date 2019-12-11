@@ -103,6 +103,20 @@ impl Client {
             connecting: self.endpoint.connect(addr, server_name)?,
         })
     }
+
+    pub fn connect_with(
+        &self,
+        client_config: quinn::ClientConfig,
+        addr: &SocketAddr,
+        server_name: &str,
+    ) -> Result<Connecting, quinn::ConnectError> {
+        Ok(Connecting {
+            settings: self.settings.clone(),
+            connecting: self
+                .endpoint
+                .connect_with(client_config, addr, server_name)?,
+        })
+    }
 }
 
 pub struct Connection(ConnectionRef);
