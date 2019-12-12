@@ -7,6 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use futures::{future, TryFutureExt};
 use lazy_static::lazy_static;
+use quinn_h3::Settings;
 use structopt::StructOpt;
 use tokio::io::AsyncReadExt;
 use tracing::{error, info, warn};
@@ -258,8 +259,14 @@ impl State {
         let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
         tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
+        let mut h3_client = quinn_h3::client::Builder::default();
+        h3_client.settings(Settings {
+            qpack_max_table_capacity: 0,
+            qpack_blocked_streams: 0,
+            ..Settings::default()
+        });
         Ok(State {
-            h3_client: quinn_h3::client::Builder::default().endpoint(endpoint.clone()),
+            h3_client: h3_client.endpoint(endpoint.clone()),
             host: host.into(),
             peer: peer.clone(),
             client_config,
