@@ -174,20 +174,101 @@ async fn main() {
     ::std::process::exit(code);
 }
 
+async fn run(peer: Peer, keylog: bool) -> Result<()> {
+    let state = State::try_new(&peer, keylog)?;
+    let result = match peer.alpn {
+        Alpn::Hq => state.run_hq().await?,
+        _ => state.run_h3().await?,
+    };
+    println!("{}: {}", peer.name, result.format());
+    Ok(())
+}
+
 struct State {
     endpoint: quinn::Endpoint,
     client_config: quinn::ClientConfig,
     remote: SocketAddr,
     host: String,
     peer: Peer,
+    h3_client: quinn_h3::client::Client,
 }
 
 impl State {
+    async fn run_hq(self) -> Result<InteropResult> {
+        let (core, key_update, rebind, retry, h3) = future::join5(
+            self.core(),
+            self.key_update(),
+            self.rebind(),
+            self.retry(),
+            self.h3(),
+        )
+        .await;
+        Ok(build_result(core, key_update, rebind, retry, h3))
+    }
+
+    async fn run_h3(self) -> Result<InteropResult> {
+        let (core, key_update, rebind, retry, h3) = future::join5(
+            self.core_h3(),
+            self.key_update_h3(),
+            self.rebind_h3(),
+            self.retry_h3(),
+            self.h3(),
+        )
+        .await;
+        Ok(build_result(core, key_update, rebind, retry, h3))
+    }
+
+    fn try_new(peer: &Peer, keylog: bool) -> Result<Self> {
+        let remote = format!("{}:{}", peer.host, peer.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
+        let host = if webpki::DNSNameRef::try_from_ascii_str(&peer.host).is_ok() {
+            &peer.host
+        } else {
+            warn!("invalid hostname, using \"example.com\"");
+            "example.com"
+        };
+
+        let mut tls_config = rustls::ClientConfig::new();
+        tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+        tls_config.enable_early_data = true;
+        tls_config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(InteropVerifier(Arc::new(Mutex::new(false)))));
+        tls_config.alpn_protocols = (&peer.alpn).into();
+        if keylog {
+            tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+        }
+        let client_config = quinn::ClientConfig {
+            crypto: Arc::new(tls_config),
+            transport: Arc::new(quinn::TransportConfig {
+                idle_timeout: 1_000,
+                ..Default::default()
+            }),
+        };
+
+        let mut endpoint = quinn::Endpoint::builder();
+        endpoint.default_client_config(client_config.clone());
+
+        let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
+        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+
+        Ok(State {
+            h3_client: quinn_h3::client::Builder::default().endpoint(endpoint.clone()),
+            host: host.into(),
+            peer: peer.clone(),
+            client_config,
+            endpoint,
+            remote,
+        })
+    }
+
     async fn core(&self) -> Result<InteropResult> {
         let mut result = InteropResult::default();
         let new_conn = self
             .endpoint
-            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         result.handshake = true;
@@ -211,8 +292,7 @@ impl State {
             mut crypto,
             transport,
         } = self.client_config.clone();
-        Arc::get_mut(&mut crypto)
-            .unwrap()
+        Arc::make_mut(&mut crypto)
             .dangerous()
             .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
         let client_config = quinn::ClientConfig { crypto, transport };
@@ -255,7 +335,7 @@ impl State {
     async fn key_update(&self) -> Result<()> {
         let new_conn = self
             .endpoint
-            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
@@ -282,7 +362,7 @@ impl State {
 
         let new_conn = self
             .endpoint
-            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
@@ -297,12 +377,14 @@ impl State {
     }
 
     async fn rebind(&self) -> Result<()> {
+        let mut endpoint = quinn::Endpoint::builder();
+        endpoint.default_client_config(self.client_config.clone());
         let (endpoint_driver, endpoint, _) =
-            quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
+            endpoint.bind(&"[::]:0".parse().unwrap())?;
         tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
         let new_conn = endpoint
-            .connect_with(self.client_config.clone(), &self.remote, &self.host)?
+            .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
@@ -331,6 +413,127 @@ impl State {
         h3_get(&conn)
             .await
             .map_err(|e| anyhow!("h3 request failed: {}", e))?;
+        conn.close();
+        Ok(())
+    }
+
+    async fn core_h3(&self) -> Result<InteropResult> {
+        let mut result = InteropResult::default();
+
+        let (quic_driver, h3_driver, conn) = self
+            .h3_client
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+        let close_handle = tokio::spawn(tokio::time::timeout(Duration::from_secs(2), quic_driver));
+        tokio::spawn(async {
+            if let Err(e) = h3_driver.await {
+                error!("h3 driver error: {}", e);
+            }
+        });
+        result.handshake = true;
+        h3_get(&conn)
+            .await
+            .map_err(|e| anyhow!("simple request failed: {}", e))?;
+        result.stream_data = true;
+        conn.close();
+
+        let saw_cert = Arc::new(Mutex::new(false));
+        let quinn::ClientConfig {
+            mut crypto,
+            transport,
+        } = self.client_config.clone();
+        Arc::make_mut(&mut crypto)
+            .dangerous()
+            .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
+        let client_config = quinn::ClientConfig { crypto, transport };
+
+        let conn = match self
+            .h3_client
+            .connect_with(client_config, &self.remote, &self.host)?
+            .into_0rtt()
+        {
+            Ok((quic_driver, driver, conn, _)) => {
+                tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
+                tokio::spawn(driver.unwrap_or_else(|_| ()));
+                h3_get(&conn)
+                    .await
+                    .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
+                result.zero_rtt = true;
+                conn
+            }
+            Err(connecting) => {
+                info!("0-RTT unsupported");
+                let (quic_driver, _, new_conn) = connecting
+                    .await
+                    .map_err(|e| anyhow!("failed to connect: {}", e))?;
+                tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
+                new_conn
+            }
+        };
+        result.resumption = !*saw_cert.lock().unwrap();
+        conn.close();
+
+        result.close = close_handle.await.is_ok();
+
+        Ok(result)
+    }
+
+    async fn key_update_h3(&self) -> Result<()> {
+        let (quic_driver, h3_driver, conn) = self
+            .h3_client
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
+        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
+        // Make sure some traffic has gone both ways before the key update
+        h3_get(&conn)
+            .await
+            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
+        conn.force_key_update();
+        h3_get(&conn)
+            .await
+            .map_err(|e| anyhow!("request failed after key update: {}", e))?;
+        conn.close();
+        Ok(())
+    }
+
+    async fn retry_h3(&self) -> Result<()> {
+        let mut remote = self.remote;
+        remote.set_port(self.peer.retry_port);
+
+        let (quic_driver, h3_driver, conn) = self
+            .h3_client
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
+        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
+        h3_get(&conn)
+            .await
+            .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
+        conn.close();
+        Ok(())
+    }
+
+    async fn rebind_h3(&self) -> Result<()> {
+        let (endpoint_driver, endpoint, _) =
+            quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
+        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+
+        let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
+        let (quic_driver, h3_driver, conn) = h3_client
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
+        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
+        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+        endpoint.rebind(socket)?;
+        h3_get(&conn)
+            .await
+            .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
         conn.close();
         Ok(())
     }
@@ -383,56 +586,13 @@ impl InteropResult {
     }
 }
 
-async fn run(peer: Peer, keylog: bool) -> Result<()> {
-    let remote = format!("{}:{}", peer.host, peer.port)
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
-    let host = if webpki::DNSNameRef::try_from_ascii_str(&peer.host).is_ok() {
-        &peer.host
-    } else {
-        warn!("invalid hostname, using \"example.com\"");
-        "example.com"
-    };
-
-    let mut tls_config = rustls::ClientConfig::new();
-    tls_config.versions = vec![rustls::ProtocolVersion::TLSv1_3];
-    tls_config.enable_early_data = true;
-    tls_config
-        .dangerous()
-        .set_certificate_verifier(Arc::new(InteropVerifier(Arc::new(Mutex::new(false)))));
-    tls_config.alpn_protocols = (&peer.alpn).into();
-    if keylog {
-        tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
-    }
-    let client_config = quinn::ClientConfig {
-        crypto: Arc::new(tls_config),
-        transport: Arc::new(quinn::TransportConfig {
-            idle_timeout: 1_000,
-            ..Default::default()
-        }),
-    };
-
-    let (endpoint_driver, endpoint, _) =
-        quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-    tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
-
-    let state = Arc::new(State {
-        host: peer.host.clone(),
-        peer: peer.clone(),
-        endpoint,
-        client_config,
-        remote,
-    });
-
-    let (core, key_update, rebind, retry, h3) = future::join5(
-        state.core(),
-        state.key_update(),
-        state.rebind(),
-        state.retry(),
-        state.h3(),
-    )
-    .await;
+fn build_result(
+    core: Result<InteropResult>,
+    key_update: Result<()>,
+    rebind: Result<()>,
+    retry: Result<()>,
+    h3: Result<()>,
+) -> InteropResult {
     let mut result = core.unwrap_or_else(|e| {
         error!("core functionality failed: {}", e);
         InteropResult::default()
@@ -453,10 +613,7 @@ async fn run(peer: Peer, keylog: bool) -> Result<()> {
         Ok(_) => result.h3 = true,
         Err(e) => error!("retry failed: {}", e),
     }
-
-    println!("{}: {}", peer.name, result.format());
-
-    Ok(())
+    result
 }
 
 async fn h3_get(conn: &quinn_h3::client::Connection) -> Result<()> {
