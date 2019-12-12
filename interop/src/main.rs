@@ -161,27 +161,31 @@ async fn main() {
     };
 
     let keylog = opt.keylog;
-    future::join_all(peers.into_iter().map(|peer| {
+    let results = future::join_all(peers.into_iter().map(|peer| {
         async move {
-            let name = peer.name.clone();
-            if let Err(e) = run(peer, keylog).await {
-                eprintln!("ERROR: {}: {}", name, e);
+            let result = run(&peer, keylog).await;
+            (peer, result)
+        }
+    }));
+    for (peer, result) in results.await {
+        match result {
+            Ok(r) => println!("{}: {}", peer.name, r),
+            Err(e) => {
+                println!("ERROR: {}: {}", peer.name, e);
                 code = 1;
             }
         }
-    }))
-    .await;
+    }
     ::std::process::exit(code);
 }
 
-async fn run(peer: Peer, keylog: bool) -> Result<()> {
+async fn run(peer: &Peer, keylog: bool) -> Result<String> {
     let state = State::try_new(&peer, keylog)?;
     let result = match peer.alpn {
         Alpn::Hq => state.run_hq().await?,
         _ => state.run_h3().await?,
     };
-    println!("{}: {}", peer.name, result.format());
-    Ok(())
+    Ok(result.format())
 }
 
 struct State {
