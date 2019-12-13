@@ -15,7 +15,7 @@ quinn-h3 = { path = "../quinn-h3" }
 quinn-proto = { path = "../quinn-proto" }
 rustls = { version = "0.16", features = ["dangerous_configuration"] }
 structopt = "0.3.0"
-tokio = { version = "0.2.2", features = ["rt-core"] }
+tokio = { version = "0.2.2", features = ["rt-core", "io-util"] }
 tracing = "0.1.10"
 tracing-subscriber = "0.1.5"
 webpki = "0.21"
