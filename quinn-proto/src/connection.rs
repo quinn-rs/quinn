@@ -2121,6 +2121,7 @@ where
         };
 
         for space_id in spaces {
+            let buf_start = buf.len();
             let mut ack_eliciting =
                 !self.space(space_id).pending.is_empty() || self.space(space_id).ping_pending;
             if space_id == SpaceId::Data {
@@ -2279,7 +2280,7 @@ where
                         acks,
                         time_sent: now,
                         size: if padded || ack_eliciting {
-                            buf.len() as u16
+                            (buf.len() - buf_start) as u16
                         } else {
                             0
                         },
