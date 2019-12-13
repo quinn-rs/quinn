@@ -185,7 +185,7 @@ fn client_stateless_reset() {
 }
 
 #[test]
-fn finish_stream() {
+fn finish_stream_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
