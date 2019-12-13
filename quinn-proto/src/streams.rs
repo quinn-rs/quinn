@@ -465,10 +465,15 @@ pub enum ReadError {
 /// notified, as we never discard resources for a stream that has it set.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum SendState {
+    /// Sending new data
     Ready,
+    /// Sending retransmits only
     DataSent,
+    /// Sent RESET
     ResetSent { stop_reason: Option<VarInt> },
+    /// All sent data acknowledged
     DataRecvd,
+    /// Reset acknowledged
     ResetRecvd { stop_reason: Option<VarInt> },
 }
 
