@@ -2532,7 +2532,7 @@ where
         }
 
         // DATAGRAM
-        while buf.len() + Datagram::SIZE_BOUND < max_size {
+        while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
             let datagram = match self.datagrams.outgoing.pop_front() {
                 Some(x) => x,
                 None => break,
