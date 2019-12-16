@@ -195,20 +195,14 @@ struct State {
     remote: SocketAddr,
     host: String,
     peer: Peer,
-    h3_client: quinn_h3::client::Client,
+    h3_client: Option<quinn_h3::client::Client>,
 }
 
 impl State {
     async fn run_hq(self) -> Result<InteropResult> {
-        let (core, key_update, rebind, retry, h3) = future::join5(
-            self.core(),
-            self.key_update(),
-            self.rebind(),
-            self.retry(),
-            self.h3(),
-        )
-        .await;
-        Ok(build_result(core, key_update, rebind, retry, h3))
+        let (core, key_update, rebind, retry) =
+            future::join4(self.core(), self.key_update(), self.rebind(), self.retry()).await;
+        Ok(build_result(core, key_update, rebind, retry, None))
     }
 
     async fn run_h3(self) -> Result<InteropResult> {
@@ -220,7 +214,7 @@ impl State {
             self.h3(),
         )
         .await;
-        Ok(build_result(core, key_update, rebind, retry, h3))
+        Ok(build_result(core, key_update, rebind, retry, Some(h3)))
     }
 
     fn try_new(peer: &Peer, keylog: bool) -> Result<Self> {
@@ -259,14 +253,20 @@ impl State {
         let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
         tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
-        let mut h3_client = quinn_h3::client::Builder::default();
-        h3_client.settings(Settings {
-            qpack_max_table_capacity: 0,
-            qpack_blocked_streams: 0,
-            ..Settings::default()
-        });
+        let h3_client = match peer.alpn {
+            Alpn::Hq => None,
+            _ => {
+                let mut h3_client = quinn_h3::client::Builder::default();
+                h3_client.settings(Settings {
+                    qpack_max_table_capacity: 0,
+                    qpack_blocked_streams: 0,
+                    ..Settings::default()
+                });
+                Some(h3_client.endpoint(endpoint.clone()))
+            }
+        };
         Ok(State {
-            h3_client: h3_client.endpoint(endpoint.clone()),
+            h3_client,
             host: host.into(),
             peer: peer.clone(),
             client_config,
@@ -323,7 +323,7 @@ impl State {
                 get(stream)
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
-                result.zero_rtt;
+                result.zero_rtt = true;
                 new_conn.connection
             }
             Err(conn) => {
@@ -390,8 +390,7 @@ impl State {
     async fn rebind(&self) -> Result<()> {
         let mut endpoint = quinn::Endpoint::builder();
         endpoint.default_client_config(self.client_config.clone());
-        let (endpoint_driver, endpoint, _) =
-            endpoint.bind(&"[::]:0".parse().unwrap())?;
+        let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
         tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
 
         let new_conn = endpoint
@@ -412,8 +411,13 @@ impl State {
     }
 
     async fn h3(&self) -> Result<()> {
-        let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
-        let (quic_driver, h3_driver, conn) = h3_client
+        if let Alpn::Hq = self.peer.alpn {
+            return Err(anyhow!("H3 not implemented on this peer"));
+        }
+        let (quic_driver, h3_driver, conn) = self
+            .h3_client
+            .as_ref()
+            .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
@@ -433,6 +437,8 @@ impl State {
 
         let (quic_driver, h3_driver, conn) = self
             .h3_client
+            .as_ref()
+            .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
@@ -461,6 +467,8 @@ impl State {
 
         let conn = match self
             .h3_client
+            .as_ref()
+            .unwrap()
             .connect_with(client_config, &self.remote, &self.host)?
             .into_0rtt()
         {
@@ -493,6 +501,8 @@ impl State {
     async fn key_update_h3(&self) -> Result<()> {
         let (quic_driver, h3_driver, conn) = self
             .h3_client
+            .as_ref()
+            .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
@@ -516,6 +526,8 @@ impl State {
 
         let (quic_driver, h3_driver, conn) = self
             .h3_client
+            .as_ref()
+            .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
@@ -602,7 +614,7 @@ fn build_result(
     key_update: Result<()>,
     rebind: Result<()>,
     retry: Result<()>,
-    h3: Result<()>,
+    h3: Option<Result<()>>,
 ) -> InteropResult {
     let mut result = core.unwrap_or_else(|e| {
         error!("core functionality failed: {}", e);
@@ -621,8 +633,9 @@ fn build_result(
         Err(e) => error!("retry failed: {}", e),
     }
     match h3 {
-        Ok(_) => result.h3 = true,
-        Err(e) => error!("retry failed: {}", e),
+        Some(Ok(_)) => result.h3 = true,
+        Some(Err(e)) => error!("retry failed: {}", e),
+        None => (),
     }
     result
 }
