@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use futures::{io::AsyncRead, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
@@ -359,7 +359,7 @@ impl ConnectionInner {
                         (cur.position() as usize, max_received_ref + 1)
                     };
 
-                    buffer.split_to(pos);
+                    buffer.advance(pos);
                     buffer.reserve(RECV_ENCODER_INITIAL_CAPACITY);
 
                     let blocked = self.blocked_streams.split_off(&max_received_ref);
@@ -396,7 +396,7 @@ impl ConnectionInner {
                         self.inner.on_recv_decoder(&mut cur)?;
                         cur.position() as usize
                     };
-                    buffer.split_to(pos);
+                    buffer.advance(pos);
                     buffer.reserve(RECV_DECODER_INITIAL_CAPACITY);
                 }
             }
