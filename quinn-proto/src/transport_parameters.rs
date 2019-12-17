@@ -1,3 +1,11 @@
+//! QUIC connection transport parameters
+//!
+//! The `TransportParameters` type is used to represent the transport parameters
+//! negotiated by peers while establishing a QUIC connection. This process
+//! happens as part of the establishment of the TLS session. As such, the types
+//! contained in this modules should generally only be referred to by custom
+//! implementations of the `crypto::Session` trait.
+
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
 use bytes::{buf::ext::BufExt as _, Buf, BufMut};
@@ -13,43 +21,61 @@ use crate::{
 // Apply a given macro to a list of all the transport parameters having integer types, along with
 // their codes and default values. Using this helps us avoid error-prone duplication of the
 // contained information across decoding, encoding, and the `Default` impl. Whenever we want to do
-// something with transport parameters, we'll handle the bulk of cases by writing a macro that takes
-// a list of arguments in this form, then passing it to this macro.
+// something with transport parameters, we'll handle the bulk of cases by writing a macro that
+// takes a list of arguments in this form, then passing it to this macro.
 macro_rules! apply_params {
     ($macro:ident) => {
         $macro! {
-            // name (id) = default,
+            // #[doc] name (id) = default,
+            /// Milliseconds, disabled if zero
             idle_timeout(0x0001) = 0,
+            /// Limits the size of packets that the endpoint is willing to receive
             max_packet_size(0x0003) = 65527,
 
+            /// Initial value for the maximum amount of data that can be sent on the connection
             initial_max_data(0x0004) = 0,
+            /// Initial flow control limit for locally-initiated bidirectional streams
             initial_max_stream_data_bidi_local(0x0005) = 0,
+            /// Initial flow control limit for peer-initiated bidirectional streams
             initial_max_stream_data_bidi_remote(0x0006) = 0,
+            /// Initial flow control limit for unidirectional streams
             initial_max_stream_data_uni(0x0007) = 0,
 
+            /// Initial maximum number of bidirectional streams the peer may initiate
             initial_max_streams_bidi(0x0008) = 0,
+            /// Initial maximum number of unidirectional streams the peer may initiate
             initial_max_streams_uni(0x0009) = 0,
 
+            /// Exponent used to decode the ACK Delay field in the ACK frame
             ack_delay_exponent(0x000a) = 3,
+            /// Maximum amount of time in milliseconds by which the endpoint will delay sending
+            /// acknowledgments
             max_ack_delay(0x000b) = 25,
+            /// Maximum number of connection IDs from the peer that an endpoint is willing to store
             active_connection_id_limit(0x000e) = 0,
         }
     };
 }
 
 macro_rules! make_struct {
-    {$($name:ident ($code:expr) = $default:expr,)*} => {
+    {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
+        /// Transport parameters used to negotiate connection-level preferences between peers
         #[derive(Debug, Copy, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
-            $(pub $name : u64,)*
+            $($(#[$doc])* pub(crate) $name : u64,)*
 
-            pub disable_active_migration: bool,
-            pub max_datagram_frame_size: Option<VarInt>,
+            /// Does the endpoint support active connection migration
+            pub(crate) disable_active_migration: bool,
+            /// Maximum size for datagram frames
+            pub(crate) max_datagram_frame_size: Option<VarInt>,
 
             // Server-only
-            pub original_connection_id: Option<ConnectionId>,
-            pub stateless_reset_token: Option<ResetToken>,
-            pub preferred_address: Option<PreferredAddress>,
+            /// The DCID from the first Initial packet; must be included if sent in a Retry packet
+            pub(crate) original_connection_id: Option<ConnectionId>,
+            /// Token used by the client to verify a stateless reset from the server
+            pub(crate) stateless_reset_token: Option<ResetToken>,
+            /// The server's preferred address for communication after handshake completion
+            pub(crate) preferred_address: Option<PreferredAddress>,
         }
 
         impl Default for TransportParameters {
@@ -73,7 +99,7 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self
+    pub(crate) fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self
     where
         S: crypto::Session,
     {
@@ -97,7 +123,7 @@ impl TransportParameters {
 
     /// Check that these parameters are legal when resuming from
     /// certain cached parameters
-    pub fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
+    pub(crate) fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
         if cached.initial_max_data < self.initial_max_data
             || cached.initial_max_stream_data_bidi_local < self.initial_max_stream_data_bidi_local
             || cached.initial_max_stream_data_bidi_remote < self.initial_max_stream_data_bidi_remote
@@ -114,8 +140,11 @@ impl TransportParameters {
     }
 }
 
+/// A server's preferred address
+///
+/// This is communicated as a transport parameter during TLS session establishment.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct PreferredAddress {
+pub(crate) struct PreferredAddress {
     address_v4: Option<SocketAddrV4>,
     address_v6: Option<SocketAddrV6>,
     connection_id: ConnectionId,
@@ -176,10 +205,13 @@ impl PreferredAddress {
     }
 }
 
+/// Errors encountered while decoding `TransportParameters`
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum Error {
+    /// Parameters that are semantically invalid
     #[error(display = "parameter had illegal value")]
     IllegalValue,
+    /// Catch-all error for problems while decoding transport parameters
     #[error(display = "parameters were malformed")]
     Malformed,
 }
@@ -200,11 +232,12 @@ impl From<UnexpectedEnd> for Error {
 }
 
 impl TransportParameters {
+    /// Encode `TransportParameters` into buffer
     pub fn write<W: BufMut>(&self, w: &mut W) {
         let mut buf = Vec::new();
 
         macro_rules! write_params {
-            {$($name:ident ($code:expr) = $default:expr,)*} => {
+            {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
                 $(
                     if self.$name != $default {
                         buf.write::<u16>($code);
@@ -253,6 +286,7 @@ impl TransportParameters {
         w.put_slice(&buf);
     }
 
+    /// Decode `TransportParameters` from buffer
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
         // Initialize to protocol-specified defaults
         let mut params = TransportParameters::default();
@@ -264,7 +298,7 @@ impl TransportParameters {
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {
-            {$($name:ident ($code:expr) = $default:expr,)*} => {{
+            {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {{
                 struct ParamState {
                     $($name: bool,)*
                 }
@@ -325,7 +359,7 @@ impl TransportParameters {
                 }
                 _ => {
                     macro_rules! parse {
-                        {$($name:ident ($code:expr) = $default:expr,)*} => {
+                        {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
                             match id {
                                 $($code => {
                                     params.$name = r.get_var()?;
