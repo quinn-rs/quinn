@@ -28,7 +28,7 @@ mod range_set;
 mod spaces;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
-mod transport_parameters;
+pub mod transport_parameters;
 mod varint;
 
 pub use varint::{VarInt, VarIntBoundsExceeded};
