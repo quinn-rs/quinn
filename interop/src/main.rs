@@ -18,10 +18,10 @@ struct Opt {
     host: Option<String>,
     #[structopt(short, long)]
     name: Option<String>,
-    #[structopt(default_value = "4433")]
-    port: u16,
-    #[structopt(default_value = "4434")]
-    retry_port: u16,
+    #[structopt(long)]
+    port: Option<u16>,
+    #[structopt(long)]
+    retry_port: Option<u16>,
     #[structopt(long)]
     h3: bool,
     #[structopt(long)]
@@ -142,8 +142,8 @@ async fn main() {
         vec![Peer {
             name: host.clone(),
             host,
-            port: opt.port,
-            retry_port: opt.retry_port,
+            port: opt.port.unwrap_or(4433),
+            retry_port: opt.retry_port.unwrap_or(4434),
             alpn: match (opt.h3, opt.hq) {
                 (false, true) => Alpn::Hq,
                 (true, false) => Alpn::H3,
@@ -152,11 +152,26 @@ async fn main() {
         }]
     } else if opt.name.is_some() {
         let name = opt.name.as_ref().unwrap();
-        PEERS[..]
+        let mut peers: Vec<Peer> = PEERS[..]
             .iter()
             .filter(|p| &p.name == name)
             .cloned()
-            .collect()
+            .collect();
+
+        peers.iter_mut().for_each(|mut x| {
+            match (opt.h3, opt.hq) {
+                (false, true) => x.alpn = Alpn::Hq,
+                (true, false) => x.alpn = Alpn::H3,
+                _ => (),
+            }
+            if let Some(port) = opt.port {
+                x.port = port;
+            }
+            if let Some(retry_port) = opt.retry_port {
+                x.retry_port = retry_port;
+            }
+        });
+        peers
     } else {
         Vec::from(&PEERS[..])
     };
