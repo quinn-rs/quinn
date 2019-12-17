@@ -143,7 +143,7 @@ impl crypto::Keys for Crypto {
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce).unwrap();
         key.open_in_place(nonce, header, payload.as_mut())
             .map_err(|_| ())?;
-        payload.split_off(payload_len - cipher.tag_len());
+        payload.truncate(payload_len - cipher.tag_len());
         Ok(())
     }
 
