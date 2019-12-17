@@ -178,8 +178,6 @@ impl PreferredAddress {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum Error {
-    #[error(display = "version negotiation was tampered with")]
-    VersionNegotiation,
     #[error(display = "parameter had illegal value")]
     IllegalValue,
     #[error(display = "parameters were malformed")]
@@ -189,7 +187,6 @@ pub enum Error {
 impl From<Error> for TransportError {
     fn from(e: Error) -> Self {
         match e {
-            Error::VersionNegotiation => TransportError::VERSION_NEGOTIATION_ERROR(""),
             Error::IllegalValue => TransportError::TRANSPORT_PARAMETER_ERROR("illegal value"),
             Error::Malformed => TransportError::TRANSPORT_PARAMETER_ERROR("malformed"),
         }
