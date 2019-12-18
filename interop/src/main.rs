@@ -95,6 +95,15 @@ impl Peer {
         self.alpn = Alpn::Hq;
         self
     }
+
+    fn uri(&self, path: &str) -> http::Uri {
+        http::Uri::builder()
+            .scheme("https")
+            .authority(self.host.as_str())
+            .path_and_query(path)
+            .build()
+            .expect("invalid uri")
+    }
 }
 
 lazy_static! {
@@ -442,7 +451,7 @@ impl State {
         tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
 
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("h3 request failed: {}", e))?;
         conn.close();
@@ -466,7 +475,7 @@ impl State {
             }
         });
         result.handshake = true;
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("simple request failed: {}", e))?;
         result.stream_data = true;
@@ -492,7 +501,7 @@ impl State {
             Ok((quic_driver, driver, conn, _)) => {
                 tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
                 tokio::spawn(driver.unwrap_or_else(|_| ()));
-                h3_get(&conn)
+                h3_get(&conn, &self.peer.uri("/"))
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
                 result.zero_rtt = true;
@@ -526,11 +535,11 @@ impl State {
         tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
         tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         // Make sure some traffic has gone both ways before the key update
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("request failed before key update: {}", e))?;
         conn.force_key_update();
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("request failed after key update: {}", e))?;
         conn.close();
@@ -550,7 +559,7 @@ impl State {
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
         tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
         tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
         conn.close();
@@ -571,7 +580,7 @@ impl State {
         tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
         endpoint.rebind(socket)?;
-        h3_get(&conn)
+        h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
         conn.close();
@@ -657,15 +666,8 @@ fn build_result(
     result
 }
 
-async fn h3_get(conn: &quinn_h3::client::Connection) -> Result<()> {
-    let (response, _) = conn
-        .send_request(
-            http::Request::builder()
-                .method(http::Method::GET)
-                .uri("/")
-                .body(())?,
-        )
-        .await?;
+async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<()> {
+    let (response, _) = conn.send_request(http::Request::get(uri).body(())?).await?;
 
     let (_, mut recv_body) = response.await?;
 
