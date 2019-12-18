@@ -275,7 +275,7 @@ impl Pseudo {
 
         Self {
             method: Some(method),
-            scheme,
+            scheme: scheme.or(Some(Scheme::HTTPS)),
             authority,
             path: Some(path),
             status: None,
