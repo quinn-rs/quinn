@@ -72,7 +72,10 @@ impl HttpFrame {
             Type::H2_PRIORITY | Type::H2_PING | Type::H2_WINDOW_UPDATE | Type::H2_CONTINUATION => {
                 Err(Error::UnsupportedFrame)
             }
-            t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => Ok(HttpFrame::Reserved),
+            t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => {
+                buf.advance(len as usize);
+                Ok(HttpFrame::Reserved)
+            },
             _ => Err(Error::UnsupportedFrame),
         }
     }
