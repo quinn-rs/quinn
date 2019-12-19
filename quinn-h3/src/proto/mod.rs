@@ -3,12 +3,13 @@ use quinn_proto::{
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     VarInt,
 };
+use std::fmt;
 
 pub mod connection;
 pub mod frame;
 pub mod headers;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StreamType(pub u64);
 
 macro_rules! stream_types {
@@ -40,6 +41,17 @@ impl StreamType {
         let mut buf = BytesMut::with_capacity(var_int.size());
         self.encode(&mut buf);
         buf.freeze()
+    }
+}
+
+impl fmt::Display for StreamType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            &StreamType::CONTROL => write!(f, "Control"),
+            &StreamType::ENCODER => write!(f, "Encoder"),
+            &StreamType::DECODER => write!(f, "Decoder"),
+            x => write!(f, "StreamType({})", x.0),
+        }
     }
 }
 

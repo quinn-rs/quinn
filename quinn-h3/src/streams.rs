@@ -14,6 +14,7 @@ use futures::{
 };
 use quinn::{OpenUni, RecvStream, SendStream};
 use quinn_proto::VarInt;
+use tracing::trace;
 
 use crate::{
     frame::{FrameDecoder, FrameStream},
@@ -130,6 +131,7 @@ impl Future for SendUni {
     type Output = Result<(), Error>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let is_empty = self.data.is_empty();
+        let ty = self.ty.clone();
         loop {
             match self.state {
                 SendUniState::Opening(ref mut o) => {
@@ -137,6 +139,7 @@ impl Future for SendUni {
                         return Poll::Ready(Ok(()));
                     }
                     let send = ready!(Pin::new(o).poll(cx))?;
+                    trace!("opening {} stream", ty);
                     self.state = SendUniState::Sending(send, self.ty.encoded());
                 }
                 SendUniState::Idle(_) => match self.data.pop_front() {
@@ -149,6 +152,7 @@ impl Future for SendUni {
                 SendUniState::Sending(ref mut send, ref mut data) => {
                     let wrote = ready!(Pin::new(send).poll_write(cx, data))?;
                     data.advance(wrote);
+                    trace!("sent {} bytes on {} stream", wrote, ty);
                     if data.is_empty() {
                         self.state = match mem::replace(&mut self.state, SendUniState::Transitive) {
                             SendUniState::Sending(s, _) => match self.data.pop_front() {
