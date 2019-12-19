@@ -294,7 +294,10 @@ impl Future for RecvResponse {
                     )))
                 }
                 RecvResponseState::Receiving(ref mut recv) => {
-                    match ready!(Pin::new(recv).poll_next(cx)) {
+                    let frame = ready!(Pin::new(recv).poll_next(cx));
+
+                    trace!("client got {:?}", frame);
+                    match frame {
                         None => return Poll::Ready(Err(Error::peer("received an empty response"))),
                         Some(Err(e)) => return Poll::Ready(Err(e.into())),
                         Some(Ok(f)) => match f {
