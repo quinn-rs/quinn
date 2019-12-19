@@ -28,6 +28,8 @@ struct Opt {
     h3: bool,
     #[structopt(long)]
     hq: bool,
+    #[structopt(long)]
+    seq: bool,
     /// Enable key logging
     #[structopt(long = "keylog")]
     keylog: bool,
@@ -57,6 +59,7 @@ struct Peer {
     port: u16,
     retry_port: u16,
     alpn: Alpn,
+    sequential: bool,
 }
 
 impl Peer {
@@ -68,6 +71,7 @@ impl Peer {
             port: 4433,
             retry_port: 4434,
             alpn: Alpn::HqH3,
+            sequential: false,
         }
     }
 
@@ -155,6 +159,7 @@ async fn main() {
             host,
             port: opt.port.unwrap_or(4433),
             retry_port: opt.retry_port.unwrap_or(4434),
+            sequential: opt.seq,
             alpn: match (opt.h3, opt.hq) {
                 (false, true) => Alpn::Hq,
                 (true, false) => Alpn::H3,
@@ -181,6 +186,7 @@ async fn main() {
             if let Some(retry_port) = opt.retry_port {
                 x.retry_port = retry_port;
             }
+            x.sequential = opt.seq;
         });
         peers
     } else {
@@ -226,21 +232,41 @@ struct State {
 
 impl State {
     async fn run_hq(self) -> Result<InteropResult> {
-        let (core, key_update, rebind, retry) =
-            future::join4(self.core(), self.key_update(), self.rebind(), self.retry()).await;
-        Ok(build_result(core, key_update, rebind, retry, None))
+        if self.peer.sequential {
+            Ok(build_result(
+                self.core().await,
+                self.key_update().await,
+                self.rebind().await,
+                self.retry().await,
+                None,
+            ))
+        } else {
+            let (core, key_update, rebind, retry) =
+                future::join4(self.core(), self.key_update(), self.rebind(), self.retry()).await;
+            Ok(build_result(core, key_update, rebind, retry, None))
+        }
     }
 
     async fn run_h3(self) -> Result<InteropResult> {
-        let (core, key_update, rebind, retry, h3) = future::join5(
-            self.core_h3(),
-            self.key_update_h3(),
-            self.rebind_h3(),
-            self.retry_h3(),
-            self.h3(),
-        )
-        .await;
-        Ok(build_result(core, key_update, rebind, retry, Some(h3)))
+        if self.peer.sequential {
+            Ok(build_result(
+                self.core_h3().await,
+                self.key_update_h3().await,
+                self.rebind_h3().await,
+                self.retry_h3().await,
+                Some(self.h3().await),
+            ))
+        } else {
+            let (core, key_update, rebind, retry, h3) = future::join5(
+                self.core_h3(),
+                self.key_update_h3(),
+                self.rebind_h3(),
+                self.retry_h3(),
+                self.h3(),
+            )
+            .await;
+            Ok(build_result(core, key_update, rebind, retry, Some(h3)))
+        }
     }
 
     fn try_new(peer: &Peer, keylog: bool) -> Result<Self> {
