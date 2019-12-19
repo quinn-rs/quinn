@@ -246,27 +246,27 @@ impl IntoPayload for HeadersFrame {
 
 #[derive(Debug, PartialEq)]
 pub struct PushPromiseFrame {
-    push_id: u64,
+    id: u64,
     encoded: Bytes,
 }
 
 impl FrameHeader for PushPromiseFrame {
     const TYPE: Type = Type::PUSH_PROMISE;
     fn len(&self) -> usize {
-        VarInt::from_u64(self.push_id).unwrap().size() + self.encoded.as_ref().len()
+        VarInt::from_u64(self.id).unwrap().size() + self.encoded.as_ref().len()
     }
 }
 
 impl PushPromiseFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(PushPromiseFrame {
-            push_id: buf.get_var()?,
+            id: buf.get_var()?,
             encoded: buf.to_bytes(),
         })
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
-        buf.write_var(self.push_id);
+        buf.write_var(self.id);
         buf.put(self.encoded.clone());
     }
 }
@@ -533,7 +533,7 @@ mod tests {
         );
         codec_frame_check(
             HttpFrame::PushPromise(PushPromiseFrame {
-                push_id: 134,
+                id: 134,
                 encoded: Bytes::from("TODO QPACK"),
             }),
             &[5, 12, 64, 134, 84, 79, 68, 79, 32, 81, 80, 65, 67, 75],
