@@ -1,9 +1,12 @@
+use std::fmt;
+
 use bytes::{buf::ext::BufExt as _, Buf, BufMut, Bytes};
 use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
     VarInt,
 };
 use std::collections::HashSet;
+use tracing::trace;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -56,7 +59,7 @@ impl HttpFrame {
         }
 
         let mut payload = buf.take(len as usize);
-        match ty {
+        let frame = match ty {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
                 payload: payload.to_bytes(),
             })),
@@ -75,12 +78,36 @@ impl HttpFrame {
             t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => {
                 buf.advance(len as usize);
                 Ok(HttpFrame::Reserved)
-            },
+            }
             _ => Err(Error::UnsupportedFrame),
+        };
+        if let Ok(frame) = &frame {
+            trace!(
+                "got frame {}, len: {}, remaining: {}",
+                frame,
+                len,
+                buf.remaining()
+            );
         }
+        frame
     }
 }
 
+impl fmt::Display for HttpFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HttpFrame::Data(frame) => write!(f, "Data({} bytes)", frame.len()),
+            HttpFrame::Headers(frame) => write!(f, "Headers({} entries)", frame.len()),
+            HttpFrame::Settings(_) => write!(f, "Settings"),
+            HttpFrame::CancelPush(id) => write!(f, "CancelPush({})", id),
+            HttpFrame::PushPromise(frame) => write!(f, "PushPromise({})", frame.id),
+            HttpFrame::Goaway(id) => write!(f, "GoAway({})", id),
+            HttpFrame::MaxPushId(id) => write!(f, "MaxPushId({})", id),
+            HttpFrame::DuplicatePush(id) => write!(f, "DuplicatePush({})", id),
+            HttpFrame::Reserved => write!(f, "Reserved"),
+        }
+    }
+}
 macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
         impl Type {
