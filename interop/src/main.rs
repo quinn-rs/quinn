@@ -115,7 +115,7 @@ lazy_static! {
         Peer::new("quant.eggert.org").name("quant").hq(),
         Peer::new("nghttp2.org").name("nghttp2").h3(),
         Peer::new("fb.mvfst.net").name("mvfst").h3(),
-        Peer::new("test.privateoctopus.com").name("picoquic"),
+        Peer::new("test.privateoctopus.com").name("picoquic").h3(),
         Peer::new("quic.westus.cloudapp.azure.com")
             .name("msquic")
             .h3()
