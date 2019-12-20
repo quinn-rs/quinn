@@ -145,7 +145,17 @@ impl Connection {
             .set_max_blocked(settings.qpack_blocked_streams as usize)?;
         self.encoder_table
             .set_max_size(settings.qpack_max_table_capacity as usize)?;
+
+        if settings.qpack_max_table_capacity > 0 {
+            qpack::set_dynamic_table_size(
+                &mut self.encoder_table,
+                &mut self.pending_streams[PendingStreamType::Encoder as usize],
+                settings.qpack_max_table_capacity as usize,
+            )?;
+        };
+
         self.remote_settings = Some(settings);
+
         Ok(())
     }
 
