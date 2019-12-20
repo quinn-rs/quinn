@@ -151,6 +151,7 @@ impl Future for ZeroRttAccepted {
 ///
 /// You can also explicitly invoke `Connection::close` at any time.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct NewConnection {
     /// The future responsible for handling I/O on the connection
     pub driver: ConnectionDriver,
@@ -166,8 +167,6 @@ pub struct NewConnection {
     pub bi_streams: IncomingBiStreams,
     /// Unordered, unreliable datagrams sent by the peer
     pub datagrams: Datagrams,
-    /// Leave room for future extensions
-    _non_exhaustive: (),
 }
 
 impl NewConnection {
@@ -178,7 +177,6 @@ impl NewConnection {
             uni_streams: IncomingUniStreams(conn.clone()),
             bi_streams: IncomingBiStreams(conn.clone()),
             datagrams: Datagrams(conn),
-            _non_exhaustive: (),
         }
     }
 }
