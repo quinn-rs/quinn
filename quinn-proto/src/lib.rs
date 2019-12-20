@@ -14,6 +14,9 @@
 
 #![warn(missing_docs)]
 #![cfg_attr(test, allow(dead_code))]
+// Fixes welcome:
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::too_many_arguments)]
 
 use std::{fmt, net::SocketAddr, ops, time::Duration};
 

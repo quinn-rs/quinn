@@ -1,3 +1,4 @@
+#![allow(clippy::ptr_arg)] // bitlab doesn't handle `&[u8]` for some reason
 use bitlab::*;
 
 use super::BitWindow;
@@ -22,27 +23,30 @@ struct HuffmanDecoder {
 
 impl HuffmanDecoder {
     fn check_eof(&self, bit_pos: &mut BitWindow, input: &Vec<u8>) -> Result<Option<u32>, Error> {
-        // Position is out-of-range
-        if (bit_pos.byte + 1) as usize > input.len() {
-            return Ok(None);
-        }
-        // Position is on the last byte
-        else if (bit_pos.byte + 1) as usize == input.len() {
-            let side = bit_pos.opposite_bit_window();
-
-            let rest = match input.get_u8(side.byte, side.bit, side.count) {
-                Ok(x) => x,
-                Err(_) => {
-                    return Err(Error::MissingBits(side.clone()));
-                }
-            };
-
-            let eof_filler = ((2u16 << (side.count - 1)) - 1) as u8;
-            if rest & eof_filler == eof_filler {
+        use std::cmp::Ordering;
+        match ((bit_pos.byte + 1) as usize).cmp(&input.len()) {
+            // Position is out-of-range
+            Ordering::Greater => {
                 return Ok(None);
             }
-        }
+            // Position is on the last byte
+            Ordering::Equal => {
+                let side = bit_pos.opposite_bit_window();
 
+                let rest = match input.get_u8(side.byte, side.bit, side.count) {
+                    Ok(x) => x,
+                    Err(_) => {
+                        return Err(Error::MissingBits(side));
+                    }
+                };
+
+                let eof_filler = ((2u16 << (side.count - 1)) - 1) as u8;
+                if rest & eof_filler == eof_filler {
+                    return Ok(None);
+                }
+            }
+            Ordering::Less => {}
+        }
         Err(Error::MissingBits(bit_pos.clone()))
     }
 

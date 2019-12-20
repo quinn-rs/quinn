@@ -1,14 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     future::Future,
-    io::{self, Cursor},
-    mem,
+    io, mem,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
 };
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use futures::{io::AsyncRead, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
@@ -145,9 +144,9 @@ impl ConnectionInner {
                     DecodeResult::MissingRefs(required_ref) => {
                         self.blocked_streams
                             .entry(*required_ref)
-                            .or_insert(HashMap::new())
+                            .or_insert_with(HashMap::new)
                             .entry(stream_id)
-                            .or_insert(cx.waker().clone());
+                            .or_insert_with(|| cx.waker().clone());
                     }
                 };
                 r
@@ -368,15 +367,15 @@ impl ConnectionInner {
                 }
                 Poll::Ready(n) => {
                     buffer.extend_from_slice(&read_buf[..n]);
-                    let (pos, max_received_ref) = {
-                        let mut cur = Cursor::new(&mut buffer);
-                        let max_received_ref = self.inner.on_recv_encoder(&mut cur)?;
-                        (cur.position() as usize, max_received_ref + 1)
-                    };
-
-                    buffer.split_to(pos);
+                    let start = buffer.remaining();
+                    let max_received_ref = self.inner.on_recv_encoder(&mut buffer)? + 1;
+                    let end = buffer.remaining();
                     buffer.reserve(RECV_ENCODER_INITIAL_CAPACITY);
-                    trace!("decoded {} bytes, buf capacity: {}", pos, buffer.capacity());
+                    trace!(
+                        "decoded {} bytes, buf capacity: {}",
+                        start - end,
+                        buffer.capacity()
+                    );
 
                     let blocked = self.blocked_streams.split_off(&max_received_ref);
                     let unblocked = mem::replace(&mut self.blocked_streams, blocked);
@@ -410,14 +409,15 @@ impl ConnectionInner {
                 }
                 Poll::Ready(n) => {
                     buffer.extend_from_slice(&read_buf[..n]);
-                    let pos = {
-                        let mut cur = Cursor::new(&mut buffer);
-                        self.inner.on_recv_decoder(&mut cur)?;
-                        cur.position() as usize
-                    };
-                    buffer.split_to(pos);
+                    let start = buffer.remaining();
+                    self.inner.on_recv_decoder(&mut buffer)?;
+                    let end = buffer.remaining();
                     buffer.reserve(RECV_DECODER_INITIAL_CAPACITY);
-                    trace!("decoded {} bytes, buf capacity: {}", pos, buffer.capacity());
+                    trace!(
+                        "decoded {} bytes, buf capacity: {}",
+                        start - end,
+                        buffer.capacity()
+                    );
                 }
             }
         }

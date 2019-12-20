@@ -1,5 +1,6 @@
 use std::{
     cmp,
+    cmp::Ordering,
     collections::{
         btree_map, BTreeMap,
         Bound::{Excluded, Included},
@@ -22,21 +23,25 @@ impl RangeSet {
 
     pub fn insert_one(&mut self, x: u64) -> bool {
         if let Some((start, end)) = self.pred(x) {
-            if end > x {
+            match end.cmp(&x) {
                 // Wholly contained
-                return false;
-            } else if end == x {
-                // Extend existing
-                self.0.remove(&start);
-                let mut new_end = x + 1;
-                if let Some((next_start, next_end)) = self.succ(x) {
-                    if next_start == new_end {
-                        self.0.remove(&next_start);
-                        new_end = next_end;
-                    }
+                Ordering::Greater => {
+                    return false;
                 }
-                self.0.insert(start, new_end);
-                return true;
+                Ordering::Equal => {
+                    // Extend existing
+                    self.0.remove(&start);
+                    let mut new_end = x + 1;
+                    if let Some((next_start, next_end)) = self.succ(x) {
+                        if next_start == new_end {
+                            self.0.remove(&next_start);
+                            new_end = next_end;
+                        }
+                    }
+                    self.0.insert(start, new_end);
+                    return true;
+                }
+                _ => {}
             }
         }
         let mut new_end = x + 1;

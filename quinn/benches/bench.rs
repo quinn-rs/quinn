@@ -4,7 +4,6 @@ use std::{
     thread,
 };
 
-use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
 use tokio::{
@@ -133,7 +132,7 @@ impl Context {
                         while let Some(_) = stream.read_unordered().await.unwrap() {}
                     }
                 }
-                    .instrument(error_span!("server")),
+                .instrument(error_span!("server")),
             );
             runtime.block_on(handle).unwrap();
         });

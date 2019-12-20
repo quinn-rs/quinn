@@ -210,14 +210,9 @@ impl Connecting {
                     bi_streams,
                     ..
                 } = new_conn;
-                let conn_ref = ConnectionRef::new(
-                    connection,
-                    Side::Client,
-                    uni_streams,
-                    bi_streams,
-                    settings.clone(),
-                )
-                .expect("error in h3 settings"); // FIXME return an error type
+                let conn_ref =
+                    ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings)
+                        .expect("error in h3 settings"); // FIXME return an error type
                 Ok((
                     driver,
                     ConnectionDriver(conn_ref.clone()),

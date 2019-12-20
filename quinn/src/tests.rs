@@ -165,7 +165,7 @@ fn local_addr() {
 fn read_after_close() {
     let _guard = subscribe();
     let mut runtime = rt_basic();
-    let (driver, endpoint, mut incoming) = runtime.enter(|| endpoint());
+    let (driver, endpoint, mut incoming) = runtime.enter(endpoint);
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(async move {
@@ -228,7 +228,7 @@ fn endpoint() -> (EndpointDriver, Endpoint, Incoming) {
 fn zero_rtt() {
     let _guard = subscribe();
     let mut runtime = rt_basic();
-    let (driver, endpoint, incoming) = runtime.enter(|| endpoint());
+    let (driver, endpoint, incoming) = runtime.enter(endpoint);
 
     runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";

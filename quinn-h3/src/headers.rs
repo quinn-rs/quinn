@@ -43,7 +43,7 @@ impl Future for DecodeHeaders {
                 match result {
                     Ok(DecodeResult::MissingRefs(_)) => Poll::Pending,
                     Ok(DecodeResult::Decoded(decoded, _)) => Poll::Ready(Ok(decoded)),
-                    Err(e) => Poll::Ready(Err(e.into())),
+                    Err(e) => Poll::Ready(Err(e)),
                 }
             }
         }

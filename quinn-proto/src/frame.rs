@@ -1,7 +1,4 @@
-use std::{
-    fmt, io, mem,
-    ops::{Range, RangeInclusive},
-};
+use std::{fmt, io, mem, ops::RangeInclusive};
 
 use bytes::{Buf, BufMut, Bytes};
 
@@ -326,7 +323,7 @@ pub struct Ack {
 }
 
 impl<'a> IntoIterator for &'a Ack {
-    type Item = Range<u64>;
+    type Item = RangeInclusive<u64>;
     type IntoIter = AckIter<'a>;
 
     fn into_iter(self) -> AckIter<'a> {
@@ -707,8 +704,8 @@ impl<'a> AckIter<'a> {
 }
 
 impl<'a> Iterator for AckIter<'a> {
-    type Item = Range<u64>;
-    fn next(&mut self) -> Option<Range<u64>> {
+    type Item = RangeInclusive<u64>;
+    fn next(&mut self) -> Option<RangeInclusive<u64>> {
         if !self.data.has_remaining() {
             return None;
         }
@@ -717,7 +714,7 @@ impl<'a> Iterator for AckIter<'a> {
         if let Ok(gap) = self.data.get_var() {
             self.largest -= block + gap + 2;
         }
-        Some(largest - block..largest + 1)
+        Some(largest - block..=largest)
     }
 }
 
