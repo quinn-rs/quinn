@@ -537,13 +537,18 @@ impl DynamicTable {
         for (reference, count) in refs {
             match self.track_map.as_mut().unwrap().entry(reference) {
                 BTEntry::Occupied(mut e) => {
-                    if *e.get() < count {
-                        return Err(Error::InvalidTrackingCount);
-                    } else if *e.get() == count {
-                        e.remove(); // TODO just pu 0 ?
-                    } else {
-                        let entry = e.get_mut();
-                        *entry -= count;
+                    use std::cmp::Ordering;
+                    match e.get().cmp(&count) {
+                        Ordering::Less => {
+                            return Err(Error::InvalidTrackingCount);
+                        }
+                        Ordering::Equal => {
+                            e.remove(); // TODO just pu 0 ?
+                        }
+                        _ => {
+                            let entry = e.get_mut();
+                            *entry -= count;
+                        }
                     }
                 }
                 BTEntry::Vacant(_) => return Err(Error::InvalidTrackingCount),

@@ -824,8 +824,8 @@ mod tests {
         check_pn(PacketNumber::U8(0x7f), &hex!("7f"));
         check_pn(PacketNumber::U16(0x80), &hex!("0080"));
         check_pn(PacketNumber::U16(0x3fff), &hex!("3fff"));
-        check_pn(PacketNumber::U32(0x00004000), &hex!("00004000"));
-        check_pn(PacketNumber::U32(0xffffffff), &hex!("ffffffff"));
+        check_pn(PacketNumber::U32(0x0000_4000), &hex!("0000 4000"));
+        check_pn(PacketNumber::U32(0xffff_ffff), &hex!("ffff ffff"));
     }
 
     #[test]

@@ -362,17 +362,17 @@ mod test {
         assert_eq!(dedup.window, 0b11110);
         assert!(!dedup.insert(7));
         assert_eq!(dedup.next, 8);
-        assert_eq!(dedup.window, 0b11110100);
+        assert_eq!(dedup.window, 0b1111_0100);
         assert!(dedup.insert(4));
         assert!(!dedup.insert(3));
         assert_eq!(dedup.next, 8);
-        assert_eq!(dedup.window, 0b11111100);
+        assert_eq!(dedup.window, 0b1111_1100);
         assert!(!dedup.insert(6));
         assert_eq!(dedup.next, 8);
-        assert_eq!(dedup.window, 0b11111101);
+        assert_eq!(dedup.window, 0b1111_1101);
         assert!(!dedup.insert(5));
         assert_eq!(dedup.next, 8);
-        assert_eq!(dedup.window, 0b11111111);
+        assert_eq!(dedup.window, 0b1111_1111);
     }
 
     #[test]

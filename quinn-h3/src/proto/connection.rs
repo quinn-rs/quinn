@@ -22,6 +22,7 @@ pub enum PendingStreamType {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum DecodeResult {
     Decoded(Header, bool),
     MissingRefs(usize),

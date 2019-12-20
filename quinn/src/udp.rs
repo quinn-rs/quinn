@@ -50,7 +50,7 @@ impl UdpSocket {
         &self,
         cx: &mut Context,
         buf: &mut [u8],
-    ) -> Poll<Result<(usize, SocketAddr, Option<EcnCodepoint>), io::Error>> {
+    ) -> Poll<io::Result<(usize, SocketAddr, Option<EcnCodepoint>)>> {
         ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
         match self.io.get_ref().recv_ext(buf) {
             Ok(n) => Poll::Ready(Ok(n)),

@@ -4,7 +4,6 @@ use std::{
     thread,
 };
 
-use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
 use tokio::{
