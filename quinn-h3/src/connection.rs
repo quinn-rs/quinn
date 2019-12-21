@@ -103,6 +103,7 @@ pub(crate) struct ConnectionInner {
 
 impl ConnectionInner {
     fn drive(&mut self, cx: &mut Context) -> Result<bool, DriverError> {
+        self.poll_recv_control(cx)?;
         self.poll_incoming_uni(cx)?;
         self.poll_send(cx)?;
         self.poll_recv_control(cx)?;
