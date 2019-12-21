@@ -170,7 +170,7 @@ impl AsyncRead for BodyReader {
                     if size > 0 {
                         Poll::Ready(Ok(size))
                     } else {
-                        Poll::Ready(Err(io::Error::new(ErrorKind::WouldBlock, "stream blocked")))
+                        Poll::Pending
                     }
                 }
                 Poll::Ready(Some(Err(e))) => {
