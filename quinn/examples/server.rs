@@ -185,8 +185,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         }
         Ok(())
     }
-        .instrument(span)
-        .await?;
+    .instrument(span)
+    .await?;
     Ok(())
 }
 
