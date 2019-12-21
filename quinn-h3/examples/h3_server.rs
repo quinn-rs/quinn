@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use futures::{AsyncReadExt, StreamExt};
 use http::{Response, StatusCode};
 use structopt::{self, StructOpt};
+use tracing::error;
 
 use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
@@ -62,12 +63,13 @@ async fn main() -> Result<()> {
         println!("server received connection");
         let connection = connecting
             .await
-            .map_err(|e| anyhow!("accept failed: {:?}", e))
-            .expect("server failed");
+            .map_err(|e| error!("accept failed: {:?}", e));
 
-        handle_connection(connection)
-            .await
-            .expect("handling connection failed")
+        if let Ok(connection) = connection {
+            let _ = handle_connection(connection)
+                .await
+                .map_err(|e| error!("handling connection failed: {:?}", e));
+        }
     }
 
     Ok(())
@@ -100,7 +102,7 @@ async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)
 }
 
 async fn handle_request(recv_request: RecvRequest) -> Result<()> {
-    let (request, mut recv_body, sender) = recv_request.await.expect("recv request failed");
+    let (request, mut recv_body, sender) = recv_request.await?;
     println!("received request: {:?}", request);
 
     let mut body = Vec::with_capacity(1024);
