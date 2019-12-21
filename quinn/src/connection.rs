@@ -199,6 +199,9 @@ impl Future for ConnectionDriver {
     type Output = Result<(), ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
+        if let Some(ref e) = conn.error {
+            return Poll::Ready(Err(e.clone()));
+        }
 
         let span = info_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
