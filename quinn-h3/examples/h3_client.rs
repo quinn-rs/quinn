@@ -3,9 +3,8 @@ use structopt::{self, StructOpt};
 
 use anyhow::{anyhow, Result};
 use futures::AsyncReadExt;
-use http::{method::Method, Request};
+use http::{Request, Uri};
 use tracing::{error, info};
-use url::Url;
 
 use quinn_h3::{
     self,
@@ -16,7 +15,7 @@ use quinn_h3::{
 #[structopt(name = "h3_client")]
 struct Opt {
     #[structopt(default_value = "http://localhost:4433/Cargo.toml")]
-    url: Url,
+    uri: Uri,
 
     /// Custom certificate authority to trust, in DER format
     #[structopt(parse(from_os_str), long = "ca")]
@@ -58,7 +57,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    match request(client, &options.url).await {
+    match request(client, &options.uri).await {
         Ok(_) => println!("client finished"),
         Err(e) => println!("client failed: {:?}", e),
     }
@@ -66,13 +65,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn request(client: Client, url: &Url) -> Result<()> {
-    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
+async fn request(client: Client, uri: &Uri) -> Result<()> {
+    let remote = (uri.host().unwrap(), uri.port_u16().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
     let (quic_driver, h3_driver, conn) = client
-        .connect(&remote, url.host_str().unwrap_or("localhost"))?
+        .connect(&remote, uri.host().unwrap_or("localhost"))?
         .await
         .map_err(|e| anyhow!("failed ot connect: {:?}", e))?;
 
@@ -88,9 +87,7 @@ async fn request(client: Client, url: &Url) -> Result<()> {
         }
     });
 
-    let request = Request::builder()
-        .method(Method::GET)
-        .uri(url.path())
+    let request = Request::get(uri)
         .header("client", "quinn-h3:0.0.1")
         .body(())
         .expect("failed to build request");
