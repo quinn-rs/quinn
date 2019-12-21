@@ -88,7 +88,7 @@ impl Future for Connecting {
         let connected = match self.0 {
             Some(ref mut driver) => {
                 let r = driver.poll_unpin(cx)?;
-                let driver = self.0.as_mut().unwrap().0.lock().unwrap(); // borrowck workaround
+                let driver = driver.0.lock().unwrap();
                 match r {
                     Poll::Ready(()) => {
                         return Poll::Ready(Err(driver.error.as_ref().unwrap().clone()));
