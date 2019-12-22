@@ -92,10 +92,10 @@ mod test {
 
     #[test]
     fn codec_5_bits() {
-        check_codec(5, 0b101, 10, &[0b10101010]);
-        check_codec(5, 0b101, 0, &[0b10100000]);
-        check_codec(5, 0b010, 1337, &[0b01011111, 154, 10]);
-        check_codec(5, 0b010, 31, &[0b01011111, 0]);
+        check_codec(5, 0b101, 10, &[0b1010_1010]);
+        check_codec(5, 0b101, 0, &[0b1010_0000]);
+        check_codec(5, 0b010, 1337, &[0b0101_1111, 154, 10]);
+        check_codec(5, 0b010, 31, &[0b0101_1111, 0]);
         check_codec(
             5,
             0b010,
@@ -106,8 +106,8 @@ mod test {
 
     #[test]
     fn codec_8_bits() {
-        check_codec(8, 0, 42, &[0b00101010]);
-        check_codec(8, 0, 424242, &[255, 179, 240, 25]);
+        check_codec(8, 0, 42, &[0b0010_1010]);
+        check_codec(8, 0, 424_242, &[255, 179, 240, 25]);
         check_codec(
             8,
             0,

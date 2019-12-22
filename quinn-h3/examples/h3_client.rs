@@ -70,7 +70,7 @@ async fn request(client: Client, url: &Url) -> Result<()> {
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
-        .ok_or(anyhow!("couldn't resolve to an address"))?;
+        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
     let (quic_driver, h3_driver, conn) = client
         .connect(&remote, url.host_str().unwrap_or("localhost"))?
         .await

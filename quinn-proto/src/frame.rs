@@ -813,6 +813,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[allow(clippy::range_plus_one)]
     fn ack_coding() {
         const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
         let mut ranges = RangeSet::new();
@@ -830,7 +831,7 @@ mod test {
         assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
-                let mut packets = ack.iter().flat_map(|x| x).collect::<Vec<_>>();
+                let mut packets = ack.iter().flatten().collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
                 assert_eq!(ack.ecn, Some(ECN));
