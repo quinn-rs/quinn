@@ -228,7 +228,7 @@ mod tests {
         buf.truncate(buf.len() - 1);
 
         let mut decoder = FrameDecoder::default();
-        assert_matches!(decoder.decode(&mut buf.into()), Ok(None));
+        assert_matches!(decoder.decode(&mut buf), Ok(None));
     }
 
     #[test]

@@ -62,7 +62,7 @@ fn run(options: Opt) -> Result<()> {
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
-        .ok_or(anyhow!("couldn't resolve to an address"))?;
+        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
@@ -102,7 +102,7 @@ fn run(options: Opt) -> Result<()> {
         .host
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
-        .ok_or(anyhow!("no hostname specified"))?;
+        .ok_or_else(|| anyhow!("no hostname specified"))?;
     let r: Result<()> = runtime.block_on(async {
         let new_conn = endpoint
             .connect(&remote, &host)?

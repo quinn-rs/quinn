@@ -363,7 +363,7 @@ fn zero_rtt_happypath() {
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!("resuming session");
-    let client_ch = pair.begin_connect(config.clone());
+    let client_ch = pair.begin_connect(config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
@@ -455,7 +455,7 @@ fn alpn_success() {
         .set_protocols(&["bar".into(), "quux".into(), "corge".into()]);
 
     // Establish normal connection
-    let client_conn = pair.begin_connect(client_config.clone());
+    let client_conn = pair.begin_connect(client_config);
     pair.drive();
     let server_conn = pair.server.assert_accept();
     assert_matches!(
@@ -757,7 +757,7 @@ fn server_hs_retransmit() {
     let mut pair = Pair::default();
     let client_ch = pair.begin_connect(client_config());
     pair.step();
-    assert!(pair.client.inbound.len() > 0); // Initial + Handshakes
+    assert!(!pair.client.inbound.is_empty()); // Initial + Handshakes
     pair.client.inbound.clear();
     pair.drive();
     assert_matches!(

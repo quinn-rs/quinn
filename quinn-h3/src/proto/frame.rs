@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn buffer_too_short() {
-        let mut buf = Cursor::new(&[04, 0x4, 0, 255, 128]);
+        let mut buf = Cursor::new(&[4, 4, 0, 255, 128]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::Incomplete(6)));
     }

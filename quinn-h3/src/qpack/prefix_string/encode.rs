@@ -394,6 +394,7 @@ mod tests {
      * Appendix B.  Huffman Code
      */
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_encode_single_value() {
         encoding![
              48 => (0b0000_0000 << 3) | /* padding */ 0b0000_0111; // '0'
@@ -1727,7 +1728,7 @@ mod tests {
                 // end filler
                 + 0b0011_1111,
         ];
-        let values: Vec<u8> = (0..=255).into_iter().collect();
+        let values: Vec<u8> = (0..=255).collect();
         let res = values.hpack_encode();
         assert_eq!(res, Ok(bytes));
     }

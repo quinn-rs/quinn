@@ -854,10 +854,10 @@ mod tests {
         let field_map = encoder.table.field_map.as_ref().unwrap();
         assert_eq!(name_map.len(), 2);
         assert_eq!(field_map.len(), 2);
-        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(1));
-        assert_eq!(name_map.get(&field_b.name).map(|x| *x), Some(2));
-        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(1));
-        assert_eq!(field_map.get(&field_b).map(|x| *x), Some(2));
+        assert_eq!(name_map.get(&field_a.name).copied(), Some(1));
+        assert_eq!(name_map.get(&field_b.name).copied(), Some(2));
+        assert_eq!(field_map.get(&field_a).copied(), Some(1));
+        assert_eq!(field_map.get(&field_b).copied(), Some(2));
     }
 
     #[test]
@@ -963,20 +963,16 @@ mod tests {
                 field_c
             ]
         );
-        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(3));
-        assert_eq!(name_map.get(&field_b.name).map(|x| *x), Some(5));
-        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(3));
-        assert_eq!(field_map.get(&field_b).map(|x| *x), Some(2));
+        assert_eq!(name_map.get(&field_a.name).copied(), Some(3));
+        assert_eq!(name_map.get(&field_b.name).copied(), Some(5));
+        assert_eq!(field_map.get(&field_a).copied(), Some(3));
+        assert_eq!(field_map.get(&field_b).copied(), Some(2));
         assert_eq!(
-            field_map
-                .get(&field_b.with_value("New Value-B"))
-                .map(|x| *x),
+            field_map.get(&field_b.with_value("New Value-B")).copied(),
             Some(4)
         );
         assert_eq!(
-            field_map
-                .get(&field_b.with_value("Newer Value-B"))
-                .map(|x| *x),
+            field_map.get(&field_b.with_value("Newer Value-B")).copied(),
             Some(5)
         );
     }
@@ -999,8 +995,8 @@ mod tests {
         let name_map = encoder.table.name_map.as_ref().unwrap();
         let field_map = encoder.table.field_map.as_ref().unwrap();
         assert_eq!(encoder.table.fields, &[field_a.clone()]);
-        assert_eq!(name_map.get(&field_a.name).map(|x| *x), Some(1));
-        assert_eq!(field_map.get(&field_a).map(|x| *x), Some(1));
+        assert_eq!(name_map.get(&field_a.name).copied(), Some(1));
+        assert_eq!(field_map.get(&field_a).copied(), Some(1));
     }
 
     #[test]
@@ -1116,16 +1112,10 @@ mod tests {
             })
         );
         assert_eq!(
-            encoder
-                .table
-                .track_map
-                .as_ref()
-                .unwrap()
-                .get(&1)
-                .map(|x| *x),
+            encoder.table.track_map.as_ref().unwrap().get(&1).copied(),
             Some(1)
         );
-        assert_eq!(encoder.block_refs.get(&1).map(|x| *x), Some(1));
+        assert_eq!(encoder.block_refs.get(&1).copied(), Some(1));
     }
 
     #[test]

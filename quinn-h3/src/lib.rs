@@ -1,3 +1,5 @@
+#![allow(clippy::identity_op)]
+
 #[macro_use]
 extern crate lazy_static;
 

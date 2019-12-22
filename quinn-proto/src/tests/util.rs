@@ -229,7 +229,7 @@ impl TestEndpoint {
                     DatagramEvent::ConnectionEvent(event) => {
                         self.conn_events
                             .entry(ch)
-                            .or_insert_with(|| VecDeque::new())
+                            .or_insert_with(VecDeque::new)
                             .push_back(event);
                     }
                 }
@@ -386,7 +386,6 @@ pub fn client_config() -> ClientConfig {
     ClientConfig {
         transport: Default::default(),
         crypto,
-        ..Default::default()
     }
 }
 

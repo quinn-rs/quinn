@@ -1,3 +1,5 @@
+#![allow(clippy::mutex_atomic)]
+
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
