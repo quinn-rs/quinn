@@ -271,7 +271,7 @@ where
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
     /// - a packet is transmitted
-    /// - any timer expires
+    /// - a timer expires
     pub fn poll_timers(&mut self) -> Option<TimerUpdate> {
         for (timer, update) in self.io.timers.iter_mut() {
             if let Some(update) = update.take() {
@@ -285,7 +285,7 @@ where
     ///
     /// Connections should be polled for events after:
     /// - an incoming packet is handled, or
-    /// - the idle timer expires
+    /// - a timer expires
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(dir) =
             Dir::iter().find(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
@@ -2067,7 +2067,7 @@ where
     /// Connections should be polled for transmit after:
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
-    /// - the LossDetection timer expires
+    /// - a timer expires
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if self.state.is_handshake()
             && !self.remote_validated
