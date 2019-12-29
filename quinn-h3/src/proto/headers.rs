@@ -263,7 +263,7 @@ impl Pseudo {
         } = uri::Parts::from(uri);
 
         let path = path_and_query.map_or_else(
-            || PathAndQuery::from_static(""),
+            || PathAndQuery::from_static("/"),
             |path| {
                 if path.path().is_empty() && method != Method::OPTIONS {
                     PathAndQuery::from_static("/")
