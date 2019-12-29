@@ -273,13 +273,15 @@ impl Pseudo {
             },
         );
 
+        let len = 3 + if authority.is_some() { 1 } else { 0 };
+
         Self {
             method: Some(method),
             scheme: scheme.or(Some(Scheme::HTTPS)),
             authority,
             path: Some(path),
             status: None,
-            len: 2,
+            len,
         }
     }
 
