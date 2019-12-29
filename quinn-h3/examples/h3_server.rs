@@ -61,14 +61,15 @@ async fn main() -> Result<()> {
     println!("server listening");
     while let Some(connecting) = incoming.next().await {
         println!("server received connection");
-        let connection = connecting
-            .await
-            .map_err(|e| error!("accept failed: {:?}", e));
-
-        if let Ok(connection) = connection {
-            let _ = handle_connection(connection)
-                .await
-                .map_err(|e| error!("handling connection failed: {:?}", e));
+        match connecting.await {
+            Err(e) => error!("accept failed: {:?}", e),
+            Ok(connection) => {
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = handle_connection(connection).await {
+                        error!("handling connection failed: {:?}", e);
+                    }
+                });
+            }
         }
     }
 
@@ -80,7 +81,7 @@ async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)
 
     tokio::spawn(async move {
         if let Err(e) = h3_driver.await {
-            eprintln!("quic connection driver error: {}", e)
+            eprintln!("h3 connection driver error: {}", e)
         }
     });
 
