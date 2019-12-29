@@ -329,7 +329,13 @@ mod tests {
     fn decode_header() {
         let mut header_map = HeaderMap::new();
         header_map.append("hello", HeaderValue::from_static("text/html"));
-        let header = Header::request(Method::GET, Uri::default(), header_map);
+        let header = Header::request(
+            Method::GET,
+            // NOTE: H3 adds a trailing `/`, so the one in following the url is important
+            //       only to make the `Header` comparison succeed at the end of this test.
+            "https://example.com/".parse().expect("uri"),
+            header_map,
+        );
 
         let mut client = Connection::default();
         let encoded = client
