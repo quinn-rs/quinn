@@ -103,7 +103,6 @@ pub(crate) struct ConnectionInner {
 
 impl ConnectionInner {
     fn drive(&mut self, cx: &mut Context) -> Result<bool, DriverError> {
-        self.poll_recv_control(cx)?;
         self.poll_incoming_uni(cx)?;
         self.poll_send(cx)?;
         self.poll_recv_control(cx)?;
@@ -236,18 +235,19 @@ impl ConnectionInner {
                     let msg = format!("{:?}", e);
                     return Err(DriverError::new(e, ErrorCode::STREAM_CREATION_ERROR, msg));
                 }
-                Ok(n) => self.on_uni_resolved(n)?,
+                Ok(n) => self.on_uni_resolved(cx, n)?,
             }
         }
         Ok(())
     }
 
-    fn on_uni_resolved(&mut self, new_stream: NewUni) -> Result<(), DriverError> {
+    fn on_uni_resolved(&mut self, cx: &mut Context, new_stream: NewUni) -> Result<(), DriverError> {
         match new_stream {
             NewUni::Control(stream) => match self.recv_control {
                 None => {
                     trace!("Got Control stream");
                     self.recv_control = Some(stream);
+                    self.poll_recv_control(cx)?;
                     Ok(())
                 }
                 Some(_) => Err(DriverError::peer(
