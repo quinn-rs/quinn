@@ -25,6 +25,6 @@ webpki = "0.21"
 name = "main"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "qif"
-# path = "src/qif.rs"
+[[bin]]
+name = "h3_server"
+path = "src/h3_server.rs"
