@@ -81,7 +81,6 @@ where
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
     lost_packets: u64,
-    io: IoQueue,
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
@@ -122,6 +121,7 @@ where
     //
     path_challenge_pending: bool,
     path_response: Option<PathResponse>,
+    close: bool,
 
     //
     // Loss Detection
@@ -220,7 +220,6 @@ where
             unacked_data: 0,
             orig_rem_cid: None,
             lost_packets: 0,
-            io: IoQueue::new(),
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
             cids_issued: 0,
@@ -241,6 +240,7 @@ where
 
             path_challenge_pending: false,
             path_response: None,
+            close: false,
 
             crypto_count: 0,
             pto_count: 0,
@@ -1321,7 +1321,7 @@ where
 
         // Transmit CONNECTION_CLOSE if necessary
         if let State::Closed(_) = self.state {
-            self.io.close = remote == self.path.remote;
+            self.close = remote == self.path.remote;
         }
     }
 
@@ -1698,7 +1698,7 @@ where
                 Frame::Close(reason) => {
                     self.events.push_back(ConnectionError::from(reason).into());
                     self.state = State::Draining;
-                    self.io.close = true;
+                    self.close = true;
                     return Ok(());
                 }
                 Frame::PathChallenge(token) => {
@@ -2093,7 +2093,7 @@ where
                 return None;
             }
             State::Draining | State::Closed(_) => {
-                if mem::replace(&mut self.io.close, false) {
+                if mem::replace(&mut self.close, false) {
                     (vec![self.highest_space], true)
                 } else {
                     return None;
@@ -2596,7 +2596,7 @@ where
         if !was_closed {
             self.close_common();
             self.set_close_timer(now);
-            self.io.close = true;
+            self.close = true;
             self.state = State::Closed(state::Closed {
                 reason: Close::Application(frame::ApplicationClose { error_code, reason }),
             });
@@ -3298,19 +3298,6 @@ mod state {
 
 /// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
 const MAX_ACK_BLOCKS: usize = 64;
-
-/// Encoding of I/O operations to emit on upcoming `poll_*` calls
-#[derive(Debug)]
-struct IoQueue {
-    /// Whether to transmit a close packet
-    close: bool,
-}
-
-impl IoQueue {
-    fn new() -> Self {
-        Self { close: false }
-    }
-}
 
 struct PrevCrypto<K>
 where
