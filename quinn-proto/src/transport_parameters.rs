@@ -6,7 +6,10 @@
 //! contained in this modules should generally only be referred to by custom
 //! implementations of the `crypto::Session` trait.
 
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+};
 
 use bytes::{buf::ext::BufExt as _, Buf, BufMut};
 use err_derive::Error;
@@ -110,7 +113,11 @@ impl TransportParameters {
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
-            idle_timeout: config.idle_timeout,
+            idle_timeout: config.idle_timeout.map_or(0, |x| {
+                x.as_millis()
+                    .try_into()
+                    .expect("setter guarantees this is in-bounds")
+            }),
             max_ack_delay: 0,
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: REM_CID_COUNT,

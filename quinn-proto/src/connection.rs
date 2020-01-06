@@ -109,7 +109,7 @@ where
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
     /// Negotiated idle timeout
-    idle_timeout: u64,
+    idle_timeout: Option<Duration>,
     /// Number of the first 1-RTT packet transmitted
     first_1rtt_sent: Option<u64>,
     /// Sequence number of the first remote CID that we haven't been asked to retire
@@ -776,7 +776,7 @@ where
     /// Probe Timeout
     fn pto(&self) -> Duration {
         match self.path.rtt.smoothed {
-            None => 2 * Duration::from_micros(self.config.initial_rtt),
+            None => 2 * self.config.initial_rtt,
             Some(srtt) => {
                 srtt + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
             }
@@ -831,25 +831,24 @@ where
     }
 
     fn reset_idle_timeout(&mut self, now: Instant) {
-        if self.idle_timeout == 0 {
-            return;
-        }
+        let timeout = match self.idle_timeout {
+            None => return,
+            Some(x) => x,
+        };
         if self.state.is_closed() {
             self.timers.stop(Timer::Idle);
             return;
         }
-        let dt = cmp::max(Duration::from_millis(self.idle_timeout), 3 * self.pto());
+        let dt = cmp::max(timeout, 3 * self.pto());
         self.timers.set(Timer::Idle, now + dt);
     }
 
     fn reset_keep_alive(&mut self, now: Instant) {
-        if self.config.keep_alive_interval == 0 || !self.state.is_established() {
-            return;
-        }
-        self.timers.set(
-            Timer::KeepAlive,
-            now + Duration::from_millis(u64::from(self.config.keep_alive_interval)),
-        );
+        let interval = match self.config.keep_alive_interval {
+            Some(x) if self.state.is_established() => x,
+            _ => return,
+        };
+        self.timers.set(Timer::KeepAlive, now + interval);
     }
 
     fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) -> Result<(), WriteError> {
@@ -2041,10 +2040,7 @@ where
         // Initiate path validation
         self.timers.set(
             Timer::PathValidation,
-            now + 3 * cmp::max(
-                self.pto(),
-                Duration::from_micros(2 * self.config.initial_rtt),
-            ),
+            now + 3 * cmp::max(self.pto(), 2 * self.config.initial_rtt),
         );
         self.path_challenge = Some(self.rng.gen());
         self.path_challenge_pending = true;
@@ -2650,10 +2646,11 @@ where
             self.streams.send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
-        self.idle_timeout = if self.config.idle_timeout == 0 || params.idle_timeout == 0 {
-            cmp::max(self.config.idle_timeout, params.idle_timeout)
-        } else {
-            cmp::min(self.config.idle_timeout, params.idle_timeout)
+        self.idle_timeout = match (self.config.idle_timeout, params.idle_timeout) {
+            (None, 0) => None,
+            (None, x) => Some(Duration::from_millis(x)),
+            (Some(x), 0) => Some(x),
+            (Some(x), y) => Some(cmp::min(x, Duration::from_millis(y))),
         };
         self.params = params;
     }

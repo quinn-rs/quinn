@@ -31,11 +31,12 @@ fn handshake_timeout() {
     runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client endpoint driver failed: {}", e)));
 
     let mut client_config = crate::ClientConfig::default();
-    const IDLE_TIMEOUT: u64 = 500;
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
-        .idle_timeout(IDLE_TIMEOUT)
-        .initial_rtt(10_000);
+        .idle_timeout(Some(IDLE_TIMEOUT))
+        .unwrap()
+        .initial_rtt(Duration::from_millis(10));
     client_config.transport = Arc::new(transport_config);
 
     let start = Instant::now();
@@ -55,9 +56,7 @@ fn handshake_timeout() {
         }
     });
     let dt = start.elapsed();
-    assert!(
-        dt > Duration::from_millis(IDLE_TIMEOUT) && dt < 2 * Duration::from_millis(IDLE_TIMEOUT)
-    );
+    assert!(dt > IDLE_TIMEOUT && dt < 2 * IDLE_TIMEOUT);
 }
 
 #[test]

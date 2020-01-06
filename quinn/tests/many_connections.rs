@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crc::crc32;
 use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
@@ -140,7 +143,9 @@ fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
     unwrap!(peer_cfg_builder.add_certificate_authority(their_cert));
     let mut peer_cfg = peer_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));
-    transport_config.idle_timeout(20_000);
+    transport_config
+        .idle_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
 
     peer_cfg
 }
@@ -158,7 +163,9 @@ fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
     ));
     let mut our_cfg = our_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport));
-    transport_config.idle_timeout(20_000);
+    transport_config
+        .idle_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
 
     (our_cfg, our_cert_der)
 }
