@@ -50,12 +50,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let (endpoint_driver, client) = client.build()?;
-    tokio::spawn(async move {
-        if let Err(e) = endpoint_driver.await {
-            eprintln!("quic driver error: {}", e)
-        }
-    });
+    let client = client.build()?;
 
     match request(client, &options.uri).await {
         Ok(_) => println!("client finished"),
@@ -70,22 +65,10 @@ async fn request(client: Client, uri: &Uri) -> Result<()> {
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
-    let (quic_driver, h3_driver, conn) = client
+    let conn = client
         .connect(&remote, uri.host().unwrap_or("localhost"))?
         .await
         .map_err(|e| anyhow!("failed ot connect: {:?}", e))?;
-
-    tokio::spawn(async move {
-        if let Err(e) = h3_driver.await {
-            eprintln!("h3 client error: {}", e)
-        }
-    });
-
-    tokio::spawn(async move {
-        if let Err(e) = quic_driver.await {
-            eprintln!("h3 client error: {}", e)
-        }
-    });
 
     let request = Request::get(uri)
         .header("client", "quinn-h3:0.0.1")

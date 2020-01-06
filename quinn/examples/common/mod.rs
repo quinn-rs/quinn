@@ -1,8 +1,8 @@
 //! Commonly used code in most examples.
 
 use quinn::{
-    Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, EndpointDriver,
-    Incoming, PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
+    Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, Incoming,
+    PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
 };
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
@@ -15,12 +15,12 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 pub fn make_client_endpoint(
     bind_addr: SocketAddr,
     server_certs: &[&[u8]],
-) -> Result<(Endpoint, EndpointDriver), Box<dyn Error>> {
+) -> Result<Endpoint, Box<dyn Error>> {
     let client_cfg = configure_client(server_certs)?;
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
-    let (driver, endpoint, _incoming) = endpoint_builder.bind(&bind_addr)?;
-    Ok((endpoint, driver))
+    let (endpoint, _incoming) = endpoint_builder.bind(&bind_addr)?;
+    Ok(endpoint)
 }
 
 /// Constructs a QUIC endpoint configured to listen for incoming connections on a certain address
@@ -28,18 +28,15 @@ pub fn make_client_endpoint(
 ///
 /// ## Returns
 ///
-/// - UDP socket driver
 /// - a sream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
-pub fn make_server_endpoint(
-    bind_addr: SocketAddr,
-) -> Result<(EndpointDriver, Incoming, Vec<u8>), Box<dyn Error>> {
+pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {
     let (server_config, server_cert) = configure_server()?;
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.listen(server_config);
-    let (driver, _endpoint, incoming) = endpoint_builder.bind(&bind_addr)?;
-    Ok((driver, incoming, server_cert))
+    let (_endpoint, incoming) = endpoint_builder.bind(&bind_addr)?;
+    Ok((incoming, server_cert))
 }
 
 /// Builds default quinn client config and trusts given certificates.

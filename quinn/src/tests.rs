@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use futures::{future, FutureExt, StreamExt, TryFutureExt};
+use futures::{future, FutureExt, StreamExt};
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -14,7 +14,7 @@ use tracing::{info, info_span};
 use tracing_futures::Instrument as _;
 
 use super::{
-    ClientConfigBuilder, Endpoint, EndpointDriver, Incoming, NewConnection, RecvStream, SendStream,
+    ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
     ServerConfigBuilder,
 };
 
@@ -22,13 +22,11 @@ use super::{
 fn handshake_timeout() {
     let _guard = subscribe();
     let mut runtime = rt_threaded();
-    let (client_driver, client, _) = runtime.enter(|| {
+    let (client, _) = runtime.enter(|| {
         Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
             .unwrap()
     });
-
-    runtime.spawn(client_driver.unwrap_or_else(|e| panic!("client endpoint driver failed: {}", e)));
 
     let mut client_config = crate::ClientConfig::default();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -60,63 +58,11 @@ fn handshake_timeout() {
 }
 
 #[test]
-fn drop_endpoint() {
-    let _guard = subscribe();
-    let mut runtime = rt_basic();
-    let (driver, endpoint, _) = runtime.enter(|| {
-        Endpoint::builder()
-            .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .unwrap()
-    });
-
-    let handle = runtime.spawn(
-        endpoint
-            .connect(
-                &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
-                "localhost",
-            )
-            .unwrap()
-            .map(|x| match x {
-                Err(crate::ConnectionError::TransportError(proto::TransportError {
-                    code: proto::TransportErrorCode::INTERNAL_ERROR,
-                    ..
-                })) => {}
-                Err(e) => panic!("unexpected error: {}", e),
-                Ok(_) => {
-                    panic!("unexpected success");
-                }
-            }),
-    );
-
-    drop((driver, endpoint));
-    runtime.block_on(handle).unwrap();
-}
-
-#[test]
-fn drop_endpoint_driver() {
-    let _guard = subscribe();
-    let endpoint = Endpoint::builder();
-    let runtime = rt_basic();
-    let (_, endpoint, _) = runtime.enter(|| {
-        endpoint
-            .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .unwrap()
-    });
-
-    assert!(endpoint
-        .connect(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
-            "localhost",
-        )
-        .is_err());
-}
-
-#[test]
 fn close_endpoint() {
     let _guard = subscribe();
     let endpoint = Endpoint::builder();
     let mut runtime = rt_basic();
-    let (_driver, endpoint, incoming) = runtime.enter(|| {
+    let (endpoint, incoming) = runtime.enter(|| {
         endpoint
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
             .unwrap()
@@ -152,7 +98,7 @@ fn local_addr() {
     let socket = UdpSocket::bind("[::1]:0").unwrap();
     let addr = socket.local_addr().unwrap();
     let runtime = rt_basic();
-    let (_, ep, _) = runtime.enter(|| Endpoint::builder().with_socket(socket).unwrap());
+    let (ep, _) = runtime.enter(|| Endpoint::builder().with_socket(socket).unwrap());
     assert_eq!(
         addr,
         ep.local_addr()
@@ -164,8 +110,7 @@ fn local_addr() {
 fn read_after_close() {
     let _guard = subscribe();
     let mut runtime = rt_basic();
-    let (driver, endpoint, mut incoming) = runtime.enter(endpoint);
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
+    let (endpoint, mut incoming) = runtime.enter(endpoint);
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(async move {
         let new_conn = incoming
@@ -174,7 +119,6 @@ fn read_after_close() {
             .expect("endpoint")
             .await
             .expect("connection");
-        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let mut s = new_conn.connection.open_uni().await.unwrap();
         s.write_all(MSG).await.unwrap();
         s.finish().await.unwrap();
@@ -185,7 +129,6 @@ fn read_after_close() {
             .unwrap()
             .await
             .expect("connect");
-        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
         let stream = new_conn
             .uni_streams
@@ -202,7 +145,7 @@ fn read_after_close() {
 }
 
 /// Construct an endpoint suitable for connecting to itself
-fn endpoint() -> (EndpointDriver, Endpoint, Incoming) {
+fn endpoint() -> (Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();
 
     let mut server_config = ServerConfigBuilder::default();
@@ -217,29 +160,25 @@ fn endpoint() -> (EndpointDriver, Endpoint, Incoming) {
     client_config.add_certificate_authority(cert).unwrap();
     endpoint.default_client_config(client_config.build());
 
-    let (x, y, z) = endpoint
+    let (x, y) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
-    (x, y, z)
+    (x, y)
 }
 
-#[test]
-fn zero_rtt() {
+#[tokio::test]
+async fn zero_rtt() {
     let _guard = subscribe();
-    let mut runtime = rt_basic();
-    let (driver, endpoint, incoming) = runtime.enter(endpoint);
+    let (endpoint, incoming) = endpoint();
 
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("{}", e)));
     const MSG: &[u8] = b"goodbye!";
-    runtime.spawn(incoming.take(2).for_each(|incoming| {
+    tokio::spawn(incoming.take(2).for_each(|incoming| {
         async {
             let NewConnection {
-                driver,
                 mut uni_streams,
                 connection,
                 ..
             } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
-            tokio::spawn(driver.unwrap_or_else(|_| ()));
             tokio::spawn(async move {
                 while let Some(Ok(x)) = uni_streams.next().await {
                     let msg = x.read_to_end(usize::max_value()).await.unwrap();
@@ -251,59 +190,21 @@ fn zero_rtt() {
             s.finish().await.expect("finish");
         }
     }));
-    runtime.block_on(async {
-        let NewConnection {
-            driver,
-            mut uni_streams,
-            ..
-        } = endpoint
-            .connect(&endpoint.local_addr().unwrap(), "localhost")
-            .unwrap()
-            .into_0rtt()
-            .err()
-            .expect("0-RTT succeeded without keys")
-            .await
-            .expect("connect");
 
-        tokio::spawn(async move {
-            // Buy time for the driver to process the server's NewSessionTicket
-            tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
-            let stream = uni_streams
-                .next()
-                .await
-                .expect("incoming streams")
-                .expect("missing stream");
-            let msg = stream
-                .read_to_end(usize::max_value())
-                .await
-                .expect("read_to_end");
-            assert_eq!(msg, MSG);
-        });
-        driver.unwrap_or_else(|_| ()).await
-    });
-    info!("initial connection complete");
-    let (
-        NewConnection {
-            connection,
-            driver,
-            mut uni_streams,
-            ..
-        },
-        zero_rtt,
-    ) = endpoint
+    let NewConnection {
+        mut uni_streams, ..
+    } = endpoint
         .connect(&endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
-        .ok()
-        .expect("missing 0-RTT keys");
-    // Send something before the driver starts to ensure it's 0-RTT
-    runtime.spawn(async move {
-        let mut s = connection.open_uni().await.expect("0-RTT open uni");
-        s.write_all(MSG).await.expect("0-RTT write");
-        s.finish().await.expect("0-RTT finish");
-    });
-    let handle = runtime.spawn(driver.unwrap_or_else(|_| ()));
-    runtime.block_on(async move {
+        .err()
+        .expect("0-RTT succeeded without keys")
+        .await
+        .expect("connect");
+
+    tokio::spawn(async move {
+        // Buy time for the driver to process the server's NewSessionTicket
+        tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
         let stream = uni_streams
             .next()
             .await
@@ -314,13 +215,45 @@ fn zero_rtt() {
             .await
             .expect("read_to_end");
         assert_eq!(msg, MSG);
-        assert_eq!(zero_rtt.await, true);
+    });
+    endpoint.wait_idle().await;
+
+    info!("initial connection complete");
+
+    let (
+        NewConnection {
+            connection,
+            mut uni_streams,
+            ..
+        },
+        zero_rtt,
+    ) = endpoint
+        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .unwrap()
+        .into_0rtt()
+        .expect("missing 0-RTT keys");
+    // Send something ASAP to use 0-RTT
+    tokio::spawn(async move {
+        let mut s = connection.open_uni().await.expect("0-RTT open uni");
+        s.write_all(MSG).await.expect("0-RTT write");
+        s.finish().await.expect("0-RTT finish");
     });
 
-    // The endpoint driver won't finish if we could still create new connections
-    drop(endpoint);
+    let stream = uni_streams
+        .next()
+        .await
+        .expect("incoming streams")
+        .expect("missing stream");
+    let msg = stream
+        .read_to_end(usize::max_value())
+        .await
+        .expect("read_to_end");
+    assert_eq!(msg, MSG);
+    assert_eq!(zero_rtt.await, true);
 
-    runtime.block_on(handle).unwrap();
+    drop(uni_streams);
+
+    endpoint.wait_idle().await;
 }
 
 #[test]
@@ -365,7 +298,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (server_driver, _, mut server_incoming) =
+        let (server, mut server_incoming) =
             runtime.enter(|| server.with_socket(server_sock).unwrap());
 
         let mut client_config = ClientConfigBuilder::default();
@@ -373,39 +306,19 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         client_config.enable_keylog();
         let mut client = Endpoint::builder();
         client.default_client_config(client_config.build());
-        let (client_driver, client, _) = runtime.enter(|| client.bind(&client_addr).unwrap());
+        let (client, _) = runtime.enter(|| client.bind(&client_addr).unwrap());
 
-        let handle = runtime.spawn(
-            server_driver
-                .unwrap_or_else(|e| panic!("server driver failed: {}", e))
-                .instrument(info_span!("server endpoint")),
-        );
-        let handle = future::join(
-            handle,
-            runtime.spawn(
-                client_driver
-                    .unwrap_or_else(|e| panic!("client driver failed: {}", e))
-                    .instrument(info_span!("client endpoint")),
-            ),
-        );
-        let handle = future::join(
-            handle,
-            runtime.spawn(async move {
-                let incoming = server_incoming.next().await.unwrap();
-                let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
-                tokio::spawn(
-                    new_conn
-                        .bi_streams
-                        .take_while(|x| future::ready(x.is_ok()))
-                        .for_each(|s| echo(s.unwrap())),
-                );
+        let handle = runtime.spawn(async move {
+            let incoming = server_incoming.next().await.unwrap();
+            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
+            tokio::spawn(
                 new_conn
-                    .driver
-                    .unwrap_or_else(|_| ())
-                    .instrument(info_span!("server"))
-                    .await
-            }),
-        );
+                    .bi_streams
+                    .take_while(|x| future::ready(x.is_ok()))
+                    .for_each(|s| echo(s.unwrap())),
+            );
+            server.wait_idle().await;
+        });
 
         info!("connecting from {} to {}", client_addr, server_addr);
         runtime.block_on(async move {
@@ -415,26 +328,17 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .instrument(info_span!("client"))
                 .await
                 .expect("connect");
-            let driver = tokio::spawn(
-                new_conn
-                    .driver
-                    .unwrap_or_else(|e| eprintln!("outgoing connection lost: {}", e))
-                    .instrument(info_span!("client")),
-            );
             let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
             send.write_all(b"foo").await.expect("write");
             send.finish().await.expect("finish");
             let data = recv.read_to_end(usize::max_value()).await.expect("read");
             assert_eq!(&data[..], b"foo");
             new_conn.connection.close(0u32.into(), b"done");
-            driver.await.unwrap();
+            client.wait_idle().await;
         });
         handle
     };
-    let ((r1, r2), r3) = runtime.block_on(handle);
-    r1.unwrap();
-    r2.unwrap();
-    r3.unwrap();
+    runtime.block_on(handle).unwrap();
 }
 
 async fn echo((mut send, recv): (SendStream, RecvStream)) {

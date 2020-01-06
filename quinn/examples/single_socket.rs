@@ -41,50 +41,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server2_cert = run_server(addr2)?;
     let server3_cert = run_server(addr3)?;
 
-    let (client, driver) = make_client_endpoint(
+    let client = make_client_endpoint(
         "127.0.0.1:0".parse().unwrap(),
         &[&server1_cert, &server2_cert, &server3_cert],
     )?;
 
     // connect to multiple endpoints using the same socket/endpoint
-    run_client(&client, addr1);
-    run_client(&client, addr2);
-    run_client(&client, addr3);
-    drop(client);
+    futures::future::join_all(vec![
+        run_client(&client, addr1),
+        run_client(&client, addr2),
+        run_client(&client, addr3),
+    ])
+    .await;
 
-    // drive client endpoint to completion
-    driver.await.unwrap();
+    // Make sure the server has a chance to clean up
+    client.wait_idle().await;
+
     Ok(())
 }
 
 /// Runs a QUIC server bound to given address and returns server certificate.
 fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
-    let (driver, mut incoming, server_cert) = make_server_endpoint(addr)?;
-    // drive UDP socket
-    tokio::spawn(async { driver.await.unwrap() });
+    let (mut incoming, server_cert) = make_server_endpoint(addr)?;
     // accept a single connection
     tokio::spawn(async move {
-        let quinn::NewConnection {
-            driver, connection, ..
-        } = incoming.next().await.unwrap().await.unwrap();
+        let quinn::NewConnection { connection, .. } = incoming.next().await.unwrap().await.unwrap();
         println!(
             "[server] incoming connection: addr={}",
             connection.remote_address()
         );
-        let _ = driver.await;
     });
 
     Ok(server_cert)
 }
 
 /// Attempt QUIC connection with the given server address.
-fn run_client(endpoint: &Endpoint, server_addr: SocketAddr) {
+async fn run_client(endpoint: &Endpoint, server_addr: SocketAddr) {
     let connect = endpoint.connect(&server_addr, "localhost").unwrap();
-    tokio::spawn(async {
-        let quinn::NewConnection {
-            driver, connection, ..
-        } = connect.await.unwrap();
-        tokio::spawn(async { driver.await.unwrap() });
-        println!("[client] connected: addr={}", connection.remote_address());
-    });
+    let quinn::NewConnection { connection, .. } = connect.await.unwrap();
+    println!("[client] connected: addr={}", connection.remote_address());
 }

@@ -24,9 +24,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 /// Runs a QUIC server bound to given address.
 async fn run_server(addr: SocketAddr) {
-    let (driver, mut incoming, _server_cert) = make_server_endpoint(addr).unwrap();
-    // drive UDP socket
-    tokio::spawn(async { driver.await.unwrap() });
+    let (mut incoming, _server_cert) = make_server_endpoint(addr).unwrap();
     // accept a single connection
     let incoming_conn = incoming.next().await.unwrap();
     let new_conn = incoming_conn.await.unwrap();
@@ -34,10 +32,6 @@ async fn run_server(addr: SocketAddr) {
         "[server] connection accepted: addr={}",
         new_conn.connection.remote_address()
     );
-    // Drive the connection to completion
-    if let Err(e) = new_conn.driver.await {
-        println!("[server] connection lost: {}", e);
-    }
 }
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
@@ -45,22 +39,19 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
 
-    let (driver, endpoint, _) = endpoint_builder.bind(&"127.0.0.1:0".parse().unwrap())?;
-    tokio::spawn(async { driver.await.unwrap() });
+    let (endpoint, _) = endpoint_builder.bind(&"127.0.0.1:0".parse().unwrap())?;
 
     // connect to server
-    let quinn::NewConnection {
-        driver, connection, ..
-    } = endpoint
+    let quinn::NewConnection { connection, .. } = endpoint
         .connect(&server_addr, "localhost")
         .unwrap()
         .await
         .unwrap();
     println!("[client] connected: addr={}", connection.remote_address());
     // Dropping handles allows the corresponding objects to automatically shut down
-    drop((endpoint, connection));
-    // Drive the connection to completion
-    driver.await.unwrap();
+    drop(connection);
+    // Make sure the server has a chance to clean up
+    endpoint.wait_idle().await;
 
     Ok(())
 }

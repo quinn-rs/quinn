@@ -7,9 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use futures::TryFutureExt;
 use structopt::StructOpt;
-use tokio::runtime::Builder;
 use tracing::{error, info};
 use url::Url;
 
@@ -57,7 +55,8 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(options: Opt) -> Result<()> {
+#[tokio::main]
+async fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
@@ -90,10 +89,7 @@ fn run(options: Opt) -> Result<()> {
 
     endpoint.default_client_config(client_config.build());
 
-    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
-    let (endpoint_driver, endpoint, _) =
-        runtime.enter(|| endpoint.bind(&"[::]:0".parse().unwrap()))?;
-    let handle = runtime.spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+    let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
@@ -103,59 +99,47 @@ fn run(options: Opt) -> Result<()> {
         .as_ref()
         .map_or_else(|| url.host_str(), |x| Some(&x))
         .ok_or_else(|| anyhow!("no hostname specified"))?;
-    let r: Result<()> = runtime.block_on(async {
-        let new_conn = endpoint
-            .connect(&remote, &host)?
-            .await
-            .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        eprintln!("connected at {:?}", start.elapsed());
-        let quinn::NewConnection {
-            driver,
-            connection: conn,
-            ..
-        } = { new_conn };
-        tokio::spawn(driver.unwrap_or_else(|e| eprintln!("connection lost: {}", e)));
-        let (mut send, recv) = conn
-            .open_bi()
-            .await
-            .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        if rebind {
-            let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-            let addr = socket.local_addr().unwrap();
-            eprintln!("rebinding to {}", addr);
-            endpoint.rebind(socket).expect("rebind failed");
-        }
 
-        send.write_all(request.as_bytes())
-            .await
-            .map_err(|e| anyhow!("failed to send request: {}", e))?;
-        send.finish()
-            .await
-            .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
-        let response_start = Instant::now();
-        eprintln!("request sent at {:?}", response_start - start);
-        let resp = recv
-            .read_to_end(usize::max_value())
-            .await
-            .map_err(|e| anyhow!("failed to read response: {}", e))?;
-        let duration = response_start.elapsed();
-        eprintln!(
-            "response received in {:?} - {} KiB/s",
-            duration,
-            resp.len() as f32 / (duration_secs(&duration) * 1024.0)
-        );
-        io::stdout().write_all(&resp).unwrap();
-        io::stdout().flush().unwrap();
-        conn.close(0u32.into(), b"done");
-        Ok(())
-    });
-    r?;
+    let new_conn = endpoint
+        .connect(&remote, &host)?
+        .await
+        .map_err(|e| anyhow!("failed to connect: {}", e))?;
+    eprintln!("connected at {:?}", start.elapsed());
+    let quinn::NewConnection {
+        connection: conn, ..
+    } = { new_conn };
+    let (mut send, recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| anyhow!("failed to open stream: {}", e))?;
+    if rebind {
+        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
+        let addr = socket.local_addr().unwrap();
+        eprintln!("rebinding to {}", addr);
+        endpoint.rebind(socket).expect("rebind failed");
+    }
 
-    // Allow the endpoint driver to automatically shut down
-    drop(endpoint);
-
-    // Let the connection finish closing gracefully
-    runtime.block_on(handle).unwrap();
+    send.write_all(request.as_bytes())
+        .await
+        .map_err(|e| anyhow!("failed to send request: {}", e))?;
+    send.finish()
+        .await
+        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
+    let response_start = Instant::now();
+    eprintln!("request sent at {:?}", response_start - start);
+    let resp = recv
+        .read_to_end(usize::max_value())
+        .await
+        .map_err(|e| anyhow!("failed to read response: {}", e))?;
+    let duration = response_start.elapsed();
+    eprintln!(
+        "response received in {:?} - {} KiB/s",
+        duration,
+        resp.len() as f32 / (duration_secs(&duration) * 1024.0)
+    );
+    io::stdout().write_all(&resp).unwrap();
+    io::stdout().flush().unwrap();
+    conn.close(0u32.into(), b"done");
 
     Ok(())
 }

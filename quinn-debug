@@ -1,0 +1,390 @@
+Wireshark SSL debug log 
+
+Wireshark version: 3.1.0rc0-765-g3234152b (v3.1.0rc0-765-g3234152b)
+GnuTLS version:    3.4.17
+Libgcrypt version: 1.7.7
+
+
+dissect_ssl enter frame #736 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x7fcf29431510
+  record: offset = 0, reported_length_remaining = 50
+ssl_try_set_version found version 0x0303 -> state 0x10
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #738 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x7fcf294321f0
+  record: offset = 0, reported_length_remaining = 50
+ssl_try_set_version found version 0x0303 -> state 0x10
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #739 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x7fcf29432cc0
+  record: offset = 0, reported_length_remaining = 50
+ssl_try_set_version found version 0x0303 -> state 0x10
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #742 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x7fcf29433bb0
+  record: offset = 0, reported_length_remaining = 50
+ssl_try_set_version found version 0x0303 -> state 0x10
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #744 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x7fcf29432cc0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #745 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x7fcf294321f0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #746 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x7fcf29433bb0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #750 (first time)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x7fcf29431510
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+decrypt_ssl3_record: app_data len 45, ssl state 0x10
+packet_from_server: is from server - FALSE
+decrypt_ssl3_record: using client decoder
+decrypt_ssl3_record: no decoder available
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #736 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #738 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #739 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #742 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #744 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29432610, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #745 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29431b40, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #746 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29433500, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data
+
+dissect_ssl enter frame #750 (already visited)
+packet_from_server: is from server - FALSE
+  conversation = 0x7fcf29430e60, ssl_session = 0x0
+  record: offset = 0, reported_length_remaining = 50
+dissect_ssl3_record: content_type 23 Application Data

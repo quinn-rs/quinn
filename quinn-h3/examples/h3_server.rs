@@ -6,10 +6,8 @@ use http::{Response, StatusCode};
 use structopt::{self, StructOpt};
 use tracing::error;
 
-use quinn::ConnectionDriver as QuicDriver;
 use quinn_h3::{
     self,
-    connection::ConnectionDriver,
     server::{Builder as ServerBuilder, IncomingRequest, RecvRequest},
 };
 
@@ -47,16 +45,10 @@ async fn main() -> Result<()> {
         .certificate(certs.0, certs.2)
         .expect("failed to add cert");
 
-    let (endpoint_driver, mut incoming) = {
-        let (driver, _server, incoming) = server.build().expect("bind failed");
-        (driver, incoming)
+    let mut incoming = {
+        let (_server, incoming) = server.build().expect("bind failed");
+        incoming
     };
-
-    tokio::spawn(async move {
-        if let Err(e) = endpoint_driver.await {
-            eprintln!("h3 server error: {}", e)
-        }
-    });
 
     println!("server listening");
     while let Some(connecting) = incoming.next().await {
@@ -76,27 +68,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(conn: (QuicDriver, ConnectionDriver, IncomingRequest)) -> Result<()> {
-    let (quic_driver, h3_driver, mut incoming) = conn;
-
-    tokio::spawn(async move {
-        if let Err(e) = h3_driver.await {
-            eprintln!("h3 connection driver error: {}", e)
-        }
-    });
-
-    tokio::spawn(async move {
-        while let Some(request) = incoming.next().await {
-            tokio::spawn(async move {
-                if let Err(e) = handle_request(request).await {
-                    eprintln!("request error: {}", e)
-                }
-            });
-        }
-    });
-
-    if let Err(e) = quic_driver.await {
-        eprintln!("quic connection driver error: {}", e)
+async fn handle_connection(mut incoming: IncomingRequest) -> Result<()> {
+    while let Some(request) = incoming.next().await {
+        tokio::spawn(async move {
+            if let Err(e) = handle_request(request).await {
+                eprintln!("request error: {}", e)
+            }
+        });
     }
 
     Ok(())

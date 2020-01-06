@@ -30,9 +30,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let (cfg, listener_cert) = configure_listener();
     let mut ep_builder = quinn::Endpoint::builder();
     ep_builder.listen(cfg);
-    let (driver, endpoint, incoming_conns) =
+    let (endpoint, incoming_conns) =
         unwrap!(runtime.enter(|| ep_builder.bind(&"127.0.0.1:0".parse().unwrap())));
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("Listener IO error: {}", e)));
     let listener_addr = unwrap!(endpoint.local_addr());
 
     let expected_messages = 50;
@@ -43,7 +42,6 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         .take(expected_messages)
         .for_each(move |new_conn| {
             let conn = new_conn.connection;
-            tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
 
             let shared = shared2.clone();
             let task = new_conn
@@ -62,7 +60,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
             future::ready(())
         });
-    let handle = runtime.spawn(read_incoming_data);
+    runtime.spawn(read_incoming_data);
 
     let client_cfg = configure_connector(&listener_cert);
 
@@ -70,34 +68,25 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let data = random_data_with_hash(1024 * 1024);
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
-            .and_then(move |new_conn| {
-                tokio::spawn(
-                    write_to_peer(new_conn.connection, data).unwrap_or_else(move |e| {
-                        // Error will also be propagated to the driver
-                        eprintln!("write failed: {}", e);
-                    }),
-                );
-                new_conn.driver
-            })
+            .map_err(WriteError::ConnectionClosed)
+            .and_then(move |new_conn| write_to_peer(new_conn.connection, data))
             .unwrap_or_else(move |e| {
+                use quinn::ConnectionError::*;
                 match e {
-                    quinn::ConnectionError::ApplicationClosed { .. }
-                    | quinn::ConnectionError::Reset => {}
-                    // TODO: Determine why packet loss during connection close leads to this timing out
-                    // even though valid stateless reset packets are sent.
-                    _ => match e {
-                        quinn::ConnectionError::TimedOut => {}
-                        _ => shared.lock().unwrap().errors.push(e),
+                    WriteError::ConnectionClosed(ApplicationClosed { .. })
+                    | WriteError::ConnectionClosed(Reset) => {}
+                    WriteError::ConnectionClosed(e) => match e {
+                        _ => {
+                            shared.lock().unwrap().errors.push(e);
+                        }
                     },
+                    _ => panic!("unexpected write error"),
                 }
             });
         runtime.spawn(task);
     }
-    // we don't need it anymore, this will make EndpointDriver finish after all connections are
-    // finished.
-    drop(endpoint);
 
-    unwrap!(runtime.block_on(handle));
+    runtime.block_on(endpoint.wait_idle());
     let shared = shared.lock().unwrap();
     if !shared.errors.is_empty() {
         panic!("some connections failed: {:?}", shared.errors);

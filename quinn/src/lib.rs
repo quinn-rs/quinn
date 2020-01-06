@@ -8,14 +8,13 @@
 //!
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
-//! ```
+//! ```no_run
 //! # use futures::TryFutureExt;
-//! let mut runtime = tokio::runtime::Builder::new().basic_scheduler().enable_all().build().unwrap();
 //! let mut builder = quinn::Endpoint::builder();
-//! // <configure builder>
-//! let (endpoint_driver, endpoint, _) = runtime.enter(|| builder.bind(&"[::]:0".parse().unwrap()).unwrap());
-//! runtime.spawn(endpoint_driver.unwrap_or_else(|e| panic!("I/O error: {}", e)));
-//! // <use endpoint>
+//! // ... configure builder ...
+//! // Ensure you're inside a tokio runtime context
+//! let (endpoint, _) = builder.bind(&"[::]:0".parse().unwrap()).unwrap();
+//! // ... use endpoint ...
 //! ```
 //! # About QUIC
 //!
@@ -64,12 +63,12 @@ pub use crate::builders::{
 
 mod connection;
 pub use connection::{
-    Connecting, Connection, ConnectionDriver, Datagrams, IncomingBiStreams, IncomingUniStreams,
-    NewConnection, OpenBi, OpenUni, ZeroRttAccepted,
+    Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
+    OpenBi, OpenUni, ZeroRttAccepted,
 };
 
 mod endpoint;
-pub use endpoint::{Endpoint, EndpointDriver, Incoming};
+pub use endpoint::{Endpoint, Incoming};
 
 mod streams;
 pub use streams::{

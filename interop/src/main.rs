@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use futures::{future, TryFutureExt};
+use futures::future;
 use lazy_static::lazy_static;
 use quinn_h3::Settings;
 use structopt::StructOpt;
@@ -303,8 +303,7 @@ impl State {
         let mut endpoint = quinn::Endpoint::builder();
         endpoint.default_client_config(client_config.clone());
 
-        let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
         let h3_client = match peer.alpn {
             Alpn::Hq => None,
@@ -336,10 +335,6 @@ impl State {
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         result.handshake = true;
-        let close_handle = tokio::spawn(tokio::time::timeout(
-            Duration::from_secs(2),
-            new_conn.driver,
-        ));
         let stream = new_conn
             .connection
             .open_bi()
@@ -367,7 +362,6 @@ impl State {
             .into_0rtt()
         {
             Ok((new_conn, _)) => {
-                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 let stream = new_conn
                     .connection
                     .open_bi()
@@ -384,14 +378,13 @@ impl State {
                 let new_conn = conn
                     .await
                     .map_err(|e| anyhow!("failed to connect: {}", e))?;
-                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 new_conn.connection
             }
         };
         result.resumption = !*saw_cert.lock().unwrap();
         conn.close(0u32.into(), b"done");
 
-        result.close = close_handle.await.is_ok();
+        self.endpoint.wait_idle().await;
 
         Ok(result)
     }
@@ -402,7 +395,6 @@ impl State {
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let conn = new_conn.connection;
         // Make sure some traffic has gone both ways before the key update
         let stream = conn
@@ -429,7 +421,6 @@ impl State {
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let stream = new_conn
             .connection
             .open_bi()
@@ -443,14 +434,12 @@ impl State {
     async fn rebind(&self) -> Result<()> {
         let mut endpoint = quinn::Endpoint::builder();
         endpoint.default_client_config(self.client_config.clone());
-        let (endpoint_driver, endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
         let new_conn = endpoint
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
-        tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
         endpoint.rebind(socket)?;
         let stream = new_conn
@@ -467,16 +456,13 @@ impl State {
         if let Alpn::Hq = self.peer.alpn {
             return Err(anyhow!("H3 not implemented on this peer"));
         }
-        let (quic_driver, h3_driver, conn) = self
+        let conn = self
             .h3_client
             .as_ref()
             .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-
-        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
-        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
 
         h3_get(&conn, &self.peer.uri("/"))
             .await
@@ -488,19 +474,13 @@ impl State {
     async fn core_h3(&self) -> Result<InteropResult> {
         let mut result = InteropResult::default();
 
-        let (quic_driver, h3_driver, conn) = self
+        let conn = self
             .h3_client
             .as_ref()
             .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        let close_handle = tokio::spawn(tokio::time::timeout(Duration::from_secs(2), quic_driver));
-        tokio::spawn(async {
-            if let Err(e) = h3_driver.await {
-                error!("h3 driver error: {}", e);
-            }
-        });
         result.handshake = true;
         h3_get(&conn, &self.peer.uri("/"))
             .await
@@ -525,9 +505,7 @@ impl State {
             .connect_with(client_config, &self.remote, &self.host)?
             .into_0rtt()
         {
-            Ok((quic_driver, driver, conn, _)) => {
-                tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
-                tokio::spawn(driver.unwrap_or_else(|_| ()));
+            Ok((conn, _)) => {
                 h3_get(&conn, &self.peer.uri("/"))
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
@@ -536,31 +514,29 @@ impl State {
             }
             Err(connecting) => {
                 info!("0-RTT unsupported");
-                let (quic_driver, _, new_conn) = connecting
+                connecting
                     .await
-                    .map_err(|e| anyhow!("failed to connect: {}", e))?;
-                tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
-                new_conn
+                    .map_err(|e| anyhow!("failed to connect: {}", e))?
             }
         };
         result.resumption = !*saw_cert.lock().unwrap();
         conn.close();
 
-        result.close = close_handle.await.is_ok();
+        self.endpoint.wait_idle().await;
+
+        result.close = true;
 
         Ok(result)
     }
 
     async fn key_update_h3(&self) -> Result<()> {
-        let (quic_driver, h3_driver, conn) = self
+        let conn = self
             .h3_client
             .as_ref()
             .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
-        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         // Make sure some traffic has gone both ways before the key update
         h3_get(&conn, &self.peer.uri("/"))
             .await
@@ -577,15 +553,13 @@ impl State {
         let mut remote = self.remote;
         remote.set_port(self.peer.retry_port);
 
-        let (quic_driver, h3_driver, conn) = self
+        let conn = self
             .h3_client
             .as_ref()
             .unwrap()
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
-        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         h3_get(&conn, &self.peer.uri("/"))
             .await
             .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
@@ -594,17 +568,13 @@ impl State {
     }
 
     async fn rebind_h3(&self) -> Result<()> {
-        let (endpoint_driver, endpoint, _) =
-            quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-        tokio::spawn(endpoint_driver.unwrap_or_else(|e| eprintln!("IO error: {}", e)));
+        let (endpoint, _) = quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
 
         let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
-        let (quic_driver, h3_driver, conn) = h3_client
+        let conn = h3_client
             .connect(&self.remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        tokio::spawn(quic_driver.unwrap_or_else(|_| ()));
-        tokio::spawn(h3_driver.unwrap_or_else(|_| ()));
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
         endpoint.rebind(socket)?;
         h3_get(&conn, &self.peer.uri("/"))

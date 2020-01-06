@@ -6,10 +6,7 @@ use std::{
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use futures::StreamExt;
-use tokio::{
-    runtime::{Builder, Runtime},
-    task::JoinHandle,
-};
+use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
@@ -30,7 +27,7 @@ fn throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime, handle) = ctx.make_client(addr);
+        let (endpoint, client, mut runtime) = ctx.make_client(addr);
         const DATA: &[u8] = &[0xAB; 128 * 1024];
         group.throughput(Throughput::Bytes(DATA.len() as u64));
         group.bench_function("large streams", |b| {
@@ -43,13 +40,13 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.block_on(handle).unwrap();
+        runtime.block_on(endpoint.wait_idle());
         thread.join().unwrap();
     }
 
     {
         let (addr, thread) = ctx.spawn_server();
-        let (client, mut runtime, handle) = ctx.make_client(addr);
+        let (endpoint, client, mut runtime) = ctx.make_client(addr);
         const DATA: &[u8] = &[0xAB; 1];
         group.throughput(Throughput::Elements(1));
         group.bench_function("small streams", |b| {
@@ -61,7 +58,7 @@ fn throughput(c: &mut Criterion) {
             })
         });
         drop(client);
-        runtime.block_on(handle).unwrap();
+        runtime.block_on(endpoint.wait_idle());
         thread.join().unwrap();
     }
 
@@ -104,27 +101,17 @@ impl Context {
             let mut endpoint = Endpoint::builder();
             endpoint.listen(config);
             let mut runtime = rt();
-            let (driver, _, mut incoming) = runtime.enter(|| endpoint.with_socket(sock).unwrap());
-            runtime.spawn(async { driver.instrument(error_span!("server")).await.unwrap() });
+            let (_, mut incoming) = runtime.enter(|| endpoint.with_socket(sock).unwrap());
             let handle = runtime.spawn(
                 async move {
                     let quinn::NewConnection {
-                        driver,
-                        mut uni_streams,
-                        ..
+                        mut uni_streams, ..
                     } = incoming
                         .next()
                         .await
                         .expect("accept")
                         .await
                         .expect("connect");
-                    tokio::spawn(async move {
-                        match driver.instrument(error_span!("server")).await {
-                            Ok(()) => panic!("unexpected success"),
-                            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {}
-                            Err(e) => panic!("connection lost: {}", e),
-                        }
-                    });
                     while let Some(Ok(mut stream)) = uni_streams.next().await {
                         while let Some(_) = stream.read_unordered().await.unwrap() {}
                     }
@@ -139,22 +126,14 @@ impl Context {
     pub fn make_client(
         &self,
         server_addr: SocketAddr,
-    ) -> (quinn::Connection, Runtime, JoinHandle<()>) {
+    ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
         let mut runtime = rt();
-        let (endpoint_driver, endpoint, _) = runtime.enter(|| {
+        let (endpoint, _) = runtime.enter(|| {
             Endpoint::builder()
                 .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
                 .unwrap()
         });
-        runtime.spawn(async move {
-            endpoint_driver
-                .instrument(error_span!("client"))
-                .await
-                .unwrap();
-        });
-        let quinn::NewConnection {
-            driver, connection, ..
-        } = runtime
+        let quinn::NewConnection { connection, .. } = runtime
             .block_on(
                 endpoint
                     .connect_with(self.client_config.clone(), &server_addr, "localhost")
@@ -162,10 +141,7 @@ impl Context {
                     .instrument(error_span!("client")),
             )
             .unwrap();
-        let handle = runtime.spawn(async move {
-            driver.instrument(error_span!("client")).await.unwrap();
-        });
-        (connection, runtime, handle)
+        (endpoint, connection, runtime)
     }
 }
 

@@ -72,18 +72,15 @@ impl Builder {
         }
     }
 
-    pub fn build(self) -> Result<(quinn::EndpointDriver, Client), quinn::EndpointError> {
+    pub fn build(self) -> Result<Client, quinn::EndpointError> {
         let mut endpoint_builder = quinn::Endpoint::builder();
         endpoint_builder.default_client_config(self.client_config.build());
-        let (endpoint_driver, endpoint, _) = endpoint_builder.bind(&"[::]:0".parse().unwrap())?;
+        let (endpoint, _) = endpoint_builder.bind(&"[::]:0".parse().unwrap())?;
 
-        Ok((
-            endpoint_driver,
-            Client {
-                endpoint,
-                settings: self.settings,
-            },
-        ))
+        Ok(Client {
+            endpoint,
+            settings: self.settings,
+        })
     }
 }
 
@@ -182,17 +179,7 @@ pub struct Connecting {
 }
 
 impl Connecting {
-    pub fn into_0rtt(
-        self,
-    ) -> Result<
-        (
-            quinn::ConnectionDriver,
-            ConnectionDriver,
-            Connection,
-            ZeroRttAccepted,
-        ),
-        Self,
-    > {
+    pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         let Self {
             connecting,
             settings,
@@ -204,7 +191,6 @@ impl Connecting {
             }),
             Ok((new_conn, zero_rtt)) => {
                 let quinn::NewConnection {
-                    driver,
                     connection,
                     uni_streams,
                     bi_streams,
@@ -213,23 +199,18 @@ impl Connecting {
                 let conn_ref =
                     ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings)
                         .expect("error in h3 settings"); // FIXME return an error type
-                Ok((
-                    driver,
-                    ConnectionDriver(conn_ref.clone()),
-                    Connection(conn_ref),
-                    ZeroRttAccepted(zero_rtt),
-                ))
+                tokio::spawn(ConnectionDriver(conn_ref.clone()));
+                Ok((Connection(conn_ref), ZeroRttAccepted(zero_rtt)))
             }
         }
     }
 }
 
 impl Future for Connecting {
-    type Output = Result<(quinn::ConnectionDriver, ConnectionDriver, Connection), Error>;
+    type Output = Result<Connection, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let quinn::NewConnection {
-            driver,
             connection,
             uni_streams,
             bi_streams,
@@ -242,11 +223,8 @@ impl Future for Connecting {
             bi_streams,
             self.settings.clone(),
         )?;
-        Poll::Ready(Ok((
-            driver,
-            ConnectionDriver(conn_ref.clone()),
-            Connection(conn_ref),
-        )))
+        tokio::spawn(ConnectionDriver(conn_ref.clone()));
+        Poll::Ready(Ok(Connection(conn_ref)))
     }
 }
 
