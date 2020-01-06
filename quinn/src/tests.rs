@@ -416,7 +416,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .instrument(info_span!("client"))
                 .await
                 .expect("connect");
-            tokio::spawn(
+            let driver = tokio::spawn(
                 new_conn
                     .driver
                     .unwrap_or_else(|e| eprintln!("outgoing connection lost: {}", e))
@@ -428,6 +428,7 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             let data = recv.read_to_end(usize::max_value()).await.expect("read");
             assert_eq!(&data[..], b"foo");
             new_conn.connection.close(0u32.into(), b"done");
+            driver.await.unwrap();
         });
         handle
     };
