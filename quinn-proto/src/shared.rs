@@ -1,4 +1,10 @@
-use std::{cmp, fmt, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    cmp, fmt,
+    net::SocketAddr,
+    num::TryFromIntError,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::BytesMut;
 use err_derive::Error;
@@ -7,7 +13,7 @@ use rand::{Rng, RngCore};
 use crate::{
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
     packet::PartialDecode,
-    MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -28,7 +34,7 @@ use crate::{
 pub struct TransportConfig {
     pub(crate) stream_window_bidi: u64,
     pub(crate) stream_window_uni: u64,
-    pub(crate) idle_timeout: u64,
+    pub(crate) idle_timeout: Option<Duration>,
     pub(crate) stream_receive_window: u64,
     pub(crate) receive_window: u64,
     pub(crate) send_window: u64,
@@ -36,14 +42,14 @@ pub struct TransportConfig {
     pub(crate) max_tlps: u32,
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: u16,
-    pub(crate) initial_rtt: u64,
+    pub(crate) initial_rtt: Duration,
 
     pub(crate) max_datagram_size: u64,
     pub(crate) initial_window: u64,
     pub(crate) minimum_window: u64,
     pub(crate) loss_reduction_factor: u16,
     pub(crate) persistent_congestion_threshold: u32,
-    pub(crate) keep_alive_interval: u32,
+    pub(crate) keep_alive_interval: Option<Duration>,
     pub(crate) crypto_buffer_size: usize,
     pub(crate) allow_spin: bool,
     pub(crate) datagram_receive_buffer_size: Option<usize>,
@@ -78,12 +84,16 @@ impl TransportConfig {
         self
     }
 
-    /// Maximum duration of inactivity to accept before timing out the connection (ms).
+    /// Maximum duration of inactivity to accept before timing out the connection.
     ///
-    /// The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
-    pub fn idle_timeout(&mut self, value: u64) -> &mut Self {
+    /// The actual value used is the minimum of this and the peer's own idle timeout. `None`
+    /// represents an infinite timeout.
+    pub fn idle_timeout(&mut self, value: Option<Duration>) -> Result<&mut Self, ConfigError> {
+        if value.map_or(false, |x| x.as_millis() > VarInt::MAX.0 as u128) {
+            return Err(ConfigError::OutOfBounds);
+        }
         self.idle_timeout = value;
-        self
+        Ok(self)
     }
 
     /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
@@ -141,8 +151,8 @@ impl TransportConfig {
         self
     }
 
-    /// The RTT used before an RTT sample is taken (μs)
-    pub fn initial_rtt(&mut self, value: u64) -> &mut Self {
+    /// The RTT used before an RTT sample is taken
+    pub fn initial_rtt(&mut self, value: Duration) -> &mut Self {
         self.initial_rtt = value;
         self
     }
@@ -183,14 +193,14 @@ impl TransportConfig {
         self
     }
 
-    /// Number of milliseconds of inactivity before sending a keep-alive packet
+    /// Period of inactivity before sending a keep-alive packet
     ///
     /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
     ///
-    /// 0 to disable, which is the default. Only one side of any given connection needs keep-alive
+    /// `None` to disable, which is the default. Only one side of any given connection needs keep-alive
     /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
     /// peers to be effective.
-    pub fn keep_alive_interval(&mut self, value: u32) -> &mut Self {
+    pub fn keep_alive_interval(&mut self, value: Option<Duration>) -> &mut Self {
         self.keep_alive_interval = value;
         self
     }
@@ -245,15 +255,15 @@ impl Default for TransportConfig {
         TransportConfig {
             stream_window_bidi: 32,
             stream_window_uni: 32,
-            idle_timeout: 10_000,
+            idle_timeout: Some(Duration::from_millis(10_000)),
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
             send_window: 8 * STREAM_RWND,
 
             max_tlps: 2,
             packet_threshold: 3,
-            time_threshold: 0x2000,  // 1/8
-            initial_rtt: 500 * 1000, // 500ms per spec, intentionally distinct from EXPECTED_RTT
+            time_threshold: 0x2000,                  // 1/8
+            initial_rtt: Duration::from_millis(500), // per spec, intentionally distinct from EXPECTED_RTT
 
             max_datagram_size: MAX_DATAGRAM_SIZE,
             initial_window: cmp::min(
@@ -263,7 +273,7 @@ impl Default for TransportConfig {
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0x8000, // 1/2
             persistent_congestion_threshold: 3,
-            keep_alive_interval: 0,
+            keep_alive_interval: None,
             crypto_buffer_size: 16 * 1024,
             allow_spin: true,
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
@@ -558,6 +568,12 @@ pub enum ConfigError {
     /// Value exceeds supported bounds
     #[error(display = "value exceeds supported bounds")]
     OutOfBounds,
+}
+
+impl From<TryFromIntError> for ConfigError {
+    fn from(_: TryFromIntError) -> Self {
+        ConfigError::OutOfBounds
+    }
 }
 
 /// Events sent from an Endpoint to a Connection

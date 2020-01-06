@@ -292,7 +292,9 @@ impl State {
             tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
         }
         let mut transport = quinn::TransportConfig::default();
-        transport.idle_timeout(1_000);
+        transport
+            .idle_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         let client_config = quinn::ClientConfig {
             crypto: Arc::new(tls_config),
             transport: Arc::new(transport),

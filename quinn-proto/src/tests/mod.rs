@@ -681,10 +681,10 @@ fn instant_close_2() {
 #[test]
 fn idle_timeout() {
     let _guard = subscribe();
-    const IDLE_TIMEOUT: u64 = 10;
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(10);
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            idle_timeout: IDLE_TIMEOUT,
+            idle_timeout: Some(IDLE_TIMEOUT),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -705,7 +705,7 @@ fn idle_timeout() {
         pair.client.inbound.clear(); // Simulate total S->C packet loss
     }
 
-    assert!(pair.time - start < 2 * Duration::from_secs(IDLE_TIMEOUT));
+    assert!(pair.time - start < 2 * IDLE_TIMEOUT);
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::ConnectionLost {
@@ -981,11 +981,11 @@ fn zero_length_cid() {
 #[test]
 fn keep_alive() {
     let _guard = subscribe();
-    const IDLE_TIMEOUT: u64 = 10_000;
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            keep_alive_interval: IDLE_TIMEOUT as u32 / 2,
-            idle_timeout: IDLE_TIMEOUT,
+            keep_alive_interval: Some(IDLE_TIMEOUT / 2),
+            idle_timeout: Some(IDLE_TIMEOUT),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -993,7 +993,7 @@ fn keep_alive() {
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
     // Run a good while longer than the idle timeout
-    let end = pair.time + Duration::from_millis(20 * IDLE_TIMEOUT);
+    let end = pair.time + 20 * IDLE_TIMEOUT;
     while pair.time < end {
         if !pair.step() {
             if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
