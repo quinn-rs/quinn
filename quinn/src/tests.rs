@@ -32,11 +32,11 @@ fn handshake_timeout() {
 
     let mut client_config = crate::ClientConfig::default();
     const IDLE_TIMEOUT: u64 = 500;
-    client_config.transport = Arc::new(crate::TransportConfig {
-        idle_timeout: IDLE_TIMEOUT,
-        initial_rtt: 10_000, // Ensure initial PTO doesn't influence the timeout significantly
-        ..Default::default()
-    });
+    let mut transport_config = crate::TransportConfig::default();
+    transport_config
+        .idle_timeout(IDLE_TIMEOUT)
+        .initial_rtt(10_000);
+    client_config.transport = Arc::new(transport_config);
 
     let start = Instant::now();
     runtime.block_on(async move {

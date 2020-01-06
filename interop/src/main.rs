@@ -291,12 +291,11 @@ impl State {
         if keylog {
             tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
         }
+        let mut transport = quinn::TransportConfig::default();
+        transport.idle_timeout(1_000);
         let client_config = quinn::ClientConfig {
             crypto: Arc::new(tls_config),
-            transport: Arc::new(quinn::TransportConfig {
-                idle_timeout: 1_000,
-                ..Default::default()
-            }),
+            transport: Arc::new(transport),
         };
 
         let mut endpoint = quinn::Endpoint::builder();

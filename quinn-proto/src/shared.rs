@@ -27,6 +27,32 @@ use crate::{
 /// second.
 #[derive(Debug)]
 pub struct TransportConfig {
+    pub(crate) stream_window_bidi: u64,
+    pub(crate) stream_window_uni: u64,
+    pub(crate) idle_timeout: u64,
+    pub(crate) stream_receive_window: u64,
+    pub(crate) receive_window: u64,
+    pub(crate) send_window: u64,
+
+    pub(crate) max_tlps: u32,
+    pub(crate) packet_threshold: u32,
+    pub(crate) time_threshold: u16,
+    pub(crate) delayed_ack_timeout: u64,
+    pub(crate) initial_rtt: u64,
+
+    pub(crate) max_datagram_size: u64,
+    pub(crate) initial_window: u64,
+    pub(crate) minimum_window: u64,
+    pub(crate) loss_reduction_factor: u16,
+    pub(crate) persistent_congestion_threshold: u32,
+    pub(crate) keep_alive_interval: u32,
+    pub(crate) crypto_buffer_size: usize,
+    pub(crate) allow_spin: bool,
+    pub(crate) datagram_receive_buffer_size: Option<usize>,
+    pub(crate) datagram_send_buffer_size: usize,
+}
+
+impl TransportConfig {
     /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
     /// accepted locally
     ///
@@ -43,13 +69,25 @@ pub struct TransportConfig {
     ///
     /// Note that worst-case memory use is directly proportional to `stream_window_bidi *
     /// stream_receive_window`, with an upper bound proportional to `receive_window`.
-    pub stream_window_bidi: u64,
+    pub fn stream_window_bidi(&mut self, value: u64) -> &mut Self {
+        self.stream_window_bidi = value;
+        self
+    }
+
     /// Variant of `stream_window_bidi` affecting unidirectional streams
-    pub stream_window_uni: u64,
+    pub fn stream_window_uni(&mut self, value: u64) -> &mut Self {
+        self.stream_window_uni = value;
+        self
+    }
+
     /// Maximum duration of inactivity to accept before timing out the connection (ms).
     ///
     /// The actual value used is the minimum of this and the peer's own idle timeout. 0 for none.
-    pub idle_timeout: u64,
+    pub fn idle_timeout(&mut self, value: u64) -> &mut Self {
+        self.idle_timeout = value;
+        self
+    }
+
     /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
     /// before becoming blocked.
     ///
@@ -58,51 +96,101 @@ pub struct TransportConfig {
     /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
     /// chooses not to read from a large stream for a time while still requiring data on other
     /// streams.
-    pub stream_receive_window: u64,
+    pub fn stream_receive_window(&mut self, value: u64) -> &mut Self {
+        self.stream_receive_window = value;
+        self
+    }
+
     /// Maximum number of bytes the peer may transmit across all streams of a connection before
     /// becoming blocked.
     ///
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub receive_window: u64,
+    pub fn receive_window(&mut self, value: u64) -> &mut Self {
+        self.receive_window = value;
+        self
+    }
+
     /// Maximum number of bytes to transmit to a peer without acknowledgment
     ///
     /// Provides an upper bound on memory when communicating with peers that issue large amounts of
     /// flow control credit. Endpoints that wish to handle large numbers of connections robustly
     /// should take care to set this low enough to guarantee memory exhaustion does not occur if
     /// every connection uses the entire window.
-    pub send_window: u64,
+    pub fn send_window(&mut self, value: u64) -> &mut Self {
+        self.send_window = value;
+        self
+    }
 
     /// Maximum number of tail loss probes before an RTO fires.
-    pub max_tlps: u32,
+    pub fn max_tlps(&mut self, value: u32) -> &mut Self {
+        self.max_tlps = value;
+        self
+    }
+
     /// Maximum reordering in packet number space before FACK style loss detection considers a
     /// packet lost.
-    pub packet_threshold: u32,
+    pub fn packet_threshold(&mut self, value: u32) -> &mut Self {
+        self.packet_threshold = value;
+        self
+    }
+
     /// Maximum reordering in time space before time based loss detection considers a packet lost.
     /// 0.16 format, added to 1
-    pub time_threshold: u16,
+    pub fn time_threshold(&mut self, value: u16) -> &mut Self {
+        self.time_threshold = value;
+        self
+    }
+
     /// The length of the peer’s delayed ack timer (μs).
-    pub delayed_ack_timeout: u64,
+    pub fn delayed_ack_timeout(&mut self, value: u64) -> &mut Self {
+        self.delayed_ack_timeout = value;
+        self
+    }
+
     /// The RTT used before an RTT sample is taken (μs)
-    pub initial_rtt: u64,
+    pub fn initial_rtt(&mut self, value: u64) -> &mut Self {
+        self.initial_rtt = value;
+        self
+    }
 
     /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
     ///
     /// Used for calculating initial and minimum congestion windows.
-    pub max_datagram_size: u64,
+    pub fn max_datagram_size(&mut self, value: u64) -> &mut Self {
+        self.max_datagram_size = value;
+        self
+    }
+
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
-    pub initial_window: u64,
+    pub fn initial_window(&mut self, value: u64) -> &mut Self {
+        self.initial_window = value;
+        self
+    }
+
     /// Default minimum congestion window.
     ///
     /// Recommended value: `2 * max_datagram_size`.
-    pub minimum_window: u64,
+    pub fn minimum_window(&mut self, value: u64) -> &mut Self {
+        self.minimum_window = value;
+        self
+    }
+
     /// Reduction in congestion window when a new loss event is detected. 0.16 format
-    pub loss_reduction_factor: u16,
+    pub fn loss_reduction_factor(&mut self, value: u16) -> &mut Self {
+        self.loss_reduction_factor = value;
+        self
+    }
+
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
-    pub persistent_congestion_threshold: u32,
+    pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
+        self.persistent_congestion_threshold = value;
+        self
+    }
+
     /// Number of milliseconds of inactivity before sending a keep-alive packet
     ///
     /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
@@ -110,28 +198,47 @@ pub struct TransportConfig {
     /// 0 to disable, which is the default. Only one side of any given connection needs keep-alive
     /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
     /// peers to be effective.
-    pub keep_alive_interval: u32,
+    pub fn keep_alive_interval(&mut self, value: u32) -> &mut Self {
+        self.keep_alive_interval = value;
+        self
+    }
+
     /// Maximum quantity of out-of-order crypto layer data to buffer
-    pub crypto_buffer_size: usize,
+    pub fn crypto_buffer_size(&mut self, value: usize) -> &mut Self {
+        self.crypto_buffer_size = value;
+        self
+    }
+
     /// Whether the implementation is permitted to set the spin bit on this connection
     ///
     /// This allows passive observers to easily judge the round trip time of a connection, which can
     /// be useful for network administration but sacrifices a small amount of privacy.
-    pub allow_spin: bool,
+    pub fn allow_spin(&mut self, value: bool) -> &mut Self {
+        self.allow_spin = value;
+        self
+    }
+
     /// Maximum number of incoming application datagram bytes to buffer, or None to disable
     /// datagrams
     ///
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
     /// exceeds this value, old datagrams are dropped until it is no longer exceeded.
-    pub datagram_receive_buffer_size: Option<usize>,
+    pub fn datagram_receive_buffer_size(&mut self, value: Option<usize>) -> &mut Self {
+        self.datagram_receive_buffer_size = value;
+        self
+    }
+
     /// Maximum number of outgoing application datagram bytes to buffer
     ///
     /// While datagrams are sent ASAP, it is possible for an application to generate data faster
     /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
     /// memory that may be consumed in that case. When the send buffer is full and a new datagram is
     /// sent, older datagrams are dropped until sufficient space is available.
-    pub datagram_send_buffer_size: usize,
+    pub fn datagram_send_buffer_size(&mut self, value: usize) -> &mut Self {
+        self.datagram_send_buffer_size = value;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -214,11 +321,31 @@ pub struct EndpointConfig {
     /// their source address. Otherwise, the connection ID field is used alone, allowing for source
     /// address to change and for multiple connections from a single address. When local_cid_len >
     /// 0, at most 3/4 * 2^(local_cid_len * 8) simultaneous connections can be supported.
-    pub local_cid_len: usize,
+    pub(crate) local_cid_len: usize,
 
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
-    pub reset_key: Vec<u8>,
+    pub(crate) reset_key: Vec<u8>,
+}
+
+impl EndpointConfig {
+    /// Length of connection IDs for the endpoint.
+    ///
+    /// This must be no greater than 20. If zero, incoming packets are mapped to connections only by
+    /// their source address. Otherwise, the connection ID field is used alone, allowing for source
+    /// address to change and for multiple connections from a single address. When local_cid_len >
+    /// 0, at most 3/4 * 2^(local_cid_len * 8) simultaneous connections can be supported.
+    pub fn local_cid_len(&mut self, value: usize) -> &mut Self {
+        self.local_cid_len = value;
+        self
+    }
+
+    /// Private key used to send authenticated connection resets to peers who were
+    /// communicating with a previous instance of this endpoint.
+    pub fn reset_key(&mut self, value: &[u8]) -> &mut Self {
+        self.reset_key = value.to_vec();
+        self
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -268,24 +395,66 @@ where
     pub crypto: S::ServerConfig,
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub token_key: Vec<u8>,
+    pub(crate) token_key: Vec<u8>,
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub use_stateless_retry: bool,
+    pub(crate) use_stateless_retry: bool,
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub retry_token_lifetime: u64,
+    pub(crate) retry_token_lifetime: u64,
 
     /// Maximum number of incoming connections to buffer.
     ///
     /// Accepting a connection removes it from the buffer, so this does not need to be large.
-    pub accept_buffer: u32,
+    pub(crate) accept_buffer: u32,
 
     /// Whether to allow clients to migrate to new addresses
     ///
     /// Improves behavior for clients that move between different internet connections or suffer NAT
     /// rebinding. Enabled by default.
-    pub migration: bool,
+    pub(crate) migration: bool,
+}
+
+impl<S> ServerConfig<S>
+where
+    S: crypto::Session,
+{
+    /// Private key used to authenticate data included in handshake tokens.
+    pub fn token_key(&mut self, value: &[u8]) -> &mut Self {
+        self.token_key = value.to_vec();
+        self
+    }
+
+    /// Whether to require clients to prove ownership of an address before committing resources.
+    ///
+    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
+    pub fn use_stateless_retry(&mut self, value: bool) -> &mut Self {
+        self.use_stateless_retry = value;
+        self
+    }
+
+    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    pub fn retry_token_lifetime(&mut self, value: u64) -> &mut Self {
+        self.retry_token_lifetime = value;
+        self
+    }
+
+    /// Maximum number of incoming connections to buffer.
+    ///
+    /// Accepting a connection removes it from the buffer, so this does not need to be large.
+    pub fn accept_buffer(&mut self, value: u32) -> &mut Self {
+        self.accept_buffer = value;
+        self
+    }
+
+    /// Whether to allow clients to migrate to new addresses
+    ///
+    /// Improves behavior for clients that move between different internet connections or suffer NAT
+    /// rebinding. Enabled by default.
+    pub fn migration(&mut self, value: bool) -> &mut Self {
+        self.migration = value;
+        self
+    }
 }
 
 impl<S> fmt::Debug for ServerConfig<S>
