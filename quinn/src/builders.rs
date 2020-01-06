@@ -50,7 +50,7 @@ impl EndpointBuilder {
         let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
-            proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new))?,
+            proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
             addr.is_ipv6(),
         );
         Ok((
@@ -94,9 +94,6 @@ pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
     #[error(display = "failed to set up UDP socket: {}", _0)]
     Socket(io::Error),
-    /// An error in the Quinn transport configuration
-    #[error(display = "configuration error: {:?}", _0)]
-    Config(#[source] proto::ConfigError),
 }
 
 /// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable

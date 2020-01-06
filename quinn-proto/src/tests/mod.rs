@@ -9,6 +9,7 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use hex_literal::hex;
 use rand::RngCore;
+use ring::hmac;
 use rustls::internal::msgs::enums::AlertDescription;
 use tracing::info;
 
@@ -20,7 +21,7 @@ use util::*;
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config()))).unwrap();
+    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())));
     let now = Instant::now();
     let event = server.handle(
         now,
@@ -53,8 +54,7 @@ fn version_negotiate_client() {
             ..Default::default()
         }),
         None,
-    )
-    .unwrap();
+    );
     let (_, mut client_conn) = client
         .connect(client_config(), server_addr, "localhost")
         .unwrap();
@@ -128,15 +128,13 @@ fn server_stateless_reset() {
     let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
     rng.fill_bytes(&mut reset_key);
+    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
 
-    let endpoint_config = Arc::new(EndpointConfig {
-        reset_key,
-        ..Default::default()
-    });
+    let endpoint_config = Arc::new(EndpointConfig::new(reset_key));
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
-    pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config()))).unwrap();
+    pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())));
     // Send something big enough to allow room for a smaller stateless reset.
     pair.client.connections.get_mut(&client_ch).unwrap().close(
         pair.time,
@@ -159,15 +157,13 @@ fn client_stateless_reset() {
     let mut reset_key = vec![0; 64];
     let mut rng = rand::thread_rng();
     rng.fill_bytes(&mut reset_key);
+    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
 
-    let endpoint_config = Arc::new(EndpointConfig {
-        reset_key,
-        ..Default::default()
-    });
+    let endpoint_config = Arc::new(EndpointConfig::new(reset_key));
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
-    pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config()))).unwrap();
+    pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())));
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
         pair.time,

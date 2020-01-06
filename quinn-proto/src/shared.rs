@@ -3,12 +3,11 @@ use std::{cmp, fmt, net::SocketAddr, sync::Arc, time::Instant};
 use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
-use tracing::warn;
 
 use crate::{
-    crypto::{self, ClientConfig as _, ServerConfig as _},
+    crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
     packet::PartialDecode,
-    VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -281,40 +280,13 @@ impl Default for TransportConfig {
     }
 }
 
-impl TransportConfig {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if let Some((name, _)) = [
-            ("stream_window_bidi", self.stream_window_bidi),
-            ("stream_window_uni", self.stream_window_uni),
-            ("receive_window", self.receive_window),
-            ("stream_receive_window", self.stream_receive_window),
-            ("idle_timeout", self.idle_timeout),
-        ]
-        .iter()
-        .find(|&&(_, x)| x > VarInt::MAX.into_inner())
-        {
-            return Err(ConfigError::VarIntBounds(name));
-        }
-        if self.crypto_buffer_size < 4096 {
-            return Err(ConfigError::IllegalValue(
-                "crypto_buffer_size must be at least 4096",
-            ));
-        }
-        if self.idle_timeout != 0 && u64::from(self.keep_alive_interval) >= self.idle_timeout {
-            warn!(
-                "keep-alive interval {} is ineffective due to lower idle timeout {}",
-                self.keep_alive_interval, self.idle_timeout
-            );
-        }
-        Ok(())
-    }
-}
-
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.
-#[derive(Clone)]
-pub struct EndpointConfig {
+pub struct EndpointConfig<S>
+where
+    S: crypto::Session,
+{
     /// Length of connection IDs for the endpoint.
     ///
     /// This must be no greater than 20. If zero, incoming packets are mapped to connections only by
@@ -325,30 +297,44 @@ pub struct EndpointConfig {
 
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
-    pub(crate) reset_key: Vec<u8>,
+    pub(crate) reset_key: Arc<S::HmacKey>,
 }
 
-impl EndpointConfig {
+impl<S> EndpointConfig<S>
+where
+    S: crypto::Session,
+{
+    /// Create a default config with a particular `reset_key`
+    pub fn new(reset_key: S::HmacKey) -> Self {
+        Self {
+            local_cid_len: 8,
+            reset_key: Arc::new(reset_key),
+        }
+    }
+
     /// Length of connection IDs for the endpoint.
     ///
     /// This must be no greater than 20. If zero, incoming packets are mapped to connections only by
     /// their source address. Otherwise, the connection ID field is used alone, allowing for source
     /// address to change and for multiple connections from a single address. When local_cid_len >
     /// 0, at most 3/4 * 2^(local_cid_len * 8) simultaneous connections can be supported.
-    pub fn local_cid_len(&mut self, value: usize) -> &mut Self {
+    pub fn local_cid_len(&mut self, value: usize) -> Result<&mut Self, ConfigError> {
+        if value > MAX_CID_SIZE {
+            return Err(ConfigError::OutOfBounds);
+        }
         self.local_cid_len = value;
-        self
+        Ok(self)
     }
 
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
-    pub fn reset_key(&mut self, value: &[u8]) -> &mut Self {
-        self.reset_key = value.to_vec();
-        self
+    pub fn reset_key(&mut self, value: &[u8]) -> Result<&mut Self, ConfigError> {
+        self.reset_key = Arc::new(S::HmacKey::new(value)?);
+        Ok(self)
     }
 }
 
-impl fmt::Debug for EndpointConfig {
+impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EndpointConfig")
             .field("local_cid_len", &self.local_cid_len)
@@ -357,25 +343,23 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-impl Default for EndpointConfig {
+impl<S: crypto::Session> Default for EndpointConfig<S> {
     fn default() -> Self {
-        let mut reset_key = vec![0; 64];
+        let mut reset_key = vec![0; S::HmacKey::KEY_LEN];
         rand::thread_rng().fill_bytes(&mut reset_key);
-        Self {
-            local_cid_len: 8,
-            reset_key,
-        }
+        Self::new(
+            S::HmacKey::new(&reset_key)
+                .expect("HMAC key rejected random bytes; use EndpointConfig::new instead"),
+        )
     }
 }
 
-impl EndpointConfig {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if self.local_cid_len > MAX_CID_SIZE {
-            return Err(ConfigError::IllegalValue(
-                "local_cid_len must be at most 20",
-            ));
+impl<S: crypto::Session> Clone for EndpointConfig<S> {
+    fn clone(&self) -> Self {
+        Self {
+            local_cid_len: self.local_cid_len,
+            reset_key: self.reset_key.clone(),
         }
-        Ok(())
     }
 }
 
@@ -395,7 +379,7 @@ where
     pub crypto: S::ServerConfig,
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub(crate) token_key: Vec<u8>,
+    pub(crate) token_key: Arc<S::HmacKey>,
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
@@ -419,10 +403,26 @@ impl<S> ServerConfig<S>
 where
     S: crypto::Session,
 {
+    /// Create a default config with a particular `token_key`
+    pub fn new(token_key: S::HmacKey) -> Self {
+        Self {
+            transport: Arc::new(TransportConfig::default()),
+            crypto: S::ServerConfig::new(),
+
+            token_key: Arc::new(token_key),
+            use_stateless_retry: false,
+            retry_token_lifetime: 15_000_000,
+
+            accept_buffer: 1024,
+
+            migration: true,
+        }
+    }
+
     /// Private key used to authenticate data included in handshake tokens.
-    pub fn token_key(&mut self, value: &[u8]) -> &mut Self {
-        self.token_key = value.to_vec();
-        self
+    pub fn token_key(&mut self, value: &[u8]) -> Result<&mut Self, ConfigError> {
+        self.token_key = Arc::new(S::HmacKey::new(value)?);
+        Ok(self)
     }
 
     /// Whether to require clients to prove ownership of an address before committing resources.
@@ -481,21 +481,12 @@ where
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
 
-        let mut token_key = vec![0; 64];
+        let mut token_key = vec![0; S::HmacKey::KEY_LEN];
         rng.fill_bytes(&mut token_key);
-
-        Self {
-            transport: Arc::new(TransportConfig::default()),
-            crypto: S::ServerConfig::new(),
-
-            token_key,
-            use_stateless_retry: false,
-            retry_token_lifetime: 15_000_000,
-
-            accept_buffer: 1024,
-
-            migration: true,
-        }
+        Self::new(
+            S::HmacKey::new(&token_key)
+                .expect("HMAC key rejected random bytes; use ServerConfig::new instead"),
+        )
     }
 }
 
@@ -570,14 +561,11 @@ where
 
 /// Errors in the configuration of an endpoint
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConfigError {
-    /// The supplied configuration contained an invalid value
-    #[error(display = "illegal configuration value: {}", _0)]
-    IllegalValue(&'static str),
-    /// A configuration field that will be encoded as a variable-length integer exceeds the 0..2^62
-    /// range
-    #[error(display = "{} must be at most 2^62-1", _0)]
-    VarIntBounds(&'static str),
+    /// Value exceeds supported bounds
+    #[error(display = "value exceeds supported bounds")]
+    OutOfBounds,
 }
 
 /// Events sent from an Endpoint to a Connection

@@ -42,7 +42,7 @@ pub struct Connection<S>
 where
     S: crypto::Session,
 {
-    endpoint_config: Arc<EndpointConfig>,
+    endpoint_config: Arc<EndpointConfig<S>>,
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
@@ -161,7 +161,7 @@ where
     S: crypto::Session,
 {
     pub(crate) fn new(
-        endpoint_config: Arc<EndpointConfig>,
+        endpoint_config: Arc<EndpointConfig<S>>,
         server_config: Option<Arc<ServerConfig<S>>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
