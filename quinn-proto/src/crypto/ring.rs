@@ -262,7 +262,7 @@ impl crypto::HmacKey for hmac::Key {
         if key.len() == Self::KEY_LEN {
             Ok(hmac::Key::new(hmac::HMAC_SHA256, key))
         } else {
-            Err(ConfigError::IllegalValue("key length must be 64 bytes"))
+            Err(ConfigError::OutOfBounds)
         }
     }
 

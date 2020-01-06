@@ -30,8 +30,8 @@ pub struct Pair {
 
 impl Pair {
     pub fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
-        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config))).unwrap();
-        let client = Endpoint::new(endpoint_config, None).unwrap();
+        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
+        let client = Endpoint::new(endpoint_config, None);
 
         let server_addr = SocketAddr::new(
             Ipv6Addr::LOCALHOST.into(),

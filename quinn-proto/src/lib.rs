@@ -48,7 +48,7 @@ pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};
 
 mod shared;
 pub use crate::shared::{
-    ConfigError, ConnectionEvent, EcnCodepoint, EndpointConfig, EndpointEvent, TransportConfig,
+    ConfigError, ConnectionEvent, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 
 mod streams;
@@ -62,7 +62,7 @@ pub mod generic {
     pub use crate::{
         connection::Connection,
         endpoint::Endpoint,
-        shared::{ClientConfig, ServerConfig},
+        shared::{ClientConfig, EndpointConfig, ServerConfig},
     };
 }
 
@@ -78,6 +78,8 @@ mod rustls_impls {
     pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
     /// A `ServerConfig` containing server-side rustls configuration
     pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
+    /// A `EndpointConfig` using rustls keys
+    pub type EndpointConfig = generic::EndpointConfig<crypto::rustls::TlsSession>;
 }
 
 #[cfg(feature = "rustls")]
