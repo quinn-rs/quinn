@@ -1,14 +1,7 @@
-use std::{
-    ops::{Index, IndexMut},
-    slice,
-};
-
-/// Kinds of timeouts needed to run the protocol logic
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub struct Timer(pub(crate) TimerKind);
+use std::time::Instant;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub(crate) enum TimerKind {
+pub(crate) enum Timer {
     /// When to send an ack-eliciting probe packet or declare unacked packets lost
     LossDetection = 0,
     /// When to close the connection after no activity
@@ -23,118 +16,42 @@ pub(crate) enum TimerKind {
     KeepAlive = 5,
 }
 
-impl TimerKind {
-    const VALUES: [Self; 6] = [
-        TimerKind::LossDetection,
-        TimerKind::Idle,
-        TimerKind::Close,
-        TimerKind::KeyDiscard,
-        TimerKind::PathValidation,
-        TimerKind::KeepAlive,
+impl Timer {
+    pub(crate) const VALUES: [Self; 6] = [
+        Timer::LossDetection,
+        Timer::Idle,
+        Timer::Close,
+        Timer::KeyDiscard,
+        Timer::PathValidation,
+        Timer::KeepAlive,
     ];
 }
 
 /// A table of data associated with each distinct kind of `Timer`
 #[derive(Debug, Copy, Clone, Default)]
-pub struct TimerTable<T> {
-    data: [T; 6],
+pub(crate) struct TimerTable {
+    data: [Option<Instant>; 6],
 }
 
-impl<T> TimerTable<T> {
-    /// Create a table initialized with the value returned by `f` for each timer
-    pub fn new(mut f: impl FnMut() -> T) -> Self {
-        Self {
-            data: [f(), f(), f(), f(), f(), f()],
-        }
+impl TimerTable {
+    pub fn set(&mut self, timer: Timer, time: Instant) {
+        self.data[timer as usize] = Some(time);
     }
 
-    /// Iterate over the contained values
-    pub fn iter(&self) -> TimerTableIter<T> {
-        TimerTableIter {
-            kind: TimerKind::VALUES.iter(),
-            table: self,
-        }
+    #[cfg(test)]
+    pub fn get(&self, timer: Timer) -> Option<Instant> {
+        self.data[timer as usize]
     }
 
-    /// Mutably iterate over the contained values
-    pub fn iter_mut(&mut self) -> TimerTableIterMut<T> {
-        TimerTableIterMut {
-            kind: TimerKind::VALUES.iter(),
-            table: self.data.iter_mut(),
-        }
+    pub fn stop(&mut self, timer: Timer) {
+        self.data[timer as usize] = None;
     }
-}
 
-/// Iterator over a `TimerTable`
-pub struct TimerTableIter<'a, T> {
-    kind: slice::Iter<'static, TimerKind>,
-    table: &'a TimerTable<T>,
-}
-
-impl<'a, T> Iterator for TimerTableIter<'a, T> {
-    type Item = (Timer, &'a T);
-    fn next(&mut self) -> Option<(Timer, &'a T)> {
-        let timer = Timer(*self.kind.next()?);
-        Some((timer, &self.table[timer]))
+    pub fn next_timeout(&self) -> Option<Instant> {
+        self.data.iter().filter_map(|&x| x).min()
     }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.kind.size_hint()
-    }
-}
 
-impl<'a, T> ExactSizeIterator for TimerTableIter<'a, T> {
-    fn len(&self) -> usize {
-        self.kind.len()
-    }
-}
-
-/// Mutable iterator over a `TimerTable`
-pub struct TimerTableIterMut<'a, T> {
-    kind: slice::Iter<'static, TimerKind>,
-    table: slice::IterMut<'a, T>,
-}
-
-impl<'a, T> Iterator for TimerTableIterMut<'a, T> {
-    type Item = (Timer, &'a mut T);
-    fn next(&mut self) -> Option<(Timer, &'a mut T)> {
-        Some((Timer(*self.kind.next()?), self.table.next().unwrap()))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.kind.size_hint()
-    }
-}
-
-impl<'a, T> ExactSizeIterator for TimerTableIterMut<'a, T> {
-    fn len(&self) -> usize {
-        self.kind.len()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a TimerTable<T> {
-    type Item = (Timer, &'a T);
-    type IntoIter = TimerTableIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a mut TimerTable<T> {
-    type Item = (Timer, &'a mut T);
-    type IntoIter = TimerTableIterMut<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mut()
-    }
-}
-
-impl<T> Index<Timer> for TimerTable<T> {
-    type Output = T;
-    fn index(&self, index: Timer) -> &T {
-        &self.data[index.0 as usize]
-    }
-}
-
-impl<T> IndexMut<Timer> for TimerTable<T> {
-    fn index_mut(&mut self, index: Timer) -> &mut T {
-        &mut self.data[index.0 as usize]
+    pub fn is_expired(&self, timer: Timer, after: Instant) -> bool {
+        self.data[timer as usize].map_or(false, |x| x <= after)
     }
 }

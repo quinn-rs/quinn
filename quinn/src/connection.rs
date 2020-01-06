@@ -15,9 +15,9 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId, TimerUpdate};
+use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
-use tracing::{info_span, trace};
+use tracing::info_span;
 
 use crate::{
     broadcast::{self, Broadcast},
@@ -214,8 +214,7 @@ impl Future for ConnectionDriver {
                 return Poll::Ready(Err(e));
             }
             conn.drive_transmit(now);
-            keep_going |= conn.drive_timers(cx, now);
-            keep_going |= conn.handle_timer_updates();
+            keep_going |= conn.drive_timer(cx, now);
             conn.forward_endpoint_events();
             conn.forward_app_events();
             if !keep_going || conn.inner.is_drained() {
@@ -481,13 +480,12 @@ impl ConnectionRef {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
-            epoch: Instant::now(),
             inner: conn,
             driver: None,
             handle,
             on_connected: None,
             connected: false,
-            timers: Default::default(),
+            timer: None,
             conn_events,
             endpoint_events,
             blocked_writers: HashMap::new(),
@@ -535,13 +533,12 @@ impl std::ops::Deref for ConnectionRef {
 }
 
 pub struct ConnectionInner {
-    epoch: Instant,
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
     handle: ConnectionHandle,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    timers: proto::TimerTable<Option<Delay>>,
+    timer: Option<Delay>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: HashMap<StreamId, Waker>,
@@ -660,51 +657,25 @@ impl ConnectionInner {
         }
     }
 
-    fn drive_timers(&mut self, cx: &mut Context, now: Instant) -> bool {
+    fn drive_timer(&mut self, cx: &mut Context, now: Instant) -> bool {
         let mut keep_going = false;
-        for (timer, slot) in &mut self.timers {
-            if let Some(ref mut delay) = slot {
-                match delay.poll_unpin(cx) {
-                    Poll::Ready(()) => {
-                        *slot = None;
-                        trace!("{:?} timeout", timer);
-                        self.inner.handle_timeout(now, timer);
-                        // Timeout call may have queued sends
-                        keep_going = true;
-                    }
-                    Poll::Pending => {}
-                }
-            }
+        if self.timer.is_none() {
+            self.timer = self
+                .inner
+                .poll_timeout()
+                .map(|x| delay_until(TokioInstant::from_std(x)));
         }
-        keep_going
-    }
-
-    fn handle_timer_updates(&mut self) -> bool {
-        let mut keep_going = false;
-        while let Some(update) = self.inner.poll_timers() {
-            keep_going = true; // Timers must be polled once set
-            match update {
-                TimerUpdate {
-                    timer,
-                    update: proto::TimerSetting::Start(time),
-                } => match self.timers[timer] {
-                    ref mut x @ None => {
-                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer start", timer);
-                        *x = Some(delay_until(TokioInstant::from_std(time)));
-                    }
-                    Some(ref mut x) => {
-                        trace!(time = ?time.duration_since(self.epoch), "{:?} timer reset", timer);
-                        x.reset(TokioInstant::from_std(time));
-                    }
-                },
-                TimerUpdate {
-                    timer,
-                    update: proto::TimerSetting::Stop,
-                } => {
-                    if self.timers[timer].take().is_some() {
-                        trace!("{:?} timer stop", timer);
-                    }
-                }
+        while let Some(ref mut delay) = self.timer {
+            if delay.poll_unpin(cx) == Poll::Pending {
+                break;
+            }
+            self.inner.handle_timeout(now);
+            // Timeout call may have queued sends
+            keep_going = true;
+            if let Some(t) = self.inner.poll_timeout() {
+                delay.reset(TokioInstant::from_std(t));
+            } else {
+                self.timer = None;
             }
         }
         keep_going
