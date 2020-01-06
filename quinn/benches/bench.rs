@@ -80,13 +80,10 @@ impl Context {
         let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
         let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
 
-        let server_config = quinn::ServerConfig {
-            transport: Arc::new(quinn::TransportConfig {
-                stream_window_uni: 1024,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+        let mut transport = quinn::TransportConfig::default();
+        transport.stream_window_uni(1024);
+        let mut server_config = quinn::ServerConfig::default();
+        server_config.transport = Arc::new(transport);
         let mut server_config = ServerConfigBuilder::new(server_config);
         server_config.certificate(cert_chain, key).unwrap();
 

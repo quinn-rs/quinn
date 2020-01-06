@@ -140,7 +140,7 @@ fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
     unwrap!(peer_cfg_builder.add_certificate_authority(their_cert));
     let mut peer_cfg = peer_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));
-    transport_config.idle_timeout = 20_000;
+    transport_config.idle_timeout(20_000);
 
     peer_cfg
 }
@@ -158,7 +158,7 @@ fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
     ));
     let mut our_cfg = our_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport));
-    transport_config.idle_timeout = 20_000;
+    transport_config.idle_timeout(20_000);
 
     (our_cfg, our_cert_der)
 }

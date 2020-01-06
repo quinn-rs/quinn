@@ -64,13 +64,10 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let priv_key = cert.serialize_private_key_der();
     let priv_key = PrivateKey::from_der(&priv_key)?;
 
-    let server_config = ServerConfig {
-        transport: Arc::new(TransportConfig {
-            stream_window_uni: 0,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    let mut transport_config = TransportConfig::default();
+    transport_config.stream_window_uni(0);
+    let mut server_config = ServerConfig::default();
+    server_config.transport = Arc::new(transport_config);
     let mut cfg_builder = ServerConfigBuilder::new(server_config);
     let cert = Certificate::from_der(&cert_der)?;
     cfg_builder.certificate(CertificateChain::from_certs(vec![cert]), priv_key)?;

@@ -58,13 +58,11 @@ fn main() {
 }
 
 fn run(options: Opt) -> Result<()> {
-    let server_config = quinn::ServerConfig {
-        transport: Arc::new(quinn::TransportConfig {
-            stream_window_uni: 0,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.stream_window_uni(0);
+    let mut server_config = quinn::ServerConfig::default();
+    server_config.transport = Arc::new(transport_config);
+
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(common::ALPN_QUIC_HTTP);
 
