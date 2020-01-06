@@ -28,16 +28,14 @@ mod range_set;
 mod spaces;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
+mod timer;
 pub mod transport_parameters;
 mod varint;
 
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
-mod timer;
-pub use timer::{Timer, TimerTable, TimerTableIter, TimerTableIterMut};
-
 mod connection;
-pub use crate::connection::{ConnectionError, Event, SendDatagramError, TimerSetting, TimerUpdate};
+pub use crate::connection::{ConnectionError, Event, SendDatagramError};
 
 pub mod crypto;
 

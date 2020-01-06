@@ -16,7 +16,6 @@ use rustls::KeyLogFile;
 use tracing::{info_span, trace};
 
 use super::*;
-use crate::timer::TimerKind;
 
 pub struct Pair {
     pub server: TestEndpoint,
@@ -171,7 +170,7 @@ pub struct TestEndpoint {
     pub endpoint: Endpoint,
     pub addr: SocketAddr,
     socket: Option<UdpSocket>,
-    timers: TimerTable<Option<Instant>>,
+    timeout: Option<Instant>,
     pub outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
     pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
@@ -195,7 +194,7 @@ impl TestEndpoint {
             endpoint,
             addr,
             socket,
-            timers: Default::default(),
+            timeout: None,
             outbound: VecDeque::new(),
             delayed: VecDeque::new(),
             inbound: VecDeque::new(),
@@ -242,14 +241,9 @@ impl TestEndpoint {
 
         let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
         for (ch, conn) in self.connections.iter_mut() {
-            for (timer, setting) in &mut self.timers {
-                if let Some(time) = *setting {
-                    if time <= now {
-                        trace!("{:?} timeout", timer);
-                        *setting = None;
-                        conn.handle_timeout(now, timer);
-                    }
-                }
+            if self.timeout.map_or(false, |x| x <= now) {
+                self.timeout = None;
+                conn.handle_timeout(now);
             }
 
             for (_, mut events) in self.conn_events.drain() {
@@ -265,19 +259,7 @@ impl TestEndpoint {
             while let Some(x) = conn.poll_transmit(now) {
                 self.outbound.push_back(x);
             }
-
-            while let Some(x) = conn.poll_timers() {
-                self.timers[x.timer] = match x.update {
-                    TimerSetting::Stop => {
-                        trace!("{:?} stop", x.timer);
-                        None
-                    }
-                    TimerSetting::Start(time) => {
-                        trace!("{:?} set to expire at {:?}", x.timer, time);
-                        Some(time)
-                    }
-                };
-            }
+            self.timeout = conn.poll_timeout();
         }
 
         for (ch, event) in endpoint_events {
@@ -290,14 +272,12 @@ impl TestEndpoint {
     }
 
     pub fn next_wakeup(&self) -> Option<Instant> {
-        let next_timer = self.timers.iter().filter_map(|(_, t)| *t).min();
         let next_inbound = self.inbound.front().map(|x| x.0);
-        min_opt(next_timer, next_inbound)
+        min_opt(self.timeout, next_inbound)
     }
 
     fn is_idle(&self) -> bool {
-        let t = self.next_wakeup();
-        t == self.timers[Timer(TimerKind::Idle)] || t == self.timers[Timer(TimerKind::KeepAlive)]
+        self.connections.values().all(|x| x.is_idle())
     }
 
     pub fn delay_outbound(&mut self) {

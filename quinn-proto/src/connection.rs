@@ -25,7 +25,7 @@ use crate::{
     },
     spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket},
     streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError},
-    timer::{Timer, TimerKind, TimerTable},
+    timer::{Timer, TimerTable},
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
@@ -115,6 +115,7 @@ where
     first_1rtt_sent: Option<u64>,
     /// Sequence number of the first remote CID that we haven't been asked to retire
     first_unretired_cid: u64,
+    timers: TimerTable,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -236,6 +237,7 @@ where
             idle_timeout: config.idle_timeout,
             first_1rtt_sent: None,
             first_unretired_cid: 0,
+            timers: TimerTable::default(),
 
             path_challenge_pending: false,
             path_response: None,
@@ -265,20 +267,15 @@ where
         this
     }
 
-    /// Returns timer updates
+    /// Returns the next time at which `handle_timeout` should be called
     ///
-    /// Connections should be polled for timer updates after:
+    /// The value returned may change after:
     /// - the application performed some I/O on the connection
     /// - an incoming packet is handled
     /// - a packet is transmitted
     /// - a timer expires
-    pub fn poll_timers(&mut self) -> Option<TimerUpdate> {
-        for (timer, update) in self.io.timers.iter_mut() {
-            if let Some(update) = update.take() {
-                return Some(TimerUpdate { timer, update });
-            }
-        }
-        None
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
+        self.timers.next_timeout()
     }
 
     /// Returns application-facing events
@@ -522,35 +519,42 @@ where
     /// Executes protocol logic, potentially preparing signals (including application `Event`s,
     /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
     /// methods.
-    pub fn handle_timeout(&mut self, now: Instant, timer: Timer) {
-        match timer.0 {
-            TimerKind::Close => {
-                self.state = State::Drained;
-                self.endpoint_events.push_back(EndpointEventInner::Drained);
+    pub fn handle_timeout(&mut self, now: Instant) {
+        for &timer in &Timer::VALUES {
+            if !self.timers.is_expired(timer, now) {
+                continue;
             }
-            TimerKind::Idle => {
-                self.close_common();
-                self.events.push_back(ConnectionError::TimedOut.into());
-                self.state = State::Drained;
-                self.endpoint_events.push_back(EndpointEventInner::Drained);
-            }
-            TimerKind::KeepAlive => {
-                trace!("sending keep-alive");
-                self.ping();
-            }
-            TimerKind::LossDetection => {
-                self.on_loss_detection_timeout(now);
-            }
-            TimerKind::KeyDiscard => {
-                self.zero_rtt_crypto = None;
-                self.prev_crypto = None;
-            }
-            TimerKind::PathValidation => {
-                debug!("path validation failed");
-                self.path_challenge = None;
-                self.path_challenge_pending = false;
-                if let Some(prev) = self.prev_path.take() {
-                    self.path = prev;
+            self.timers.stop(timer);
+            trace!(timer = ?timer, "timeout");
+            match timer {
+                Timer::Close => {
+                    self.state = State::Drained;
+                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                }
+                Timer::Idle => {
+                    self.close_common();
+                    self.events.push_back(ConnectionError::TimedOut.into());
+                    self.state = State::Drained;
+                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                }
+                Timer::KeepAlive => {
+                    trace!("sending keep-alive");
+                    self.ping();
+                }
+                Timer::LossDetection => {
+                    self.on_loss_detection_timeout(now);
+                }
+                Timer::KeyDiscard => {
+                    self.zero_rtt_crypto = None;
+                    self.prev_crypto = None;
+                }
+                Timer::PathValidation => {
+                    debug!("path validation failed");
+                    self.path_challenge = None;
+                    self.path_challenge_pending = false;
+                    if let Some(prev) = self.prev_path.take() {
+                        self.path = prev;
+                    }
                 }
             }
         }
@@ -568,8 +572,7 @@ where
                 .expect("update not acknowledged yet")
                 .1
         };
-        self.io
-            .timer_start(TimerKind::KeyDiscard, start + self.pto() * 3);
+        self.timers.set(Timer::KeyDiscard, start + self.pto() * 3);
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
@@ -745,14 +748,14 @@ where
     fn set_loss_detection_timer(&mut self) {
         if let Some((loss_time, _)) = self.earliest_time_and_space(|x| x.loss_time) {
             // Time threshold loss detection.
-            self.io.timer_start(TimerKind::LossDetection, loss_time);
+            self.timers.set(Timer::LossDetection, loss_time);
             return;
         }
 
         // Don't arm timer if there are no ack-eliciting packets
         // in flight and the handshake is complete.
         if self.in_flight.ack_eliciting == 0 && self.peer_not_awaiting_address_validation() {
-            self.io.timer_stop(TimerKind::LossDetection);
+            self.timers.stop(Timer::LossDetection);
             return;
         }
 
@@ -761,8 +764,7 @@ where
             self.earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
         {
             let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_BACKOFF_EXPONENT));
-            self.io
-                .timer_start(TimerKind::LossDetection, sent_time + timeout);
+            self.timers.set(Timer::LossDetection, sent_time + timeout);
         }
     }
 
@@ -828,19 +830,19 @@ where
             return;
         }
         if self.state.is_closed() {
-            self.io.timer_stop(TimerKind::Idle);
+            self.timers.stop(Timer::Idle);
             return;
         }
         let dt = cmp::max(Duration::from_millis(self.idle_timeout), 3 * self.pto());
-        self.io.timer_start(TimerKind::Idle, now + dt);
+        self.timers.set(Timer::Idle, now + dt);
     }
 
     fn reset_keep_alive(&mut self, now: Instant) {
         if self.config.keep_alive_interval == 0 || !self.state.is_established() {
             return;
         }
-        self.io.timer_start(
-            TimerKind::KeepAlive,
+        self.timers.set(
+            Timer::KeepAlive,
             now + Duration::from_millis(u64::from(self.config.keep_alive_interval)),
         );
     }
@@ -1314,7 +1316,7 @@ where
             self.endpoint_events.push_back(EndpointEventInner::Drained);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
-            self.io.timer_stop(TimerKind::Close);
+            self.timers.stop(Timer::Close);
         }
 
         // Transmit CONNECTION_CLOSE if necessary
@@ -1721,7 +1723,7 @@ where
                         continue;
                     }
                     trace!("path validated");
-                    self.io.timer_stop(TimerKind::PathValidation);
+                    self.timers.stop(Timer::PathValidation);
                     self.path_challenge = None;
                 }
                 Frame::MaxData(bytes) => {
@@ -2032,8 +2034,8 @@ where
         }
 
         // Initiate path validation
-        self.io.timer_start(
-            TimerKind::PathValidation,
+        self.timers.set(
+            Timer::PathValidation,
             now + 3 * cmp::max(
                 self.pto(),
                 Duration::from_micros(2 * self.config.initial_rtt),
@@ -2603,13 +2605,13 @@ where
 
     fn close_common(&mut self) {
         trace!("connection closed");
-        for (_, timer) in &mut self.io.timers {
-            *timer = Some(TimerSetting::Stop);
+        for &timer in &Timer::VALUES {
+            self.timers.stop(timer);
         }
     }
 
     fn set_close_timer(&mut self, now: Instant) {
-        self.io.timer_start(TimerKind::Close, now + 3 * self.pto());
+        self.timers.set(Timer::Close, now + 3 * self.pto());
     }
 
     /// Validate transport parameters received from the peer
@@ -3056,6 +3058,17 @@ where
         self.tls.sni_hostname()
     }
 
+    /// Whether no timers but keepalive and idle are running
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        Timer::VALUES
+            .iter()
+            .filter(|&&t| t != Timer::KeepAlive)
+            .filter_map(|&t| Some((t, self.timers.get(t)?)))
+            .min_by_key(|&(_, time)| time)
+            .map_or(true, |(timer, _)| timer == Timer::Idle)
+    }
+
     /// Total number of outgoing packets that have been deemed lost
     #[cfg(test)]
     pub(crate) fn lost_packets(&self) -> u64 {
@@ -3291,45 +3304,12 @@ const MAX_ACK_BLOCKS: usize = 64;
 struct IoQueue {
     /// Whether to transmit a close packet
     close: bool,
-    /// Changes to timers
-    timers: TimerTable<Option<TimerSetting>>,
 }
 
 impl IoQueue {
     fn new() -> Self {
-        Self {
-            close: false,
-            timers: Default::default(),
-        }
+        Self { close: false }
     }
-
-    /// Start or reset a timer associated with this connection.
-    fn timer_start(&mut self, timer: TimerKind, time: Instant) {
-        self.timers[Timer(timer)] = Some(TimerSetting::Start(time));
-    }
-
-    /// Start one of the timers associated with this connection.
-    fn timer_stop(&mut self, timer: TimerKind) {
-        self.timers[Timer(timer)] = Some(TimerSetting::Stop);
-    }
-}
-
-/// Change applicable to one of a connection's timers
-#[derive(Debug, Copy, Clone)]
-pub enum TimerSetting {
-    /// Set the timer to expire at an a certain point in time
-    Start(Instant),
-    /// Cancel time timer if it's currently running
-    Stop,
-}
-
-/// Change to apply to a specific timer
-#[derive(Debug, Copy, Clone)]
-pub struct TimerUpdate {
-    /// Which timer needs an update
-    pub timer: Timer,
-    /// The new state for the timer
-    pub update: TimerSetting,
 }
 
 struct PrevCrypto<K>
