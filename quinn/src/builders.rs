@@ -3,6 +3,7 @@ use std::{io, net::SocketAddr, str, sync::Arc};
 use err_derive::Error;
 use proto::{ClientConfig, EndpointConfig, ServerConfig};
 use rustls::TLSError;
+use tracing::error;
 
 use crate::{
     endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
@@ -32,11 +33,10 @@ impl EndpointBuilder {
         }
     }
 
-    /// Build an endpoint bound to `addr`.
-    pub fn bind(
-        self,
-        addr: &SocketAddr,
-    ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
+    /// Build an endpoint bound to `addr`
+    ///
+    /// Must be called from within a tokio runtime context.
+    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
     }
@@ -45,7 +45,7 @@ impl EndpointBuilder {
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
-    ) -> Result<(EndpointDriver, Endpoint, Incoming), EndpointError> {
+    ) -> Result<(Endpoint, Incoming), EndpointError> {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
@@ -53,8 +53,13 @@ impl EndpointBuilder {
             proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
             addr.is_ipv6(),
         );
+        let driver = EndpointDriver(rc.clone());
+        tokio::spawn(async {
+            if let Err(e) = driver.await {
+                error!("I/O error: {}", e);
+            }
+        });
         Ok((
-            EndpointDriver(rc.clone()),
             Endpoint {
                 inner: rc.clone(),
                 default_client_config: self.client_config,

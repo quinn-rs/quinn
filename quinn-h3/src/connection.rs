@@ -28,19 +28,19 @@ use crate::{
     Error, Settings,
 };
 
-pub struct ConnectionDriver(pub(crate) ConnectionRef);
+pub(crate) struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
-    type Output = Result<(), Error>;
+    type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let res = self.0.h3.lock().unwrap().drive(cx);
         match res {
             Ok(false) => Poll::Pending,
-            Ok(true) => Poll::Ready(Ok(())),
-            Err(DriverError(err, code, msg)) => {
+            Ok(true) => Poll::Ready(()),
+            Err(DriverError(_err, code, msg)) => {
                 self.0.quic.close(code.into(), msg.as_bytes());
-                Poll::Ready(Err(err))
+                Poll::Ready(())
             }
         }
     }

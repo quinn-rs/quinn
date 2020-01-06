@@ -15,6 +15,7 @@ use futures::{channel::mpsc, FutureExt, StreamExt};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
+    broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::{Connecting, ConnectionDriver, ConnectionRef},
     udp::UdpSocket,
@@ -39,7 +40,7 @@ impl Endpoint {
         EndpointBuilder::default()
     }
 
-    /// Connect to a remote endpoint. Be sure to spawn the `ConnectionDriver` after connecting.
+    /// Connect to a remote endpoint
     ///
     /// `server_name` must be covered by the certificate presented by the server. This prevents a
     /// connection from being intercepted by an attacker with a valid certificate for some other
@@ -115,6 +116,28 @@ impl Endpoint {
             task.wake();
         }
     }
+
+    /// Wait for all connections on the endpoint to be cleanly shut down
+    ///
+    /// Waiting for this condition before terminating the endpoint improves the odds that peers are
+    /// notified about recently closed connection, which is preferred to making them wait for an
+    /// idle timeout.
+    ///
+    /// Does not proactively close existing connections or cause incoming connections to be
+    /// rejected. Consider calling `Endpoint::close` and dropping the `Incoming` stream if that is
+    /// desired.
+    pub async fn wait_idle(&self) {
+        let mut state = broadcast::State::default();
+        futures::future::poll_fn(|cx| {
+            let endpoint = &mut *self.inner.lock().unwrap();
+            if endpoint.connections.is_empty() {
+                return Poll::Ready(());
+            }
+            endpoint.idle.register(cx, &mut state);
+            Poll::Pending
+        })
+        .await;
+    }
 }
 
 /// A future that drives IO on an endpoint
@@ -129,7 +152,7 @@ impl Endpoint {
 /// have been dropped, or when an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
 #[derive(Debug)]
-pub struct EndpointDriver(pub(crate) EndpointRef);
+pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
 
 impl Future for EndpointDriver {
     type Output = Result<(), io::Error>;
@@ -191,6 +214,7 @@ pub(crate) struct EndpointInner {
     close: Option<(VarInt, Bytes)>,
     driver_lost: bool,
     recv_buf: Box<[u8]>,
+    idle: Broadcast,
 }
 
 impl EndpointInner {
@@ -247,7 +271,7 @@ impl EndpointInner {
     fn drive_incoming(&mut self, cx: &mut Context) {
         for i in (0..self.incoming.len()).rev() {
             match self.incoming[i].poll_unpin(cx) {
-                Poll::Ready(Ok(())) | Poll::Ready(Err(_)) if !self.incoming_live => {
+                Poll::Ready(()) if !self.incoming_live => {
                     let _ = self.incoming.swap_remove_back(i);
                 }
                 // It's safe to poll an already dead connection
@@ -297,6 +321,9 @@ impl EndpointInner {
                     Proto(e) => {
                         if e.is_drained() {
                             self.connections.remove(&ch);
+                            if self.connections.is_empty() {
+                                self.idle.wake();
+                            }
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
                             // Ignoring errors from dropped connections that haven't yet been cleaned up
@@ -404,6 +431,7 @@ impl EndpointRef {
             close: None,
             driver_lost: false,
             recv_buf: vec![0; 64 * 1024].into(),
+            idle: Broadcast::new(),
         })))
     }
 }

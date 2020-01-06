@@ -82,14 +82,13 @@ impl Builder {
     pub fn endpoint(
         self,
         endpoint: EndpointBuilder,
-    ) -> Result<(quinn::EndpointDriver, Server, IncomingConnection), quinn::EndpointError> {
+    ) -> Result<(Server, IncomingConnection), quinn::EndpointError> {
         let listen = self
             .listen
             .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
-        let (endpoint_driver, _, incoming) = endpoint.bind(&listen)?;
+        let (_, incoming) = endpoint.bind(&listen)?;
 
         Ok((
-            endpoint_driver,
             Server,
             IncomingConnection {
                 incoming,
@@ -98,19 +97,16 @@ impl Builder {
         ))
     }
 
-    pub fn build(
-        self,
-    ) -> Result<(quinn::EndpointDriver, Server, IncomingConnection), quinn::EndpointError> {
+    pub fn build(self) -> Result<(Server, IncomingConnection), quinn::EndpointError> {
         let mut endpoint_builder = quinn::Endpoint::builder();
         endpoint_builder.listen(self.config.build());
 
         let listen = self
             .listen
             .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
-        let (endpoint_driver, _, incoming) = endpoint_builder.bind(&listen)?;
+        let (_, incoming) = endpoint_builder.bind(&listen)?;
 
         Ok((
-            endpoint_driver,
             Server,
             IncomingConnection {
                 incoming,
@@ -146,11 +142,10 @@ pub struct Connecting {
 }
 
 impl Future for Connecting {
-    type Output = Result<(quinn::ConnectionDriver, ConnectionDriver, IncomingRequest), Error>;
+    type Output = Result<IncomingRequest, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let quinn::NewConnection {
-            driver,
             connection,
             bi_streams,
             uni_streams,
@@ -163,11 +158,8 @@ impl Future for Connecting {
             bi_streams,
             self.settings.clone(),
         )?;
-        Poll::Ready(Ok((
-            driver,
-            ConnectionDriver(conn_ref.clone()),
-            IncomingRequest(conn_ref),
-        )))
+        tokio::spawn(ConnectionDriver(conn_ref.clone()));
+        Poll::Ready(Ok(IncomingRequest(conn_ref)))
     }
 }
 

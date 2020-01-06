@@ -26,8 +26,7 @@ use crate::{
 };
 
 /// In-progress connection attempt future
-///
-/// Be sure to spawn the `ConnectionDriver` when complete.
+#[derive(Debug)]
 pub struct Connecting(Option<ConnectionDriver>);
 
 impl Connecting {
@@ -35,8 +34,7 @@ impl Connecting {
         Self(Some(ConnectionDriver(conn)))
     }
 
-    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security. Be sure to
-    /// spawn the `ConnectionDriver`.
+    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
     ///
     /// Opens up the connection for use before the handshake finishes, allowing the API user to
     /// send data with 0-RTT encryption if the necessary key material is available. This is useful
@@ -87,7 +85,7 @@ impl Future for Connecting {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let connected = match self.0 {
             Some(ref mut driver) => {
-                let r = driver.poll_unpin(cx)?;
+                let r = driver.poll_unpin(cx);
                 let driver = driver.0.lock().unwrap();
                 match r {
                     Poll::Ready(()) => {
@@ -132,8 +130,6 @@ impl Future for ZeroRttAccepted {
 
 /// Components of a newly established connection
 ///
-/// Ensure `driver` runs or the connection will not work.
-///
 /// All fields of this struct, in addition to any other handles constructed later, must be dropped
 /// for a connection to be implicitly closed. If the `NewConnection` is stored in a long-lived
 /// variable, moving individual fields won't cause remaining unused fields to be dropped, even with
@@ -145,7 +141,7 @@ impl Future for ZeroRttAccepted {
 /// ```rust
 /// # use quinn::NewConnection;
 /// # fn dummy(new_connection: NewConnection) {
-/// let NewConnection { driver, connection, .. } = { new_connection };
+/// let NewConnection { connection, .. } = { new_connection };
 /// # }
 /// ```
 ///
@@ -153,8 +149,6 @@ impl Future for ZeroRttAccepted {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct NewConnection {
-    /// The future responsible for handling I/O on the connection
-    pub driver: ConnectionDriver,
     /// Handle for interacting with the connection
     pub connection: Connection,
     /// Unidirectional streams initiated by the peer, in the order they were opened
@@ -171,8 +165,8 @@ pub struct NewConnection {
 
 impl NewConnection {
     fn new(conn: ConnectionRef) -> Self {
+        tokio::spawn(ConnectionDriver(conn.clone()));
         Self {
-            driver: ConnectionDriver(conn.clone()),
             connection: Connection(conn.clone()),
             uni_streams: IncomingUniStreams(conn.clone()),
             bi_streams: IncomingBiStreams(conn.clone()),
@@ -193,15 +187,15 @@ impl NewConnection {
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
-pub struct ConnectionDriver(pub(crate) ConnectionRef);
+pub(crate) struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {
-    type Output = Result<(), ConnectionError>;
+    type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
         if let Some(ref e) = conn.error {
             if *e != ConnectionError::LocallyClosed {
-                return Poll::Ready(Err(e.clone()));
+                return Poll::Ready(());
             }
         }
 
@@ -212,8 +206,8 @@ impl Future for ConnectionDriver {
             let now = Instant::now();
             let mut keep_going = false;
             if let Err(e) = conn.process_conn_events(cx) {
-                conn.terminate(e.clone());
-                return Poll::Ready(Err(e));
+                conn.terminate(e);
+                return Poll::Ready(());
             }
             conn.drive_transmit(now);
             keep_going |= conn.drive_timer(cx, now);
@@ -229,8 +223,8 @@ impl Future for ConnectionDriver {
             return Poll::Pending;
         }
         match conn.error {
-            Some(ConnectionError::LocallyClosed) => Poll::Ready(Ok(())),
-            Some(ref e) => Poll::Ready(Err(e.clone())),
+            Some(ConnectionError::LocallyClosed) => Poll::Ready(()),
+            Some(_) => Poll::Ready(()),
             None => unreachable!("drained connections always have an error"),
         }
     }

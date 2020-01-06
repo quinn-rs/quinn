@@ -19,6 +19,7 @@ use std::task::{Context, Waker};
 /// wakeup is genuine but the condition of interest has already passed, then the task's generation
 /// no longer matches the counter, and we infer that the task's `Waker` is no longer stored and a
 /// new one must be recorded.
+#[derive(Debug)]
 pub struct Broadcast {
     wakers: Vec<Waker>,
     generation: u64,

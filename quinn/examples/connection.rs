@@ -22,9 +22,7 @@ use common::{make_client_endpoint, make_server_endpoint};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = "127.0.0.1:5000".parse().unwrap();
-    let (driver, mut incoming, server_cert) = make_server_endpoint(server_addr)?;
-    // drive server's UDP socket
-    tokio::spawn(async { driver.await.unwrap() });
+    let (mut incoming, server_cert) = make_server_endpoint(server_addr)?;
     // accept a single connection
     tokio::spawn(async move {
         let incoming_conn = incoming.next().await.unwrap();
@@ -33,28 +31,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "[server] connection accepted: addr={}",
             new_conn.connection.remote_address()
         );
-        // Drive the connection to completion
-        if let Err(e) = new_conn.driver.await {
-            println!("[server] connection lost: {}", e);
-        }
     });
 
-    let (endpoint, driver) = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
-    // drive client's UDP socket
-    tokio::spawn(async { driver.await.unwrap() });
+    let endpoint = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
     // connect to server
-    let quinn::NewConnection {
-        driver, connection, ..
-    } = endpoint
+    let quinn::NewConnection { connection, .. } = endpoint
         .connect(&server_addr, "localhost")
         .unwrap()
         .await
         .unwrap();
     println!("[client] connected: addr={}", connection.remote_address());
 
-    drop((endpoint, connection));
+    drop(connection);
 
-    driver.await.unwrap();
+    // Make sure the server has a chance to clean up
+    endpoint.wait_idle().await;
 
     Ok(())
 }

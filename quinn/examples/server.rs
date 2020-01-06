@@ -9,7 +9,6 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
-use tokio::runtime::Builder;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -57,12 +56,12 @@ fn main() {
     ::std::process::exit(code);
 }
 
-fn run(options: Opt) -> Result<()> {
+#[tokio::main]
+async fn run(options: Opt) -> Result<()> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.stream_window_uni(0);
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
-
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(common::ALPN_QUIC_HTTP);
 
@@ -122,32 +121,26 @@ fn run(options: Opt) -> Result<()> {
         bail!("root path does not exist");
     }
 
-    let mut runtime = Builder::new().threaded_scheduler().enable_all().build()?;
-
-    let (endpoint_driver, mut incoming) = {
-        let (driver, endpoint, incoming) = runtime.enter(|| endpoint.bind(&options.listen))?;
+    let mut incoming = {
+        let (endpoint, incoming) = endpoint.bind(&options.listen)?;
         info!("listening on {}", endpoint.local_addr()?);
-        (driver, incoming)
+        incoming
     };
 
-    runtime.spawn(async move {
-        while let Some(conn) = incoming.next().await {
-            info!("connection incoming");
-            tokio::spawn(
-                handle_connection(root.clone(), conn).unwrap_or_else(move |e| {
-                    error!("connection failed: {reason}", reason = e.to_string())
-                }),
-            );
-        }
-    });
-    runtime.block_on(endpoint_driver)?;
+    while let Some(conn) = incoming.next().await {
+        info!("connection incoming");
+        tokio::spawn(
+            handle_connection(root.clone(), conn).unwrap_or_else(move |e| {
+                error!("connection failed: {reason}", reason = e.to_string())
+            }),
+        );
+    }
 
     Ok(())
 }
 
 async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<()> {
     let quinn::NewConnection {
-        driver,
         connection,
         mut bi_streams,
         ..
@@ -157,11 +150,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         remote = %connection.remote_address(),
         protocol = %connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
     );
-    tokio::spawn(driver.unwrap_or_else(|_| ()).instrument(span.clone()));
     async {
         info!("established");
-
-        // We ignore errors from the driver because they'll be reported by the `streams` handler anyway.
 
         // Each stream initiated by the client constitutes a new request.
         while let Some(stream) = bi_streams.next().await {

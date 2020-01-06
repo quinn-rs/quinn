@@ -25,7 +25,7 @@ fn main() {
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config.build());
     let mut runtime = rt();
-    let (driver, endpoint, incoming) = runtime.enter(|| {
+    let (endpoint, incoming) = runtime.enter(|| {
         endpoint
             .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
             .unwrap()
@@ -33,13 +33,9 @@ fn main() {
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
     let thread = std::thread::spawn(move || {
-        let handle = runtime.spawn(async {
-            driver.await.expect("server endpoint driver");
-        });
         if let Err(e) = runtime.block_on(server(incoming)) {
             eprintln!("server failed: {:#}", e);
         }
-        runtime.block_on(handle).expect("server run");
     });
 
     let mut runtime = rt();
@@ -53,13 +49,8 @@ fn main() {
 async fn server(mut incoming: quinn::Incoming) -> Result<()> {
     let handshake = incoming.next().await.unwrap();
     let quinn::NewConnection {
-        driver,
-        mut uni_streams,
-        ..
+        mut uni_streams, ..
     } = handshake.await.context("handshake failed")?;
-    tokio::spawn(async {
-        driver.await.expect("server conn driver");
-    });
     let mut stream = uni_streams
         .next()
         .await
@@ -75,27 +66,19 @@ async fn server(mut incoming: quinn::Incoming) -> Result<()> {
 }
 
 async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Result<()> {
-    let (driver, endpoint, _) = quinn::EndpointBuilder::default()
+    let (endpoint, _) = quinn::EndpointBuilder::default()
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
-    tokio::spawn(async {
-        driver.await.expect("client endpoint driver");
-    });
 
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config
         .add_certificate_authority(server_cert)
         .unwrap();
-    let quinn::NewConnection {
-        driver, connection, ..
-    } = endpoint
+    let quinn::NewConnection { connection, .. } = endpoint
         .connect_with(client_config.build(), &server_addr, "localhost")
         .unwrap()
         .await
         .context("unable to connect")?;
-    tokio::spawn(async {
-        let _ = driver.await;
-    });
     trace!("connected");
 
     let mut stream = connection
