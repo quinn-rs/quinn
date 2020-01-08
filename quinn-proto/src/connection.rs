@@ -652,10 +652,7 @@ where
             .rtt
             .smoothed
             .map_or(self.path.rtt.latest, |x| cmp::max(x, self.path.rtt.latest));
-        let loss_delay = cmp::max(
-            rtt + ((rtt * u32::from(self.config.time_threshold)) / 65536),
-            TIMER_GRANULARITY,
-        );
+        let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
         // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
@@ -718,9 +715,10 @@ where
             return;
         }
         self.recovery_start_time = now;
-        // *= factor
+        // Converting a u64 to f32 risks some precision loss, but a modest amount of error in
+        // congestion window reductions is harmless.
         self.path.congestion_window =
-            (self.path.congestion_window * u64::from(self.config.loss_reduction_factor)) >> 16;
+            (self.path.congestion_window as f32 * self.config.loss_reduction_factor) as u64;
         self.path.congestion_window =
             cmp::max(self.path.congestion_window, self.config.minimum_window);
         self.path.ssthresh = self.path.congestion_window;
