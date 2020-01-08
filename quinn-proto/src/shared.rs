@@ -41,13 +41,13 @@ pub struct TransportConfig {
 
     pub(crate) max_tlps: u32,
     pub(crate) packet_threshold: u32,
-    pub(crate) time_threshold: u16,
+    pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
 
     pub(crate) max_datagram_size: u64,
     pub(crate) initial_window: u64,
     pub(crate) minimum_window: u64,
-    pub(crate) loss_reduction_factor: u16,
+    pub(crate) loss_reduction_factor: f32,
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
     pub(crate) crypto_buffer_size: usize,
@@ -144,9 +144,9 @@ impl TransportConfig {
         self
     }
 
-    /// Maximum reordering in time space before time based loss detection considers a packet lost.
-    /// 0.16 format, added to 1
-    pub fn time_threshold(&mut self, value: u16) -> &mut Self {
+    /// Maximum reordering in time space before time based loss detection considers a packet lost,
+    /// as a factor of RTT
+    pub fn time_threshold(&mut self, value: f32) -> &mut Self {
         self.time_threshold = value;
         self
     }
@@ -181,8 +181,8 @@ impl TransportConfig {
         self
     }
 
-    /// Reduction in congestion window when a new loss event is detected. 0.16 format
-    pub fn loss_reduction_factor(&mut self, value: u16) -> &mut Self {
+    /// Reduction in congestion window when a new loss event is detected.
+    pub fn loss_reduction_factor(&mut self, value: f32) -> &mut Self {
         self.loss_reduction_factor = value;
         self
     }
@@ -262,7 +262,7 @@ impl Default for TransportConfig {
 
             max_tlps: 2,
             packet_threshold: 3,
-            time_threshold: 0x2000,                  // 1/8
+            time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(500), // per spec, intentionally distinct from EXPECTED_RTT
 
             max_datagram_size: MAX_DATAGRAM_SIZE,
@@ -271,7 +271,7 @@ impl Default for TransportConfig {
                 cmp::max(2 * MAX_DATAGRAM_SIZE, 14720),
             ),
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
-            loss_reduction_factor: 0x8000, // 1/2
+            loss_reduction_factor: 0.5,
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,
             crypto_buffer_size: 16 * 1024,
