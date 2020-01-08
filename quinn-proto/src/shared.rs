@@ -36,7 +36,6 @@ pub struct TransportConfig {
     pub(crate) max_tlps: u32,
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: u16,
-    pub(crate) delayed_ack_timeout: u64,
     pub(crate) initial_rtt: u64,
 
     pub(crate) max_datagram_size: u64,
@@ -139,12 +138,6 @@ impl TransportConfig {
     /// 0.16 format, added to 1
     pub fn time_threshold(&mut self, value: u16) -> &mut Self {
         self.time_threshold = value;
-        self
-    }
-
-    /// The length of the peer’s delayed ack timer (μs).
-    pub fn delayed_ack_timeout(&mut self, value: u64) -> &mut Self {
-        self.delayed_ack_timeout = value;
         self
     }
 
@@ -259,8 +252,7 @@ impl Default for TransportConfig {
 
             max_tlps: 2,
             packet_threshold: 3,
-            time_threshold: 0x2000, // 1/8
-            delayed_ack_timeout: 25 * 1000,
+            time_threshold: 0x2000,  // 1/8
             initial_rtt: 500 * 1000, // 500ms per spec, intentionally distinct from EXPECTED_RTT
 
             max_datagram_size: MAX_DATAGRAM_SIZE,
