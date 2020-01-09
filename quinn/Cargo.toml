@@ -46,7 +46,7 @@ directories = "2.0.0"
 rand = "0.7"
 rcgen = "0.7"
 structopt = "0.3.0"
-tokio = { version = "0.2.2", features = ["rt-core", "rt-threaded", "time"] }
+tokio = { version = "0.2.2", features = ["rt-core", "rt-threaded", "time", "macros"] }
 tracing-subscriber = "0.1.5"
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 unwrap = "1.2.1"

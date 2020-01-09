@@ -13,25 +13,20 @@
 //! [client] connected: id=61a2df1548935aeb, addr=127.0.0.1:5000
 //! ```
 
-use futures::{StreamExt, TryFutureExt};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use tokio::runtime::Builder;
+// Provides the async `next()` method on `incoming` below
+use futures::StreamExt;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
-const SERVER_PORT: u16 = 5000;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
-
-    let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), SERVER_PORT));
-    let (driver, mut incoming, server_cert) =
-        runtime.enter(|| make_server_endpoint(server_addr))?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server_addr = "127.0.0.1:5000".parse().unwrap();
+    let (driver, mut incoming, server_cert) = make_server_endpoint(server_addr)?;
     // drive server's UDP socket
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    tokio::spawn(async { driver.await.unwrap() });
     // accept a single connection
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let incoming_conn = incoming.next().await.unwrap();
         let new_conn = incoming_conn.await.unwrap();
         println!(
@@ -44,26 +39,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let (endpoint, driver) =
-        runtime.enter(|| make_client_endpoint("0.0.0.0:0", &[&server_cert]))?;
+    let (endpoint, driver) = make_client_endpoint("0.0.0.0:0", &[&server_cert])?;
     // drive client's UDP socket
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    tokio::spawn(async { driver.await.unwrap() });
     // connect to server
-    let handle = runtime.spawn(async move {
-        let quinn::NewConnection {
-            driver, connection, ..
-        } = endpoint
-            .connect(&server_addr, "localhost")
-            .unwrap()
-            .await
-            .unwrap();
-        println!("[client] connected: addr={}", connection.remote_address());
-        // Dropping handles allows the corresponding objects to automatically shut down
-        drop((endpoint, connection));
-        // Drive the connection to completion
-        driver.await.unwrap();
-    });
+    let quinn::NewConnection {
+        driver, connection, ..
+    } = endpoint
+        .connect(&server_addr, "localhost")
+        .unwrap()
+        .await
+        .unwrap();
+    println!("[client] connected: addr={}", connection.remote_address());
 
-    runtime.block_on(handle)?;
+    drop((endpoint, connection));
+
+    driver.await.unwrap();
+
     Ok(())
 }
