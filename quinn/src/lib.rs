@@ -2,7 +2,9 @@
 //!
 //! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing
 //! shortcomings of TCP, such as head-of-line blocking, poor security, slow handshakes, and
-//! inefficient congestion control. This crate provides a portable userspace implementation.
+//! inefficient congestion control. This crate provides a portable userspace implementation. It
+//! builds on top of quinn-proto, which implements protocol logic independent of any particular
+//! runtime.
 //!
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
