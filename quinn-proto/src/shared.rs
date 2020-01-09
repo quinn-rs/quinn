@@ -553,15 +553,17 @@ impl EcnCodepoint {
 /// Stateless reset token
 ///
 /// Used for an endpoint to securely communicate that it has lost state for a connection.
-// FIXME: `Eq` must be constant-time!
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[allow(clippy::derive_hash_xor_eq)] // Custom PartialEq impl matches derived semantics
+#[derive(Debug, Copy, Clone, Hash)]
 pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
 
-impl std::borrow::Borrow<[u8]> for ResetToken {
-    fn borrow(&self) -> &[u8] {
-        &self.0
+impl cmp::PartialEq for ResetToken {
+    fn eq(&self, other: &ResetToken) -> bool {
+        crate::constant_time::eq(&self.0, &other.0)
     }
 }
+
+impl cmp::Eq for ResetToken {}
 
 impl From<[u8; RESET_TOKEN_SIZE]> for ResetToken {
     fn from(x: [u8; RESET_TOKEN_SIZE]) -> Self {

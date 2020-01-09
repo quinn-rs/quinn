@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    convert::TryFrom,
     fmt, iter,
     net::SocketAddr,
     ops::{Index, IndexMut},
@@ -903,7 +904,8 @@ impl ResetTokenTable {
     }
 
     fn get(&self, remote: SocketAddr, token: &[u8]) -> Option<&ConnectionHandle> {
-        self.0.get(&remote).and_then(|x| x.get(token))
+        let token = ResetToken::from(<[u8; RESET_TOKEN_SIZE]>::try_from(token).ok()?);
+        self.0.get(&remote)?.get(&token)
     }
 }
 
