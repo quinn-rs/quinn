@@ -2588,8 +2588,9 @@ where
 
     /// Close a connection immediately
     ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility
-    /// to call this only when all important communications have been completed.
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility to
+    /// call this only when all important communications have been completed, e.g. by calling
+    /// `finish` on outstanding streams and waiting for the corresponding `StreamFinished` event.
     pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
         let was_closed = self.state.is_closed();
         if !was_closed {
