@@ -276,7 +276,8 @@ impl Connection {
     ///
     /// Pending operations will fail immediately with `ConnectionError::LocallyClosed`. Delivery of
     /// data on unfinished streams is not guaranteed, so the application must call this only when
-    /// all important communications have been completed.
+    /// all important communications have been completed, e.g. by calling `finish` on outstanding
+    /// `SendStream`s and waiting for the resulting futures to complete.
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
