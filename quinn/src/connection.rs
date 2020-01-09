@@ -661,23 +661,30 @@ impl ConnectionInner {
 
     fn drive_timer(&mut self, cx: &mut Context, now: Instant) -> bool {
         let mut keep_going = false;
-        if self.timer.is_none() {
-            self.timer = self
-                .inner
-                .poll_timeout()
-                .map(|x| delay_until(TokioInstant::from_std(x)));
-        }
-        while let Some(ref mut delay) = self.timer {
-            if delay.poll_unpin(cx) == Poll::Pending {
-                break;
+        loop {
+            if let Some(ref mut delay) = self.timer {
+                if delay.poll_unpin(cx) == Poll::Ready(()) {
+                    self.inner.handle_timeout(now);
+                    self.timer = None;
+                    keep_going = true;
+                }
             }
-            self.inner.handle_timeout(now);
-            // Timeout call may have queued sends
-            keep_going = true;
-            if let Some(t) = self.inner.poll_timeout() {
-                delay.reset(TokioInstant::from_std(t));
-            } else {
-                self.timer = None;
+            // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
+            // timer is registered with the runtime (and check whether it's already
+            // expired). Otherwise, exit the loop.
+            match (
+                self.inner.poll_timeout().map(TokioInstant::from_std),
+                &mut self.timer,
+            ) {
+                (Some(timeout), &mut None) => self.timer = Some(delay_until(timeout)),
+                (Some(timeout), &mut Some(ref mut delay)) if delay.deadline() != timeout => {
+                    delay.reset(timeout);
+                }
+                (None, _) => {
+                    self.timer = None;
+                    break;
+                }
+                _ => break,
             }
         }
         keep_going
