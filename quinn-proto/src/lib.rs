@@ -23,6 +23,7 @@ use std::{fmt, net::SocketAddr, ops, time::Duration};
 mod assembler;
 #[doc(hidden)]
 pub mod coding;
+mod constant_time;
 mod packet;
 mod range_set;
 mod spaces;
