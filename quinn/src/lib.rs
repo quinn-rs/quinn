@@ -38,6 +38,9 @@
 //! multiple TCP connections between the same two hosts, while providing more useful behavior than
 //! raw UDP sockets.
 //!
+//! Quinn also exposes unreliable datagrams, which are a low-level primitive preferred when
+//! automatic fragmentation and retransmission of certain data is not desired.
+//!
 //! QUIC uses encryption and identity verification built directly on TLS 1.3. Just as with a TLS
 //! server, it is useful for a QUIC server to be identified by a certificate signed by a trusted
 //! authority. If this is infeasible--for example, if servers are short-lived or not associated
