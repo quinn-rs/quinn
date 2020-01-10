@@ -312,7 +312,10 @@ impl Connection {
         self.0.lock().unwrap().inner.max_datagram_size()
     }
 
-    /// The peer's UDP address.
+    /// The peer's UDP address
+    ///
+    /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
+    /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote()
     }
