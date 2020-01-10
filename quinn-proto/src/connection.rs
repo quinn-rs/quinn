@@ -3022,7 +3022,7 @@ where
     }
 
     /// The latest socket address for this connection's peer
-    pub fn remote(&self) -> SocketAddr {
+    pub fn remote_address(&self) -> SocketAddr {
         self.path.remote
     }
 

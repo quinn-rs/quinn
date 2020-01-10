@@ -113,7 +113,7 @@ impl Connecting {
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
         let conn_ref: &ConnectionRef = &self.0.as_ref().expect("used after yielding Ready").0;
-        conn_ref.lock().unwrap().inner.remote()
+        conn_ref.lock().unwrap().inner.remote_address()
     }
 }
 
@@ -317,7 +317,7 @@ impl Connection {
     /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.lock().unwrap().inner.remote()
+        self.0.lock().unwrap().inner.remote_address()
     }
 
     /// The negotiated application protocol
