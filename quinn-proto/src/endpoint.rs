@@ -199,7 +199,7 @@ where
                 None
             };
             ch.or_else(|| {
-                if first_decode.is_initial() {
+                if first_decode.is_initial() || first_decode.is_0rtt() {
                     self.connection_ids_initial.get(&dst_cid)
                 } else {
                     None
