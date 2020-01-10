@@ -4,7 +4,7 @@ use quinn::{
     Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, EndpointDriver,
     Incoming, PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
 };
-use std::{error::Error, net::ToSocketAddrs, sync::Arc};
+use std::{error::Error, net::SocketAddr, sync::Arc};
 
 /// Constructs a QUIC endpoint configured for use a client only.
 ///
@@ -12,15 +12,14 @@ use std::{error::Error, net::ToSocketAddrs, sync::Arc};
 ///
 /// - server_certs: list of trusted certificates.
 #[allow(unused)]
-pub fn make_client_endpoint<A: ToSocketAddrs>(
-    bind_addr: A,
+pub fn make_client_endpoint(
+    bind_addr: SocketAddr,
     server_certs: &[&[u8]],
 ) -> Result<(Endpoint, EndpointDriver), Box<dyn Error>> {
     let client_cfg = configure_client(server_certs)?;
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.default_client_config(client_cfg);
-    let (driver, endpoint, _incoming) =
-        endpoint_builder.bind(&bind_addr.to_socket_addrs().unwrap().next().unwrap())?;
+    let (driver, endpoint, _incoming) = endpoint_builder.bind(&bind_addr)?;
     Ok((endpoint, driver))
 }
 
@@ -33,14 +32,13 @@ pub fn make_client_endpoint<A: ToSocketAddrs>(
 /// - a sream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
-pub fn make_server_endpoint<A: ToSocketAddrs>(
-    bind_addr: A,
+pub fn make_server_endpoint(
+    bind_addr: SocketAddr,
 ) -> Result<(EndpointDriver, Incoming, Vec<u8>), Box<dyn Error>> {
     let (server_config, server_cert) = configure_server()?;
     let mut endpoint_builder = Endpoint::builder();
     endpoint_builder.listen(server_config);
-    let (driver, _endpoint, incoming) =
-        endpoint_builder.bind(&bind_addr.to_socket_addrs().unwrap().next().unwrap())?;
+    let (driver, _endpoint, incoming) = endpoint_builder.bind(&bind_addr)?;
     Ok((driver, incoming, server_cert))
 }
 

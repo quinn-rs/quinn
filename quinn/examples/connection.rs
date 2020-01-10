@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let (endpoint, driver) = make_client_endpoint("0.0.0.0:0", &[&server_cert])?;
+    let (endpoint, driver) = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
     // drive client's UDP socket
     tokio::spawn(async { driver.await.unwrap() });
     // connect to server
