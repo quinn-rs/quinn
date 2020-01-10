@@ -24,47 +24,46 @@
 //! Notice how server sees multiple incoming connections with different IDs coming from the same
 //! endpoint.
 
-use futures::{StreamExt, TryFutureExt};
-use std::{
-    error::Error,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
-};
-use tokio::runtime::{Builder, Runtime};
+use futures::StreamExt;
+use std::{error::Error, net::SocketAddr};
 
 use quinn::Endpoint;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut runtime = Builder::new().basic_scheduler().enable_all().build()?;
-    let server1_cert = run_server(&mut runtime, "0.0.0.0:5000")?;
-    let server2_cert = run_server(&mut runtime, "0.0.0.0:5001")?;
-    let server3_cert = run_server(&mut runtime, "0.0.0.0:5002")?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let addr1 = "127.0.0.1:5000".parse().unwrap();
+    let addr2 = "127.0.0.1:5001".parse().unwrap();
+    let addr3 = "127.0.0.1:5002".parse().unwrap();
+    let server1_cert = run_server(addr1)?;
+    let server2_cert = run_server(addr2)?;
+    let server3_cert = run_server(addr3)?;
 
-    let (client, driver) = runtime.enter(|| {
-        make_client_endpoint("0.0.0.0:0", &[&server1_cert, &server2_cert, &server3_cert])
-    })?;
-    // drive UDP socket
-    let handle = runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    let (client, driver) = make_client_endpoint(
+        "127.0.0.1:0".parse().unwrap(),
+        &[&server1_cert, &server2_cert, &server3_cert],
+    )?;
 
     // connect to multiple endpoints using the same socket/endpoint
-    run_client(&mut runtime, &client, 5000)?;
-    run_client(&mut runtime, &client, 5001)?;
-    run_client(&mut runtime, &client, 5002)?;
+    run_client(&client, addr1);
+    run_client(&client, addr2);
+    run_client(&client, addr3);
     drop(client);
 
-    runtime.block_on(handle)?;
+    // drive client endpoint to completion
+    driver.await.unwrap();
     Ok(())
 }
 
 /// Runs a QUIC server bound to given address and returns server certificate.
-fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8>, Box<dyn Error>> {
-    let (driver, mut incoming, server_cert) = runtime.enter(|| make_server_endpoint(addr))?;
+fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
+    let (driver, mut incoming, server_cert) = make_server_endpoint(addr)?;
     // drive UDP socket
-    runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+    tokio::spawn(async { driver.await.unwrap() });
     // accept a single connection
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let quinn::NewConnection {
             driver, connection, ..
         } = incoming.next().await.unwrap().await.unwrap();
@@ -79,22 +78,13 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8
 }
 
 /// Attempt QUIC connection with the given server address.
-fn run_client(
-    runtime: &mut Runtime,
-    endpoint: &Endpoint,
-    server_port: u16,
-) -> Result<(), Box<dyn Error>> {
-    let server_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
-    runtime.spawn(
-        endpoint
-            .connect(&server_addr, "localhost")?
-            .map_ok(|new_conn| {
-                tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
-                let conn = new_conn.connection;
-                println!("[client] connected: addr={}", conn.remote_address());
-            })
-            .unwrap_or_else(|e| panic!("Failed to connect: {}", e)),
-    );
-
-    Ok(())
+fn run_client(endpoint: &Endpoint, server_addr: SocketAddr) {
+    let connect = endpoint.connect(&server_addr, "localhost").unwrap();
+    tokio::spawn(async {
+        let quinn::NewConnection {
+            driver, connection, ..
+        } = connect.await.unwrap();
+        tokio::spawn(async { driver.await.unwrap() });
+        println!("[client] connected: addr={}", connection.remote_address());
+    });
 }
