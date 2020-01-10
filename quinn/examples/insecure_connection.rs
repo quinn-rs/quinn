@@ -44,8 +44,7 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<(), Bo
         let incoming_conn = incoming.next().await.unwrap();
         let new_conn = incoming_conn.await.unwrap();
         println!(
-            "[server] connection accepted: id={} addr={}",
-            new_conn.connection.remote_id(),
+            "[server] connection accepted: addr={}",
             new_conn.connection.remote_address()
         );
         // Drive the connection to completion
@@ -75,11 +74,7 @@ fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<JoinHandle<()>,
             .unwrap()
             .await
             .unwrap();
-        println!(
-            "[client] connected: id={}, addr={}",
-            connection.remote_id(),
-            connection.remote_address()
-        );
+        println!("[client] connected: addr={}", connection.remote_address());
         // Dropping handles allows the corresponding objects to automatically shut down
         drop((endpoint, connection));
         // Drive the connection to completion

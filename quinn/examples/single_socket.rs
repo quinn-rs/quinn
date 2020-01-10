@@ -69,8 +69,7 @@ fn run_server<A: ToSocketAddrs>(runtime: &mut Runtime, addr: A) -> Result<Vec<u8
             driver, connection, ..
         } = incoming.next().await.unwrap().await.unwrap();
         println!(
-            "[server] incoming connection: id={} addr={}",
-            connection.remote_id(),
+            "[server] incoming connection: addr={}",
             connection.remote_address()
         );
         let _ = driver.await;
@@ -92,11 +91,7 @@ fn run_client(
             .map_ok(|new_conn| {
                 tokio::spawn(new_conn.driver.unwrap_or_else(|_| ()));
                 let conn = new_conn.connection;
-                println!(
-                    "[client] connected: id={}, addr={}",
-                    conn.remote_id(),
-                    conn.remote_address()
-                );
+                println!("[client] connected: addr={}", conn.remote_address());
             })
             .unwrap_or_else(|e| panic!("Failed to connect: {}", e)),
     );

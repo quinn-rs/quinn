@@ -5,9 +5,8 @@ use bytes::{Buf, BufMut, Bytes};
 use crate::{
     coding::{self, BufExt, BufMutExt, UnexpectedEnd},
     range_set::RangeSet,
-    shared::{EcnCodepoint, ResetToken},
-    ConnectionId, Dir, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE,
-    RESET_TOKEN_SIZE,
+    shared::{ConnectionId, EcnCodepoint, ResetToken},
+    Dir, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
