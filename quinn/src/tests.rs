@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use futures::{future, FutureExt, StreamExt};
+use futures::{future, StreamExt};
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -57,40 +57,29 @@ fn handshake_timeout() {
     assert!(dt > IDLE_TIMEOUT && dt < 2 * IDLE_TIMEOUT);
 }
 
-#[test]
-fn close_endpoint() {
+#[tokio::test]
+async fn close_endpoint() {
     let _guard = subscribe();
     let endpoint = Endpoint::builder();
-    let mut runtime = rt_basic();
-    let (endpoint, incoming) = runtime.enter(|| {
-        endpoint
-            .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .unwrap()
-    });
+    let (endpoint, incoming) = endpoint
+        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .unwrap();
 
-    let handle = runtime.spawn(incoming.for_each(|_| future::ready(())));
-    let handle = future::join(
-        handle,
-        runtime.spawn(
-            endpoint
-                .connect(
-                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
-                    "localhost",
-                )
-                .unwrap()
-                .map(|x| match x {
-                    Err(crate::ConnectionError::LocallyClosed) => (),
-                    Err(e) => panic!("unexpected error: {}", e),
-                    Ok(_) => {
-                        panic!("unexpected success");
-                    }
-                }),
-        ),
-    );
+    tokio::spawn(incoming.for_each(|_| future::ready(())));
+    let conn = endpoint
+        .connect(
+            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            "localhost",
+        )
+        .unwrap();
     endpoint.close(0u32.into(), &[]);
-    let (r1, r2) = runtime.block_on(handle);
-    r1.unwrap();
-    r2.unwrap();
+    match conn.await {
+        Err(crate::ConnectionError::LocallyClosed) => (),
+        Err(e) => panic!("unexpected error: {}", e),
+        Ok(_) => {
+            panic!("unexpected success");
+        }
+    }
 }
 
 #[test]

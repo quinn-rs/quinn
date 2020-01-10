@@ -11,7 +11,10 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{channel::mpsc, FutureExt, StreamExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    StreamExt,
+};
 use proto::{self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
@@ -75,7 +78,7 @@ impl Endpoint {
             *addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(Connecting::new(endpoint.create_connection(ch, conn)))
+        Ok(endpoint.create_connection(ch, conn))
     }
 
     /// Switch to a new UDP socket
@@ -165,7 +168,6 @@ impl Future for EndpointDriver {
             let now = Instant::now();
             let mut keep_going = false;
             keep_going |= endpoint.drive_recv(cx, now)?;
-            endpoint.drive_incoming(cx);
             endpoint.handle_events(cx);
             keep_going |= endpoint.drive_send(cx)?;
             if !keep_going {
@@ -198,7 +200,7 @@ pub(crate) struct EndpointInner {
     socket: UdpSocket,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
-    incoming: VecDeque<ConnectionDriver>,
+    incoming: VecDeque<Connecting>,
     incoming_reader: Option<Waker>,
     /// Whether the `Incoming` stream has not yet been dropped
     incoming_live: bool,
@@ -228,13 +230,12 @@ impl EndpointInner {
                         .handle(now, addr, ecn, (&self.recv_buf[0..n]).into())
                     {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = ConnectionDriver(self.create_connection(handle, conn));
-                            if !self.incoming_live {
-                                conn.0.lock().unwrap().implicit_close();
-                            }
-                            self.incoming.push_back(conn);
-                            if let Some(task) = self.incoming_reader.take() {
-                                task.wake();
+                            let conn = self.create_connection(handle, conn);
+                            if self.incoming_live {
+                                self.incoming.push_back(conn);
+                                if let Some(task) = self.incoming_reader.take() {
+                                    task.wake();
+                                }
                             }
                         }
                         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
@@ -266,18 +267,6 @@ impl EndpointInner {
             }
         }
         Ok(false)
-    }
-
-    fn drive_incoming(&mut self, cx: &mut Context) {
-        for i in (0..self.incoming.len()).rev() {
-            match self.incoming[i].poll_unpin(cx) {
-                Poll::Ready(()) if !self.incoming_live => {
-                    let _ = self.incoming.swap_remove_back(i);
-                }
-                // It's safe to poll an already dead connection
-                _ => {}
-            }
-        }
     }
 
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
@@ -348,7 +337,7 @@ impl EndpointInner {
         &mut self,
         handle: ConnectionHandle,
         conn: proto::Connection,
-    ) -> ConnectionRef {
+    ) -> Connecting {
         let (send, recv) = mpsc::unbounded();
         if let Some((error_code, ref reason)) = self.close {
             send.unbounded_send(ConnectionEvent::Close {
@@ -358,7 +347,10 @@ impl EndpointInner {
             .unwrap();
         }
         self.connections.insert(handle, send);
-        ConnectionRef::new(handle, conn, self.sender.clone(), recv)
+        let (connected_send, connected_recv) = oneshot::channel();
+        let conn = ConnectionRef::new(handle, conn, self.sender.clone(), recv, connected_send);
+        tokio::spawn(ConnectionDriver(conn.clone()));
+        Connecting::new(conn, connected_recv)
     }
 }
 
@@ -387,7 +379,7 @@ impl futures::Stream for Incoming {
             Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
-            Poll::Ready(Some(Connecting::new(conn.0)))
+            Poll::Ready(Some(conn))
         } else if endpoint.close.is_some() {
             Poll::Ready(None)
         } else {
@@ -403,9 +395,6 @@ impl Drop for Incoming {
         endpoint.inner.reject_new_connections();
         endpoint.incoming_live = false;
         endpoint.incoming_reader = None;
-        for conn in &mut endpoint.incoming {
-            conn.0.lock().unwrap().implicit_close();
-        }
     }
 }
 
