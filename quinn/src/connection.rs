@@ -27,11 +27,17 @@ use crate::{
 
 /// In-progress connection attempt future
 #[derive(Debug)]
-pub struct Connecting(Option<ConnectionDriver>);
+pub struct Connecting {
+    conn: Option<ConnectionRef>,
+    connected: oneshot::Receiver<bool>,
+}
 
 impl Connecting {
-    pub(crate) fn new(conn: ConnectionRef) -> Self {
-        Self(Some(ConnectionDriver(conn)))
+    pub(crate) fn new(conn: ConnectionRef, connected: oneshot::Receiver<bool>) -> Self {
+        Self {
+            conn: Some(conn),
+            connected,
+        }
     }
 
     /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
@@ -62,17 +68,11 @@ impl Connecting {
     pub fn into_0rtt(mut self) -> Result<(NewConnection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
-        let mut conn = (self.0.as_mut().unwrap().0).lock().unwrap();
+        let conn = (self.conn.as_mut().unwrap().0).lock().unwrap();
         if conn.inner.has_0rtt() || conn.inner.side().is_server() {
-            let (send, recv) = oneshot::channel();
-            if conn.connected {
-                send.send(true).unwrap();
-            } else {
-                conn.on_connected = Some(send);
-            }
             drop(conn);
-            let ConnectionDriver(conn) = self.0.take().unwrap();
-            Ok((NewConnection::new(conn), ZeroRttAccepted(recv)))
+            let conn = self.conn.take().unwrap();
+            Ok((NewConnection::new(conn), ZeroRttAccepted(self.connected)))
         } else {
             drop(conn);
             Err(self)
@@ -83,25 +83,14 @@ impl Connecting {
 impl Future for Connecting {
     type Output = Result<NewConnection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let connected = match self.0 {
-            Some(ref mut driver) => {
-                let r = driver.poll_unpin(cx);
-                let driver = driver.0.lock().unwrap();
-                match r {
-                    Poll::Ready(()) => {
-                        return Poll::Ready(Err(driver.error.as_ref().unwrap().clone()));
-                    }
-                    Poll::Pending => driver.connected,
-                }
+        self.connected.poll_unpin(cx).map(|_| {
+            let conn = self.conn.take().unwrap();
+            let err = conn.lock().unwrap().error.clone();
+            match err {
+                None => Ok(NewConnection::new(conn)),
+                Some(e) => Err(e),
             }
-            None => panic!("polled after yielding Ready"),
-        };
-        if connected {
-            let ConnectionDriver(conn) = self.0.take().unwrap();
-            Poll::Ready(Ok(NewConnection::new(conn)))
-        } else {
-            Poll::Pending
-        }
+        })
     }
 }
 
@@ -110,7 +99,7 @@ impl Connecting {
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef = &self.0.as_ref().expect("used after yielding Ready").0;
+        let conn_ref: &ConnectionRef = &self.conn.as_ref().expect("used after yielding Ready");
         conn_ref.lock().unwrap().inner.remote_address()
     }
 }
@@ -165,7 +154,6 @@ pub struct NewConnection {
 
 impl NewConnection {
     fn new(conn: ConnectionRef) -> Self {
-        tokio::spawn(ConnectionDriver(conn.clone()));
         Self {
             connection: Connection(conn.clone()),
             uni_streams: IncomingUniStreams(conn.clone()),
@@ -193,11 +181,6 @@ impl Future for ConnectionDriver {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
-        if let Some(ref e) = conn.error {
-            if *e != ConnectionError::LocallyClosed {
-                return Poll::Ready(());
-            }
-        }
 
         let span = info_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
@@ -473,12 +456,13 @@ impl ConnectionRef {
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
+        on_connected: oneshot::Sender<bool>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
             inner: conn,
             driver: None,
             handle,
-            on_connected: None,
+            on_connected: Some(on_connected),
             connected: false,
             timer: None,
             conn_events,
