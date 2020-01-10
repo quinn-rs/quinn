@@ -3021,11 +3021,6 @@ where
         self.side
     }
 
-    /// The `ConnectionId` defined for this Connection by the peer.
-    pub fn rem_cid(&self) -> ConnectionId {
-        self.rem_cid
-    }
-
     /// The latest socket address for this connection's peer
     pub fn remote(&self) -> SocketAddr {
         self.path.remote

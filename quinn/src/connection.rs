@@ -15,7 +15,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, ConnectionId, Dir, StreamId};
+use proto::{ConnectionError, ConnectionHandle, Dir, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -315,11 +315,6 @@ impl Connection {
     /// The peer's UDP address.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote()
-    }
-
-    /// The `ConnectionId` defined for `conn` by the peer.
-    pub fn remote_id(&self) -> ConnectionId {
-        self.0.lock().unwrap().inner.rem_cid()
     }
 
     /// The negotiated application protocol
