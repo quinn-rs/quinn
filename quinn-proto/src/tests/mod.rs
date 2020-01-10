@@ -778,7 +778,10 @@ fn migration() {
     pair.client_conn_mut(client_ch).ping();
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
-    assert_eq!(pair.server_conn_mut(server_ch).remote(), pair.client.addr);
+    assert_eq!(
+        pair.server_conn_mut(server_ch).remote_address(),
+        pair.client.addr
+    );
 }
 
 fn test_flow_control(config: TransportConfig, window_size: usize) {
