@@ -302,6 +302,11 @@ where
         self.endpoint_events.pop_front().map(EndpointEvent)
     }
 
+    /// Get a session reference
+    pub fn crypto_session(&self) -> &S {
+        &self.tls
+    }
+
     fn on_packet_sent(
         &mut self,
         now: Instant,
