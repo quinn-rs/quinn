@@ -63,17 +63,11 @@ jobs:
         with:
           toolchain: nightly
           override: true
-      - uses: actions-rs/cargo@v1
+      - uses: actions-rs/tarpaulin@v0.1
+      - uses: codecov/codecov-action@v1.0.2
         with:
-          command: test
-          args: --workspace --no-fail-fast
-        env:
-          CARGO_INCREMENTAL: '0'
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
-      - id: coverage
-        uses: actions-rs/grcov@v0.1
-      - name: Coveralls upload
-        uses: coverallsapp/github-action@master
+          token: ${{secrets.CODECOV_TOKEN}}
+      - uses: actions/upload-artifact@v1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: ${{ steps.coverage.outputs.report }}
+          name: code-coverage-report
+          path: cobertura.xml
