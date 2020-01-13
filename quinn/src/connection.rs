@@ -303,6 +303,13 @@ impl Connection {
         self.0.lock().unwrap().inner.protocol().map(|x| x.into())
     }
 
+    /// The server name specified by the client
+    ///
+    /// Returns `None` for outgoing connections.
+    pub fn server_name(&self) -> Option<String> {
+        self.0.lock().unwrap().inner.server_name().map(|x| x.into())
+    }
+
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
