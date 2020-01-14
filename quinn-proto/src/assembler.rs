@@ -1,12 +1,13 @@
-use std::{cmp::Ordering, collections::BinaryHeap};
+use std::{cmp::Ordering, collections::BinaryHeap, mem};
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug)]
 pub(crate) struct Assembler {
     offset: u64,
     data: BinaryHeap<Chunk>,
+    defragmented: usize,
 }
 
 impl Assembler {
@@ -14,6 +15,7 @@ impl Assembler {
         Self {
             offset: 0,
             data: BinaryHeap::new(),
+            defragmented: 0,
         }
     }
 
@@ -22,6 +24,7 @@ impl Assembler {
         loop {
             if self.consume(buf, &mut read) {
                 self.data.pop();
+                self.defragmented = self.defragmented.saturating_sub(1);
             } else {
                 break;
             }
@@ -71,6 +74,32 @@ impl Assembler {
         }
     }
 
+    // Copy the buffered chunk data to new chunks backed by a single buffer to
+    // make sure we're not unnecessarily holding on to many larger allocations.
+    // Merge contiguous chunks in the process of doing so. Reset the `defragmented`
+    // counter to the new number of chunks left in the heap so that we can decide
+    // when to defragment the queue again if necessary.
+    fn defragment(&mut self) {
+        let buffered = self.data.iter().map(|c| c.bytes.len()).sum::<usize>();
+        let mut buffer = BytesMut::with_capacity(buffered);
+        let mut offset = self.offset;
+
+        let new = BinaryHeap::with_capacity(self.data.len());
+        let old = mem::replace(&mut self.data, new);
+        for chunk in old.into_sorted_vec().into_iter().rev() {
+            if offset + (buffer.len() as u64) < chunk.offset {
+                let bytes = buffer.split().freeze();
+                self.data.push(Chunk { offset, bytes });
+                offset = chunk.offset;
+            }
+            buffer.extend_from_slice(&chunk.bytes);
+        }
+
+        let bytes = buffer.split().freeze();
+        self.data.push(Chunk { offset, bytes });
+        self.defragmented = self.data.len();
+    }
+
     #[cfg(test)]
     fn next(&mut self, size: usize) -> Option<Box<[u8]>> {
         let mut buf = vec![0; size];
@@ -89,6 +118,16 @@ impl Assembler {
 
     pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
         self.data.push(Chunk { offset, bytes });
+        // Why 32: on the one hand, we want to defragment rarely, ideally never
+        // in non-pathological scenarios. However, a pathological or malicious
+        // peer could send us one-byte frames, and since we use reference-counted
+        // buffers in order to prevent copying, this could result in keeping a lot
+        // of memory allocated. In the worst case scenario of 32 1-byte chunks,
+        // each one from a ~1000-byte datagram, using 32 limits us to having a
+        // maximum pathological over-allocation of about 32k bytes.
+        if self.data.len() - self.defragmented > 32 {
+            self.defragment()
+        }
     }
 
     /// Current position in the stream
@@ -215,5 +254,17 @@ mod test {
         assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
         x.insert(0, Bytes::from_static(b"1234"));
         assert_matches!(x.next(32), None);
+    }
+
+    #[test]
+    fn compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"abc"));
+        x.insert(3, Bytes::from_static(b"def"));
+        x.insert(9, Bytes::from_static(b"jkl"));
+        x.insert(12, Bytes::from_static(b"mno"));
+        x.defragment();
+        assert_eq!(x.pop(), Some((0, Bytes::from_static(b"abcdef"))));
+        assert_eq!(x.pop(), Some((9, Bytes::from_static(b"jklmno"))));
     }
 }
