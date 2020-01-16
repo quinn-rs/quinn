@@ -35,7 +35,7 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.5.0" }
 rustls = { version = "0.16", features = ["quic"] }
 rustls-native-certs = { version = "0.1.0", optional = true }
 tracing = "0.1.10"
-tokio = { version = "0.2.6", features = ["io-driver", "time"] }
+tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
 webpki = "0.21"
 
 [dev-dependencies]
