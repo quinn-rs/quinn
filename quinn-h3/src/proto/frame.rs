@@ -11,7 +11,7 @@ use tracing::trace;
 #[derive(Debug, PartialEq)]
 pub enum Error {
     Malformed,
-    UnsupportedFrame,
+    UnsupportedFrame(u64),
     UnexpectedEnd,
     InvalidFrameValue,
     Incomplete(usize),
@@ -73,13 +73,13 @@ impl HttpFrame {
             Type::MAX_PUSH_ID => Ok(HttpFrame::MaxPushId(payload.get_var()?)),
             Type::DUPLICATE_PUSH => Ok(HttpFrame::DuplicatePush(payload.get_var()?)),
             Type::H2_PRIORITY | Type::H2_PING | Type::H2_WINDOW_UPDATE | Type::H2_CONTINUATION => {
-                Err(Error::UnsupportedFrame)
+                Err(Error::UnsupportedFrame(ty.0))
             }
             t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => {
                 buf.advance(len as usize);
                 Ok(HttpFrame::Reserved)
             }
-            _ => Err(Error::UnsupportedFrame),
+            _ => Err(Error::UnsupportedFrame(ty.0)),
         };
         if let Ok(frame) = &frame {
             trace!(
@@ -412,7 +412,7 @@ mod tests {
     fn unknown_frame_type() {
         let mut buf = Cursor::new(&[0x2f, 4, 0, 255, 128, 0]);
         let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::UnsupportedFrame));
+        assert_eq!(decoded, Err(Error::UnsupportedFrame(47)));
     }
 
     #[test]
