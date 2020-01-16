@@ -183,7 +183,7 @@ impl Error {
         match self {
             Error::Io(_) => ErrorCode::GENERAL_PROTOCOL_ERROR,
             Error::Proto(frame::Error::Settings(_)) => ErrorCode::SETTINGS_ERROR,
-            Error::Proto(frame::Error::UnsupportedFrame) => ErrorCode::FRAME_UNEXPECTED,
+            Error::Proto(frame::Error::UnsupportedFrame(_)) => ErrorCode::FRAME_UNEXPECTED,
             Error::Proto(_) => ErrorCode::FRAME_ERROR,
         }
     }

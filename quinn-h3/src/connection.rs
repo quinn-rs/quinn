@@ -487,9 +487,10 @@ impl From<frame::Error> for DriverError {
             frame::Error::Proto(proto::frame::Error::Malformed) => {
                 DriverError::peer(ErrorCode::FRAME_ERROR, "Malformed frame received")
             }
-            frame::Error::Proto(proto::frame::Error::UnsupportedFrame) => {
-                DriverError::peer(ErrorCode::FRAME_ERROR, "Unsupported frame received")
-            }
+            frame::Error::Proto(proto::frame::Error::UnsupportedFrame(t)) => DriverError::peer(
+                ErrorCode::FRAME_ERROR,
+                format!("Unsupported frame received: {:x}", t),
+            ),
             frame::Error::Proto(e) => DriverError::internal(format!("frame: {:?}", e)),
         }
     }
