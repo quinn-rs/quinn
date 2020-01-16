@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
@@ -300,7 +300,7 @@ impl AsyncWrite for BodyWriter {
                 BodyWriterState::Finished => panic!(),
                 BodyWriterState::Idle(_) => {
                     let frame = DataFrame {
-                        payload: Bytes::copy_from_slice(buf),
+                        payload: BytesMut::from(buf).freeze(),
                     };
                     self.state = match mem::replace(&mut self.state, BodyWriterState::Finished) {
                         BodyWriterState::Idle(send) => {
