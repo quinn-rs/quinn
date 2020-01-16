@@ -158,12 +158,14 @@ impl Future for WriteFrame {
                 WriteFrameState::Payload(ref mut send, ref mut p) => {
                     let wrote = ready!(Pin::new(send).poll_write(cx, p))?;
                     p.advance(wrote);
-                    let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
-                        WriteFrameState::Payload(s, _) => s,
-                        _ => unreachable!(),
-                    };
-                    self.state = WriteFrameState::Finished;
-                    return Poll::Ready(Ok(send));
+                    if p.is_empty() {
+                        let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
+                            WriteFrameState::Payload(s, _) => s,
+                            _ => unreachable!(),
+                        };
+                        self.state = WriteFrameState::Finished;
+                        return Poll::Ready(Ok(send));
+                    }
                 }
             }
         }
