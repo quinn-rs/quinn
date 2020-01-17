@@ -262,11 +262,9 @@ impl BodyWriter {
     }
 
     pub async fn close(mut self) -> Result<(), Error> {
-        let state = mem::replace(&mut self.state, BodyWriterState::Finished);
-        match state {
-            BodyWriterState::Idle(mut send) => send.finish().await.map_err(Into::into),
-            _ => panic!("cannot close while not in idle state"),
-        }
+        futures_util::future::poll_fn(|cx| self.poll_close_inner(cx))
+            .await
+            .map_err(Into::into)
     }
 
     pub fn cancel(mut self) {
@@ -279,6 +277,23 @@ impl BodyWriter {
                 write.reset(ErrorCode::REQUEST_CANCELLED);
             }
             _ => (),
+        }
+    }
+
+    fn poll_close_inner(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        loop {
+            match self.state {
+                BodyWriterState::Finished => return Poll::Ready(Ok(())),
+                BodyWriterState::Idle(ref mut send) => {
+                    ready!(Pin::new(send).poll_close(cx))?;
+                    self.state = BodyWriterState::Finished;
+                    return Poll::Ready(Ok(()));
+                }
+                BodyWriterState::Writing(ref mut write) => {
+                    let send = ready!(Pin::new(write).poll(cx))?;
+                    self.state = BodyWriterState::Idle(send);
+                }
+            }
         }
     }
 }
@@ -335,19 +350,7 @@ impl AsyncWrite for BodyWriter {
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        match self.state {
-            BodyWriterState::Finished => Poll::Ready(Ok(())),
-            BodyWriterState::Idle(ref mut send) => {
-                ready!(Pin::new(send).poll_close(cx))?;
-                self.state = BodyWriterState::Finished;
-                Poll::Ready(Ok(()))
-            }
-            BodyWriterState::Writing(ref mut write) => {
-                let send = ready!(Pin::new(write).poll(cx))?;
-                self.state = BodyWriterState::Idle(send);
-                Poll::Pending
-            }
-        }
+        self.poll_close_inner(cx)
     }
 }
 
