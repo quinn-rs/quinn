@@ -48,8 +48,11 @@ impl HttpFrame {
     }
 
     pub fn decode<T: Buf>(buf: &mut T) -> Result<Self, Error> {
-        let ty = Type::decode(buf)?;
-        let len = buf.get_var()?;
+        let remaining = buf.remaining();
+        let ty = Type::decode(buf).map_err(|_| Error::Incomplete(remaining + 1 as usize))?;
+        let len = buf
+            .get_var()
+            .map_err(|_| Error::Incomplete(remaining + 1 as usize))?;
 
         if buf.remaining() < len as usize {
             if ty == Type::DATA {
@@ -413,6 +416,20 @@ mod tests {
         let mut buf = Cursor::new(&[0x2f, 4, 0, 255, 128, 0]);
         let decoded = HttpFrame::decode(&mut buf);
         assert_eq!(decoded, Err(Error::UnsupportedFrame(47)));
+    }
+
+    #[test]
+    fn len_unexpected_end() {
+        let mut buf = Cursor::new(&[0, 255]);
+        let decoded = HttpFrame::decode(&mut buf);
+        assert_eq!(decoded, Err(Error::Incomplete(3)));
+    }
+
+    #[test]
+    fn type_unexpected_end() {
+        let mut buf = Cursor::new(&[255]);
+        let decoded = HttpFrame::decode(&mut buf);
+        assert_eq!(decoded, Err(Error::Incomplete(2)));
     }
 
     #[test]
