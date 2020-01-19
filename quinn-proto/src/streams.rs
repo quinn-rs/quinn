@@ -268,6 +268,9 @@ impl Send {
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
     /// The peer is not able to accept additional data, or the connection is congested.
+    ///
+    /// If the peer issues additional flow control credit, an `Event::StreamWritable` will be
+    /// generated, indicating that retrying the write might succeed.
     #[error(display = "unable to accept further writes")]
     Blocked,
     /// The peer is no longer accepting data on this stream.
@@ -276,6 +279,9 @@ pub enum WriteError {
     #[error(display = "stopped by peer: code {}", 0)]
     Stopped(VarInt),
     /// Unknown stream
+    ///
+    /// Occurs when attempting to access a stream after finishing it or observing that it has been
+    /// stopped.
     #[error(display = "unknown stream")]
     UnknownStream,
 }
@@ -449,6 +455,9 @@ impl Recv {
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
+    ///
+    /// If more data on this stream is received from the peer, an `Event::StreamReadable` will be
+    /// generated for this stream, indicating that retrying the read might succeed.
     #[error(display = "blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
@@ -457,6 +466,9 @@ pub enum ReadError {
     #[error(display = "reset by peer: code {}", 0)]
     Reset(VarInt),
     /// Unknown stream
+    ///
+    /// Occurs when attempting to access a stream after observing that it has been finished or
+    /// reset.
     #[error(display = "unknown stream")]
     UnknownStream,
 }
@@ -503,7 +515,7 @@ pub enum FinishError {
     /// Carries an application-defined error code.
     #[error(display = "stopped by peer: code {}", 0)]
     Stopped(VarInt),
-    /// The stream has not yet been created or is already considered destroyed
+    /// The stream has not yet been created or was already finished or stopped.
     #[error(display = "unknown stream")]
     UnknownStream,
 }
