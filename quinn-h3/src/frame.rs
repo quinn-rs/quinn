@@ -145,33 +145,51 @@ impl Future for WriteFrame {
                 WriteFrameState::Header(ref mut send, ref mut h) => {
                     let wrote = ready!(Pin::new(send).poll_write(cx, h))?;
                     h.advance(wrote);
-                    if h.is_empty() {
-                        self.state = match mem::replace(&mut self.state, WriteFrameState::Finished)
-                        {
-                            WriteFrameState::Header(s, _) => {
-                                WriteFrameState::Payload(s, self.payload.take().unwrap())
-                            }
-                            _ => unreachable!(),
+                    if !h.is_empty() {
+                        continue;
+                    }
+                    self.state = match mem::replace(&mut self.state, WriteFrameState::Finished) {
+                        WriteFrameState::Header(s, _) => {
+                            WriteFrameState::Payload(s, self.payload.take().unwrap())
                         }
+                        _ => unreachable!(),
                     }
                 }
                 WriteFrameState::Payload(ref mut send, ref mut p) => {
                     let wrote = ready!(Pin::new(send).poll_write(cx, p))?;
                     p.advance(wrote);
-                    if p.is_empty() {
-                        let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
-                            WriteFrameState::Payload(s, _) => s,
-                            _ => unreachable!(),
-                        };
-                        self.state = WriteFrameState::Finished;
-                        return Poll::Ready(Ok(send));
+                    if !p.is_empty() {
+                        continue;
                     }
+                    let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
+                        WriteFrameState::Payload(s, _) => s,
+                        _ => unreachable!(),
+                    };
+                    self.state = WriteFrameState::Finished;
+                    return Poll::Ready(Ok(send));
                 }
             }
         }
     }
 }
 
+// impl DataFrame {
+//     pub async fn write(&mut self, stream: &mut SendStream) -> Result<(), Error> {
+//         let mut header = [0u8; 24];
+//         let mut buf = &mut header[..];
+//         self.encode_header(&mut buf);
+//         stream
+//             .write_all(&mut buf)
+//             .await
+//             .expect("not expected header");
+//         stream
+//             .write_all(&mut self.payload)
+//             .await
+//             .expect("not expected header");
+//         Ok(())
+//     }
+// }
+//
 #[derive(Debug)]
 pub enum Error {
     Proto(frame::Error),
