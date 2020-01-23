@@ -271,9 +271,9 @@ where
     ///
     /// The value returned may change after:
     /// - the application performed some I/O on the connection
-    /// - an incoming packet is handled
-    /// - a packet is transmitted
-    /// - a timer expires
+    /// - a call was made to `handle_event`
+    /// - a call to `poll_transmit` returned `Some`
+    /// - a call was made to `handle_timeout`
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         self.timers.next_timeout()
     }
@@ -281,8 +281,8 @@ where
     /// Returns application-facing events
     ///
     /// Connections should be polled for events after:
-    /// - an incoming packet is handled, or
-    /// - a timer expires
+    /// - a call was made to `handle_event`
+    /// - a call was made to `handle_timeout`
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(dir) =
             Dir::iter().find(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
@@ -2067,8 +2067,8 @@ where
     ///
     /// Connections should be polled for transmit after:
     /// - the application performed some I/O on the connection
-    /// - an incoming packet is handled
-    /// - a timer expires
+    /// - a call was made to `handle_event`
+    /// - a call was made to `handle_timeout`
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if self.state.is_handshake()
             && !self.remote_validated
