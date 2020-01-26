@@ -235,8 +235,12 @@ impl Default for ClientConfigBuilder {
             Ok(x) => {
                 crypto.root_store = x;
             }
-            Err(e) => {
-                tracing::warn!("couldn't load default trust roots: {}", e);
+            Err((Some(x), e)) => {
+                crypto.root_store = x;
+                tracing::warn!("couldn't load some default trust roots: {}", e);
+            }
+            Err((None, e)) => {
+                tracing::warn!("couldn't load any default trust roots: {}", e);
             }
         }
         #[cfg(feature = "ct-logs")]
