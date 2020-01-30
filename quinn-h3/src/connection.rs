@@ -10,8 +10,10 @@ use std::{
 use bytes::{Buf, BytesMut};
 use futures::{io::AsyncRead, Stream};
 use quinn::{IncomingBiStreams, IncomingUniStreams, RecvStream, SendStream};
-use quinn_proto::{Side, StreamId};
-use tracing::{trace, trace_span, warn};
+use quinn_proto::{
+    ConnectionClose, ConnectionError as QuicConnError, Side, StreamId, TransportErrorCode,
+};
+use tracing::{error, trace, trace_span, warn};
 
 use crate::{
     frame::{self, FrameStream},
@@ -38,10 +40,27 @@ impl Future for ConnectionDriver {
         match res {
             Ok(false) => Poll::Pending,
             Ok(true) => Poll::Ready(()),
-            Err(DriverError(_err, code, msg)) => {
-                self.0.quic.close(code.into(), msg.as_bytes());
-                Poll::Ready(())
-            }
+            Err(DriverError(err, code, msg)) => match err.try_into_quic() {
+                // Send CONNECTION_CLOSE and log only if it's pertinent:
+                //   - Any Quic ConnectionError should have already closed the connection.
+                //   - Local close, or no error doesn't need to be logged.
+                //   - All other errors need logging and closing the underlying connection.
+                Some(QuicConnError::LocallyClosed)
+                | Some(QuicConnError::ApplicationClosed { .. })
+                | Some(QuicConnError::ConnectionClosed(ConnectionClose {
+                    error_code: TransportErrorCode::NO_ERROR,
+                    ..
+                })) => Poll::Ready(()),
+                Some(_) => {
+                    error!("driver error: {}", err);
+                    Poll::Ready(())
+                }
+                None => {
+                    error!("driver error: {}", err);
+                    self.0.quic.close(code.into(), msg.as_bytes());
+                    Poll::Ready(())
+                }
+            },
         }
     }
 }
