@@ -62,6 +62,17 @@ impl Error {
     pub fn internal<T: Into<String>>(msg: T) -> Self {
         Error::Internal(msg.into())
     }
+
+    pub fn try_into_quic(&self) -> Option<&quinn_proto::ConnectionError> {
+        match self {
+            Error::Quic(e) => Some(e),
+            Error::Write(quinn::WriteError::ConnectionClosed(e)) => Some(e),
+            Error::Io(e) => e
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<quinn_proto::ConnectionError>()),
+            _ => None,
+        }
+    }
 }
 
 impl From<proto::connection::Error> for Error {
