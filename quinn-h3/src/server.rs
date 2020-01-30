@@ -168,18 +168,11 @@ pub struct IncomingRequest(ConnectionRef);
 impl Stream for IncomingRequest {
     type Item = RecvRequest;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let (send, recv) = {
-            let conn = &mut self.0.h3.lock().unwrap();
-            match conn.requests.pop_front() {
-                Some(s) => s,
-                None => {
-                    conn.requests_task = Some(cx.waker().clone());
-                    return Poll::Pending;
-                }
-            }
-        };
-        Poll::Ready(Some(RecvRequest::new(recv, send, self.0.clone())))
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        match self.0.h3.lock().unwrap().next_request(cx) {
+            Some((s, r)) => Poll::Ready(Some(RecvRequest::new(r, s, self.0.clone()))),
+            None => Poll::Pending
+        }
     }
 }
 

@@ -106,8 +106,8 @@ impl ConnectionRef {
 
 pub(crate) struct ConnectionInner {
     pub inner: Connection,
-    pub requests: VecDeque<(SendStream, RecvStream)>,
-    pub requests_task: Option<Waker>,
+    requests: VecDeque<(SendStream, RecvStream)>,
+    requests_task: Option<Waker>,
     side: Side,
     driver: Option<Waker>,
     incoming_bi: IncomingBiStreams,
@@ -133,6 +133,16 @@ impl ConnectionInner {
         self.reset_waker(cx);
 
         Ok(self.inner.is_closing() && self.inner.requests_in_flight() == 0)
+    }
+
+    pub fn next_request(&mut self, cx: &mut Context) -> Option<(SendStream, RecvStream)> {
+        match self.requests.pop_front() {
+            Some(x) => Some(x),
+            None => {
+                self.requests_task = Some(cx.waker().clone());
+                Ok(None)
+            }
+        }
     }
 
     pub fn wake(&mut self) {
