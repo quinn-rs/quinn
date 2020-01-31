@@ -170,8 +170,9 @@ impl Stream for IncomingRequest {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         match self.0.h3.lock().unwrap().next_request(cx) {
-            Some((s, r)) => Poll::Ready(Some(RecvRequest::new(r, s, self.0.clone()))),
-            None => Poll::Pending
+            Ok(Some((s, r))) => Poll::Ready(Some(RecvRequest::new(r, s, self.0.clone()))),
+            Ok(None) => Poll::Pending,
+            Err(_) => Poll::Ready(None),
         }
     }
 }
