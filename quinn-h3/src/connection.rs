@@ -36,31 +36,31 @@ impl Future for ConnectionDriver {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let res = self.0.h3.lock().unwrap().drive(cx);
-        match res {
+        let mut conn = self.0.h3.lock().unwrap();
+        match conn.drive(cx) {
             Ok(false) => Poll::Pending,
             Ok(true) => Poll::Ready(()),
-            Err(DriverError(err, code, msg)) => match err.try_into_quic() {
-                // Send CONNECTION_CLOSE and log only if it's pertinent:
-                //   - Any Quic ConnectionError should have already closed the connection.
-                //   - Local close, or no error doesn't need to be logged.
-                //   - All other errors need logging and closing the underlying connection.
-                Some(QuicConnError::LocallyClosed)
-                | Some(QuicConnError::ApplicationClosed { .. })
-                | Some(QuicConnError::ConnectionClosed(ConnectionClose {
-                    error_code: TransportErrorCode::NO_ERROR,
-                    ..
-                })) => Poll::Ready(()),
-                Some(_) => {
-                    error!("driver error: {}", err);
-                    Poll::Ready(())
+            Err(DriverError(err, code, msg)) => {
+                match err.try_into_quic() {
+                    // Send CONNECTION_CLOSE and log only if it's pertinent:
+                    //   - Any Quic ConnectionError should have already closed the connection.
+                    //   - Local close, or no error doesn't need to be logged.
+                    //   - All other errors need logging and closing the underlying connection.
+                    Some(QuicConnError::LocallyClosed)
+                    | Some(QuicConnError::ApplicationClosed { .. })
+                    | Some(QuicConnError::ConnectionClosed(ConnectionClose {
+                        error_code: TransportErrorCode::NO_ERROR,
+                        ..
+                    })) => (),
+                    Some(_) => error!("driver error: {}", err),
+                    None => {
+                        error!("driver error: {}", err);
+                        self.0.quic.close(code.into(), msg.as_bytes());
+                    }
                 }
-                None => {
-                    error!("driver error: {}", err);
-                    self.0.quic.close(code.into(), msg.as_bytes());
-                    Poll::Ready(())
-                }
-            },
+                conn.terminate();
+                Poll::Ready(())
+            }
         }
     }
 }
@@ -99,6 +99,7 @@ impl ConnectionRef {
                     SendUni::new(StreamType::ENCODER, quic.open_uni()),
                     SendUni::new(StreamType::DECODER, quic.open_uni()),
                 ],
+                closed: false,
             })),
         })
     }
@@ -118,6 +119,7 @@ pub(crate) struct ConnectionInner {
     recv_decoder: Option<(RecvStream, BytesMut)>,
     blocked_streams: BTreeMap<usize, HashMap<StreamId, Waker>>,
     send_unis: [SendUni; 3],
+    closed: bool,
 }
 
 impl ConnectionInner {
@@ -135,13 +137,32 @@ impl ConnectionInner {
         Ok(self.inner.is_closing() && self.inner.requests_in_flight() == 0)
     }
 
-    pub fn next_request(&mut self, cx: &mut Context) -> Option<(SendStream, RecvStream)> {
+    pub fn next_request(
+        &mut self,
+        cx: &mut Context,
+    ) -> Result<Option<(SendStream, RecvStream)>, ()> {
+        if self.closed {
+            return Err(());
+        }
         match self.requests.pop_front() {
-            Some(x) => Some(x),
+            Some(x) => Ok(Some(x)),
             None => {
                 self.requests_task = Some(cx.waker().clone());
                 Ok(None)
             }
+        }
+    }
+
+    pub fn terminate(&mut self) {
+        self.closed = true;
+
+        if let Some(t) = self.requests_task.take() {
+            t.wake();
+        }
+
+        let requests = mem::replace(&mut self.blocked_streams, BTreeMap::new());
+        for (_, waker) in requests.into_iter().map(|(_, v)| v).flatten() {
+            waker.wake();
         }
     }
 
@@ -163,6 +184,9 @@ impl ConnectionInner {
         stream_id: StreamId,
         header: &HeadersFrame,
     ) -> Result<DecodeResult, Error> {
+        if self.closed {
+            return Err(Error::Aborted);
+        }
         self.inner
             .decode_header(stream_id, header)
             .map_err(|e| Error::peer(format!("decoding header failed: {:?}", e)))
@@ -185,16 +209,13 @@ impl ConnectionInner {
     fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), DriverError> {
         loop {
             match Pin::new(&mut self.incoming_bi).poll_next(cx) {
-                Poll::Pending => return Ok(()),
+                Poll::Pending | Poll::Ready(None) => return Ok(()),
                 Poll::Ready(Some(Err(e))) => {
                     return Err(DriverError::new(
                         e,
                         ErrorCode::INTERNAL_ERROR,
                         "incoming bi error",
                     ))
-                }
-                Poll::Ready(None) => {
-                    return Err(DriverError::internal("closed incoming bi"));
                 }
                 Poll::Ready(Some(Ok((mut send, mut recv)))) => match self.side {
                     Side::Client => {
@@ -224,7 +245,7 @@ impl ConnectionInner {
         loop {
             match Pin::new(&mut self.incoming_uni).poll_next(cx)? {
                 Poll::Pending => break,
-                Poll::Ready(None) => return Err(DriverError::internal("closed incoming uni")),
+                Poll::Ready(None) => return Ok(()),
                 Poll::Ready(Some(recv)) => self.pending_uni.push_back(Some(RecvUni::new(recv))),
             }
         }
