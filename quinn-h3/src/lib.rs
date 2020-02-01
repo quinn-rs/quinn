@@ -11,6 +11,9 @@ extern crate proptest;
 #[macro_use]
 extern crate assert_matches;
 
+#[cfg(test)]
+mod tests;
+
 pub use body::Body;
 
 pub mod body;
