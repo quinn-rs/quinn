@@ -75,7 +75,7 @@ pub use streams::{
 };
 
 mod tls;
-pub use tls::{Certificate, CertificateChain, PrivateKey};
+pub use tls::{Certificate, CertificateChain, ParseError, PrivateKey};
 
 #[cfg(test)]
 mod tests;
