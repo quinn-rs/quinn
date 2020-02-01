@@ -508,13 +508,21 @@ where
             };
             ss.bytes_in_flight -= frame.data.len() as u64;
             self.unacked_data -= frame.data.len() as u64;
-            if ss.state == streams::SendState::DataSent && ss.bytes_in_flight == 0 {
-                ss.state = streams::SendState::DataRecvd;
-                self.streams.maybe_cleanup(frame.id);
-                self.events.push_back(Event::StreamFinished {
-                    stream: frame.id,
-                    stop_reason: None,
-                });
+            if let streams::SendState::DataSent {
+                ref mut finish_acked,
+            } = ss.state
+            {
+                if frame.fin {
+                    *finish_acked = true;
+                }
+                if *finish_acked && ss.bytes_in_flight == 0 {
+                    ss.state = streams::SendState::DataRecvd;
+                    self.streams.maybe_cleanup(frame.id);
+                    self.events.push_back(Event::StreamFinished {
+                        stream: frame.id,
+                        stop_reason: None,
+                    });
+                }
             }
         }
     }
@@ -900,7 +908,7 @@ where
                 // Nothing to do
                 return;
             }
-            DataSent => {
+            DataSent { .. } => {
                 self.events.push_back(Event::StreamFinished {
                     stream: stream_id,
                     stop_reason,
