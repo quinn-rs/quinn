@@ -103,6 +103,7 @@ pub enum EndpointError {
 
 /// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
 /// incoming connections.
+#[derive(Clone)]
 pub struct ServerConfigBuilder {
     config: ServerConfig,
 }
@@ -169,6 +170,7 @@ impl Default for ServerConfigBuilder {
 /// If the `native-certs` and `ct-logs` features are enabled, `ClientConfigBuilder::default()` will
 /// construct a configuration that trusts the host OS certificate store and uses built-in
 /// certificate transparency logs respectively. These features are both enabled by default.
+#[derive(Clone)]
 pub struct ClientConfigBuilder {
     config: ClientConfig,
 }
