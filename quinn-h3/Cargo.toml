@@ -33,7 +33,7 @@ lazy_static = "1"
 quinn-proto = { path = "../quinn-proto", version = "0.5.0" }
 quinn = { path = "../quinn", version = "0.5.0" }
 rustls = { version = "0.16", features = ["quic"] }
-tokio = "0.2.2"
+tokio = "0.2.6"
 tokio-util = { version = "0.2.0", features = ["codec"] }
 tracing = "0.1.10"
 webpki = "0.21"
@@ -46,8 +46,8 @@ proptest = "0.9.1"
 rand = "0.7.0"
 rcgen = "0.7"
 structopt = "0.3.0"
-tracing-subscriber = "0.2.0"
-tokio = { version = "0.2.2", features = ["io-util", "macros", "rt-threaded"] }
+tokio = { version = "0.2.6", features = ["io-util", "macros", "rt-threaded"] }
+tracing-subscriber = "0.1.5"
 url = "2"
 
 [[example]]
