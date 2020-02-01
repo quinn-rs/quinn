@@ -14,17 +14,17 @@ pub(crate) struct Streams {
     recv: HashMap<StreamId, Recv>,
     next: [u64; 2],
     // Locally initiated
-    pub(crate) max: [u64; 2],
+    pub max: [u64; 2],
     // Maximum that can be remotely initiated
-    pub(crate) max_remote: [u64; 2],
+    pub max_remote: [u64; 2],
     // Lowest that hasn't actually been opened
-    pub(crate) next_remote: [u64; 2],
+    pub next_remote: [u64; 2],
     // Next to report to the application, once opened
     next_reported_remote: [u64; 2],
 }
 
 impl Streams {
-    pub(crate) fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
+    pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
         let mut this = Self {
             send: HashMap::default(),
             recv: HashMap::default(),
@@ -44,7 +44,7 @@ impl Streams {
         this
     }
 
-    pub(crate) fn open(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
+    pub fn open(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
         if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
@@ -55,13 +55,13 @@ impl Streams {
         Some(id)
     }
 
-    pub(crate) fn alloc_remote_stream(&mut self, side: Side, dir: Dir) {
+    pub fn alloc_remote_stream(&mut self, side: Side, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!side, dir, self.max_remote[dir as usize] - 1);
         self.insert(true, id);
     }
 
-    pub(crate) fn accept(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
+    pub fn accept(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
         if self.next_remote[dir as usize] == self.next_reported_remote[dir as usize] {
             return None;
         }
@@ -70,7 +70,7 @@ impl Streams {
         Some(StreamId::new(!side, dir, x))
     }
 
-    pub(crate) fn zero_rtt_rejected(&mut self, side: Side) {
+    pub fn zero_rtt_rejected(&mut self, side: Side) {
         // Revert to initial state for outgoing streams
         for dir in Dir::iter() {
             for i in 0..self.next[dir as usize] {
@@ -83,7 +83,7 @@ impl Streams {
         }
     }
 
-    pub(crate) fn read(
+    pub fn read(
         &mut self,
         id: StreamId,
         buf: &mut [u8],
@@ -103,7 +103,7 @@ impl Streams {
         }
     }
 
-    pub(crate) fn read_unordered(
+    pub fn read_unordered(
         &mut self,
         id: StreamId,
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
@@ -126,7 +126,7 @@ impl Streams {
     ///
     /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
     /// misbehavior.
-    pub(crate) fn recv_stream(
+    pub fn recv_stream(
         &mut self,
         side: Side,
         id: StreamId,
@@ -157,7 +157,7 @@ impl Streams {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub(crate) fn maybe_cleanup(&mut self, id: StreamId) {
+    pub fn maybe_cleanup(&mut self, id: StreamId) {
         match self.send.entry(id) {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
@@ -176,16 +176,16 @@ impl Streams {
         }
     }
 
-    pub(crate) fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
+    pub fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
         self.recv.get_mut(&id)
     }
 
-    pub(crate) fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
+    pub fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
         self.send.get_mut(&id)
     }
 
     /// Whether a locally initiated stream has never been open
-    pub(crate) fn is_local_unopened(&self, id: StreamId) -> bool {
+    pub fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.dir() as usize]
     }
 
@@ -202,15 +202,15 @@ impl Streams {
 
 #[derive(Debug)]
 pub(crate) struct Send {
-    pub(crate) offset: u64,
-    pub(crate) max_data: u64,
-    pub(crate) state: SendState,
+    pub offset: u64,
+    pub max_data: u64,
+    pub state: SendState,
     /// Number of bytes sent but unacked
-    pub(crate) bytes_in_flight: u64,
+    pub bytes_in_flight: u64,
 }
 
 impl Send {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             offset: 0,
             max_data: 0,
@@ -219,7 +219,7 @@ impl Send {
         }
     }
 
-    pub(crate) fn write_budget(&mut self) -> Result<u64, WriteError> {
+    pub fn write_budget(&mut self) -> Result<u64, WriteError> {
         if let Some(error_code) = self.take_stop_reason() {
             return Err(WriteError::Stopped(error_code));
         }
@@ -232,7 +232,7 @@ impl Send {
     }
 
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
-    pub(crate) fn is_closed(&self) -> bool {
+    pub fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
             DataRecvd | ResetRecvd { stop_reason: None } => true,
@@ -240,7 +240,7 @@ impl Send {
         }
     }
 
-    pub(crate) fn finish(&mut self) -> Result<(), FinishError> {
+    pub fn finish(&mut self) -> Result<(), FinishError> {
         if self.state == SendState::Ready {
             self.state = SendState::DataSent;
             Ok(())
@@ -296,11 +296,11 @@ pub(crate) struct Recv {
     assembler: Assembler,
     /// Number of bytes read by the application. Equal to assembler.offset when `unordered` is
     /// false.
-    pub(crate) bytes_read: u64,
+    pub bytes_read: u64,
 }
 
 impl Recv {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: RecvState::Recv { size: None },
             recvd: RangeSet::new(),
@@ -310,7 +310,7 @@ impl Recv {
         }
     }
 
-    pub(crate) fn ingest(
+    pub fn ingest(
         &mut self,
         frame: frame::Stream,
         received: u64,
@@ -359,7 +359,7 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub(crate) fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         assert!(
             !self.unordered,
             "cannot perform ordered reads following unordered reads on a stream"
@@ -374,7 +374,7 @@ impl Recv {
         }
     }
 
-    pub(crate) fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+    pub fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
         self.unordered = true;
 
         // Return data we already have buffered, regardless of state
@@ -401,7 +401,7 @@ impl Recv {
         }
     }
 
-    pub(crate) fn receiving_unknown_size(&self) -> bool {
+    pub fn receiving_unknown_size(&self) -> bool {
         match self.state {
             RecvState::Recv { size: None } => true,
             _ => false,
@@ -409,7 +409,7 @@ impl Recv {
     }
 
     /// No more data expected from peer
-    pub(crate) fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         match self.state {
             RecvState::Recv { .. } => false,
             _ => true,
@@ -417,16 +417,16 @@ impl Recv {
     }
 
     /// All data read by application
-    pub(crate) fn is_closed(&self) -> bool {
+    pub fn is_closed(&self) -> bool {
         self.state == self::RecvState::Closed
     }
 
     /// Offset after the largest byte received
-    pub(crate) fn limit(&self) -> u64 {
+    pub fn limit(&self) -> u64 {
         self.recvd.max().map_or(0, |x| x + 1)
     }
 
-    pub(crate) fn final_offset(&self) -> Option<u64> {
+    pub fn final_offset(&self) -> Option<u64> {
         match self.state {
             RecvState::Recv { size } => size,
             RecvState::ResetRecvd { size, .. } => Some(size),
@@ -435,7 +435,7 @@ impl Recv {
         }
     }
 
-    pub(crate) fn reset(&mut self, error_code: VarInt, final_offset: u64) {
+    pub fn reset(&mut self, error_code: VarInt, final_offset: u64) {
         if self.is_closed() {
             return;
         }
@@ -490,7 +490,7 @@ pub(crate) enum SendState {
 }
 
 impl SendState {
-    pub(crate) fn was_reset(self) -> bool {
+    pub fn was_reset(self) -> bool {
         use self::SendState::*;
         match self {
             ResetSent { .. } | ResetRecvd { .. } => true,
