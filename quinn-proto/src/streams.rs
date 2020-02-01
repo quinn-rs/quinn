@@ -242,7 +242,9 @@ impl Send {
 
     pub fn finish(&mut self) -> Result<(), FinishError> {
         if self.state == SendState::Ready {
-            self.state = SendState::DataSent;
+            self.state = SendState::DataSent {
+                finish_acked: false,
+            };
             Ok(())
         } else if let Some(error_code) = self.take_stop_reason() {
             Err(FinishError::Stopped(error_code))
@@ -479,8 +481,8 @@ pub enum ReadError {
 pub(crate) enum SendState {
     /// Sending new data
     Ready,
-    /// Sending retransmits only
-    DataSent,
+    /// Stream was finished; now sending retransmits only
+    DataSent { finish_acked: bool },
     /// Sent RESET
     ResetSent { stop_reason: Option<VarInt> },
     /// All sent data acknowledged
