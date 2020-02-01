@@ -1286,3 +1286,50 @@ fn large_initial() {
         Some(Event::Connected { .. })
     );
 }
+
+#[test]
+/// Ensure that we don't yield a finish event before the actual FIN is acked so the peer isn't left
+/// hanging
+fn finish_acked() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
+
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.drive_client(); // send data to server
+    pair.drive_server(); // process data and send data ack
+
+    // Receive data
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::StreamOpened { dir: Dir::Uni })
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+
+    assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(s),
+        Ok(Some((ref data, 0))) if data == MSG
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read_unordered(s),
+        Err(ReadError::Blocked)
+    );
+
+    // Finish before receiving data ack
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    // Send FIN, receive data ack
+    pair.drive_client();
+    // Check for premature finish from data ack
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    // Process FIN ack
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+}
