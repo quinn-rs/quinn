@@ -161,23 +161,21 @@ async fn zero_rtt() {
     let (endpoint, incoming) = endpoint();
 
     const MSG: &[u8] = b"goodbye!";
-    tokio::spawn(incoming.take(2).for_each(|incoming| {
-        async {
-            let NewConnection {
-                mut uni_streams,
-                connection,
-                ..
-            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
-            tokio::spawn(async move {
-                while let Some(Ok(x)) = uni_streams.next().await {
-                    let msg = x.read_to_end(usize::max_value()).await.unwrap();
-                    assert_eq!(msg, MSG);
-                }
-            });
-            let mut s = connection.open_uni().await.expect("open_uni");
-            s.write_all(MSG).await.expect("write");
-            s.finish().await.expect("finish");
-        }
+    tokio::spawn(incoming.take(2).for_each(|incoming| async {
+        let NewConnection {
+            mut uni_streams,
+            connection,
+            ..
+        } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
+        tokio::spawn(async move {
+            while let Some(Ok(x)) = uni_streams.next().await {
+                let msg = x.read_to_end(usize::max_value()).await.unwrap();
+                assert_eq!(msg, MSG);
+            }
+        });
+        let mut s = connection.open_uni().await.expect("open_uni");
+        s.write_all(MSG).await.expect("write");
+        s.finish().await.expect("finish");
     }));
 
     let NewConnection {

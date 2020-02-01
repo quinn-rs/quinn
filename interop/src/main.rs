@@ -194,11 +194,9 @@ async fn main() {
     };
 
     let keylog = opt.keylog;
-    let results = future::join_all(peers.into_iter().map(|peer| {
-        async move {
-            let result = run(&peer, keylog).await;
-            (peer, result)
-        }
+    let results = future::join_all(peers.into_iter().map(|peer| async move {
+        let result = run(&peer, keylog).await;
+        (peer, result)
     }));
     for (peer, result) in results.await {
         match result {
