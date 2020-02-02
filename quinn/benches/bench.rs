@@ -134,12 +134,12 @@ impl Context {
                 .unwrap()
         });
         let quinn::NewConnection { connection, .. } = runtime
-            .block_on(
+            .block_on(runtime.enter(|| {
                 endpoint
                     .connect_with(self.client_config.clone(), &server_addr, "localhost")
                     .unwrap()
-                    .instrument(error_span!("client")),
-            )
+                    .instrument(error_span!("client"))
+            }))
             .unwrap();
         (endpoint, connection, runtime)
     }
