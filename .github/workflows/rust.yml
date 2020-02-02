@@ -34,6 +34,10 @@ jobs:
         with:
           command: test
           args: --workspace
+      - uses: actions-rs/cargo@v1
+        with:
+          command: bench
+          args: --workspace --no-run
 
   lint:
     runs-on: ubuntu-latest
