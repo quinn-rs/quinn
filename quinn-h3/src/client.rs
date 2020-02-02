@@ -173,6 +173,14 @@ impl Connection {
     }
 }
 
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.0
+            .quic
+            .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
+    }
+}
+
 pub struct Connecting {
     connecting: quinn::Connecting,
     settings: Settings,
