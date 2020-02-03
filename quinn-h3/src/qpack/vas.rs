@@ -133,7 +133,7 @@ impl VirtualAddressSpace {
     }
 
     pub fn largest_ref(&self) -> usize {
-        (self.inserted - self.dropped)
+        self.inserted - self.dropped
     }
 
     pub fn total_inserted(&self) -> usize {
