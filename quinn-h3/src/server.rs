@@ -26,7 +26,7 @@ use crate::{
     try_take, Error, Settings,
 };
 
-#[cfg_attr(test, derive(Clone))]
+#[derive(Clone)]
 pub struct Builder {
     config: quinn::ServerConfigBuilder,
     listen: Option<SocketAddr>,
