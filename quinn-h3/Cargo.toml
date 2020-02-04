@@ -41,6 +41,7 @@ webpki = "0.21"
 [dev-dependencies]
 anyhow = "1.0.22"
 assert_matches = "1.1"
+criterion = "0.3"
 directories = "2.0.1"
 proptest = "0.9.1"
 rand = "0.7.0"
@@ -48,6 +49,7 @@ rcgen = "0.7"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["io-util", "macros", "rt-threaded", "time"] }
 tracing-subscriber = "0.1.5"
+tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 url = "2"
 
 [[example]]
@@ -55,3 +57,7 @@ name = "h3_server"
 
 [[example]]
 name = "h3_client"
+
+[[bench]]
+name = "bench"
+harness = false

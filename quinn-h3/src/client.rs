@@ -26,7 +26,7 @@ use crate::{
     Error, Settings,
 };
 
-#[cfg_attr(test, derive(Clone))]
+#[derive(Clone)]
 pub struct Builder {
     settings: Settings,
     client_config: quinn::ClientConfigBuilder,
