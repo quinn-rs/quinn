@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use http::{Request, Response, StatusCode};
 use tokio::time::timeout;
 
@@ -76,4 +76,75 @@ async fn incoming_request_stream_closed_on_client_drop() {
         .map_err(|_| panic!("IncomingRequest did not resolve"))
         .expect("server panic")
         .unwrap();
+}
+
+async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> String {
+    let mut incoming_req = incoming
+        .next()
+        .await
+        .expect("connecting")
+        .await
+        .expect("accept");
+    let recv_req = incoming_req.next().await.expect("wait request");
+    let (_, mut body_reader, sender) = recv_req.await.expect("recv_req");
+
+    let mut body = String::new();
+    body_reader
+        .read_to_string(&mut body)
+        .await
+        .expect("server read body");
+    sender
+        .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+        .await
+        .expect("send_response");
+    body
+}
+
+#[tokio::test(threaded_scheduler)]
+async fn client_send_body() {
+    let helper = Helper::new();
+
+    let (_, incoming) = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
+
+    let conn = helper.make_connection().await;
+    let (resp, _) = conn
+        .send_request(
+            Request::post("https://localhost/")
+                .body("the body")
+                .expect("request"),
+        )
+        .await
+        .expect("request");
+    resp.await.expect("recv response");
+    drop(conn);
+
+    assert_eq!(server_handle.await.unwrap(), "the body");
+}
+
+#[tokio::test(threaded_scheduler)]
+async fn client_send_stream_body() {
+    let helper = Helper::new();
+
+    let (_, incoming) = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
+
+    let conn = helper.make_connection().await;
+    let (resp, mut body_writer) = conn
+        .send_request(
+            Request::post("https://localhost/")
+                .body(())
+                .expect("request"),
+        )
+        .await
+        .expect("request");
+    body_writer
+        .write_all(&b"the body"[..])
+        .await
+        .expect("write body");
+    body_writer.close().await.expect("body close");
+    let _ = resp.await.unwrap();
+    drop(conn);
+
+    assert_eq!(server_handle.await.unwrap(), "the body");
 }
