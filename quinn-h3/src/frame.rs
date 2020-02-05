@@ -30,12 +30,13 @@ pub struct FrameDecoder {
 
 impl FrameDecoder {
     pub fn stream<T: AsyncRead>(stream: T) -> FramedRead<T, Self> {
-        FramedRead::new(
+        FramedRead::with_capacity(
             stream,
             FrameDecoder {
                 expected: None,
                 partial: None,
             },
+            65535,
         )
     }
 }
