@@ -67,8 +67,8 @@ impl Future for RecvUni {
                 Some((ref mut recv, ref mut buf, ref mut expected, ref mut len)) => {
                     match ready!(Pin::new(recv).poll_read(cx, &mut buf[*len..*expected]))? {
                         0 => {
-                            return Poll::Ready(Err(Error::Peer(
-                                "Uni stream closed before type received".into(),
+                            return Poll::Ready(Err(Error::peer(
+                                "Uni stream closed before type received",
                             )))
                         }
                         read => {
