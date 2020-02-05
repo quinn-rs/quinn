@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{io::AsyncWrite, ready};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio::io::AsyncRead;
@@ -109,7 +109,7 @@ pub struct WriteFrame {
 }
 
 enum WriteFrameState {
-    Header(SendStream, Bytes),
+    Header(SendStream, [u8; VarInt::MAX_SIZE * 2], usize, usize),
     Payload(SendStream, Bytes),
     Finished,
 }
@@ -119,17 +119,22 @@ impl WriteFrame {
     where
         T: FrameHeader + IntoPayload,
     {
-        let mut buf = Vec::with_capacity(VarInt::MAX.size() * 2);
-        frame.encode_header(&mut buf);
+        let mut buf = [0u8; VarInt::MAX_SIZE * 2];
+        let remaining = {
+            let mut cur = &mut buf[..];
+            frame.encode_header(&mut cur);
+            cur.remaining_mut()
+        };
 
         Self {
             payload: Some(frame.into_payload()),
-            state: WriteFrameState::Header(send, buf.into()),
+            state: WriteFrameState::Header(send, buf, 0, buf.len() - remaining),
         }
     }
 
     pub fn reset(self, err_code: ErrorCode) {
-        if let WriteFrameState::Header(mut s, _) | WriteFrameState::Payload(mut s, _) = self.state {
+        if let WriteFrameState::Header(mut s, ..) | WriteFrameState::Payload(mut s, _) = self.state
+        {
             s.reset(err_code.into());
         }
     }
@@ -142,14 +147,14 @@ impl Future for WriteFrame {
         loop {
             match self.state {
                 WriteFrameState::Finished => panic!("polled after finished"),
-                WriteFrameState::Header(ref mut send, ref mut h) => {
-                    let wrote = ready!(Pin::new(send).poll_write(cx, h))?;
-                    h.advance(wrote);
-                    if !h.is_empty() {
+                WriteFrameState::Header(ref mut send, ref h, ref mut start, len) => {
+                    let wrote = ready!(Pin::new(send).poll_write(cx, &h[*start..len]))?;
+                    *start += wrote;
+                    if *start < len {
                         continue;
                     }
                     self.state = match mem::replace(&mut self.state, WriteFrameState::Finished) {
-                        WriteFrameState::Header(s, _) => {
+                        WriteFrameState::Header(s, ..) => {
                             WriteFrameState::Payload(s, self.payload.take().unwrap())
                         }
                         _ => unreachable!(),
