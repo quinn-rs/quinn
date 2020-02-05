@@ -628,9 +628,9 @@ where
 
     /// Free a handshake slot for reuse
     ///
-    /// Every time an [`Event::Handshaking`] is emitted, a slot is consumed, up to a limit of
-    /// [`ServerConfig.accept_buffer`]. Calling this indicates the application's acceptance of that
-    /// connection and releases the slot for reuse.
+    /// Every time an [`DatagramEvent::NewConnection`] is yielded by `Endpoint::handle`, a slot is
+    /// consumed, up to a limit of [`ServerConfig.accept_buffer`]. Calling this indicates the
+    /// application's acceptance of that connection and releases the slot for reuse.
     pub fn accept(&mut self) {
         self.incoming_handshakes -= 1;
     }
