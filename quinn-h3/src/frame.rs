@@ -178,23 +178,6 @@ impl Future for WriteFrame {
     }
 }
 
-// impl DataFrame {
-//     pub async fn write(&mut self, stream: &mut SendStream) -> Result<(), Error> {
-//         let mut header = [0u8; 24];
-//         let mut buf = &mut header[..];
-//         self.encode_header(&mut buf);
-//         stream
-//             .write_all(&mut buf)
-//             .await
-//             .expect("not expected header");
-//         stream
-//             .write_all(&mut self.payload)
-//             .await
-//             .expect("not expected header");
-//         Ok(())
-//     }
-// }
-//
 #[derive(Debug)]
 pub enum Error {
     Proto(frame::Error),
