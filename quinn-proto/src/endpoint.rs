@@ -632,7 +632,8 @@ where
     /// consumed, up to a limit of [`ServerConfig.accept_buffer`]. Calling this indicates the
     /// application's acceptance of that connection and releases the slot for reuse.
     pub fn accept(&mut self) {
-        self.incoming_handshakes -= 1;
+        // Don't overflow if a buggy caller invokes this too many times.
+        self.incoming_handshakes = self.incoming_handshakes.saturating_sub(1);
     }
 
     /// Unconditionally reject future incoming connections
