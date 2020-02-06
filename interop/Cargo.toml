@@ -18,7 +18,7 @@ rustls = { version = "0.16", features = ["dangerous_configuration"] }
 structopt = "0.3.0"
 tokio = { version = "0.2.2", features = ["macros", "rt-core", "io-util"] }
 tracing = "0.1.10"
-tracing-subscriber = "0.1.5"
+tracing-subscriber = "0.2.0"
 webpki = "0.21"
 
 [[bin]]

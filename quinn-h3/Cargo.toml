@@ -46,7 +46,7 @@ proptest = "0.9.1"
 rand = "0.7.0"
 rcgen = "0.7"
 structopt = "0.3.0"
-tracing-subscriber = "0.1.5"
+tracing-subscriber = "0.2.0"
 tokio = { version = "0.2.2", features = ["io-util", "macros", "rt-threaded"] }
 url = "2"
 
