@@ -313,7 +313,7 @@ pub struct DynamicTable {
     field_map: Option<HashMap<HeaderField, usize>>,
     name_map: Option<HashMap<Cow<'static, [u8]>, usize>>,
     track_map: Option<BTreeMap<usize, usize>>,
-    track_blocks: Option<HashMap<u64, HashMap<usize, usize>>>,
+    track_blocks: Option<HashMap<u64, VecDeque<HashMap<usize, usize>>>>, // TODO no need for Option
     largest_known_received: usize,
     blocked_max: usize,
     blocked_count: usize,
@@ -397,12 +397,19 @@ impl DynamicTable {
             return Ok(());
         }
 
-        if let Some(bloc_entry) = self.track_blocks.as_mut().unwrap().remove(&stream_id) {
-            self.track_cancel(bloc_entry.iter().map(|(x, y)| (*x, *y)))?;
-            Ok(())
-        } else {
-            Err(Error::UnknownStreamId(stream_id))
+        let mut entry = self.track_blocks.as_mut().unwrap().entry(stream_id);
+        let block = match entry {
+            Entry::Occupied(ref mut blocks) if blocks.get().len() > 1 => {
+                blocks.get_mut().pop_front()
+            }
+            Entry::Occupied(blocks) => blocks.remove().pop_front(),
+            Entry::Vacant { .. } => return Err(Error::UnknownStreamId(stream_id)),
+        };
+
+        if let Some(b) = block {
+            self.track_cancel(b.iter().map(|(x, y)| (*x, *y)))?;
         }
+        Ok(())
     }
 
     fn put_field(&mut self, field: HeaderField) -> Result<Option<usize>, Error> {
@@ -512,16 +519,14 @@ impl DynamicTable {
             self.track_blocks = Some(HashMap::new());
         }
 
-        if self.track_blocks.as_ref().unwrap().contains_key(&stream_id) {
-            self.untrack_block(stream_id).ok();
-        }
-
         match self.track_blocks.as_mut().unwrap().entry(stream_id) {
             Entry::Occupied(mut e) => {
-                e.insert(refs);
+                e.get_mut().push_back(refs);
             }
             Entry::Vacant(e) => {
-                e.insert(refs);
+                let mut blocks = VecDeque::with_capacity(2);
+                blocks.push_back(refs);
+                e.insert(blocks);
             }
         }
     }
@@ -1139,7 +1144,7 @@ mod tests {
             assert_eq!(track_map.get(&1), Some(&1));
         }
         let track_blocks = table.track_blocks.as_ref().unwrap();
-        let block = track_blocks.get(&stream_id).unwrap();
+        let block = track_blocks.get(&stream_id).unwrap().get(0).unwrap();
         assert_eq!(block.get(&1), Some(&1));
         assert_eq!(block.get(&2), Some(&1));
         assert_eq!(block.get(&3), Some(&1));
@@ -1288,7 +1293,7 @@ mod tests {
             .unwrap()
             .entry(42)
             .and_modify(|x| {
-                x.entry(2).and_modify(|c| *c += 1);
+                x.get_mut(0).unwrap().entry(2).and_modify(|c| *c += 1);
             });
         assert_eq!(table.untrack_block(42), Err(Error::InvalidTrackingCount));
     }
@@ -1297,6 +1302,29 @@ mod tests {
     fn untrack_bloc_wrong_stream() {
         let mut table = tracked_table(41);
         assert_eq!(table.untrack_block(42), Err(Error::UnknownStreamId(42)));
+    }
+
+    #[test]
+    fn untrack_trailers() {
+        const STREAM_ID: u64 = 42;
+        let mut table = tracked_table(STREAM_ID);
+        {
+            // encode trailers
+            let mut encoder = table.encoder(STREAM_ID);
+            for idx in 4..=9 {
+                encoder
+                    .insert(&HeaderField::new(format!("foo{}", idx), "quxx"))
+                    .unwrap();
+            }
+            assert_eq!(encoder.block_refs.len(), 6);
+            encoder.commit(6);
+        }
+        assert_eq!(table.untrack_block(STREAM_ID), Ok(()));
+        assert!(!table.is_tracked(3));
+        assert!(table.is_tracked(5));
+        assert_eq!(table.untrack_block(STREAM_ID), Ok(()));
+        assert!(!table.is_tracked(6));
+        assert_eq!(table.untrack_block(STREAM_ID), Err(Error::UnknownStreamId(STREAM_ID)));
     }
 
     #[test]
