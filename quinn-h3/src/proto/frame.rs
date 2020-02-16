@@ -276,7 +276,6 @@ impl PushPromiseFrame {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SettingsFrame {
-    pub num_placeholders: u64,
     pub max_header_list_size: u64,
     pub qpack_max_table_capacity: u64,
     pub qpack_blocked_streams: u64,
@@ -285,7 +284,6 @@ pub struct SettingsFrame {
 impl Default for SettingsFrame {
     fn default() -> SettingsFrame {
         SettingsFrame {
-            num_placeholders: DEFAULT_NUM_PLACE_HOLDER,
             max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
             qpack_max_table_capacity: DEFAULT_QPACK_MAX_TABLE_CAPACITY,
             qpack_blocked_streams: DEFAULT_QPACK_BLOCKED_STREAMS,
@@ -293,7 +291,6 @@ impl Default for SettingsFrame {
     }
 }
 
-const DEFAULT_NUM_PLACE_HOLDER: u64 = 16;
 const DEFAULT_MAX_HEADER_LIST_SIZE: u64 = 6;
 const DEFAULT_QPACK_MAX_TABLE_CAPACITY: u64 = 4096;
 const DEFAULT_QPACK_BLOCKED_STREAMS: u64 = 129;
@@ -301,8 +298,6 @@ const DEFAULT_QPACK_BLOCKED_STREAMS: u64 = 129;
 impl SettingsFrame {
     pub fn encode<T: BufMut>(&self, buf: &mut T) {
         self.encode_header(buf);
-        SettingId::NUM_PLACEHOLDERS.encode(buf);
-        buf.write_var(self.num_placeholders);
         SettingId::MAX_HEADER_LIST_SIZE.encode(buf);
         buf.write_var(self.max_header_list_size);
         SettingId::QPACK_MAX_TABLE_CAPACITY.encode(buf);
@@ -331,9 +326,6 @@ impl SettingsFrame {
 
             match identifier {
                 t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => continue,
-                SettingId::NUM_PLACEHOLDERS => {
-                    settings.num_placeholders = value;
-                }
                 SettingId::MAX_HEADER_LIST_SIZE => {
                     settings.max_header_list_size = value;
                 }
@@ -356,9 +348,7 @@ impl FrameHeader for SettingsFrame {
         fn sz(x: u64) -> usize {
             VarInt::from_u64(x).unwrap().size()
         }
-        sz(SettingId::NUM_PLACEHOLDERS.0)
-            + sz(self.num_placeholders)
-            + sz(SettingId::MAX_HEADER_LIST_SIZE.0)
+        sz(SettingId::MAX_HEADER_LIST_SIZE.0)
             + sz(self.max_header_list_size)
             + sz(SettingId::QPACK_MAX_TABLE_CAPACITY.0)
             + sz(self.qpack_max_table_capacity)
@@ -390,7 +380,6 @@ macro_rules! setting_identifiers {
 setting_identifiers! {
     QPACK_MAX_TABLE_CAPACITY = 0x1,
     QPACK_BLOCKED_STREAMS = 0x7,
-    NUM_PLACEHOLDERS = 0x8,
     MAX_HEADER_LIST_SIZE = 0x6,
 }
 
@@ -441,7 +430,7 @@ mod tests {
 
     #[test]
     fn settings_frame_ignores_0x_a_a() {
-        let mut buf = vec![4, 16, 8, 128, 0, 250, 218];
+        let mut buf = vec![4, 16, 1, 128, 0, 250, 218];
         buf.write_var(0x1a2a);
         buf.extend(&[128, 0, 250, 218, 6, 128, 0, 250, 218]);
 
@@ -450,7 +439,7 @@ mod tests {
         assert_matches!(
             decoded,
             HttpFrame::Settings(SettingsFrame {
-                num_placeholders: 0xfada,
+                qpack_max_table_capacity: 0xfada,
                 max_header_list_size: 0xfada,
                 ..
             })
@@ -488,7 +477,6 @@ mod tests {
         assert_matches!(
             decoded,
             Ok(HttpFrame::Settings(SettingsFrame {
-                num_placeholders: 16,
                 max_header_list_size: 0xFADA,
                 ..
             }))
@@ -510,15 +498,11 @@ mod tests {
     fn settings_frame() {
         codec_frame_check(
             HttpFrame::Settings(SettingsFrame {
-                num_placeholders: 0xfada,
                 max_header_list_size: 0xfad1,
                 qpack_max_table_capacity: 0xfad2,
                 qpack_blocked_streams: 0xfad3,
             }),
-            &[
-                4, 20, 8, 128, 0, 250, 218, 6, 128, 0, 250, 209, 1, 128, 0, 250, 210, 7, 128, 0,
-                250, 211,
-            ],
+            &[4, 15, 6, 128, 0, 250, 209, 1, 128, 0, 250, 210, 7, 128, 0, 250, 211],
         );
     }
 
