@@ -71,7 +71,7 @@ impl super::UdpExt for UdpSocket {
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         use crate::udp::BATCH_SIZE;
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
@@ -105,7 +105,7 @@ impl super::UdpExt for UdpSocket {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
         let mut iov: libc::iovec = unsafe { mem::zeroed() };
