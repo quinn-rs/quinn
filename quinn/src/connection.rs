@@ -22,7 +22,7 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     streams::{RecvStream, SendStream, WriteError},
-    ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
+    tls, ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
 };
 
 /// In-progress connection attempt future
@@ -308,6 +308,26 @@ impl Connection {
     /// Returns `None` for outgoing connections.
     pub fn server_name(&self) -> Option<String> {
         self.0.lock().unwrap().inner.server_name().map(|x| x.into())
+    }
+
+    /// The certificate chain used by the peer to authenticate
+    ///
+    /// For clients, this is the certificate chain of the server. For servers,
+    /// it is the certificate chain of the client, or [`None`] if client
+    /// authentication was not requested.
+    pub fn presented_certs(&self) -> Option<Vec<tls::Certificate>> {
+        self.0
+            .lock()
+            .unwrap()
+            .inner
+            .crypto_session()
+            .get_peer_certificates()
+            .map(|certs| {
+                certs
+                    .into_iter()
+                    .map(|cert| tls::Certificate { inner: cert })
+                    .collect()
+            })
     }
 
     // Update traffic keys spontaneously for testing purposes.
