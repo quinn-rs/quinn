@@ -15,6 +15,11 @@ impl Certificate {
             inner: rustls::Certificate(der.to_vec()),
         })
     }
+
+    /// View the certificate in DER format
+    pub fn as_der(&self) -> &[u8] {
+        &self.inner.0
+    }
 }
 
 /// A chain of signed TLS certificates ending the one to be used by a server
