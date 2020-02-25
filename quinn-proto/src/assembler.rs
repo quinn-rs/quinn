@@ -23,8 +23,7 @@ impl Assembler {
         let mut read = 0;
         loop {
             if self.consume(buf, &mut read) {
-                self.data.pop();
-                self.defragmented = self.defragmented.saturating_sub(1);
+                self.pop();
             } else {
                 break;
             }
@@ -113,6 +112,7 @@ impl Assembler {
     }
 
     pub(crate) fn pop(&mut self) -> Option<(u64, Bytes)> {
+        self.defragmented = self.defragmented.saturating_sub(1);
         self.data.pop().map(|x| (x.offset, x.bytes))
     }
 
@@ -138,6 +138,7 @@ impl Assembler {
     /// Discard all buffered data
     pub(crate) fn clear(&mut self) {
         self.data.clear();
+        self.defragmented = 0;
     }
 }
 
