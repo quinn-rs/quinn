@@ -18,14 +18,20 @@ maintenance = { status = "experimental" }
 
 [features]
 default = ["tls-rustls"]
+# Use Google's list of CT logs to enable certificate transparency checks
+certificate-transparency = ["ct-logs"]
 tls-rustls = ["rustls", "webpki", "ring"]
+# Trust the contents of the OS certificate store by default
+native-certs = ["rustls-native-certs"]
 
 [dependencies]
 bytes = "0.5.2"
+ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2.3"
 rand = "0.7"
 ring = { version = "0.16.7", optional = true }
 rustls = { version = "0.17", features = ["quic"], optional = true }
+rustls-native-certs = { version = "0.3", optional = true }
 slab = "0.4"
 tracing = "0.1.10"
 webpki = { version = "0.21", optional = true }

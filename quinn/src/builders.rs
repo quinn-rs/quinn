@@ -226,25 +226,6 @@ impl ClientConfigBuilder {
 
 impl Default for ClientConfigBuilder {
     fn default() -> Self {
-        let mut x = ClientConfig::default();
-        let crypto = Arc::make_mut(&mut x.crypto);
-        #[cfg(feature = "native-certs")]
-        match rustls_native_certs::load_native_certs() {
-            Ok(x) => {
-                crypto.root_store = x;
-            }
-            Err((Some(x), e)) => {
-                crypto.root_store = x;
-                tracing::warn!("couldn't load some default trust roots: {}", e);
-            }
-            Err((None, e)) => {
-                tracing::warn!("couldn't load any default trust roots: {}", e);
-            }
-        }
-        #[cfg(feature = "ct-logs")]
-        {
-            crypto.ct_logs = Some(&ct_logs::LOGS);
-        }
-        Self::new(x)
+        Self::new(ClientConfig::default())
     }
 }
