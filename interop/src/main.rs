@@ -307,11 +307,7 @@ impl State {
             Alpn::Hq => None,
             _ => {
                 let mut h3_client = quinn_h3::client::Builder::default();
-                h3_client.settings(Settings {
-                    qpack_max_table_capacity: 0,
-                    qpack_blocked_streams: 0,
-                    ..Settings::default()
-                });
+                h3_client.settings(Settings::default());
                 Some(h3_client.endpoint(endpoint.clone()))
             }
         };
