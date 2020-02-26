@@ -1,7 +1,7 @@
 use std::{io, net::SocketAddr, str, sync::Arc};
 
 use err_derive::Error;
-use proto::{ClientConfig, EndpointConfig, ServerConfig};
+use proto::generic::{ClientConfig, EndpointConfig, ServerConfig};
 use tracing::error;
 
 use crate::{
@@ -14,16 +14,22 @@ use crate::{
 ///
 /// See `ClientConfigBuilder` for details on trust defaults.
 #[derive(Clone, Debug)]
-pub struct EndpointBuilder {
-    server_config: Option<ServerConfig>,
-    config: EndpointConfig,
-    client_config: ClientConfig,
+pub struct EndpointBuilder<S>
+where
+    S: proto::crypto::Session,
+{
+    server_config: Option<ServerConfig<S>>,
+    config: EndpointConfig<S>,
+    client_config: ClientConfig<S>,
 }
 
 #[allow(missing_docs)]
-impl EndpointBuilder {
+impl<S> EndpointBuilder<S>
+where
+    S: proto::crypto::Session + Send + 'static,
+{
     /// Start a builder with a specific initial low-level configuration.
-    pub fn new(config: EndpointConfig) -> Self {
+    pub fn new(config: EndpointConfig<S>) -> Self {
         Self {
             config,
             // Pull in this crate's defaults rather than proto's
@@ -35,7 +41,7 @@ impl EndpointBuilder {
     /// Build an endpoint bound to `addr`
     ///
     /// Must be called from within a tokio runtime context.
-    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint, Incoming), EndpointError> {
+    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
     }
@@ -44,12 +50,12 @@ impl EndpointBuilder {
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
-    ) -> Result<(Endpoint, Incoming), EndpointError> {
+    ) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
-            proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
+            proto::generic::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
             addr.is_ipv6(),
         );
         let driver = EndpointDriver(rc.clone());
@@ -68,7 +74,7 @@ impl EndpointBuilder {
     }
 
     /// Accept incoming connections.
-    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
+    pub fn listen(&mut self, config: ServerConfig<S>) -> &mut Self {
         self.server_config = Some(config);
         self
     }
@@ -76,13 +82,16 @@ impl EndpointBuilder {
     /// Set the default configuration used for outgoing connections.
     ///
     /// The default can be overriden by using `Endpoint::connect_with`.
-    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
+    pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
         self.client_config = config;
         self
     }
 }
 
-impl Default for EndpointBuilder {
+impl<S> Default for EndpointBuilder<S>
+where
+    S: proto::crypto::Session,
+{
     fn default() -> Self {
         Self {
             server_config: None,
@@ -102,22 +111,35 @@ pub enum EndpointError {
 
 /// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
 /// incoming connections.
-#[derive(Clone)]
-pub struct ServerConfigBuilder {
-    config: ServerConfig,
+pub struct ServerConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
+    config: ServerConfig<S>,
 }
 
-impl ServerConfigBuilder {
+impl<S> ServerConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
     /// Construct a builder using `config` as the initial state.
-    pub fn new(config: ServerConfig) -> Self {
+    pub fn new(config: ServerConfig<S>) -> Self {
         Self { config }
     }
 
     /// Construct the complete `ServerConfig`.
-    pub fn build(self) -> ServerConfig {
+    pub fn build(self) -> ServerConfig<S> {
         self.config
     }
 
+    /// Whether to require clients to prove they can receive packets before accepting a connection
+    pub fn use_stateless_retry(&mut self, enabled: bool) -> &mut Self {
+        self.config.use_stateless_retry(enabled);
+        self
+    }
+}
+
+impl ServerConfigBuilder<proto::crypto::rustls::TlsSession> {
     /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
     ///
     /// Useful for debugging encrypted communications with protocol analyzers such as Wireshark.
@@ -148,15 +170,23 @@ impl ServerConfigBuilder {
             protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
+}
 
-    /// Whether to require clients to prove they can receive packets before accepting a connection
-    pub fn use_stateless_retry(&mut self, enabled: bool) -> &mut Self {
-        self.config.use_stateless_retry(enabled);
-        self
+impl<S> Clone for ServerConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+        }
     }
 }
 
-impl Default for ServerConfigBuilder {
+impl<S> Default for ServerConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
     fn default() -> Self {
         Self {
             config: ServerConfig::default(),
@@ -169,21 +199,33 @@ impl Default for ServerConfigBuilder {
 /// If the `native-certs` and `ct-logs` features are enabled, `ClientConfigBuilder::default()` will
 /// construct a configuration that trusts the host OS certificate store and uses built-in
 /// certificate transparency logs respectively. These features are both enabled by default.
-#[derive(Clone)]
-pub struct ClientConfigBuilder {
-    config: ClientConfig,
+pub struct ClientConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
+    config: ClientConfig<S>,
 }
 
-impl ClientConfigBuilder {
+impl<S> ClientConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
     /// Construct a builder using `config` as the initial state.
     ///
     /// If you want to trust the usual certificate authorities trusted by the system, use
     /// `ClientConfigBuilder::default()` with the `native-certs` and `ct-logs` features enabled
     /// instead.
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(config: ClientConfig<S>) -> Self {
         Self { config }
     }
 
+    /// Begin connecting from `endpoint` to `addr`.
+    pub fn build(self) -> ClientConfig<S> {
+        self.config
+    }
+}
+
+impl ClientConfigBuilder<proto::crypto::rustls::TlsSession> {
     /// Add a trusted certificate authority.
     ///
     /// For more advanced/less secure certificate verification, construct a [`ClientConfig`]
@@ -217,14 +259,23 @@ impl ClientConfigBuilder {
             protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
+}
 
-    /// Begin connecting from `endpoint` to `addr`.
-    pub fn build(self) -> ClientConfig {
-        self.config
+impl<S> Clone for ClientConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+        }
     }
 }
 
-impl Default for ClientConfigBuilder {
+impl<S> Default for ClientConfigBuilder<S>
+where
+    S: proto::crypto::Session,
+{
     fn default() -> Self {
         Self::new(ClientConfig::default())
     }

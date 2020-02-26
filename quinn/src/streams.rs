@@ -23,15 +23,21 @@ use crate::{connection::ConnectionRef, VarInt};
 /// If dropped, streams that haven't been explicitly `reset` will continue to (re)transmit
 /// previously written data until it has been fully acknowledged or the connection is closed.
 #[derive(Debug)]
-pub struct SendStream {
-    conn: ConnectionRef,
+pub struct SendStream<S>
+where
+    S: proto::crypto::Session,
+{
+    conn: ConnectionRef<S>,
     stream: StreamId,
     is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<WriteError>>>,
 }
 
-impl SendStream {
-    pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
+impl<S> SendStream<S>
+where
+    S: proto::crypto::Session,
+{
+    pub(crate) fn new(conn: ConnectionRef<S>, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
@@ -44,12 +50,12 @@ impl SendStream {
     ///
     /// Yields the number of bytes written on success. Congestion and flow control may cause this to
     /// be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    pub fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'a> {
+    pub fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'a, S> {
         Write { stream: self, buf }
     }
 
     /// Convenience method to write an entire buffer to the stream
-    pub fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a> {
+    pub fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a, S> {
         WriteAll { stream: self, buf }
     }
 
@@ -84,7 +90,7 @@ impl SendStream {
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn finish(&mut self) -> Finish<'_> {
+    pub fn finish(&mut self) -> Finish<'_, S> {
         Finish { stream: self }
     }
 
@@ -135,7 +141,10 @@ impl SendStream {
     }
 }
 
-impl AsyncWrite for SendStream {
+impl<S> AsyncWrite for SendStream<S>
+where
+    S: proto::crypto::Session,
+{
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
         SendStream::poll_write(self.get_mut(), cx, buf).map_err(Into::into)
     }
@@ -149,7 +158,10 @@ impl AsyncWrite for SendStream {
     }
 }
 
-impl tokio::io::AsyncWrite for SendStream {
+impl<S> tokio::io::AsyncWrite for SendStream<S>
+where
+    S: proto::crypto::Session,
+{
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -167,7 +179,10 @@ impl tokio::io::AsyncWrite for SendStream {
     }
 }
 
-impl Drop for SendStream {
+impl<S> Drop for SendStream<S>
+where
+    S: proto::crypto::Session,
+{
     fn drop(&mut self) {
         let mut conn = self.conn.lock().unwrap();
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -183,11 +198,17 @@ impl Drop for SendStream {
 }
 
 /// Future produced by `SendStream::finish`
-pub struct Finish<'a> {
-    stream: &'a mut SendStream,
+pub struct Finish<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
 }
 
-impl Future for Finish<'_> {
+impl<S> Future for Finish<'_, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<(), WriteError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -201,16 +222,22 @@ impl Future for Finish<'_> {
 /// - `ReadError::Finished` has been emitted, or
 /// - `stop` was called explicitly
 #[derive(Debug)]
-pub struct RecvStream {
-    conn: ConnectionRef,
+pub struct RecvStream<S>
+where
+    S: proto::crypto::Session,
+{
+    conn: ConnectionRef<S>,
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
     any_data_read: bool,
 }
 
-impl RecvStream {
-    pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
+impl<S> RecvStream<S>
+where
+    S: proto::crypto::Session,
+{
+    pub(crate) fn new(conn: ConnectionRef<S>, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
@@ -231,14 +258,14 @@ impl RecvStream {
     /// - If used after `read_unordered` on the same stream.
     ///   This is forbidden because an unordered read could consume a segment of data from a
     ///   location other than the start of the receive buffer, making it impossible for future
-    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a> {
+    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
         Read { stream: self, buf }
     }
 
     /// Read an exact number of bytes contiguously from the stream.
     ///
     /// See `read` for details.
-    pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a> {
+    pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S> {
         ReadExact {
             stream: self,
             off: 0,
@@ -285,7 +312,7 @@ impl RecvStream {
     ///
     /// Unordered reads have reduced overhead and higher throughput, and should therefore be
     /// preferred when applicable.
-    pub fn read_unordered(&mut self) -> ReadUnordered<'_> {
+    pub fn read_unordered(&mut self) -> ReadUnordered<'_, S> {
         ReadUnordered { stream: self }
     }
 
@@ -328,7 +355,7 @@ impl RecvStream {
     ///
     /// If unordered reads have already been made, the resulting buffer may have gaps containing
     /// arbitrary data.
-    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
+    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd<S> {
         ReadToEnd {
             stream: self,
             size_limit,
@@ -361,15 +388,21 @@ impl RecvStream {
 }
 
 /// Future produced by `read_to_end`
-pub struct ReadToEnd {
-    stream: RecvStream,
+pub struct ReadToEnd<S>
+where
+    S: proto::crypto::Session,
+{
+    stream: RecvStream<S>,
     read: Vec<(Bytes, u64)>,
     start: u64,
     end: u64,
     size_limit: usize,
 }
 
-impl Future for ReadToEnd {
+impl<S> Future for ReadToEnd<S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<Vec<u8>, ReadToEndError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
@@ -412,7 +445,10 @@ pub enum ReadToEndError {
     TooLong,
 }
 
-impl AsyncRead for RecvStream {
+impl<S> AsyncRead for RecvStream<S>
+where
+    S: proto::crypto::Session,
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
@@ -427,7 +463,10 @@ impl AsyncRead for RecvStream {
     }
 }
 
-impl tokio::io::AsyncRead for RecvStream {
+impl<S> tokio::io::AsyncRead for RecvStream<S>
+where
+    S: proto::crypto::Session,
+{
     unsafe fn prepare_uninitialized_buffer(&self, _: &mut [MaybeUninit<u8>]) -> bool {
         false
     }
@@ -441,7 +480,10 @@ impl tokio::io::AsyncRead for RecvStream {
     }
 }
 
-impl Drop for RecvStream {
+impl<S> Drop for RecvStream<S>
+where
+    S: proto::crypto::Session,
+{
     fn drop(&mut self) {
         let mut conn = self.conn.lock().unwrap();
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -526,12 +568,18 @@ impl From<WriteError> for io::Error {
 }
 
 /// Future produced by `RecvStream::read`
-pub struct Read<'a> {
-    stream: &'a mut RecvStream,
+pub struct Read<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
     buf: &'a mut [u8],
 }
 
-impl<'a> Future for Read<'a> {
+impl<'a, S> Future for Read<'a, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<Option<usize>, ReadError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -540,13 +588,19 @@ impl<'a> Future for Read<'a> {
 }
 
 /// Future produced by `RecvStream::read_exact`
-pub struct ReadExact<'a> {
-    stream: &'a mut RecvStream,
+pub struct ReadExact<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
     off: usize,
     buf: &'a mut [u8],
 }
 
-impl<'a> Future for ReadExact<'a> {
+impl<'a, S> Future for ReadExact<'a, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -574,11 +628,17 @@ pub enum ReadExactError {
 }
 
 /// Future produced by `RecvStream::read_unordered`
-pub struct ReadUnordered<'a> {
-    stream: &'a mut RecvStream,
+pub struct ReadUnordered<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
 }
 
-impl<'a> Future for ReadUnordered<'a> {
+impl<'a, S> Future for ReadUnordered<'a, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<Option<(Bytes, u64)>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.stream.poll_read_unordered(cx)
@@ -586,12 +646,18 @@ impl<'a> Future for ReadUnordered<'a> {
 }
 
 /// Future produced by `SendStream::write`
-pub struct Write<'a> {
-    stream: &'a mut SendStream,
+pub struct Write<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
     buf: &'a [u8],
 }
 
-impl<'a> Future for Write<'a> {
+impl<'a, S> Future for Write<'a, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<usize, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -600,12 +666,18 @@ impl<'a> Future for Write<'a> {
 }
 
 /// Future produced by `SendStream::write_all`
-pub struct WriteAll<'a> {
-    stream: &'a mut SendStream,
+pub struct WriteAll<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
     buf: &'a [u8],
 }
 
-impl<'a> Future for WriteAll<'a> {
+impl<'a, S> Future for WriteAll<'a, S>
+where
+    S: proto::crypto::Session,
+{
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();

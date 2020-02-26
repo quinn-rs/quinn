@@ -23,13 +23,13 @@ use crate::{
 pub(crate) mod ring;
 /// TLS interface based on rustls
 #[cfg(feature = "rustls")]
-pub(crate) mod rustls;
+pub mod rustls;
 /// Public interface TLS types
 #[cfg(feature = "rustls")]
 pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
-pub trait Session: Sized {
+pub trait Session: Send + Sized {
     /// Data conveyed by the peer during the handshake, including cryptographic identity
     type AuthenticationData: Sized;
     /// Type used to hold configuration for client sessions
@@ -37,7 +37,7 @@ pub trait Session: Sized {
     /// Type used to sign various values
     type HmacKey: HmacKey;
     /// Type used to represent packet protection keys
-    type Keys: Keys + Sized;
+    type Keys: Keys;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
@@ -86,7 +86,7 @@ pub trait Session: Sized {
 }
 
 /// Client-side configuration for the crypto protocol
-pub trait ClientConfig<S>
+pub trait ClientConfig<S>: Clone
 where
     S: Session,
 {
@@ -104,7 +104,7 @@ where
 }
 
 /// Server-side configuration for the crypto protocol
-pub trait ServerConfig<S>
+pub trait ServerConfig<S>: Clone + Send + Sync
 where
     S: Session,
 {
@@ -118,9 +118,9 @@ where
 }
 
 /// Keys used to protect packet payloads
-pub trait Keys {
+pub trait Keys: Send {
     /// Type used for header protection keys
-    type HeaderKeys: HeaderKeys + Sized;
+    type HeaderKeys: HeaderKeys;
 
     /// Create the initial set of keys given the initial ConnectionId
     fn new_initial(id: &ConnectionId, side: Side) -> Self;
@@ -135,7 +135,7 @@ pub trait Keys {
 }
 
 /// Keys used to protect packet headers
-pub trait HeaderKeys {
+pub trait HeaderKeys: Send {
     /// Decrypt the given packet's header
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]);
     /// Encrypt the given packet's header
@@ -145,7 +145,7 @@ pub trait HeaderKeys {
 }
 
 /// A key for signing with HMAC-based algorithms
-pub trait HmacKey: Sized {
+pub trait HmacKey: Send + Sized + Sync {
     /// Length of the key input
     const KEY_LEN: usize;
     /// Type of the signatures created by `sign()`
