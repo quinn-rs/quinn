@@ -207,8 +207,7 @@ impl Connecting {
                     ..
                 } = new_conn;
                 let conn_ref =
-                    ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings)
-                        .expect("error in h3 settings"); // FIXME return an error type
+                    ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings);
                 tokio::spawn(ConnectionDriver(conn_ref.clone()));
                 Ok((Connection(conn_ref), ZeroRttAccepted(zero_rtt)))
             }
@@ -232,7 +231,7 @@ impl Future for Connecting {
             uni_streams,
             bi_streams,
             self.settings.clone(),
-        )?;
+        );
         tokio::spawn(ConnectionDriver(conn_ref.clone()));
         Poll::Ready(Ok(Connection(conn_ref)))
     }

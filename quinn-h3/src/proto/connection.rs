@@ -50,10 +50,14 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn with_settings(settings: Settings) -> Result<Self> {
+    pub fn with_settings(settings: Settings) -> Self {
         let mut decoder_table = DynamicTable::new();
-        decoder_table.set_max_blocked(settings.qpack_max_blocked_streams() as usize)?;
-        decoder_table.set_max_size(settings.qpack_max_table_capacity() as usize)?;
+        decoder_table
+            .set_max_blocked(settings.qpack_max_blocked_streams() as usize)
+            .expect("set max blocked streams");
+        decoder_table
+            .set_max_size(settings.qpack_max_table_capacity() as usize)
+            .expect("set max table size");
 
         let mut pending_control = BytesMut::with_capacity(128);
         settings.to_frame().encode(&mut pending_control);
@@ -63,14 +67,14 @@ impl Connection {
             BytesMut::with_capacity(2048),
         ];
 
-        Ok(Self {
+        Self {
             decoder_table,
             pending_streams,
             remote_settings: None,
             encoder_table: DynamicTable::new(),
             requests_in_flight: VecDeque::with_capacity(32),
             go_away: false,
-        })
+        }
     }
 
     pub fn encode_header(&mut self, stream_id: StreamId, headers: Header) -> Result<HeadersFrame> {
@@ -375,7 +379,7 @@ mod tests {
         let mut settings = Settings::new();
         settings.set_qpack_max_blocked_streams(42).unwrap();
         settings.set_qpack_max_table_capacity(2048).unwrap();
-        let mut server = Connection::with_settings(settings).expect("create server");
+        let mut server = Connection::with_settings(settings);
 
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
