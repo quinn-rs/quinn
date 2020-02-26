@@ -3035,11 +3035,6 @@ where
         self.path.remote
     }
 
-    /// The ALPN protocol negotiated during this connection's handshake
-    pub fn protocol(&self) -> Option<&[u8]> {
-        self.tls.alpn_protocol()
-    }
-
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
     #[cfg(test)]
@@ -3053,13 +3048,6 @@ where
         self.path
             .congestion_window
             .saturating_sub(self.in_flight.bytes)
-    }
-
-    /// The name a client supplied via SNI
-    ///
-    /// `None` if no name was supplised or if this connection was locally initiated.
-    pub fn server_name(&self) -> Option<&str> {
-        self.tls.sni_hostname()
     }
 
     /// Whether no timers but keepalive and idle are running

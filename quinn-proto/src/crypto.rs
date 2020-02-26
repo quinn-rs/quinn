@@ -41,12 +41,6 @@ pub trait Session: Sized {
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
-    /// Get the negotiated ALPN protocol
-    ///
-    /// Returns `None` if the handshake has not advanced sufficiently or if no ALPN protocol
-    /// has been negotiated.
-    fn alpn_protocol(&self) -> Option<&[u8]>;
-
     /// Get the data agreed upon during the cryptographic handshake
     ///
     /// For TLS, this includes the peer's certificates, the negotiated protocol and the hostname
@@ -75,9 +69,6 @@ pub trait Session: Sized {
     /// caller should call `write_handshake()` to check if the crypto protocol has anything
     /// to send to the peer.
     fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError>;
-
-    /// The SNI hostname sent by the client (server only)
-    fn sni_hostname(&self) -> Option<&str>;
 
     /// The peer's QUIC transport parameters
     ///

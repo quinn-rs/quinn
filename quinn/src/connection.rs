@@ -16,7 +16,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use proto::crypto::Session as _;
-use proto::{AuthenticationData, Certificate, ConnectionError, ConnectionHandle, Dir, StreamId};
+use proto::{AuthenticationData, ConnectionError, ConnectionHandle, Dir, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -312,33 +312,6 @@ impl Connection {
             .inner
             .crypto_session()
             .authentication_data()
-    }
-
-    /// The negotiated application protocol
-    pub fn protocol(&self) -> Option<Box<[u8]>> {
-        self.0.lock().unwrap().inner.protocol().map(|x| x.into())
-    }
-
-    /// The server name specified by the client
-    ///
-    /// Returns `None` for outgoing connections.
-    pub fn server_name(&self) -> Option<String> {
-        self.0.lock().unwrap().inner.server_name().map(|x| x.into())
-    }
-
-    /// The certificate chain used by the peer to authenticate
-    ///
-    /// For clients, this is the certificate chain of the server. For servers,
-    /// it is the certificate chain of the client, or [`None`] if client
-    /// authentication was not requested.
-    pub fn presented_certs(&self) -> Option<Vec<Certificate>> {
-        self.0
-            .lock()
-            .unwrap()
-            .inner
-            .crypto_session()
-            .get_peer_certificates()
-            .map(|certs| certs.into_iter().map(|cert| cert.into()).collect())
     }
 
     // Update traffic keys spontaneously for testing purposes.

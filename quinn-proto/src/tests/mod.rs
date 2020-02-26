@@ -14,6 +14,7 @@ use rustls::internal::msgs::enums::AlertDescription;
 use tracing::info;
 
 use super::*;
+use crate::crypto::Session as _;
 mod util;
 use util::*;
 
@@ -458,10 +459,12 @@ fn alpn_success() {
         pair.server_conn_mut(server_conn).poll(),
         Some(Event::Connected)
     );
-    assert_eq!(
-        pair.client_conn_mut(client_conn).protocol(),
-        Some(&b"bar"[..])
-    );
+
+    let ad = pair
+        .client_conn_mut(client_conn)
+        .crypto_session()
+        .authentication_data();
+    assert_eq!(ad.protocol.unwrap(), &b"bar"[..]);
 }
 
 #[test]
