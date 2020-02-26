@@ -15,7 +15,8 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{Certificate, ConnectionError, ConnectionHandle, Dir, StreamId};
+use proto::crypto::Session as _;
+use proto::{AuthenticationData, Certificate, ConnectionError, ConnectionHandle, Dir, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -301,6 +302,16 @@ impl Connection {
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote_address()
+    }
+
+    /// Data conveyed by the peer during the handshake, including cryptographic identity
+    pub fn authentication_data(&self) -> AuthenticationData {
+        self.0
+            .lock()
+            .unwrap()
+            .inner
+            .crypto_session()
+            .authentication_data()
     }
 
     /// The negotiated application protocol
