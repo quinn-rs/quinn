@@ -15,6 +15,7 @@ extern crate assert_matches;
 mod tests;
 
 pub use body::Body;
+pub use proto::settings::Settings;
 
 pub mod body;
 pub mod client;
@@ -29,9 +30,7 @@ mod streams;
 
 use err_derive::Error;
 
-use proto::{frame::SettingsFrame, ErrorCode};
-
-pub type Settings = SettingsFrame;
+use proto::ErrorCode;
 
 #[derive(Debug, Error)]
 pub enum Error {

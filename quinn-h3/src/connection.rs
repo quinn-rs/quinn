@@ -24,6 +24,7 @@ use crate::{
             PendingStreamType,
         },
         frame::{HeadersFrame, HttpFrame},
+        settings::Error as SettingsError,
         ErrorCode, StreamType,
     },
     streams::{NewUni, RecvUni, SendUni},
@@ -363,7 +364,7 @@ impl ConnectionInner {
                     match (self.inner.remote_settings().is_some(), self.side, frame) {
                         (_, _, HttpFrame::Settings(s)) => {
                             trace!("Got Settings: {:#?}", s);
-                            self.inner.set_remote_settings(s)?;
+                            self.inner.set_remote_settings(Settings::from_frame(s)?)?;
                         }
                         (true, Side::Client, HttpFrame::Goaway(id)) => {
                             trace!("Got Goaway({:?})", id);
@@ -565,6 +566,32 @@ impl From<ConnectionError> for DriverError {
             | ConnectionError::InvalidRequest(_)
             | ConnectionError::InvalidResponse(_) => {
                 DriverError::internal(format!("unexpected on driver: {:?}", err))
+            }
+        }
+    }
+}
+
+impl From<SettingsError> for DriverError {
+    fn from(e: SettingsError) -> Self {
+        match e {
+            SettingsError::Exceeded => DriverError::peer(
+                ErrorCode::SETTINGS_ERROR,
+                "Received too much settings entries",
+            ),
+            SettingsError::InvalidSettingId(id) => DriverError::peer(
+                ErrorCode::SETTINGS_ERROR,
+                format!("0x{:x}: unknown setting ID", id),
+            ),
+            SettingsError::InvalidSettingValue(id, val) => DriverError::peer(
+                ErrorCode::SETTINGS_ERROR,
+                format!("{}: invalid value for setting {:?}", val, id),
+            ),
+            SettingsError::Repeated(id) => DriverError::peer(
+                ErrorCode::SETTINGS_ERROR,
+                format!("{:?}: setting repeated in frame", id),
+            ),
+            SettingsError::Malformed => {
+                DriverError::peer(ErrorCode::FRAME_ERROR, "Malformed frame received")
             }
         }
     }

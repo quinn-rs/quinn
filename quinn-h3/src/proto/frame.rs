@@ -5,8 +5,9 @@ use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
     VarInt,
 };
-use std::collections::HashSet;
 use tracing::trace;
+
+use super::settings::{Error as SettingsError, SettingId, SettingsFrame};
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -14,6 +15,10 @@ pub enum Error {
     UnsupportedFrame(u64),
     UnexpectedEnd,
     InvalidFrameValue,
+    InvalidSettingId(u64),
+    InvalidSettingValue(SettingId, u64),
+    SettingRepeated(SettingId),
+    SettingsExceeded,
     Incomplete(usize),
     IncompleteData,
     Settings(String),
@@ -274,115 +279,6 @@ impl PushPromiseFrame {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct SettingsFrame {
-    pub max_header_list_size: u64,
-    pub qpack_max_table_capacity: u64,
-    pub qpack_blocked_streams: u64,
-}
-
-impl Default for SettingsFrame {
-    fn default() -> SettingsFrame {
-        SettingsFrame {
-            max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
-            qpack_max_table_capacity: DEFAULT_QPACK_MAX_TABLE_CAPACITY,
-            qpack_blocked_streams: DEFAULT_QPACK_BLOCKED_STREAMS,
-        }
-    }
-}
-
-const DEFAULT_MAX_HEADER_LIST_SIZE: u64 = 6;
-const DEFAULT_QPACK_MAX_TABLE_CAPACITY: u64 = 4096;
-const DEFAULT_QPACK_BLOCKED_STREAMS: u64 = 129;
-
-impl SettingsFrame {
-    pub fn encode<T: BufMut>(&self, buf: &mut T) {
-        self.encode_header(buf);
-        SettingId::MAX_HEADER_LIST_SIZE.encode(buf);
-        buf.write_var(self.max_header_list_size);
-        SettingId::QPACK_MAX_TABLE_CAPACITY.encode(buf);
-        buf.write_var(self.qpack_max_table_capacity);
-        SettingId::QPACK_BLOCKED_STREAMS.encode(buf);
-        buf.write_var(self.qpack_blocked_streams);
-    }
-
-    fn decode<T: Buf>(buf: &mut T) -> Result<SettingsFrame, Error> {
-        let mut settings = SettingsFrame::default();
-        let mut received = HashSet::with_capacity(4);
-        while buf.has_remaining() {
-            if buf.remaining() < 2 {
-                // remains less than 2 * minimum-size varint
-                return Err(Error::Malformed);
-            }
-            let identifier = SettingId::decode(buf).map_err(|_| Error::Malformed)?;
-            let value = buf.get_var().map_err(|_| Error::InvalidFrameValue)?;
-
-            if !received.insert(identifier) {
-                return Err(Error::Settings(format!(
-                    "Recieved setting '0x{:X}' twice",
-                    identifier.0
-                )));
-            }
-
-            match identifier {
-                t if t.0 > 0x21 && (t.0 - 0x21) % 0x1f == 0 => continue,
-                SettingId::MAX_HEADER_LIST_SIZE => {
-                    settings.max_header_list_size = value;
-                }
-                SettingId::QPACK_MAX_TABLE_CAPACITY => {
-                    settings.qpack_max_table_capacity = value;
-                }
-                SettingId::QPACK_BLOCKED_STREAMS => {
-                    settings.qpack_blocked_streams = value;
-                }
-                _ => continue,
-            }
-        }
-        Ok(settings)
-    }
-}
-
-impl FrameHeader for SettingsFrame {
-    const TYPE: Type = Type::SETTINGS;
-    fn len(&self) -> usize {
-        fn sz(x: u64) -> usize {
-            VarInt::from_u64(x).unwrap().size()
-        }
-        sz(SettingId::MAX_HEADER_LIST_SIZE.0)
-            + sz(self.max_header_list_size)
-            + sz(SettingId::QPACK_MAX_TABLE_CAPACITY.0)
-            + sz(self.qpack_max_table_capacity)
-            + sz(SettingId::QPACK_BLOCKED_STREAMS.0)
-            + sz(self.qpack_blocked_streams)
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-struct SettingId(u64);
-
-impl Codec for SettingId {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
-        Ok(SettingId(buf.get_var()?))
-    }
-    fn encode<B: BufMut>(&self, buf: &mut B) {
-        buf.write_var(self.0);
-    }
-}
-
-macro_rules! setting_identifiers {
-    {$($name:ident = $val:expr,)*} => {
-        impl SettingId {
-            $(pub const $name: SettingId = SettingId($val);)*
-        }
-    }
-}
-
-setting_identifiers! {
-    QPACK_MAX_TABLE_CAPACITY = 0x1,
-    QPACK_BLOCKED_STREAMS = 0x7,
-    MAX_HEADER_LIST_SIZE = 0x6,
-}
-
 fn simple_frame_encode<B: BufMut>(ty: Type, id: u64, buf: &mut B) {
     ty.encode(buf);
     buf.write_var(1);
@@ -395,9 +291,22 @@ impl From<UnexpectedEnd> for Error {
     }
 }
 
+impl From<SettingsError> for Error {
+    fn from(e: SettingsError) -> Self {
+        match e {
+            SettingsError::Exceeded => Error::SettingsExceeded,
+            SettingsError::Malformed => Error::Malformed,
+            SettingsError::Repeated(i) => Error::SettingRepeated(i),
+            SettingsError::InvalidSettingId(i) => Error::InvalidSettingId(i),
+            SettingsError::InvalidSettingValue(i, v) => Error::InvalidSettingValue(i, v),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::settings::Settings;
     use std::io::Cursor;
 
     #[test]
@@ -428,61 +337,6 @@ mod tests {
         assert_eq!(decoded, Err(Error::Incomplete(6)));
     }
 
-    #[test]
-    fn settings_frame_ignores_0x_a_a() {
-        let mut buf = vec![4, 16, 1, 128, 0, 250, 218];
-        buf.write_var(0x1a2a);
-        buf.extend(&[128, 0, 250, 218, 6, 128, 0, 250, 218]);
-
-        let mut cur = Cursor::new(&buf);
-        let decoded = HttpFrame::decode(&mut cur).unwrap();
-        assert_matches!(
-            decoded,
-            HttpFrame::Settings(SettingsFrame {
-                qpack_max_table_capacity: 0xfada,
-                max_header_list_size: 0xfada,
-                ..
-            })
-        );
-    }
-
-    #[test]
-    fn settings_frame_invalid_value() {
-        let mut buf = Cursor::new(&[4, 6, 0, 255, 128, 0, 250, 218]);
-        let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::InvalidFrameValue));
-    }
-
-    #[test]
-    fn settings_frame_invalid_len() {
-        let mut buf = Cursor::new(&[4, 8, 0x1a, 0x2a, 128, 0, 250, 218, 0, 3]);
-        let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::Malformed));
-    }
-
-    #[test]
-    fn settings_frame_identifier_twice() {
-        let mut buf = Cursor::new(&[4, 10, 6, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
-        let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(
-            decoded,
-            Err(Error::Settings("Recieved setting '0x6' twice".to_string()))
-        );
-    }
-
-    #[test]
-    fn settings_frame_ignores_unknown_id() {
-        let mut buf = Cursor::new(&[4, 10, 0xA, 128, 0, 250, 218, 6, 128, 0, 250, 218]);
-        let decoded = HttpFrame::decode(&mut buf);
-        assert_matches!(
-            decoded,
-            Ok(HttpFrame::Settings(SettingsFrame {
-                max_header_list_size: 0xFADA,
-                ..
-            }))
-        );
-    }
-
     fn codec_frame_check(frame: HttpFrame, wire: &[u8]) {
         let mut buf = Vec::new();
         frame.encode(&mut buf);
@@ -496,14 +350,21 @@ mod tests {
 
     #[test]
     fn settings_frame() {
+        let mut settings = Settings::new();
+        settings.set_max_header_list_size(0xfad1).unwrap();
+        settings.set_qpack_max_table_capacity(0xfad2).unwrap();
+        settings.set_qpack_max_blocked_streams(0xfad3).unwrap();
         codec_frame_check(
-            HttpFrame::Settings(SettingsFrame {
-                max_header_list_size: 0xfad1,
-                qpack_max_table_capacity: 0xfad2,
-                qpack_blocked_streams: 0xfad3,
-            }),
-            &[4, 15, 6, 128, 0, 250, 209, 1, 128, 0, 250, 210, 7, 128, 0, 250, 211],
+            HttpFrame::Settings(settings.to_frame()),
+            &[
+                4, 15, 6, 128, 0, 250, 209, 1, 128, 0, 250, 210, 7, 128, 0, 250, 211,
+            ],
         );
+    }
+
+    #[test]
+    fn settings_frame_emtpy() {
+        codec_frame_check(HttpFrame::Settings(Settings::default().to_frame()), &[4, 0]);
     }
 
     #[test]

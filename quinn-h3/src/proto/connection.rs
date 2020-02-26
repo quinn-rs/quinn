@@ -52,11 +52,11 @@ pub struct Connection {
 impl Connection {
     pub fn with_settings(settings: Settings) -> Result<Self> {
         let mut decoder_table = DynamicTable::new();
-        decoder_table.set_max_blocked(settings.qpack_blocked_streams as usize)?;
-        decoder_table.set_max_size(settings.qpack_max_table_capacity as usize)?;
+        decoder_table.set_max_blocked(settings.qpack_max_blocked_streams() as usize)?;
+        decoder_table.set_max_size(settings.qpack_max_table_capacity() as usize)?;
 
         let mut pending_control = BytesMut::with_capacity(128);
-        settings.encode(&mut pending_control);
+        settings.to_frame().encode(&mut pending_control);
         let pending_streams = [
             pending_control,
             BytesMut::with_capacity(2048),
@@ -75,7 +75,7 @@ impl Connection {
 
     pub fn encode_header(&mut self, stream_id: StreamId, headers: Header) -> Result<HeadersFrame> {
         if let Some(ref s) = self.remote_settings {
-            if headers.len() as u64 > s.max_header_list_size {
+            if headers.len() as u64 > s.max_header_list_size() {
                 return Err(Error::HeaderListTooLarge);
             }
         }
@@ -142,15 +142,15 @@ impl Connection {
 
     pub fn set_remote_settings(&mut self, settings: Settings) -> Result<()> {
         self.encoder_table
-            .set_max_blocked(settings.qpack_blocked_streams as usize)?;
+            .set_max_blocked(settings.qpack_max_blocked_streams() as usize)?;
         self.encoder_table
-            .set_max_size(settings.qpack_max_table_capacity as usize)?;
+            .set_max_size(settings.qpack_max_table_capacity() as usize)?;
 
-        if settings.qpack_max_table_capacity > 0 {
+        if settings.qpack_max_table_capacity() > 0 {
             qpack::set_dynamic_table_size(
                 &mut self.encoder_table,
                 &mut self.pending_streams[PendingStreamType::Encoder as usize],
-                settings.qpack_max_table_capacity as usize,
+                settings.qpack_max_table_capacity() as usize,
             )?;
         };
 
@@ -315,10 +315,9 @@ mod tests {
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
         let mut conn = Connection::default();
-        conn.remote_settings = Some(Settings {
-            max_header_list_size: 4,
-            ..Settings::default()
-        });
+        let mut settings = Settings::new();
+        settings.set_max_header_list_size(4).unwrap();
+        conn.remote_settings = Some(settings);
         assert_eq!(
             conn.encode_header(StreamId(1), header),
             Err(Error::HeaderListTooLarge)
@@ -373,12 +372,10 @@ mod tests {
             .expect("encoding failed");
         assert!(!client.pending_streams[PendingStreamType::Encoder as usize].is_empty());
 
-        let mut server = Connection::with_settings(Settings {
-            qpack_max_table_capacity: 2048,
-            qpack_blocked_streams: 42,
-            ..Settings::default()
-        })
-        .expect("create server");
+        let mut settings = Settings::new();
+        settings.set_qpack_max_blocked_streams(42).unwrap();
+        settings.set_qpack_max_table_capacity(2048).unwrap();
+        let mut server = Connection::with_settings(settings).expect("create server");
 
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
