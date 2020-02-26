@@ -15,14 +15,14 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, Dir, StreamId};
+use proto::{Certificate, ConnectionError, ConnectionHandle, Dir, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
 use crate::{
     broadcast::{self, Broadcast},
     streams::{RecvStream, SendStream, WriteError},
-    tls, ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
+    ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
 };
 
 /// In-progress connection attempt future
@@ -320,19 +320,14 @@ impl Connection {
     /// For clients, this is the certificate chain of the server. For servers,
     /// it is the certificate chain of the client, or [`None`] if client
     /// authentication was not requested.
-    pub fn presented_certs(&self) -> Option<Vec<tls::Certificate>> {
+    pub fn presented_certs(&self) -> Option<Vec<Certificate>> {
         self.0
             .lock()
             .unwrap()
             .inner
             .crypto_session()
             .get_peer_certificates()
-            .map(|certs| {
-                certs
-                    .into_iter()
-                    .map(|cert| tls::Certificate { inner: cert })
-                    .collect()
-            })
+            .map(|certs| certs.into_iter().map(|cert| cert.into()).collect())
     }
 
     // Update traffic keys spontaneously for testing purposes.

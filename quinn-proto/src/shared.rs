@@ -10,6 +10,8 @@ use bytes::BytesMut;
 use err_derive::Error;
 use rand::{Rng, RngCore};
 
+#[cfg(feature = "rustls")]
+use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
     packet::PartialDecode,
@@ -459,6 +461,19 @@ where
     }
 }
 
+#[cfg(feature = "rustls")]
+impl ServerConfig<crypto::rustls::TlsSession> {
+    /// Set the certificate chain that will be presented to clients
+    pub fn certificate(
+        &mut self,
+        cert_chain: CertificateChain,
+        key: PrivateKey,
+    ) -> Result<&mut Self, rustls::TLSError> {
+        Arc::make_mut(&mut self.crypto).set_single_cert(cert_chain.certs, key.inner)?;
+        Ok(self)
+    }
+}
+
 impl<S> fmt::Debug for ServerConfig<S>
 where
     S: crypto::Session,
@@ -522,6 +537,21 @@ where
 
     /// Cryptographic configuration to use
     pub crypto: S::ClientConfig,
+}
+
+#[cfg(feature = "rustls")]
+impl ClientConfig<crypto::rustls::TlsSession> {
+    /// Add a trusted certificate authority
+    pub fn add_certificate_authority(
+        &mut self,
+        cert: Certificate,
+    ) -> Result<&mut Self, webpki::Error> {
+        let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(&cert.inner.0)?;
+        Arc::make_mut(&mut self.crypto)
+            .root_store
+            .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
+        Ok(self)
+    }
 }
 
 impl<S> Default for ClientConfig<S>

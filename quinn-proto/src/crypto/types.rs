@@ -22,6 +22,12 @@ impl Certificate {
     }
 }
 
+impl From<rustls::Certificate> for Certificate {
+    fn from(inner: rustls::Certificate) -> Self {
+        Certificate { inner }
+    }
+}
+
 /// A chain of signed TLS certificates ending the one to be used by a server
 #[derive(Debug, Clone)]
 pub struct CertificateChain {
@@ -33,7 +39,7 @@ impl CertificateChain {
     ///
     /// ```no_run
     /// let pem = std::fs::read("fullchain.pem").expect("error reading certificates");
-    /// let cert_chain = quinn::PrivateKey::from_pem(&pem).expect("error parsing certificates");
+    /// let cert_chain = quinn_proto::PrivateKey::from_pem(&pem).expect("error parsing certificates");
     /// ```
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
         Ok(Self {
@@ -70,7 +76,7 @@ impl PrivateKey {
     ///
     /// ```no_run
     /// let pem = std::fs::read("key.pem").expect("error reading key");
-    /// let key = quinn::PrivateKey::from_pem(&pem).expect("error parsing key");
+    /// let key = quinn_proto::PrivateKey::from_pem(&pem).expect("error parsing key");
     /// ```
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
         let pkcs8 = pemfile::pkcs8_private_keys(&mut &pem[..])

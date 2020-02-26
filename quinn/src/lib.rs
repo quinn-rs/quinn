@@ -53,9 +53,9 @@ mod platform;
 mod udp;
 
 pub use proto::{
-    crypto, ApplicationClose, ClientConfig, ConnectError, ConnectionClose, ConnectionError,
-    SendDatagramError, ServerConfig, Transmit, TransportConfig, TransportError, TransportErrorCode,
-    VarInt,
+    crypto, ApplicationClose, Certificate, CertificateChain, ClientConfig, ConnectError,
+    ConnectionClose, ConnectionError, ParseError, PrivateKey, SendDatagramError, ServerConfig,
+    Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::{
@@ -76,9 +76,6 @@ pub use streams::{
     Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream, SendStream,
     WriteError,
 };
-
-mod tls;
-pub use tls::{Certificate, CertificateChain, ParseError, PrivateKey};
 
 #[cfg(test)]
 mod tests;
