@@ -76,8 +76,8 @@ impl ConnectionRef {
         uni_streams: IncomingUniStreams,
         bi_streams: IncomingBiStreams,
         settings: Settings,
-    ) -> Result<Self, ProtoError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             quic: quic.clone(),
             h3: Arc::new(Mutex::new(ConnectionInner {
                 side,
@@ -85,7 +85,7 @@ impl ConnectionRef {
                 incoming_bi: bi_streams,
                 incoming_uni: uni_streams,
                 pending_uni: VecDeque::with_capacity(3),
-                inner: Connection::with_settings(settings)?,
+                inner: Connection::with_settings(settings),
                 requests: VecDeque::with_capacity(16),
                 requests_task: None,
                 recv_control: None,
@@ -99,7 +99,7 @@ impl ConnectionRef {
                 ],
                 closed: false,
             })),
-        })
+        }
     }
 }
 

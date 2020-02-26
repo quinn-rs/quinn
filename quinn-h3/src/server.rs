@@ -158,7 +158,7 @@ impl Future for Connecting {
             uni_streams,
             bi_streams,
             self.settings.clone(),
-        )?;
+        );
         tokio::spawn(ConnectionDriver(conn_ref.clone()));
         Poll::Ready(Ok(IncomingRequest(conn_ref)))
     }
