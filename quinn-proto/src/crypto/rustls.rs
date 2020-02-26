@@ -185,6 +185,23 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
         let mut cfg = rustls::ClientConfig::new();
         cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
         cfg.enable_early_data = true;
+        #[cfg(feature = "native-certs")]
+        match rustls_native_certs::load_native_certs() {
+            Ok(x) => {
+                cfg.root_store = x;
+            }
+            Err((Some(x), e)) => {
+                cfg.root_store = x;
+                tracing::warn!("couldn't load some default trust roots: {}", e);
+            }
+            Err((None, e)) => {
+                tracing::warn!("couldn't load any default trust roots: {}", e);
+            }
+        }
+        #[cfg(feature = "certificate-transparency")]
+        {
+            cfg.ct_logs = Some(&ct_logs::LOGS);
+        }
         Arc::new(cfg)
     }
 

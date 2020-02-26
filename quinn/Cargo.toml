@@ -15,9 +15,11 @@ edition = "2018"
 all-features = true
 
 [features]
-default = ["native-certs", "ct-logs"]
+default = ["native-certs", "certificate-transparency"]
+# Use Google's list of CT logs to enable certificate transparency checks
+certificate-transparency = ["proto/certificate-transparency"]
 # Trust the contents of the OS certificate store by default
-native-certs = [ "rustls-native-certs" ]
+native-certs = ["proto/native-certs"]
 
 [badges]
 codecov = { repository = "djc/quinn" }
@@ -26,14 +28,12 @@ azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" 
 
 [dependencies]
 bytes = "0.5.2"
-ct-logs = { version = "0.6", optional = true }
 err-derive = "0.2.3"
 futures = "0.3.1"
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.5.0" }
 rustls = { version = "0.17", features = ["quic"] }
-rustls-native-certs = { version = "0.3", optional = true }
 tracing = "0.1.10"
 tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
 webpki = "0.21"
