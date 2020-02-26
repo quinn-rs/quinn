@@ -20,10 +20,11 @@ use crate::{
     proto::{
         frame::{DataFrame, HttpFrame},
         headers::Header,
+        settings::Settings,
         ErrorCode,
     },
     streams::Reset,
-    Error, Settings,
+    Error,
 };
 
 #[derive(Clone)]
@@ -49,7 +50,7 @@ impl Builder {
         client_config.protocols(&[crate::ALPN]);
         Self {
             client_config,
-            settings: Settings::default(),
+            settings: Settings::new(),
         }
     }
 

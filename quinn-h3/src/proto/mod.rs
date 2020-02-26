@@ -8,6 +8,7 @@ use std::fmt;
 pub mod connection;
 pub mod frame;
 pub mod headers;
+pub mod settings;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StreamType(pub u64);
