@@ -148,7 +148,10 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
     let span = info_span!(
         "connection",
         remote = %connection.remote_address(),
-        protocol = %connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
+        protocol = %connection
+            .authentication_data()
+            .protocol
+            .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
     );
     async {
         info!("established");

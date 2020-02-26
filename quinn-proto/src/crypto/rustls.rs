@@ -45,10 +45,6 @@ impl crypto::Session for TlsSession {
     type Keys = Crypto;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
-    fn alpn_protocol(&self) -> Option<&[u8]> {
-        self.get_alpn_protocol()
-    }
-
     fn authentication_data(&self) -> AuthenticationData {
         AuthenticationData {
             peer_certificates: self.get_peer_certificates().map(|v| v.into()),
@@ -99,13 +95,6 @@ impl crypto::Session for TlsSession {
                 TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
             }
         })
-    }
-
-    fn sni_hostname(&self) -> Option<&str> {
-        match self {
-            TlsSession::Client(_) => None,
-            TlsSession::Server(session) => session.get_sni_hostname(),
-        }
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
