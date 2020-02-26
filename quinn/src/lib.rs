@@ -49,33 +49,84 @@
 
 mod broadcast;
 mod builders;
+mod connection;
+mod endpoint;
 mod platform;
+mod streams;
 mod udp;
 
 pub use proto::{
-    crypto, ApplicationClose, Certificate, CertificateChain, ClientConfig, ConnectError,
-    ConnectionClose, ConnectionError, ParseError, PrivateKey, SendDatagramError, ServerConfig,
-    Transmit, TransportConfig, VarInt,
+    crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,
+    ConnectionError, ParseError, PrivateKey, SendDatagramError, Transmit, TransportConfig, VarInt,
 };
 
-pub use crate::builders::{
-    ClientConfigBuilder, EndpointBuilder, EndpointError, ServerConfigBuilder,
-};
+pub use crate::builders::EndpointError;
+pub use crate::connection::ZeroRttAccepted;
+pub use crate::streams::{ReadError, ReadExactError, ReadToEndError, WriteError};
 
-mod connection;
-pub use connection::{
-    Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
-    OpenBi, OpenUni, ZeroRttAccepted,
-};
+/// Types that are generic over the crypto protocol implementation
+pub mod generic {
+    pub use crate::builders::{ClientConfigBuilder, EndpointBuilder, ServerConfigBuilder};
+    pub use crate::connection::{
+        Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
+        OpenBi, OpenUni,
+    };
+    pub use crate::endpoint::{Endpoint, Incoming};
+    pub use crate::streams::{Read, ReadExact, ReadToEnd, RecvStream, SendStream};
+    pub use proto::generic::{ClientConfig, ServerConfig};
+}
 
-mod endpoint;
-pub use endpoint::{Endpoint, Incoming};
+mod rustls_impls {
+    use crate::generic;
+    use proto::crypto::rustls::TlsSession;
 
-mod streams;
-pub use streams::{
-    Read, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError, RecvStream, SendStream,
-    WriteError,
-};
+    /// A `ClientConfig` using rustls for the cryptography protocol
+    pub type ClientConfig = generic::ClientConfig<TlsSession>;
+    /// A `ServerConfig` using rustls for the cryptography protocol
+    pub type ServerConfig = generic::ServerConfig<TlsSession>;
+
+    /// A `ClientConfigBuilder` using rustls for the cryptography protocol
+    pub type ClientConfigBuilder = generic::ClientConfigBuilder<TlsSession>;
+    /// An `EndpointBuilder` using rustls for the cryptography protocol
+    pub type EndpointBuilder = generic::EndpointBuilder<TlsSession>;
+    /// A `ServerConfigBuilder` using rustls for the cryptography protocol
+    pub type ServerConfigBuilder = generic::ServerConfigBuilder<TlsSession>;
+
+    /// A `Connecting` using rustls for the cryptography protocol
+    pub type Connecting = generic::Connecting<TlsSession>;
+    /// A `Connection` using rustls for the cryptography protocol
+    pub type Connection = generic::Connection<TlsSession>;
+    /// A `Datagrams` using rustls for the cryptography protocol
+    pub type Datagrams = generic::Datagrams<TlsSession>;
+    /// An `IncomingBiStreams` using rustls for the cryptography protocol
+    pub type IncomingBiStreams = generic::IncomingBiStreams<TlsSession>;
+    /// An `IncomingUniStreams` using rustls for the cryptography protocol
+    pub type IncomingUniStreams = generic::IncomingUniStreams<TlsSession>;
+    /// A `NewConnection` using rustls for the cryptography protocol
+    pub type NewConnection = generic::NewConnection<TlsSession>;
+    /// An `OpenBi` using rustls for the cryptography protocol
+    pub type OpenBi = generic::OpenBi<TlsSession>;
+    /// An `OpenUni` using rustls for the cryptography protocol
+    pub type OpenUni = generic::OpenUni<TlsSession>;
+
+    /// An `Endpoint` using rustls for the cryptography protocol
+    pub type Endpoint = generic::Endpoint<TlsSession>;
+    /// An `Incoming` using rustls for the cryptography protocol
+    pub type Incoming = generic::Incoming<TlsSession>;
+
+    /// A `Read` using rustls for the cryptography protocol
+    pub type Read<'a> = generic::Read<'a, TlsSession>;
+    /// A `ReadExact` using rustls for the cryptography protocol
+    pub type ReadExact<'a> = generic::ReadExact<'a, TlsSession>;
+    /// A `ReadToEnd` using rustls for the cryptography protocol
+    pub type ReadToEnd = generic::ReadToEnd<TlsSession>;
+    /// A `RecvStream` using rustls for the cryptography protocol
+    pub type RecvStream = generic::RecvStream<TlsSession>;
+    /// A `SendStream` using rustls for the cryptography protocol
+    pub type SendStream = generic::SendStream<TlsSession>;
+}
+
+pub use rustls_impls::*;
 
 #[cfg(test)]
 mod tests;

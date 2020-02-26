@@ -264,7 +264,7 @@ async fn zero_rtt() {
         .connect(&endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
-        .expect("missing 0-RTT keys");
+        .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
     // Send something ASAP to use 0-RTT
     tokio::spawn(async move {
         let mut s = connection.open_uni().await.expect("0-RTT open uni");
