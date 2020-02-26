@@ -40,7 +40,7 @@ pub use crate::connection::{ConnectionError, Event, SendDatagramError};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]
-pub use crypto::types::*;
+pub use crypto::{rustls::AuthenticationData, types::*};
 
 mod frame;
 use crate::frame::Frame;

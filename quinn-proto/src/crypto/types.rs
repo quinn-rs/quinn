@@ -65,6 +65,12 @@ impl std::iter::FromIterator<Certificate> for CertificateChain {
     }
 }
 
+impl From<Vec<rustls::Certificate>> for CertificateChain {
+    fn from(certs: Vec<rustls::Certificate>) -> Self {
+        Self { certs }
+    }
+}
+
 /// The private key of a TLS certificate to be used by a server
 #[derive(Debug, Clone)]
 pub struct PrivateKey {

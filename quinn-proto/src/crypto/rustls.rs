@@ -17,8 +17,8 @@ use webpki::DNSNameRef;
 
 use super::ring::{hkdf_expand, Crypto};
 use crate::{
-    crypto, transport_parameters::TransportParameters, ConnectError, Side, TransportError,
-    TransportErrorCode,
+    crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError, Side,
+    TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -39,6 +39,7 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
+    type AuthenticationData = AuthenticationData;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
     type Keys = Crypto;
@@ -46,6 +47,17 @@ impl crypto::Session for TlsSession {
 
     fn alpn_protocol(&self) -> Option<&[u8]> {
         self.get_alpn_protocol()
+    }
+
+    fn authentication_data(&self) -> AuthenticationData {
+        AuthenticationData {
+            peer_certificates: self.get_peer_certificates().map(|v| v.into()),
+            protocol: self.get_alpn_protocol().map(|p| p.into()),
+            server_name: match self {
+                TlsSession::Client(_) => None,
+                TlsSession::Server(session) => session.get_sni_hostname().map(|s| s.into()),
+            },
+        }
     }
 
     fn early_crypto(&self) -> Option<Self::Keys> {
@@ -157,6 +169,26 @@ impl DerefMut for TlsSession {
             TlsSession::Server(ref mut session) => session,
         }
     }
+}
+
+/// Authentication data for (rustls) TLS session
+pub struct AuthenticationData {
+    /// The certificate chain used by the peer to authenticate
+    ///
+    /// For clients, this is the certificate chain of the server. For servers, this is the
+    /// certificate chain of the client, if client authentication was completed.
+    ///
+    /// `None` if this data was requested from the session before this value is available.
+    ///
+    /// If this is `None`, and `Connection::is_handshaking` returns `false`, the connection
+    /// will have already been closed.
+    pub peer_certificates: Option<CertificateChain>,
+    /// The negotiated application protocol
+    pub protocol: Option<Vec<u8>>,
+    /// The server name specified by the client
+    ///
+    /// `None` for outgoing connections.
+    pub server_name: Option<String>,
 }
 
 impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {

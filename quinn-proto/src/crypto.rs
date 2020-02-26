@@ -30,6 +30,8 @@ pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Sized {
+    /// Data conveyed by the peer during the handshake, including cryptographic identity
+    type AuthenticationData: Sized;
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
@@ -44,6 +46,13 @@ pub trait Session: Sized {
     /// Returns `None` if the handshake has not advanced sufficiently or if no ALPN protocol
     /// has been negotiated.
     fn alpn_protocol(&self) -> Option<&[u8]>;
+
+    /// Get the data agreed upon during the cryptographic handshake
+    ///
+    /// For TLS, this includes the peer's certificates, the negotiated protocol and the hostname
+    /// indicated by the client. Note that this data may be incomplete while the handshake is still
+    /// in progress; only call it after the connection is established to get the full data.
+    fn authentication_data(&self) -> Self::AuthenticationData;
 
     /// Get the 0-RTT keys if available (clients only)
     ///
