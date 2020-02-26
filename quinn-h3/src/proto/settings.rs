@@ -58,9 +58,9 @@ impl Settings {
     /// Create settings with quinn-h3's recomended values
     pub fn new() -> Self {
         Self {
-            max_header_list_size: DEFAULT_MAX_HEADER_LIST_SIZE,
-            qpack_max_table_capacity: DEFAULT_QPACK_MAX_TABLE_CAPACITY,
-            qpack_max_blocked_streams: DEFAULT_QPACK_MAX_BLOCKED_STREAMS,
+            max_header_list_size: 0,
+            qpack_max_table_capacity: 4096,
+            qpack_max_blocked_streams: 128,
         }
     }
 
@@ -322,19 +322,7 @@ mod tests {
         let frame = settings.to_frame();
         assert_eq!(frame.len, 3);
         assert_eq!(frame.entries[0], (SettingId::MAX_HEADER_LIST_SIZE, 43));
-        assert_eq!(
-            frame.entries[1],
-            (
-                SettingId::QPACK_MAX_TABLE_CAPACITY,
-                DEFAULT_QPACK_MAX_TABLE_CAPACITY
-            )
-        );
-        assert_eq!(
-            frame.entries[2],
-            (
-                SettingId::QPACK_MAX_BLOCKED_STREAMS,
-                DEFAULT_QPACK_MAX_BLOCKED_STREAMS
-            )
-        );
+        assert_matches!(frame.entries[1], (SettingId::QPACK_MAX_TABLE_CAPACITY, _));
+        assert_matches!(frame.entries[2], (SettingId::QPACK_MAX_BLOCKED_STREAMS, _));
     }
 }
