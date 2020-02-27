@@ -133,6 +133,52 @@ fn read_after_close() {
     });
 }
 
+#[tokio::test]
+async fn accept_after_close() {
+    let _guard = subscribe();
+    let (endpoint, mut incoming) = endpoint();
+
+    const MSG: &[u8] = b"goodbye!";
+
+    let sender = endpoint
+        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .unwrap()
+        .await
+        .expect("connect")
+        .connection;
+    let mut s = sender.open_uni().await.unwrap();
+    s.write_all(MSG).await.unwrap();
+    s.finish().await.unwrap();
+    sender.close(0u32.into(), b"");
+
+    // Allow some time for the close to be sent and processed
+    tokio::time::delay_for(Duration::from_millis(100)).await;
+
+    // Despite the connection having closed, we should be able to accept it...
+    let mut receiver = incoming
+        .next()
+        .await
+        .expect("endpoint")
+        .await
+        .expect("connection");
+
+    // ...and read what was sent.
+    let stream = receiver
+        .uni_streams
+        .next()
+        .await
+        .expect("incoming streams")
+        .expect("missing stream");
+    let msg = stream
+        .read_to_end(usize::max_value())
+        .await
+        .expect("read_to_end");
+    assert_eq!(msg, MSG);
+
+    // But it's still definitely closed.
+    assert!(receiver.connection.open_uni().await.is_err());
+}
+
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> (Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();

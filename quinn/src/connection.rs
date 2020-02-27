@@ -85,10 +85,15 @@ impl Future for Connecting {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.connected.poll_unpin(cx).map(|_| {
             let conn = self.conn.take().unwrap();
-            let err = conn.lock().unwrap().error.clone();
-            match err {
-                None => Ok(NewConnection::new(conn)),
-                Some(e) => Err(e),
+            let inner = conn.lock().unwrap();
+            if inner.connected {
+                drop(inner);
+                Ok(NewConnection::new(conn))
+            } else {
+                Err(inner
+                    .error
+                    .clone()
+                    .expect("connected signaled without connection success or error"))
             }
         })
     }
