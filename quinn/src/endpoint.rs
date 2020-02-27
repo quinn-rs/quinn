@@ -122,9 +122,9 @@ impl Endpoint {
 
     /// Wait for all connections on the endpoint to be cleanly shut down
     ///
-    /// Waiting for this condition before terminating the endpoint improves the odds that peers are
-    /// notified about recently closed connection, which is preferred to making them wait for an
-    /// idle timeout.
+    /// Waiting for this condition before exiting ensures that a good-faith effort is made to notify
+    /// peers of recent connection closes, whereas exiting immediately could force them to wait out
+    /// the idle timeout period.
     ///
     /// Does not proactively close existing connections or cause incoming connections to be
     /// rejected. Consider calling `Endpoint::close` and dropping the `Incoming` stream if that is
