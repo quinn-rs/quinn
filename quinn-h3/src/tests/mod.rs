@@ -5,6 +5,7 @@ use http::{Request, Response, StatusCode};
 use tokio::time::timeout;
 
 use crate::server::IncomingConnection;
+use crate::Error;
 
 mod helpers;
 use helpers::Helper;
@@ -22,7 +23,12 @@ async fn serve_one(mut incoming: IncomingConnection) {
             .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
             .await
             .expect("send_response");
-        body_writer.close().await.expect("response stream close");
+        match body_writer.close().await {
+            Ok(()) => {}
+            // TODO: Only accept application close errors
+            Err(Error::Io(ref e)) if e.kind() == std::io::ErrorKind::ConnectionAborted => {}
+            Err(e) => panic!("response stream close: {}", e),
+        }
     }
 }
 
