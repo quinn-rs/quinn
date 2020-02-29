@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::{io::AsyncWrite, ready};
+use futures::{ready, FutureExt};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, FramedRead};
@@ -141,14 +141,14 @@ impl WriteFrame {
 }
 
 impl Future for WriteFrame {
-    type Output = Result<SendStream, io::Error>;
+    type Output = Result<SendStream, quinn::WriteError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
                 WriteFrameState::Finished => panic!("polled after finished"),
                 WriteFrameState::Header(ref mut send, ref h, ref mut start, len) => {
-                    let wrote = ready!(Pin::new(send).poll_write(cx, &h[*start..len]))?;
+                    let wrote = ready!(send.write(&h[*start..len]).poll_unpin(cx))?;
                     *start += wrote;
                     if *start < len {
                         continue;
@@ -161,7 +161,7 @@ impl Future for WriteFrame {
                     }
                 }
                 WriteFrameState::Payload(ref mut send, ref mut p) => {
-                    let wrote = ready!(Pin::new(send).poll_write(cx, p))?;
+                    let wrote = ready!(send.write(p).poll_unpin(cx))?;
                     p.advance(wrote);
                     if !p.is_empty() {
                         continue;

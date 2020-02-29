@@ -11,6 +11,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready,
     stream::Stream,
+    FutureExt,
 };
 use http::HeaderMap;
 use quinn::SendStream;
@@ -280,12 +281,12 @@ impl BodyWriter {
         }
     }
 
-    fn poll_close_inner(&mut self, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+    fn poll_close_inner(&mut self, cx: &mut Context) -> Poll<Result<(), quinn::WriteError>> {
         loop {
             match self.state {
                 BodyWriterState::Finished => return Poll::Ready(Ok(())),
                 BodyWriterState::Idle(ref mut send) => {
-                    ready!(Pin::new(send).poll_close(cx))?;
+                    ready!(send.finish().poll_unpin(cx))?;
                     self.state = BodyWriterState::Finished;
                     return Poll::Ready(Ok(()));
                 }
@@ -350,7 +351,7 @@ impl AsyncWrite for BodyWriter {
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        self.poll_close_inner(cx)
+        self.poll_close_inner(cx).map_err(Into::into)
     }
 }
 

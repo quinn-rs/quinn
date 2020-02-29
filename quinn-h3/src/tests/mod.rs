@@ -26,7 +26,9 @@ async fn serve_one(mut incoming: IncomingConnection) {
         match body_writer.close().await {
             Ok(()) => {}
             // TODO: Only accept application close errors
-            Err(Error::Io(ref e)) if e.kind() == std::io::ErrorKind::ConnectionAborted => {}
+            Err(Error::Write(quinn::WriteError::ConnectionClosed(
+                quinn::ConnectionError::ApplicationClosed(_),
+            ))) => {}
             Err(e) => panic!("response stream close: {}", e),
         }
     }
