@@ -94,6 +94,9 @@ impl SendStream {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
+        if let Some(ref x) = conn.error {
+            return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
+        }
         if self.finishing.is_none() {
             conn.inner.finish(self.stream).map_err(|e| match e {
                 proto::FinishError::UnknownStream => WriteError::UnknownStream,
