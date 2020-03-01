@@ -41,16 +41,6 @@ async fn incoming_request_stream_ends_on_client_closure() {
     let server_handle = tokio::spawn(async move { serve_one(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, _) = conn
-        .send_request(
-            Request::get("https://localhost/")
-                .body(())
-                .expect("request"),
-        )
-        .await
-        .expect("request");
-    let _ = resp.await;
-
     conn.close();
     // After connection closure, IncomingRequest::next() polling should
     // resolve to None, so server_handle will resolve as well.
@@ -68,15 +58,6 @@ async fn incoming_request_stream_closed_on_client_drop() {
     let server_handle = tokio::spawn(async move { serve_one(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, _) = conn
-        .send_request(
-            Request::get("https://localhost/")
-                .body(())
-                .expect("request"),
-        )
-        .await
-        .expect("request");
-    let _ = resp.await;
     drop(conn);
 
     timeout(Duration::from_millis(500), server_handle)
