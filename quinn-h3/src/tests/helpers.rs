@@ -2,10 +2,12 @@ use std::{
     fs, io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicU16, Ordering},
+    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
 use quinn::{Certificate, CertificateChain, PrivateKey};
+use tokio::time::timeout;
 
 use crate::{
     client::{self, Client},
@@ -127,4 +129,12 @@ fn build_certs() -> Result<Certs> {
         cert,
         key,
     })
+}
+
+pub async fn timeout_join<T>(handle: tokio::task::JoinHandle<T>) -> T {
+    timeout(Duration::from_millis(500), handle)
+        .await
+        .map_err(|e| panic!("IncomingRequest did not resolve, {:?}", e))
+        .expect("server panic")
+        .unwrap()
 }
