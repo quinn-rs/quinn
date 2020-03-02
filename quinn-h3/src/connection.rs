@@ -19,10 +19,7 @@ use crate::{
     frame::{self, FrameStream},
     proto::{
         self,
-        connection::{
-            Connection, DecodeResult, Error as ProtoError, Error as ConnectionError,
-            PendingStreamType,
-        },
+        connection::{Connection, DecodeResult, Error as ConnectionError, PendingStreamType},
         frame::{HeadersFrame, HttpFrame},
         settings::Error as SettingsError,
         ErrorCode, StreamType,
