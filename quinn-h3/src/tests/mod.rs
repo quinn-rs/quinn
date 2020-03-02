@@ -7,6 +7,7 @@ use tokio::time::timeout;
 use crate::server::IncomingConnection;
 use crate::Error;
 
+#[macro_use]
 mod helpers;
 use helpers::Helper;
 
@@ -97,14 +98,7 @@ async fn client_send_body() {
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, _) = conn
-        .send_request(
-            Request::post("https://localhost/")
-                .body("the body")
-                .expect("request"),
-        )
-        .await
-        .expect("request");
+    let (resp, _) = conn.send_request(post!("the body")).await.expect("request");
     resp.await.expect("recv response");
     drop(conn);
 
@@ -119,14 +113,7 @@ async fn client_send_stream_body() {
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, mut body_writer) = conn
-        .send_request(
-            Request::post("https://localhost/")
-                .body(())
-                .expect("request"),
-        )
-        .await
-        .expect("request");
+    let (resp, mut body_writer) = conn.send_request(post!()).await.expect("request");
     body_writer
         .write_all(&b"the body"[..])
         .await
