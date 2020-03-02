@@ -24,7 +24,7 @@ async fn serve_one(mut incoming: IncomingConnection) {
             .expect("send_response");
         match body_writer.close().await {
             Ok(()) => {}
-            // TODO: Only accept application close errors
+            // Only accept application close errors
             Err(Error::Write(quinn::WriteError::ConnectionClosed(
                 quinn::ConnectionError::ApplicationClosed(_),
             ))) => {}
