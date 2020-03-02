@@ -432,11 +432,12 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock().unwrap();
         if let Some(x) = conn.inner.accept(Dir::Bi) {
+            let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok((
-                SendStream::new(self.0.clone(), x, false),
-                RecvStream::new(self.0.clone(), x, false),
+                SendStream::new(self.0.clone(), x, is_0rtt),
+                RecvStream::new(self.0.clone(), x, is_0rtt),
             ))))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
             Poll::Ready(None)
