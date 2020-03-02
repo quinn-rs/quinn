@@ -12,6 +12,34 @@ use crate::{
     server::{self, IncomingConnection, Server},
 };
 
+#[macro_export]
+macro_rules! get {
+    () => {
+        Request::get("https://localhost/")
+            .body(())
+            .expect("request")
+    };
+    ($path:expr) => {
+        Request::get(format!("https://localhost/{}", path))
+            .body(())
+            .expect("request")
+    };
+}
+
+#[macro_export]
+macro_rules! post {
+    () => {
+        Request::post("https://localhost/")
+            .body(())
+            .expect("request")
+    };
+    ($body:expr) => {
+        Request::post("https://localhost/")
+            .body($body)
+            .expect("request")
+    };
+}
+
 static PORT_COUNT: AtomicU16 = AtomicU16::new(1024);
 
 pub struct Helper {
