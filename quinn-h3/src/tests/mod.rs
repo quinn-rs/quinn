@@ -1,15 +1,13 @@
-use std::time::Duration;
-
+use bytes::Bytes;
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use http::{Request, Response, StatusCode};
-use tokio::time::timeout;
 
 use crate::server::IncomingConnection;
 use crate::Error;
 
 #[macro_use]
 mod helpers;
-use helpers::Helper;
+use helpers::{timeout_join, Helper};
 
 async fn serve_one(mut incoming: IncomingConnection) {
     let mut incoming_req = incoming
@@ -45,11 +43,7 @@ async fn incoming_request_stream_ends_on_client_closure() {
     conn.close();
     // After connection closure, IncomingRequest::next() polling should
     // resolve to None, so server_handle will resolve as well.
-    timeout(Duration::from_millis(500), server_handle)
-        .await
-        .map_err(|_| panic!("IncomingRequest did not resolve"))
-        .expect("server panic")
-        .unwrap();
+    timeout_join(server_handle).await;
 }
 
 #[tokio::test(threaded_scheduler)]
@@ -61,11 +55,7 @@ async fn incoming_request_stream_closed_on_client_drop() {
     let conn = helper.make_connection().await;
     drop(conn);
 
-    timeout(Duration::from_millis(500), server_handle)
-        .await
-        .map_err(|_| panic!("IncomingRequest did not resolve"))
-        .expect("server panic")
-        .unwrap();
+    timeout_join(server_handle).await;
 }
 
 async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> String {
@@ -102,7 +92,7 @@ async fn client_send_body() {
     resp.await.expect("recv response");
     drop(conn);
 
-    assert_eq!(server_handle.await.unwrap(), "the body");
+    assert_eq!(timeout_join(server_handle).await, "the body");
 }
 
 #[tokio::test(threaded_scheduler)]
@@ -122,5 +112,5 @@ async fn client_send_stream_body() {
     let _ = resp.await.unwrap();
     drop(conn);
 
-    assert_eq!(server_handle.await.unwrap(), "the body");
+    assert_eq!(timeout_join(server_handle).await, "the body");
 }
