@@ -6,40 +6,33 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use quinn::{Certificate, CertificateChain, PrivateKey};
+use bytes::BufMut;
+use futures::stream::StreamExt;
+use http::{request, Request};
+use quinn::{Certificate, CertificateChain, PrivateKey, SendStream, WriteError};
 use tokio::time::timeout;
 
 use crate::{
+    body::Body,
     client::{self, Client},
+    frame::{Error as FrameError, FrameDecoder, FrameStream},
+    headers::SendHeaders,
+    proto::frame::HttpFrame,
+    proto::headers::Header,
     server::{self, IncomingConnection, Server},
+    ZeroRttAccepted,
 };
 
-#[macro_export]
-macro_rules! get {
-    () => {
-        Request::get("https://localhost/")
-            .body(())
-            .expect("request")
-    };
-    ($path:expr) => {
-        Request::get(format!("https://localhost/{}", path))
-            .body(())
-            .expect("request")
-    };
+pub fn get(path: &str) -> Request<()> {
+    Request::get(format!("https://localhost{}", path))
+        .body(())
+        .expect("request")
 }
 
-#[macro_export]
-macro_rules! post {
-    () => {
-        Request::post("https://localhost/")
-            .body(())
-            .expect("request")
-    };
-    ($body:expr) => {
-        Request::post("https://localhost/")
-            .body($body)
-            .expect("request")
-    };
+pub fn post<T: Into<Body>>(path: &str, body: T) -> Request<Body> {
+    Request::post(format!("https://localhost{}", path))
+        .body(body.into())
+        .expect("request")
 }
 
 static PORT_COUNT: AtomicU16 = AtomicU16::new(1024);
@@ -47,7 +40,9 @@ static PORT_COUNT: AtomicU16 = AtomicU16::new(1024);
 pub struct Helper {
     server: server::Builder,
     client: client::Builder,
+    client_endpoint: quinn::Endpoint,
     port: u16,
+    got_0rtt: bool,
 }
 
 impl Helper {
@@ -62,12 +57,26 @@ impl Helper {
             .unwrap();
 
         let mut client = client::Builder::default();
-        client.add_certificate_authority(cert).unwrap();
+        client.add_certificate_authority(cert.clone()).unwrap();
+
+        let mut client_config = quinn::ClientConfigBuilder::default();
+        client_config
+            .add_certificate_authority(cert)
+            .expect("client cert");
+        client_config.enable_0rtt();
+        let client_config = client_config.build();
+        let mut endpoint_builder = quinn::Endpoint::builder();
+        endpoint_builder.default_client_config(client_config);
+        let (client_endpoint, _) = endpoint_builder
+            .bind(&"[::]:0".parse().unwrap())
+            .expect("bind client endpoint");
 
         Self {
             server,
             client,
             port,
+            client_endpoint,
+            got_0rtt: false,
         }
     }
 
@@ -76,7 +85,7 @@ impl Helper {
     }
 
     pub fn make_client(&self) -> Client {
-        self.client.clone().build().expect("client build")
+        self.client.clone().endpoint(self.client_endpoint.clone())
     }
 
     pub async fn make_connection(&self) -> client::Connection {
@@ -88,6 +97,92 @@ impl Helper {
             .expect("connect")
             .await
             .expect("connecting")
+    }
+
+    pub async fn make_fake_0rtt(&mut self) -> (FakeConnection, ZeroRttAccepted) {
+        let (conn, z) = self.make_0rtt().await;
+        (FakeConnection(conn), z)
+    }
+
+    pub async fn make_0rtt(&mut self) -> (client::Connection, ZeroRttAccepted) {
+        if !self.got_0rtt {
+            let conn = self.make_connection().await;
+            let resp = conn
+                .send_request(get("/"))
+                .await
+                .expect("request")
+                .0
+                .await
+                .expect("response");
+            println!("got response {:?}", resp.0);
+            conn.close();
+            self.got_0rtt = true;
+        }
+        self.make_client()
+            .connect(
+                &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), self.port),
+                "localhost",
+            )
+            .expect("connect")
+            .into_0rtt()
+            .map_err(|_| ())
+            .expect("no 0rtt")
+    }
+
+    pub fn socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), self.port)
+    }
+}
+
+pub struct FakeConnection(pub client::Connection);
+
+impl FakeConnection {
+    pub async fn post(&mut self) -> FakeRequest {
+        let request = Request::post("https://localhost").body(()).unwrap();
+        let (
+            request::Parts {
+                method,
+                uri,
+                headers,
+                ..
+            },
+            _body,
+        ) = request.into_parts();
+        let (send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
+
+        let stream_id = send.id();
+        let send = SendHeaders::new(
+            Header::request(method, uri, headers),
+            &self.0.inner().clone(),
+            send,
+            stream_id,
+        )
+        .expect("bad headers")
+        .await
+        .expect("send header");
+        FakeRequest {
+            send,
+            recv: FrameDecoder::stream(recv),
+        }
+    }
+}
+
+pub struct FakeRequest {
+    send: SendStream,
+    recv: FrameStream,
+}
+
+impl FakeRequest {
+    pub async fn read(&mut self) -> Option<Result<HttpFrame, FrameError>> {
+        self.recv.next().await
+    }
+    pub async fn write<F>(&mut self, mut encode: F) -> Result<(), WriteError>
+    where
+        F: FnMut(&mut dyn BufMut),
+    {
+        let mut buf = Vec::with_capacity(20 * 1024);
+        encode(&mut buf);
+        self.send.write_all(&buf).await.map(|_| ())
     }
 }
 
