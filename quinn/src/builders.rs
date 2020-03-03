@@ -262,6 +262,12 @@ impl ClientConfigBuilder<proto::crypto::rustls::TlsSession> {
             protocols.iter().map(|x| x.to_vec()).collect();
         self
     }
+
+    /// Enable 0-RTT.
+    pub fn enable_0rtt(&mut self) -> &mut Self {
+        Arc::make_mut(&mut self.config.crypto).enable_early_data = true;
+        self
+    }
 }
 
 impl<S> Clone for ClientConfigBuilder<S>
