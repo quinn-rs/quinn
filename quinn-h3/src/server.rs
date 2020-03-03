@@ -8,7 +8,9 @@ use std::{
 
 use futures::{ready, Stream};
 use http::{response, Request, Response};
-use quinn::{self, CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream};
+use quinn::{
+    CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream, ZeroRttAccepted,
+};
 use quinn_proto::{Side, StreamId};
 use rustls::TLSError;
 
@@ -142,6 +144,32 @@ pub struct Connecting {
     settings: Settings,
 }
 
+impl Connecting {
+    pub fn into_0rtt(self) -> Result<(IncomingRequest, ZeroRttAccepted), Self> {
+        let Self {
+            connecting,
+            settings,
+        } = self;
+        let (
+            quinn::NewConnection {
+                connection,
+                bi_streams,
+                uni_streams,
+                ..
+            },
+            zerortt_accepted,
+        ) = connecting.into_0rtt().map_err(|connecting| Self {
+            connecting,
+            settings: settings.clone(),
+        })?;
+
+        let conn_ref =
+            ConnectionRef::new(connection, Side::Server, uni_streams, bi_streams, settings);
+        tokio::spawn(ConnectionDriver(conn_ref.clone()));
+        Ok((IncomingRequest(conn_ref), zerortt_accepted))
+    }
+}
+
 impl Future for Connecting {
     type Output = Result<IncomingRequest, Error>;
 
@@ -207,14 +235,16 @@ pub struct RecvRequest {
     conn: ConnectionRef,
     stream_id: StreamId,
     streams: Option<(FrameStream, SendStream)>,
+    is_0rtt: bool,
 }
 
 impl RecvRequest {
     fn new(recv: RecvStream, send: SendStream, conn: ConnectionRef) -> Self {
         Self {
             conn,
-            stream_id: send.id(),
             streams: None,
+            stream_id: send.id(),
+            is_0rtt: recv.is_0rtt(),
             state: RecvRequestState::Receiving(FrameDecoder::stream(recv), send),
         }
     }
@@ -227,6 +257,14 @@ impl RecvRequest {
             .version(http::version::Version::HTTP_3)
             .body(())
             .unwrap();
+
+        if self.is_0rtt && !request.method().is_idempotent() {
+            return Err(Error::peer(format!(
+                "Tried an non indempotent method in 0-RTT: {}",
+                request.method()
+            )));
+        }
+
         *request.headers_mut() = headers;
         Ok(request)
     }
@@ -277,9 +315,18 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
                     self.state = RecvRequestState::Finished;
-                    let (recv, send) = try_take(&mut self.streams, "Recv request invalid state")?;
+                    let (recv, mut send) =
+                        try_take(&mut self.streams, "Recv request invalid state")?;
+                    let request = match self.build_request(header) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            send.reset(ErrorCode::REQUEST_REJECTED.into());
+                            recv.reset(ErrorCode::REQUEST_REJECTED);
+                            return Poll::Ready(Err(e));
+                        }
+                    };
                     return Poll::Ready(Ok((
-                        self.build_request(header)?,
+                        request,
                         BodyReader::new(recv, self.conn.clone(), self.stream_id, false),
                         Sender {
                             send,

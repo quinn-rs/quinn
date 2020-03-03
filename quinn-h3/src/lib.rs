@@ -32,6 +32,8 @@ use err_derive::Error;
 
 use proto::ErrorCode;
 
+pub type ZeroRttAccepted = quinn::ZeroRttAccepted;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(display = "Connection is closing, resquest aborted")]

@@ -24,7 +24,7 @@ use crate::{
         ErrorCode,
     },
     streams::Reset,
-    Error,
+    Error, ZeroRttAccepted,
 };
 
 #[derive(Clone)]
@@ -136,6 +136,10 @@ impl Connection {
         ) = request.into_parts();
         let (send, recv) = self.0.quic.open_bi().await?;
 
+        if recv.is_0rtt() && !method.is_idempotent() {
+            return Err(Error::internal("non-idempotent method tried on 0RTT"));
+        }
+
         let stream_id = send.id();
         let send = SendHeaders::new(
             Header::request(method, uri, headers),
@@ -209,7 +213,7 @@ impl Connecting {
                 let conn_ref =
                     ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings);
                 tokio::spawn(ConnectionDriver(conn_ref.clone()));
-                Ok((Connection(conn_ref), ZeroRttAccepted(zero_rtt)))
+                Ok((Connection(conn_ref), zero_rtt))
             }
         }
     }
@@ -236,8 +240,6 @@ impl Future for Connecting {
         Poll::Ready(Ok(Connection(conn_ref)))
     }
 }
-
-pub struct ZeroRttAccepted(quinn::ZeroRttAccepted);
 
 pub struct RecvResponse {
     state: RecvResponseState,
@@ -345,4 +347,11 @@ fn build_response(header: Header) -> Result<Response<()>, Error> {
         .unwrap();
     *response.headers_mut() = headers;
     Ok(response)
+}
+
+#[cfg(test)]
+impl Connection {
+    pub(crate) fn inner(&self) -> &ConnectionRef {
+        &self.0
+    }
 }
