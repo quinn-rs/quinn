@@ -121,7 +121,7 @@ errors! {
     FINAL_OFFSET_ERROR(0x6) "received a STREAM frame containing data that exceeded the previously established final offset, or a RST_STREAM frame containing a final offset that was lower than the maximum offset of data that was already received, or a RST_STREAM frame containing a different final offset to the one already established";
     FRAME_ENCODING_ERROR(0x7) "received a frame that was badly formatted";
     TRANSPORT_PARAMETER_ERROR(0x8) "received transport parameters that were badly formatted, included an invalid value, was absent even though it is mandatory, was present though it is forbidden, or is otherwise in error";
-    VERSION_NEGOTIATION_ERROR(0x9) "received transport parameters that contained version negotiation parameters that disagreed with the version negotiation that was performed, constituting a potential version downgrade attack";
+    CONNECTION_ID_LIMIT_ERROR(0x9) "the number of connection IDs provided by the peer exceeds the advertised active_connection_id_limit";
     PROTOCOL_VIOLATION(0xA) "detected an error with protocol compliance that was not covered by more specific error codes";
     CRYPTO_BUFFER_EXCEEDED(0xD) "received more data in CRYPTO frames than can be buffered";
     KEY_UPDATE_ERROR(0xE) "key update error";
