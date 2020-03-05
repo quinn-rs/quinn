@@ -1900,6 +1900,9 @@ where
                             "NEW_CONNECTION_ID retiring unissued CIDs",
                         ));
                     }
+                    if self.rem_cids.len() as u64 == REM_CID_COUNT {
+                        return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
+                    }
 
                     if frame.retire_prior_to > self.first_unretired_cid {
                         self.first_unretired_cid = frame.retire_prior_to;
@@ -1918,16 +1921,13 @@ where
                         debug_assert_eq!(self.rem_cid_seq, 0);
                         self.update_rem_cid(issued);
                     } else {
-                        // Reasonable limit to bound memory use
-                        if (self.rem_cids.len() as u64) < REM_CID_COUNT {
-                            self.rem_cids.push(issued);
-                        }
+                        self.rem_cids.push(issued);
                     }
 
                     if self.rem_cid_seq < self.first_unretired_cid {
                         // If our current CID is earlier than the first unretired one we must not
-                        // have adopted the one we just got, so it must be cached, so this unwrap is
-                        // guaranteed to succeed.
+                        // have adopted the one we just got, so it must be stored in rem_cids, so
+                        // this unwrap is guaranteed to succeed.
                         let new = self.rem_cids.pop().unwrap();
                         self.update_rem_cid(new);
                     }
