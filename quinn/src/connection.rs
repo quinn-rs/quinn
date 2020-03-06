@@ -355,7 +355,7 @@ impl Connection {
 #[derive(Debug)]
 pub struct IncomingUniStreams(ConnectionRef);
 
-impl futures::Stream for IncomingUniStreams {
+impl futures::Stream for &IncomingUniStreams {
     type Item = Result<RecvStream, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -374,6 +374,14 @@ impl futures::Stream for IncomingUniStreams {
         }
     }
 }
+impl futures::Stream for IncomingUniStreams {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
+    }
+}
 
 /// A stream of bidirectional QUIC streams initiated by a remote peer.
 ///
@@ -381,7 +389,7 @@ impl futures::Stream for IncomingUniStreams {
 #[derive(Debug)]
 pub struct IncomingBiStreams(ConnectionRef);
 
-impl futures::Stream for IncomingBiStreams {
+impl futures::Stream for &IncomingBiStreams {
     type Item = Result<(SendStream, RecvStream), ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -403,12 +411,20 @@ impl futures::Stream for IncomingBiStreams {
         }
     }
 }
+impl futures::Stream for IncomingBiStreams {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
+    }
+}
 
 /// Stream of unordered, unreliable datagrams sent by the peer
 #[derive(Debug)]
 pub struct Datagrams(ConnectionRef);
 
-impl futures::Stream for Datagrams {
+impl futures::Stream for &Datagrams {
     type Item = Result<Bytes, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -423,6 +439,14 @@ impl futures::Stream for Datagrams {
             conn.datagram_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+impl futures::Stream for Datagrams {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
     }
 }
 

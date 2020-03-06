@@ -371,7 +371,7 @@ impl Incoming {
     }
 }
 
-impl futures::Stream for Incoming {
+impl futures::Stream for &Incoming {
     type Item = Connecting;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let endpoint = &mut *self.0.lock().unwrap();
@@ -386,6 +386,14 @@ impl futures::Stream for Incoming {
             endpoint.incoming_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+impl futures::Stream for Incoming {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
     }
 }
 
