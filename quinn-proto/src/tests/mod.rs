@@ -687,7 +687,7 @@ fn idle_timeout() {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(10);
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            idle_timeout: Some(IDLE_TIMEOUT),
+            max_idle_timeout: Some(IDLE_TIMEOUT),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -988,7 +988,7 @@ fn keep_alive() {
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             keep_alive_interval: Some(IDLE_TIMEOUT / 2),
-            idle_timeout: Some(IDLE_TIMEOUT),
+            max_idle_timeout: Some(IDLE_TIMEOUT),
             ..TransportConfig::default()
         }),
         ..server_config()

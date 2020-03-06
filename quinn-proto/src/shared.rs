@@ -36,7 +36,7 @@ use crate::{
 pub struct TransportConfig {
     pub(crate) stream_window_bidi: u64,
     pub(crate) stream_window_uni: u64,
-    pub(crate) idle_timeout: Option<Duration>,
+    pub(crate) max_idle_timeout: Option<Duration>,
     pub(crate) stream_receive_window: u64,
     pub(crate) receive_window: u64,
     pub(crate) send_window: u64,
@@ -88,13 +88,13 @@ impl TransportConfig {
 
     /// Maximum duration of inactivity to accept before timing out the connection.
     ///
-    /// The actual value used is the minimum of this and the peer's own idle timeout. `None`
+    /// The true idle timeout is the minimum of this and the peer's own max idle timeout. `None`
     /// represents an infinite timeout.
-    pub fn idle_timeout(&mut self, value: Option<Duration>) -> Result<&mut Self, ConfigError> {
+    pub fn max_idle_timeout(&mut self, value: Option<Duration>) -> Result<&mut Self, ConfigError> {
         if value.map_or(false, |x| x.as_millis() > VarInt::MAX.0 as u128) {
             return Err(ConfigError::OutOfBounds);
         }
-        self.idle_timeout = value;
+        self.max_idle_timeout = value;
         Ok(self)
     }
 
@@ -257,7 +257,7 @@ impl Default for TransportConfig {
         TransportConfig {
             stream_window_bidi: 32,
             stream_window_uni: 32,
-            idle_timeout: Some(Duration::from_millis(10_000)),
+            max_idle_timeout: Some(Duration::from_millis(10_000)),
             stream_receive_window: STREAM_RWND,
             receive_window: 8 * STREAM_RWND,
             send_window: 8 * STREAM_RWND,

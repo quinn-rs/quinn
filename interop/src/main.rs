@@ -291,7 +291,7 @@ impl State {
         }
         let mut transport = quinn::TransportConfig::default();
         transport
-            .idle_timeout(Some(Duration::from_secs(1)))
+            .max_idle_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         let client_config = quinn::ClientConfig {
             crypto: Arc::new(tls_config),

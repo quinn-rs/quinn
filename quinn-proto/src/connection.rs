@@ -235,7 +235,7 @@ where
             stream_opened: [false, false],
             accepted_0rtt: false,
             permit_idle_reset: true,
-            idle_timeout: config.idle_timeout,
+            idle_timeout: config.max_idle_timeout,
             first_1rtt_sent: None,
             first_unretired_cid: 0,
             timers: TimerTable::default(),
@@ -2655,7 +2655,7 @@ where
             self.streams.send_mut(id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local as u64;
         }
-        self.idle_timeout = match (self.config.idle_timeout, params.idle_timeout) {
+        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, 0) => None,
             (None, x) => Some(Duration::from_millis(x)),
             (Some(x), 0) => Some(x),

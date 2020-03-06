@@ -31,7 +31,7 @@ macro_rules! apply_params {
         $macro! {
             // #[doc] name (id) = default,
             /// Milliseconds, disabled if zero
-            idle_timeout(0x0001) = 0,
+            max_idle_timeout(0x0001) = 0,
             /// Limits the size of packets that the endpoint is willing to receive
             max_packet_size(0x0003) = 65527,
 
@@ -113,7 +113,7 @@ impl TransportParameters {
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
-            idle_timeout: config.idle_timeout.map_or(0, |x| {
+            max_idle_timeout: config.max_idle_timeout.map_or(0, |x| {
                 x.as_millis()
                     .try_into()
                     .expect("setter guarantees this is in-bounds")
