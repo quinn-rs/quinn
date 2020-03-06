@@ -34,7 +34,7 @@ fn handshake_timeout() {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
-        .idle_timeout(Some(IDLE_TIMEOUT))
+        .max_idle_timeout(Some(IDLE_TIMEOUT))
         .unwrap()
         .initial_rtt(Duration::from_millis(10));
     client_config.transport = Arc::new(transport_config);
