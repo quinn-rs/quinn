@@ -124,16 +124,24 @@ pub struct IncomingConnection {
     settings: Settings,
 }
 
-impl Stream for IncomingConnection {
+impl Stream for &IncomingConnection {
     type Item = Connecting;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         Poll::Ready(
-            ready!(Pin::new(&mut self.incoming).poll_next(cx)).map(|c| Connecting {
+            ready!(Pin::new(&mut &self.incoming).poll_next(cx)).map(|c| Connecting {
                 connecting: c,
                 settings: self.settings.clone(),
             }),
         )
+    }
+}
+impl futures::Stream for IncomingConnection {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
     }
 }
 
@@ -166,7 +174,7 @@ impl Future for Connecting {
 
 pub struct IncomingRequest(ConnectionRef);
 
-impl Stream for IncomingRequest {
+impl Stream for &IncomingRequest {
     type Item = RecvRequest;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -175,6 +183,14 @@ impl Stream for IncomingRequest {
             Ok(None) => Poll::Pending,
             Err(_) => Poll::Ready(None),
         }
+    }
+}
+impl futures::Stream for IncomingRequest {
+    type Item = <&'static Self as futures::Stream>::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let mut self_: &Self = &self.as_ref();
+        Pin::new(&mut self_).poll_next(cx)
     }
 }
 
