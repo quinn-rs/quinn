@@ -119,6 +119,7 @@ frame_types! {
     PATH_RESPONSE = 0x1b,
     CONNECTION_CLOSE = 0x1c,
     APPLICATION_CLOSE = 0x1d,
+    HANDSHAKE_DONE = 0x1e,
     // DATAGRAM
 }
 
@@ -148,6 +149,7 @@ pub enum Frame {
     Close(Close),
     Datagram(Datagram),
     Invalid { ty: Type, reason: &'static str },
+    HandshakeDone,
 }
 
 impl Frame {
@@ -187,6 +189,7 @@ impl Frame {
             NewToken { .. } => Type::NEW_TOKEN,
             Datagram(_) => Type(*DATAGRAM_TYS.start()),
             Invalid { ty, .. } => ty,
+            HandshakeDone => Type::HANDSHAKE_DONE,
         }
     }
 }
@@ -621,6 +624,7 @@ impl Iter {
             Type::NEW_TOKEN => Frame::NewToken {
                 token: self.take_len()?,
             },
+            Type::HANDSHAKE_DONE => Frame::HandshakeDone,
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {

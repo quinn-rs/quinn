@@ -183,6 +183,7 @@ pub struct Retransmits {
     pub(crate) crypto: VecDeque<frame::Crypto>,
     pub(crate) new_cids: Vec<IssuedCid>,
     pub(crate) retire_cids: Vec<u64>,
+    pub(crate) handshake_done: bool,
 }
 
 impl Retransmits {
@@ -197,6 +198,7 @@ impl Retransmits {
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
+            && !self.handshake_done
     }
 }
 
@@ -213,6 +215,7 @@ impl Default for Retransmits {
             crypto: VecDeque::new(),
             new_cids: Vec::new(),
             retire_cids: Vec::new(),
+            handshake_done: false,
         }
     }
 }
@@ -235,6 +238,7 @@ impl ::std::ops::AddAssign for Retransmits {
         }
         self.new_cids.extend(&rhs.new_cids);
         self.retire_cids.extend(rhs.retire_cids);
+        self.handshake_done |= rhs.handshake_done;
     }
 }
 
