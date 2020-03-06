@@ -144,6 +144,8 @@ where
     ecn_counters: frame::EcnCounts,
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
+    /// Whether the remote address used to initiate the connection has been validated. Not used for
+    /// validating migration; see path_challenge.
     remote_validated: bool,
     /// Total UDP datagram bytes received, tracked for handshake anti-amplification
     total_recvd: u64,
