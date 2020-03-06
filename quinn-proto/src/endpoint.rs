@@ -470,7 +470,7 @@ where
                 ref token,
                 number,
             } => (src_cid, dst_cid, token.clone(), number),
-            _ => panic!("non-initial packet in handle_initial()"),
+            _ => panic!("non-initial packet in handle_first_packet()"),
         };
         let packet_number = packet_number.expand(0);
 
@@ -539,22 +539,8 @@ where
 
         let mut retry_cid = None;
         if server_config.use_stateless_retry {
-            if let Some((token_dst_cid, token_issued)) =
-                token::check(&*server_config.token_key, &remote, &token)
-            {
-                let expires = token_issued
-                    + Duration::from_micros(
-                        self.server_config.as_ref().unwrap().retry_token_lifetime,
-                    );
-                if expires > SystemTime::now() {
-                    retry_cid = Some(token_dst_cid);
-                } else {
-                    trace!("sending stateless retry due to expired token");
-                }
-            } else {
-                trace!("sending stateless retry due to invalid token");
-            }
-            if retry_cid.is_none() {
+            if token.is_empty() {
+                // First Initial
                 let token = token::generate(
                     &*server_config.token_key,
                     &remote,
@@ -582,6 +568,34 @@ where
                 });
                 return None;
             }
+
+            retry_cid = match token::check(&*server_config.token_key, &remote, &token) {
+                Some((cid, issued))
+                    if issued
+                        + Duration::from_micros(
+                            self.server_config.as_ref().unwrap().retry_token_lifetime,
+                        )
+                        > SystemTime::now() =>
+                {
+                    Some(cid)
+                }
+                _ => {
+                    debug!("rejecting invalid stateless retry token");
+                    self.transmits.push_back(Transmit {
+                        destination: remote,
+                        ecn: None,
+                        contents: initial_close(
+                            crypto,
+                            header_crypto,
+                            &src_cid,
+                            &temp_loc_cid,
+                            0,
+                            TransportError::INVALID_TOKEN(""),
+                        ),
+                    });
+                    return None;
+                }
+            };
         }
 
         let (ch, mut conn) = self
