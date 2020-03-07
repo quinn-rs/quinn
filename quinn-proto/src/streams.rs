@@ -283,13 +283,18 @@ impl Send {
 pub enum WriteError {
     /// The peer is not able to accept additional data, or the connection is congested.
     ///
-    /// If the peer issues additional flow control credit, an `Event::StreamWritable` will be
+    /// If the peer issues additional flow control credit, a [`StreamWritable`] event will be
     /// generated, indicating that retrying the write might succeed.
+    ///
+    /// [`StreamWritable`]: crate::Event::StreamWritable
     #[error(display = "unable to accept further writes")]
     Blocked,
-    /// The peer is no longer accepting data on this stream.
+    /// The peer is no longer accepting data on this stream. No [`StreamFinished`] event will be
+    /// emitted for this stream.
     ///
     /// Carries an application-defined error code.
+    ///
+    /// [`StreamFinished`]: crate::Event::StreamFinished
     #[error(display = "stopped by peer: code {}", 0)]
     Stopped(VarInt),
     /// Unknown stream
@@ -524,7 +529,8 @@ pub(crate) enum RecvState {
 /// Reasons why attempting to finish a stream might fail
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FinishError {
-    /// The peer is no longer accepting data on this stream.
+    /// The peer is no longer accepting data on this stream. No
+    /// [`StreamFinished`](crate::Event::StreamFinished) event will be emitted for this stream.
     ///
     /// Carries an application-defined error code.
     #[error(display = "stopped by peer: code {}", 0)]
