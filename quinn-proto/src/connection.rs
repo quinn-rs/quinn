@@ -2708,6 +2708,11 @@ where
         Some(id)
     }
 
+    /// The number of streams that may have unacknowledged data.
+    pub fn send_streams(&self) -> usize {
+        self.streams.send_streams()
+    }
+
     /// Finish a send stream, signalling that no more data will be sent
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let ss = self

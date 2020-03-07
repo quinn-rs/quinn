@@ -191,6 +191,7 @@ fn finish_stream_simple() {
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    assert_eq!(pair.client_conn_mut(client_ch).send_streams(), 1);
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
 
@@ -199,10 +200,14 @@ fn finish_stream_simple() {
         Some(Event::StreamFinished { stream, stop_reason: None }) if stream == s
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(pair.client_conn_mut(client_ch).send_streams(), 0);
+    assert_eq!(pair.server_conn_mut(client_ch).send_streams(), 0);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::StreamOpened { dir: Dir::Uni })
     );
+    // Receive-only streams do not get `StreamFinished` events
+    assert_eq!(pair.server_conn_mut(client_ch).send_streams(), 0);
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
@@ -909,7 +914,9 @@ fn stop_opens_bidi() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_conn, server_conn) = pair.connect();
+    assert_eq!(pair.client_conn_mut(client_conn).send_streams(), 0);
     let s = pair.client_conn_mut(client_conn).open(Dir::Bi).unwrap();
+    assert_eq!(pair.client_conn_mut(client_conn).send_streams(), 1);
     const ERROR: VarInt = VarInt(42);
     pair.client
         .connections
@@ -923,7 +930,9 @@ fn stop_opens_bidi() {
         pair.server_conn_mut(server_conn).poll(),
         Some(Event::StreamOpened { dir: Dir::Bi })
     );
+    assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 0);
     assert_matches!(pair.server_conn_mut(server_conn).accept(Dir::Bi), Some(stream) if stream == s);
+    assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 1);
     assert_matches!(
         pair.server_conn_mut(server_conn).read_unordered(s),
         Err(ReadError::Blocked)
@@ -932,6 +941,8 @@ fn stop_opens_bidi() {
         pair.server_conn_mut(server_conn).write(s, b"foo"),
         Err(WriteError::Stopped(ERROR))
     );
+    assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 0);
+    assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
 }
 
 #[test]
