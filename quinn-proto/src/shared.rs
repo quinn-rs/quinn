@@ -140,7 +140,7 @@ impl TransportConfig {
     }
 
     /// Maximum reordering in packet number space before FACK style loss detection considers a
-    /// packet lost.
+    /// packet lost. Should not be less than 3, per RFC5681.
     pub fn packet_threshold(&mut self, value: u32) -> &mut Self {
         self.packet_threshold = value;
         self
