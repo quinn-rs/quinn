@@ -1590,7 +1590,7 @@ where
             let _guard = span.as_ref().map(|x| x.enter());
             // Check for ack-eliciting frames
             match frame {
-                Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
+                Frame::Ack(_) | Frame::Padding | Frame::Close(Close::Connection(_)) => {}
                 _ => {
                     self.space_mut(packet.header.space()).permit_ack_only = true;
                 }
@@ -1641,10 +1641,11 @@ where
                 Frame::Padding => None,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
+
             let _guard = span.as_ref().map(|x| x.enter());
             if is_0rtt {
                 match frame {
-                    Frame::Crypto(_) | Frame::Close(_) => {
+                    Frame::Crypto(_) | Frame::Close(Close::Application(_)) => {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "illegal frame type in 0-RTT",
                         ));
@@ -1652,6 +1653,7 @@ where
                     _ => {}
                 }
             }
+
             // Check for ack-eliciting frames
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
