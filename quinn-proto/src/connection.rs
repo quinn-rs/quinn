@@ -1923,26 +1923,33 @@ where
                             .retain(|x| x.sequence >= frame.retire_prior_to);
                     }
 
-                    let issued = IssuedCid {
-                        sequence: frame.sequence,
-                        id: frame.id,
-                        reset_token: frame.reset_token,
-                    };
-                    if self.side.is_server() && self.params.stateless_reset_token.is_none() {
-                        // We're a server using the initial remote CID for the client, so let's
-                        // switch immediately to enable clientside stateless resets.
-                        debug_assert_eq!(self.rem_cid_seq, 0);
-                        self.update_rem_cid(issued);
+                    if frame.sequence < self.first_unretired_cid {
+                        self.space_mut(SpaceId::Data)
+                            .pending
+                            .retire_cids
+                            .push(frame.sequence);
                     } else {
-                        self.rem_cids.push(issued);
-                    }
+                        let issued = IssuedCid {
+                            sequence: frame.sequence,
+                            id: frame.id,
+                            reset_token: frame.reset_token,
+                        };
+                        if self.side.is_server() && self.params.stateless_reset_token.is_none() {
+                            // We're a server using the initial remote CID for the client, so let's
+                            // switch immediately to enable clientside stateless resets.
+                            debug_assert_eq!(self.rem_cid_seq, 0);
+                            self.update_rem_cid(issued);
+                        } else {
+                            self.rem_cids.push(issued);
+                        }
 
-                    if self.rem_cid_seq < self.first_unretired_cid {
-                        // If our current CID is earlier than the first unretired one we must not
-                        // have adopted the one we just got, so it must be stored in rem_cids, so
-                        // this unwrap is guaranteed to succeed.
-                        let new = self.rem_cids.pop().unwrap();
-                        self.update_rem_cid(new);
+                        if self.rem_cid_seq < self.first_unretired_cid {
+                            // If our current CID is earlier than the first unretired one we must not
+                            // have adopted the one we just got, so it must be stored in rem_cids, so
+                            // this unwrap is guaranteed to succeed.
+                            let new = self.rem_cids.pop().unwrap();
+                            self.update_rem_cid(new);
+                        }
                     }
                 }
                 Frame::NewToken { token } => {
