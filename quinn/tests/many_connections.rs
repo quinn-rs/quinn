@@ -1,3 +1,4 @@
+#![cfg(feature = "rustls")]
 use std::{
     sync::{Arc, Mutex},
     time::Duration,

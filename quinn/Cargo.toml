@@ -15,11 +15,12 @@ edition = "2018"
 all-features = true
 
 [features]
-default = ["native-certs", "certificate-transparency"]
+default = ["native-certs", "certificate-transparency", "tls-rustls"]
 # Use Google's list of CT logs to enable certificate transparency checks
 certificate-transparency = ["proto/certificate-transparency"]
 # Trust the contents of the OS certificate store by default
 native-certs = ["proto/native-certs"]
+tls-rustls = ["rustls", "webpki", "proto/tls-rustls"]
 
 [badges]
 codecov = { repository = "djc/quinn" }
@@ -33,10 +34,10 @@ futures = "0.3.1"
 libc = "0.2.49"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.5.0" }
-rustls = { version = "0.17", features = ["quic"] }
+rustls = { version = "0.17", features = ["quic"], optional = true }
 tracing = "0.1.10"
 tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
-webpki = "0.21"
+webpki = { version = "0.21", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"
@@ -54,14 +55,25 @@ url = "2"
 
 [[example]]
 name = "server"
+required-features = ["tls-rustls"]
 
 [[example]]
 name = "client"
+required-features = ["tls-rustls"]
 
 [[example]]
 name = "insecure_connection"
 required-features = ["rustls/dangerous_configuration"]
 
+[[example]]
+name = "single_socket"
+required-features = ["tls-rustls"]
+
+[[example]]
+name = "connection"
+required-features = ["tls-rustls"]
+
 [[bench]]
 name = "bench"
 harness = false
+required-features = ["tls-rustls"]

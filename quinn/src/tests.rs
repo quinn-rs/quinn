@@ -1,3 +1,5 @@
+#![cfg(feature = "rustls")]
+
 use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},

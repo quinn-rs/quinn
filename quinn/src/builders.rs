@@ -7,8 +7,9 @@ use tracing::error;
 use crate::{
     endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
     udp::UdpSocket,
-    Certificate, CertificateChain, PrivateKey,
 };
+#[cfg(feature = "rustls")]
+use crate::{Certificate, CertificateChain, PrivateKey};
 
 /// A helper for constructing an `Endpoint`.
 ///
@@ -139,6 +140,7 @@ where
     }
 }
 
+#[cfg(feature = "rustls")]
 impl ServerConfigBuilder<proto::crypto::rustls::TlsSession> {
     /// Enable NSS-compatible cryptographic key logging to the `SSLKEYLOGFILE` environment variable.
     ///
@@ -225,6 +227,7 @@ where
     }
 }
 
+#[cfg(feature = "rustls")]
 impl ClientConfigBuilder<proto::crypto::rustls::TlsSession> {
     /// Add a trusted certificate authority.
     ///
