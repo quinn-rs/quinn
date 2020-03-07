@@ -537,8 +537,7 @@ where
             return None;
         }
 
-        let mut retry_cid = None;
-        if server_config.use_stateless_retry {
+        let retry_cid = if server_config.use_stateless_retry {
             if token.is_empty() {
                 // First Initial
                 let token = token::generate(
@@ -551,15 +550,15 @@ where
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
                     dst_cid: src_cid,
-                    orig_dst_cid: dst_cid,
                 };
                 let encode = header.encode(&mut buf);
+                buf.put_slice(&token);
+                buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
                 encode.finish::<S::Keys, <S::Keys as Keys>::HeaderKeys>(
                     &mut buf,
                     header_crypto,
                     None,
                 );
-                buf.put_slice(&token);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -569,7 +568,7 @@ where
                 return None;
             }
 
-            retry_cid = match token::check(&*server_config.token_key, &remote, &token) {
+            match token::check(&*server_config.token_key, &remote, &token) {
                 Some((cid, issued))
                     if issued
                         + Duration::from_micros(
@@ -595,8 +594,10 @@ where
                     });
                     return None;
                 }
-            };
-        }
+            }
+        } else {
+            None
+        };
 
         let (ch, mut conn) = self
             .add_connection(
