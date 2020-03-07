@@ -51,7 +51,7 @@ pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};
 
 mod shared;
 pub use crate::shared::{
-    ConfigError, ConnectionEvent, EcnCodepoint, EndpointEvent, TransportConfig,
+    ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
 
 mod streams;

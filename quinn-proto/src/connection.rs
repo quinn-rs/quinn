@@ -1346,27 +1346,33 @@ where
             State::Handshake(ref mut state) => {
                 match packet.header {
                     Header::Retry {
-                        src_cid: rem_cid,
-                        orig_dst_cid,
-                        ..
+                        src_cid: rem_cid, ..
                     } => {
                         if self.side.is_server() {
                             return Err(
                                 TransportError::PROTOCOL_VIOLATION("client sent Retry").into()
                             );
                         }
+
                         if self.orig_rem_cid.is_some()
-                            || orig_dst_cid != self.rem_cid
-                            || rem_cid == self.rem_cid
+                            || packet.payload.len() <= 16 // token + 16 byte tag
+                            || !S::is_valid_retry(
+                                &self.rem_cid,
+                                &packet.header_data,
+                                &packet.payload,
+                            )
                         {
-                            // A client MUST accept and process at most one Retry packet for each
-                            // connection attempt, and clients MUST discard Retry packets that
-                            // contain an Original Destination Connection ID field that does not
-                            // match the Destination Connection ID from its Initial packet, or that
-                            // contains a Source Connection ID field that is identical to the
-                            // Destination Connection ID field of its first Initial packet.
+                            trace!("discarding invalid Retry");
+                            // - After the client has received and processed an Initial or Retry
+                            //   packet from the server, it MUST discard any subsequent Retry
+                            //   packets that it receives.
+                            // - A client MUST discard a Retry packet with a zero-length Retry Token
+                            //   field.
+                            // - Clients MUST discard Retry packets that have a Retry Integrity Tag
+                            //   that cannot be validated
                             return Ok(());
                         }
+
                         trace!("retrying with CID {}", rem_cid);
                         let client_hello = state.client_hello.take().unwrap();
                         self.orig_rem_cid = Some(self.rem_cid);
@@ -1403,8 +1409,9 @@ where
                             self.space_mut(SpaceId::Data).pending += info.retransmits;
                         }
 
+                        let token_len = packet.payload.len() - 16;
                         self.state = State::Handshake(state::Handshake {
-                            token: Some(packet.payload.freeze()),
+                            token: Some(packet.payload.freeze().split_to(token_len)),
                             rem_cid_set: false,
                             client_hello: None,
                         });

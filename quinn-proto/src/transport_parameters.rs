@@ -73,7 +73,7 @@ macro_rules! make_struct {
             pub(crate) max_datagram_frame_size: Option<VarInt>,
 
             // Server-only
-            /// The DCID from the first Initial packet; must be included if sent in a Retry packet
+            /// The DCID from the first Initial packet; must be included if a Retry packet was sent
             pub(crate) original_connection_id: Option<ConnectionId>,
             /// Token used by the client to verify a stateless reset from the server
             pub(crate) stateless_reset_token: Option<ResetToken>,

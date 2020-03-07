@@ -83,6 +83,12 @@ pub trait Session: Send + Sized {
 
     /// Update the given set of keys
     fn update_keys(&self, keys: &Self::Keys) -> Self::Keys;
+
+    /// Generate the integrity tag for a retry packet
+    fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
+
+    /// Verify the integrity of a retry packet
+    fn is_valid_retry(orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
 }
 
 /// Client-side configuration for the crypto protocol

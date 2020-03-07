@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use ring::{hkdf, hmac};
+use ring::{aead, hkdf, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
@@ -17,8 +17,8 @@ use webpki::DNSNameRef;
 
 use super::ring::{hkdf_expand, Crypto};
 use crate::{
-    crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError, Side,
-    TransportError, TransportErrorCode,
+    crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError,
+    ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -139,6 +139,48 @@ impl crypto::Session for TlsSession {
             secrets.server,
         )
     }
+
+    fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+        let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
+        pseudo_packet.push(orig_dst_cid.len() as u8);
+        pseudo_packet.extend_from_slice(orig_dst_cid);
+        pseudo_packet.extend_from_slice(packet);
+
+        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
+        let key = aead::LessSafeKey::new(
+            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
+        );
+
+        let tag = key
+            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
+            .unwrap();
+        let mut result = [0; 16];
+        result.copy_from_slice(tag.as_ref());
+        result
+    }
+
+    fn is_valid_retry(orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+        let tag_start = match payload.len().checked_sub(16) {
+            Some(x) => x,
+            None => return false,
+        };
+
+        let mut pseudo_packet =
+            Vec::with_capacity(header.len() + payload.len() + orig_dst_cid.len() + 1);
+        pseudo_packet.push(orig_dst_cid.len() as u8);
+        pseudo_packet.extend_from_slice(orig_dst_cid);
+        pseudo_packet.extend_from_slice(header);
+        let tag_start = tag_start + pseudo_packet.len();
+        pseudo_packet.extend_from_slice(payload);
+
+        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
+        let key = aead::LessSafeKey::new(
+            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
+        );
+
+        let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
+        key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+    }
 }
 
 impl Deref for TlsSession {
@@ -252,3 +294,10 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
     params.write(&mut bytes);
     bytes
 }
+
+const RETRY_INTEGRITY_KEY: [u8; 16] = [
+    0x4d, 0x32, 0xec, 0xdb, 0x2a, 0x21, 0x33, 0xc8, 0x41, 0xe4, 0x04, 0x3d, 0xf2, 0x7d, 0x44, 0x30,
+];
+const RETRY_INTEGRITY_NONCE: [u8; 12] = [
+    0x4d, 0x16, 0x11, 0xd0, 0x55, 0x13, 0xa5, 0x52, 0xc5, 0x87, 0xd5, 0x75,
+];

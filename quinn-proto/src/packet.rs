@@ -147,15 +147,7 @@ impl PartialDecode {
                 src_cid,
                 number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
             },
-            Retry {
-                dst_cid,
-                src_cid,
-                orig_dst_cid,
-            } => Header::Retry {
-                dst_cid,
-                src_cid,
-                orig_dst_cid,
-            },
+            Retry { dst_cid, src_cid } => Header::Retry { dst_cid, src_cid },
             Short { spin, dst_cid, .. } => {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
@@ -242,7 +234,6 @@ pub(crate) enum Header {
     Retry {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
-        orig_dst_cid: ConnectionId,
     },
     Short {
         spin: bool,
@@ -301,13 +292,10 @@ impl Header {
             Retry {
                 ref dst_cid,
                 ref src_cid,
-                ref orig_dst_cid,
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
                 w.write(VERSION);
                 Self::encode_cids(w, dst_cid, src_cid);
-                w.write(orig_dst_cid.len() as u8);
-                w.put_slice(orig_dst_cid);
                 PartialEncode {
                     start,
                     header_len: w.len() - start,
@@ -491,7 +479,6 @@ pub(crate) enum PlainHeader {
     Retry {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
-        orig_dst_cid: ConnectionId,
     },
     Short {
         first: u8,
@@ -579,16 +566,7 @@ impl PlainHeader {
                         len,
                     })
                 }
-                LongHeaderType::Retry => {
-                    let odcil = buf.get::<u8>()? as usize;
-                    let orig_dst_cid = Self::get_cid(buf, odcil)?;
-
-                    Ok(PlainHeader::Retry {
-                        dst_cid,
-                        src_cid,
-                        orig_dst_cid,
-                    })
-                }
+                LongHeaderType::Retry => Ok(PlainHeader::Retry { dst_cid, src_cid }),
                 LongHeaderType::Standard(ty) => Ok(PlainHeader::Long {
                     ty,
                     dst_cid,
