@@ -402,7 +402,7 @@ where
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new::<S>(&config.transport, None);
+                let params = TransportParameters::new::<S>(&config.transport, &self.config, None);
                 (
                     None,
                     config.crypto.start_session(&server_name, &params)?,
@@ -411,7 +411,8 @@ where
             }
             ConnectionOpts::Server { orig_dst_cid } => {
                 let config = self.server_config.as_ref().unwrap();
-                let params = TransportParameters::new(&config.transport, Some(config));
+                let params =
+                    TransportParameters::new(&config.transport, &self.config, Some(config));
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&*self.config.reset_key, &loc_cid)),
                     original_connection_id: orig_dst_cid,

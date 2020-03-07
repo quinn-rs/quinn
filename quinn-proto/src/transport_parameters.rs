@@ -17,7 +17,7 @@ use err_derive::Error;
 use crate::{
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     crypto,
-    shared::{ConnectionId, ResetToken, ServerConfig},
+    shared::{ConnectionId, EndpointConfig, ResetToken, ServerConfig},
     Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT, RESET_TOKEN_SIZE,
 };
 
@@ -55,7 +55,7 @@ macro_rules! apply_params {
             /// acknowledgments
             max_ack_delay(0x000b) = 25,
             /// Maximum number of connection IDs from the peer that an endpoint is willing to store
-            active_connection_id_limit(0x000e) = 0,
+            active_connection_id_limit(0x000e) = 2,
         }
     };
 }
@@ -102,7 +102,11 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub(crate) fn new<S>(config: &TransportConfig, server_config: Option<&ServerConfig<S>>) -> Self
+    pub(crate) fn new<S>(
+        config: &TransportConfig,
+        endpoint_config: &EndpointConfig<S>,
+        server_config: Option<&ServerConfig<S>>,
+    ) -> Self
     where
         S: crypto::Session,
     {
@@ -120,7 +124,11 @@ impl TransportParameters {
             }),
             max_ack_delay: 0,
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
-            active_connection_id_limit: REM_CID_COUNT,
+            active_connection_id_limit: if endpoint_config.local_cid_len == 0 {
+                2 // i.e. default, i.e. unsent
+            } else {
+                REM_CID_COUNT
+            },
             max_datagram_frame_size: config
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
@@ -372,6 +380,7 @@ impl TransportParameters {
         // Semantic validation
         if params.ack_delay_exponent > 20
             || params.max_ack_delay >= 1 << 14
+            || params.active_connection_id_limit < 2
             || (side.is_server()
                 && (params.original_connection_id.is_some()
                     || params.stateless_reset_token.is_some()
