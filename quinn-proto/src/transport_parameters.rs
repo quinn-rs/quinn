@@ -241,15 +241,13 @@ impl From<UnexpectedEnd> for Error {
 impl TransportParameters {
     /// Encode `TransportParameters` into buffer
     pub fn write<W: BufMut>(&self, w: &mut W) {
-        let mut buf = Vec::new();
-
         macro_rules! write_params {
             {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
                 $(
                     if self.$name != $default {
-                        buf.write::<u16>($code);
-                        buf.write::<u16>(VarInt::from_u64(self.$name).expect("value too large").size() as u16);
-                        buf.write_var(self.$name);
+                        w.write_var($code);
+                        w.write_var(VarInt::from_u64(self.$name).expect("value too large").size() as u64);
+                        w.write_var(self.$name);
                     }
                 )*
             }
@@ -257,51 +255,43 @@ impl TransportParameters {
         apply_params!(write_params);
 
         // Add a reserved parameter to keep people on their toes
-        buf.write::<u16>(31 * 5 + 27);
-        buf.write::<u16>(0);
+        w.write_var(31 * 5 + 27);
+        w.write_var(0);
 
         if let Some(ref x) = self.original_connection_id {
-            buf.write::<u16>(0x0000);
-            buf.write::<u16>(x.len() as u16);
-            buf.put_slice(x);
+            w.write_var(0x00);
+            w.write_var(x.len() as u64);
+            w.put_slice(x);
         }
 
         if let Some(ref x) = self.stateless_reset_token {
-            buf.write::<u16>(0x0002);
-            buf.write::<u16>(16);
-            buf.put_slice(x);
+            w.write_var(0x02);
+            w.write_var(16);
+            w.put_slice(x);
         }
 
         if self.disable_active_migration {
-            buf.write::<u16>(0x000c);
-            buf.write::<u16>(0);
+            w.write_var(0x0c);
+            w.write_var(0);
         }
 
         if let Some(x) = self.max_datagram_frame_size {
-            buf.write::<u16>(0x0020);
-            buf.write::<u16>(x.size() as u16);
-            buf.write(x);
+            w.write_var(0x20);
+            w.write_var(x.size() as u64);
+            w.write(x);
         }
 
         if let Some(ref x) = self.preferred_address {
-            buf.write::<u16>(0x000d);
-            buf.write::<u16>(x.wire_size());
-            x.write(&mut buf);
+            w.write_var(0x000d);
+            w.write_var(x.wire_size() as u64);
+            x.write(w);
         }
-
-        w.write::<u16>(buf.len() as u16);
-        w.put_slice(&buf);
     }
 
     /// Decode `TransportParameters` from buffer
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
         // Initialize to protocol-specified defaults
         let mut params = TransportParameters::default();
-
-        let params_len = r.get::<u16>()?;
-        if params_len as usize != r.remaining() {
-            return Err(Error::Malformed);
-        }
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {
@@ -318,18 +308,15 @@ impl TransportParameters {
         let mut got = apply_params!(param_state);
 
         while r.has_remaining() {
-            if r.remaining() < 4 {
-                return Err(Error::Malformed);
-            }
-            let id = r.get::<u16>().unwrap();
-            let len = r.get::<u16>().unwrap();
-            if r.remaining() < len as usize {
+            let id = r.get_var()?;
+            let len = r.get_var()?;
+            if (r.remaining() as u64) < len {
                 return Err(Error::Malformed);
             }
 
             match id {
-                0x0000 => {
-                    if len > MAX_CID_SIZE as u16 || params.original_connection_id.is_some() {
+                0x00 => {
+                    if len > MAX_CID_SIZE as u64 || params.original_connection_id.is_some() {
                         return Err(Error::Malformed);
                     }
                     let mut staging = [0; MAX_CID_SIZE];
@@ -337,7 +324,7 @@ impl TransportParameters {
                     params.original_connection_id =
                         Some(ConnectionId::new(&staging[0..len as usize]));
                 }
-                0x0002 => {
+                0x02 => {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -345,20 +332,20 @@ impl TransportParameters {
                     r.copy_to_slice(&mut tok);
                     params.stateless_reset_token = Some(tok.into());
                 }
-                0x000c => {
+                0x0c => {
                     if len != 0 || params.disable_active_migration {
                         return Err(Error::Malformed);
                     }
                     params.disable_active_migration = true;
                 }
-                0x000d => {
+                0x0d => {
                     if params.preferred_address.is_some() {
                         return Err(Error::Malformed);
                     }
                     params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
                 }
-                0x0020 => {
+                0x20 => {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -370,7 +357,7 @@ impl TransportParameters {
                             match id {
                                 $($code => {
                                     params.$name = r.get_var()?;
-                                    if len != VarInt::from_u64(params.$name).unwrap().size() as u16 || got.$name { return Err(Error::Malformed); }
+                                    if len != VarInt::from_u64(params.$name).unwrap().size() as u64 || got.$name { return Err(Error::Malformed); }
                                     got.$name = true;
                                 })*
                                 _ => r.advance(len as usize),
