@@ -1,3 +1,4 @@
+#![cfg(feature = "rustls")]
 //! Commonly used code in most examples.
 
 use quinn::{

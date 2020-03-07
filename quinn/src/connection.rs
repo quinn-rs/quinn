@@ -144,12 +144,15 @@ impl Future for ZeroRttAccepted {
 /// variable and into a temporary, ensuring all unused fields are dropped at the end of the
 /// statement:
 ///
-/// ```rust
-/// # use quinn::NewConnection;
-/// # fn dummy(new_connection: NewConnection) {
-/// let NewConnection { connection, .. } = { new_connection };
-/// # }
-/// ```
+#[cfg_attr(
+    feature = "rustls",
+    doc = "```rust
+# use quinn::NewConnection;
+# fn dummy(new_connection: NewConnection) {
+let NewConnection { connection, .. } = { new_connection };
+# }
+```"
+)]
 ///
 /// You can also explicitly invoke `Connection::close` at any time.
 #[derive(Debug)]

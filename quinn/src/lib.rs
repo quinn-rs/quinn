@@ -8,14 +8,17 @@
 //!
 //! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
 //!
-//! ```no_run
-//! # use futures::TryFutureExt;
-//! let mut builder = quinn::Endpoint::builder();
-//! // ... configure builder ...
-//! // Ensure you're inside a tokio runtime context
-//! let (endpoint, _) = builder.bind(&"[::]:0".parse().unwrap()).unwrap();
-//! // ... use endpoint ...
-//! ```
+#![cfg_attr(
+    feature = "rustls",
+    doc = "```no_run
+# use futures::TryFutureExt;
+let mut builder = quinn::Endpoint::builder();
+// ... configure builder ...
+// Ensure you're inside a tokio runtime context
+let (endpoint, _) = builder.bind(&\"[::]:0\".parse().unwrap()).unwrap();
+// ... use endpoint ...
+```"
+)]
 //! # About QUIC
 //!
 //! A QUIC connection is an association between two endpoints. The endpoint which initiates the
@@ -76,6 +79,7 @@ pub mod generic {
     pub use proto::generic::{ClientConfig, ServerConfig};
 }
 
+#[cfg(feature = "rustls")]
 mod rustls_impls {
     use crate::generic;
     use proto::crypto::rustls::TlsSession;
@@ -126,6 +130,7 @@ mod rustls_impls {
     pub type SendStream = generic::SendStream<TlsSession>;
 }
 
+#[cfg(feature = "rustls")]
 pub use rustls_impls::*;
 
 #[cfg(test)]
