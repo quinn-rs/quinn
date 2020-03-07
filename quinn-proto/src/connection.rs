@@ -1229,6 +1229,12 @@ where
             remote,
             packet.header.dst_cid(),
         );
+
+        if self.is_handshaking() && remote != self.path.remote {
+            debug!("discarding packet with unexpected remote during handshake");
+            return;
+        }
+
         let was_closed = self.state.is_closed();
         let was_drained = self.state.is_drained();
         let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
