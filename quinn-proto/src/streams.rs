@@ -21,6 +21,8 @@ pub(crate) struct Streams {
     pub next_remote: [u64; 2],
     // Next to report to the application, once opened
     next_reported_remote: [u64; 2],
+    // Outbound streams
+    send_streams: usize,
 }
 
 impl Streams {
@@ -33,6 +35,7 @@ impl Streams {
             max_remote: [max_remote_bi, max_remote_uni],
             next_remote: [0, 0],
             next_reported_remote: [0, 0],
+            send_streams: 0,
         };
 
         for dir in Dir::iter() {
@@ -52,7 +55,12 @@ impl Streams {
         self.next[dir as usize] += 1;
         let id = StreamId::new(side, dir, self.next[dir as usize] - 1);
         self.insert(false, id);
+        self.send_streams += 1;
         Some(id)
+    }
+
+    pub fn send_streams(&self) -> usize {
+        self.send_streams
     }
 
     pub fn alloc_remote_stream(&mut self, side: Side, dir: Dir) {
@@ -67,6 +75,9 @@ impl Streams {
         }
         let x = self.next_reported_remote[dir as usize];
         self.next_reported_remote[dir as usize] = x + 1;
+        if dir == Dir::Bi {
+            self.send_streams += 1;
+        }
         Some(StreamId::new(!side, dir, x))
     }
 
@@ -162,6 +173,7 @@ impl Streams {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
                 if e.get().is_closed() {
+                    self.send_streams -= 1;
                     e.remove_entry();
                 }
             }
