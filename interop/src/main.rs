@@ -380,6 +380,8 @@ impl State {
 
         self.endpoint.wait_idle().await;
 
+        result.close = true;
+
         Ok(result)
     }
 
