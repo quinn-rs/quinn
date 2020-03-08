@@ -121,7 +121,7 @@ fn try_take<T>(item: &mut Option<T>, msg: &'static str) -> Result<T, Error> {
 }
 
 /// TLS ALPN value for H3
-pub const ALPN: &[u8] = b"h3-24";
+pub const ALPN: &[u8] = b"h3-27";
 
 impl From<frame::Error> for (ErrorCode, String, Error) {
     fn from(err: frame::Error) -> Self {

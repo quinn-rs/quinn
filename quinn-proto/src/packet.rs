@@ -852,8 +852,8 @@ mod tests {
         assert_eq!(
             buf[..],
             hex!(
-                "cbff0000180806b858ec6f80452b0000402101
-                 540018670adb60eab8efbd35425c2d9ba98d99ac084c8d8f48436337b6013e9f"
+                "cbff00001b0806b858ec6f80452b000040211c
+                 540018670adb60eab8efbd35425c2d9be03a2f8977ddb70dc95b3cd59a0f5219"
             )[..]
         );
 
@@ -863,7 +863,7 @@ mod tests {
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
         assert_eq!(
             packet.header_data[..],
-            hex!("c0ff0000180806b858ec6f80452b0000402100")[..]
+            hex!("c0ff00001b0806b858ec6f80452b0000402100")[..]
         );
         server_crypto
             .decrypt(0, &packet.header_data, &mut packet.payload)
