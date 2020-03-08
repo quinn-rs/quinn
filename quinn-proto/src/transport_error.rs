@@ -118,7 +118,7 @@ errors! {
     FLOW_CONTROL_ERROR(0x3) "received more data than permitted in advertised data limits";
     STREAM_LIMIT_ERROR(0x4) "received a frame for a stream identifier that exceeded advertised the stream limit for the corresponding stream type";
     STREAM_STATE_ERROR(0x5) "received a frame for a stream that was not in a state that permitted that frame";
-    FINAL_OFFSET_ERROR(0x6) "received a STREAM frame containing data that exceeded the previously established final offset, or a RST_STREAM frame containing a final offset that was lower than the maximum offset of data that was already received, or a RST_STREAM frame containing a different final offset to the one already established";
+    FINAL_SIZE_ERROR(0x6) "received a STREAM frame or a RESET_STREAM frame containing a different final size to the one already established";
     FRAME_ENCODING_ERROR(0x7) "received a frame that was badly formatted";
     TRANSPORT_PARAMETER_ERROR(0x8) "received transport parameters that were badly formatted, included an invalid value, was absent even though it is mandatory, was present though it is forbidden, or is otherwise in error";
     CONNECTION_ID_LIMIT_ERROR(0x9) "the number of connection IDs provided by the peer exceeds the advertised active_connection_id_limit";

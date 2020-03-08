@@ -328,8 +328,8 @@ impl Recv {
 
         if let Some(final_offset) = self.final_offset() {
             if end > final_offset || (frame.fin && end != final_offset) {
-                debug!(end, final_offset, "final offset error");
-                return Err(TransportError::FINAL_OFFSET_ERROR(""));
+                debug!(end, final_offset, "final size error");
+                return Err(TransportError::FINAL_SIZE_ERROR(""));
             }
         }
 

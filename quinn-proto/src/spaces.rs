@@ -177,7 +177,7 @@ pub struct Retransmits {
     pub(crate) max_uni_stream_id: bool,
     pub(crate) max_bi_stream_id: bool,
     pub(crate) stream: VecDeque<frame::Stream>,
-    pub(crate) rst_stream: Vec<(StreamId, VarInt)>,
+    pub(crate) reset_stream: Vec<(StreamId, VarInt)>,
     pub(crate) stop_sending: Vec<frame::StopSending>,
     pub(crate) max_stream_data: HashSet<StreamId>,
     pub(crate) crypto: VecDeque<frame::Crypto>,
@@ -192,7 +192,7 @@ impl Retransmits {
             && !self.max_uni_stream_id
             && !self.max_bi_stream_id
             && self.stream.is_empty()
-            && self.rst_stream.is_empty()
+            && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
             && self.max_stream_data.is_empty()
             && self.crypto.is_empty()
@@ -209,7 +209,7 @@ impl Default for Retransmits {
             max_uni_stream_id: false,
             max_bi_stream_id: false,
             stream: VecDeque::new(),
-            rst_stream: Vec::new(),
+            reset_stream: Vec::new(),
             stop_sending: Vec::new(),
             max_stream_data: HashSet::new(),
             crypto: VecDeque::new(),
@@ -230,7 +230,7 @@ impl ::std::ops::AddAssign for Retransmits {
         for stream in rhs.stream.into_iter().rev() {
             self.stream.push_front(stream);
         }
-        self.rst_stream.extend_from_slice(&rhs.rst_stream);
+        self.reset_stream.extend_from_slice(&rhs.reset_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);
         for crypto in rhs.crypto.into_iter().rev() {

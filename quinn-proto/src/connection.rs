@@ -476,7 +476,7 @@ where
         }
 
         // Update state for confirmed delivery of frames
-        for (id, _) in info.retransmits.rst_stream {
+        for (id, _) in info.retransmits.reset_stream {
             let ss = match self.streams.send_mut(id) {
                 Some(ss) => ss,
                 None => {
@@ -930,7 +930,7 @@ where
 
         self.spaces[SpaceId::Data as usize]
             .pending
-            .rst_stream
+            .reset_stream
             .push((stream_id, error_code));
     }
 
@@ -1807,11 +1807,11 @@ where
                 }) => {
                     let rs = match self.streams.recv_stream(self.side, id) {
                         Err(e) => {
-                            debug!("received illegal RST_STREAM");
+                            debug!("received illegal RESET_STREAM");
                             return Err(e);
                         }
                         Ok(None) => {
-                            trace!("received RST_STREAM on closed stream");
+                            trace!("received RESET_STREAM on closed stream");
                             continue;
                         }
                         Ok(Some(stream)) => stream,
@@ -1821,10 +1821,10 @@ where
                     // Validate final_offset
                     if let Some(offset) = rs.final_offset() {
                         if offset != final_offset {
-                            return Err(TransportError::FINAL_OFFSET_ERROR("inconsistent value"));
+                            return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
                         }
                     } else if limit > final_offset {
-                        return Err(TransportError::FINAL_OFFSET_ERROR(
+                        return Err(TransportError::FINAL_SIZE_ERROR(
                             "lower than high water mark",
                         ));
                     }
@@ -2455,7 +2455,7 @@ where
 
         // RESET_STREAM
         while buf.len() + frame::ResetStream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let (id, error_code) = match space.pending.rst_stream.pop() {
+            let (id, error_code) = match space.pending.reset_stream.pop() {
                 Some(x) => x,
                 None => break,
             };
@@ -2464,7 +2464,7 @@ where
                 None => continue,
             };
             trace!(stream = %id, "RESET_STREAM");
-            sent.rst_stream.push((id, error_code));
+            sent.reset_stream.push((id, error_code));
             frame::ResetStream {
                 id,
                 error_code,
