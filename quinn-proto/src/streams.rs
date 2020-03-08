@@ -289,12 +289,12 @@ pub enum WriteError {
     /// [`StreamWritable`]: crate::Event::StreamWritable
     #[error(display = "unable to accept further writes")]
     Blocked,
-    /// The peer is no longer accepting data on this stream. No [`StreamFinished`] event will be
-    /// emitted for this stream.
+    /// The peer is no longer accepting data on this stream. It isn’t useful to call [`finish`] on
+    /// this stream.
     ///
     /// Carries an application-defined error code.
     ///
-    /// [`StreamFinished`]: crate::Event::StreamFinished
+    /// [`finish`]: crate::generic::Connection::finish
     #[error(display = "stopped by peer: code {}", 0)]
     Stopped(VarInt),
     /// Unknown stream

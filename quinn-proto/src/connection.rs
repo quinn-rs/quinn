@@ -2640,8 +2640,8 @@ where
     /// [`Connection::finish`] on outstanding streams and waiting for the corresponding
     /// [`StreamFinished`] event.
     ///
-    /// If [`Connection::send_streams`] returns 0, all outstanding data has been delivered. There
-    /// may still be data from the peer that has not been received.
+    /// If [`Connection::send_streams`] returns 0, all outstanding stream data has been delivered.
+    /// There may still be data from the peer that has not been received.
     ///
     /// [`StreamFinished`]: Event::StreamFinished
     pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
@@ -2754,6 +2754,8 @@ where
     }
 
     /// The number of streams that may have unacknowledged data.
+    ///
+    /// If this returns 0, all stream data has been delivered.
     pub fn send_streams(&self) -> usize {
         self.streams.send_streams()
     }
