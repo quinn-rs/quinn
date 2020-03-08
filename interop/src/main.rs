@@ -46,8 +46,8 @@ impl From<&Alpn> for Vec<Vec<u8>> {
     fn from(alpn: &Alpn) -> Vec<Vec<u8>> {
         match alpn {
             Alpn::H3 => vec![quinn_h3::ALPN.into()],
-            Alpn::Hq => vec![b"hq-24"[..].into()],
-            Alpn::HqH3 => vec![b"hq-24"[..].into(), quinn_h3::ALPN.into()],
+            Alpn::Hq => vec![b"hq-27"[..].into()],
+            Alpn::HqH3 => vec![b"hq-27"[..].into(), quinn_h3::ALPN.into()],
         }
     }
 }
