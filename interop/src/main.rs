@@ -414,7 +414,7 @@ impl State {
 
         let new_conn = self
             .endpoint
-            .connect(&self.remote, &self.host)?
+            .connect(&remote, &self.host)?
             .await
             .map_err(|e| anyhow!("failed to connect: {}", e))?;
         let stream = new_conn
@@ -553,7 +553,7 @@ impl State {
             .h3_client
             .as_ref()
             .unwrap()
-            .connect(&self.remote, &self.host)?
+            .connect(&remote, &self.host)?
             .await
             .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
         h3_get(&conn, &self.peer.uri("/"))
