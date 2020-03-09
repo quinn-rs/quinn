@@ -66,12 +66,12 @@ where
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
+        if let Some(ref x) = conn.error {
+            return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
+        }
         let n = match conn.inner.write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
-                }
                 conn.blocked_writers.insert(self.stream, cx.waker().clone());
                 return Poll::Pending;
             }
