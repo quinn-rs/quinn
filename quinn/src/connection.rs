@@ -11,6 +11,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
@@ -22,7 +23,7 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     streams::{RecvStream, SendStream, WriteError},
-    ConnectionEvent, EndpointEvent, SendDatagramError, VarInt,
+    ConnectionEvent, EndpointEvent, VarInt,
 };
 
 /// In-progress connection attempt future
@@ -304,9 +305,21 @@ where
     /// dictated by the peer.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.lock().unwrap();
-        let result = conn.inner.send_datagram(data);
-        conn.wake();
-        result
+        if let Some(ref x) = conn.error {
+            return Err(SendDatagramError::ConnectionClosed(x.clone()));
+        }
+        use proto::SendDatagramError::*;
+        match conn.inner.send_datagram(data) {
+            Ok(()) => {
+                conn.wake();
+                Ok(())
+            }
+            Err(e) => Err(match e {
+                UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
+                Disabled => SendDatagramError::Disabled,
+                TooLarge => SendDatagramError::TooLarge,
+            }),
+        }
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
@@ -831,4 +844,24 @@ where
             .field("inner", &self.inner)
             .finish()
     }
+}
+
+/// Errors that can arise when sending a datagram
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum SendDatagramError {
+    /// The peer does not support receiving datagram frames
+    #[error(display = "datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error(display = "datagram support disabled")]
+    Disabled,
+    /// The datagram is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+    /// exceeded.
+    #[error(display = "datagram too large")]
+    TooLarge,
+    /// The connection was closed
+    #[error(display = "connection closed: {}", _0)]
+    ConnectionClosed(ConnectionError),
 }
