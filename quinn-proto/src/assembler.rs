@@ -86,12 +86,17 @@ impl Assembler {
         let new = BinaryHeap::with_capacity(self.data.len());
         let old = mem::replace(&mut self.data, new);
         for chunk in old.into_sorted_vec().into_iter().rev() {
-            if offset + (buffer.len() as u64) < chunk.offset {
+            let end = offset + (buffer.len() as u64);
+            if let Some(overlap) = end.checked_sub(chunk.offset) {
+                if let Some(bytes) = chunk.bytes.get(overlap as usize..) {
+                    buffer.extend_from_slice(bytes);
+                }
+            } else {
                 let bytes = buffer.split().freeze();
                 self.data.push(Chunk { offset, bytes });
                 offset = chunk.offset;
+                buffer.extend_from_slice(&chunk.bytes);
             }
-            buffer.extend_from_slice(&chunk.bytes);
         }
 
         let bytes = buffer.split().freeze();
@@ -211,10 +216,30 @@ mod test {
     }
 
     #[test]
+    fn assemble_duplicate_compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"123"));
+        x.insert(0, Bytes::from_static(b"123"));
+        x.defragment();
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
     fn assemble_contained() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"12345"));
         x.insert(1, Bytes::from_static(b"234"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
+    fn assemble_contained_compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"12345"));
+        x.insert(1, Bytes::from_static(b"234"));
+        x.defragment();
         assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
         assert_matches!(x.next(32), None);
     }
@@ -229,10 +254,30 @@ mod test {
     }
 
     #[test]
+    fn assemble_contains_compact() {
+        let mut x = Assembler::new();
+        x.insert(1, Bytes::from_static(b"234"));
+        x.insert(0, Bytes::from_static(b"12345"));
+        x.defragment();
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
     fn assemble_overlapping() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"123"));
         x.insert(1, Bytes::from_static(b"234"));
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
+    fn assemble_overlapping_compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"123"));
+        x.insert(1, Bytes::from_static(b"234"));
+        x.defragment();
         assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
         assert_matches!(x.next(32), None);
     }
@@ -249,11 +294,34 @@ mod test {
     }
 
     #[test]
+    fn assemble_complex_compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"1"));
+        x.insert(2, Bytes::from_static(b"3"));
+        x.insert(4, Bytes::from_static(b"5"));
+        x.insert(0, Bytes::from_static(b"123456"));
+        x.defragment();
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
     fn assemble_old() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"1234"));
         assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
         x.insert(0, Bytes::from_static(b"1234"));
+        assert_matches!(x.next(32), None);
+    }
+
+    #[test]
+    fn assemble_old_compact() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"1234"));
+        x.defragment();
+        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        x.insert(0, Bytes::from_static(b"1234"));
+        x.defragment();
         assert_matches!(x.next(32), None);
     }
 
