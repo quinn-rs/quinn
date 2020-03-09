@@ -60,11 +60,11 @@ mod udp;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,
-    ConnectionError, ParseError, PrivateKey, SendDatagramError, Transmit, TransportConfig, VarInt,
+    ConnectionError, ParseError, PrivateKey, Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::EndpointError;
-pub use crate::connection::ZeroRttAccepted;
+pub use crate::connection::{SendDatagramError, ZeroRttAccepted};
 pub use crate::streams::{ReadError, ReadExactError, ReadToEndError, WriteError};
 
 /// Types that are generic over the crypto protocol implementation
