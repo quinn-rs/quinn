@@ -1649,6 +1649,7 @@ where
     ) -> Result<(), TransportError> {
         let is_0rtt = self.space(SpaceId::Data).crypto.is_none();
         let mut is_probing_packet = true;
+        let mut close = None;
         for frame in frame::Iter::new(payload) {
             let span = match frame {
                 Frame::Padding => None,
@@ -1725,10 +1726,7 @@ where
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
-                    self.events.push_back(ConnectionError::from(reason).into());
-                    self.state = State::Draining;
-                    self.close = true;
-                    return Ok(());
+                    close = Some(reason);
                 }
                 Frame::PathChallenge(token) => {
                     if self
@@ -2001,6 +1999,12 @@ where
                     }
                 }
             }
+        }
+
+        if let Some(reason) = close {
+            self.events.push_back(ConnectionError::from(reason).into());
+            self.state = State::Draining;
+            self.close = true;
         }
 
         if remote != self.path.remote
