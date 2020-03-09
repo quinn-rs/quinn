@@ -100,9 +100,6 @@ where
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
-        if let Some(ref x) = conn.error {
-            return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
-        }
         if self.finishing.is_none() {
             conn.inner.finish(self.stream).map_err(|e| match e {
                 proto::FinishError::UnknownStream => WriteError::UnknownStream,
@@ -113,10 +110,26 @@ where
             conn.finishing.insert(self.stream, send);
             conn.wake();
         }
-        let r = ready!(self.finishing.as_mut().unwrap().poll_unpin(cx)).unwrap();
-        match r {
-            None => Poll::Ready(Ok(())),
-            Some(e) => Poll::Ready(Err(e)),
+        match self
+            .finishing
+            .as_mut()
+            .unwrap()
+            .poll_unpin(cx)
+            .map(|x| x.unwrap())
+        {
+            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Ready(Some(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => {
+                // To ensure that finished streams can be detected even after the connection is
+                // closed, we must only check for connection errors after determining that the
+                // stream has not yet been finished. Note that this relies on holding the connection
+                // lock so that it is impossible for the stream to become finished between the above
+                // poll call and this check.
+                if let Some(ref x) = conn.error {
+                    return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
+                }
+                Poll::Pending
+            }
         }
     }
 
