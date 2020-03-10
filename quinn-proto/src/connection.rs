@@ -1924,7 +1924,8 @@ where
                         }
                     }
 
-                    if self.rem_cids.len() as u64 == REM_CID_COUNT {
+                    // Number of active connection IDs is the number saved + the one in use
+                    if self.rem_cids.len() as u64 + 1 == REM_CID_COUNT {
                         return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
                     }
 
