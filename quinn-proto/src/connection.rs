@@ -1917,14 +1917,15 @@ where
                             "NEW_CONNECTION_ID retiring unissued CIDs",
                         ));
                     }
-                    if self.rem_cids.len() as u64 == REM_CID_COUNT {
-                        return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
-                    }
 
                     if frame.retire_prior_to > self.first_unretired_cid {
                         self.first_unretired_cid = frame.retire_prior_to;
                         self.rem_cids
                             .retain(|x| x.sequence >= frame.retire_prior_to);
+                    }
+
+                    if self.rem_cids.len() as u64 == REM_CID_COUNT {
+                        return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
                     }
 
                     if frame.sequence < self.first_unretired_cid {
