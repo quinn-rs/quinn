@@ -52,6 +52,14 @@ impl CertificateChain {
     pub fn from_certs(certs: impl IntoIterator<Item = Certificate>) -> Self {
         certs.into_iter().collect()
     }
+
+    /// Iterate over the certificates
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = Certificate> + 'a {
+        self.certs
+            .iter()
+            .cloned()
+            .map(|cert| Certificate { inner: cert })
+    }
 }
 
 impl std::iter::FromIterator<Certificate> for CertificateChain {
