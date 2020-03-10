@@ -1480,7 +1480,7 @@ where
                             }
                             self.validate_params(&params)?;
                             self.set_params(params);
-                            if params.active_connection_id_limit != 0 {
+                            if self.endpoint_config.local_cid_len != 0 {
                                 self.endpoint_events.push_back(
                                     EndpointEventInner::NeedIdentifiers(
                                         params.active_connection_id_limit,
@@ -1533,7 +1533,7 @@ where
                                     })?;
                             self.validate_params(&params)?;
                             self.set_params(params);
-                            if params.active_connection_id_limit != 0 {
+                            if self.endpoint_config.local_cid_len != 0 {
                                 self.endpoint_events.push_back(
                                     EndpointEventInner::NeedIdentifiers(
                                         params.active_connection_id_limit,
