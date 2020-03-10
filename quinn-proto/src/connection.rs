@@ -1147,7 +1147,6 @@ where
             }
             NewIdentifiers(ids) => {
                 ids.into_iter().for_each(|frame| {
-                    self.cids_issued += 1;
                     self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
                 });
             }
@@ -1481,11 +1480,7 @@ where
                             self.validate_params(&params)?;
                             self.set_params(params);
                             if self.endpoint_config.local_cid_len != 0 {
-                                self.endpoint_events.push_back(
-                                    EndpointEventInner::NeedIdentifiers(
-                                        params.active_connection_id_limit,
-                                    ),
-                                );
+                                self.issue_cids(params.active_connection_id_limit);
                             }
                         } else {
                             // Server-only
@@ -1534,11 +1529,7 @@ where
                             self.validate_params(&params)?;
                             self.set_params(params);
                             if self.endpoint_config.local_cid_len != 0 {
-                                self.endpoint_events.push_back(
-                                    EndpointEventInner::NeedIdentifiers(
-                                        params.active_connection_id_limit,
-                                    ),
-                                );
+                                self.issue_cids(params.active_connection_id_limit);
                             }
                             self.init_0rtt();
                         }
@@ -2110,6 +2101,12 @@ where
         self.params.stateless_reset_token = Some(new.reset_token);
         // Reduce linkability
         self.spin = false;
+    }
+
+    fn issue_cids(&mut self, n: u64) {
+        self.endpoint_events
+            .push_back(EndpointEventInner::NeedIdentifiers(n));
+        self.cids_issued += n;
     }
 
     /// Returns packets to transmit
