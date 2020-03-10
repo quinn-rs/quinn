@@ -679,7 +679,7 @@ where
         while let Some(event) = self.inner.poll() {
             use proto::Event::*;
             match event {
-                Connected { .. } => {
+                Connected => {
                     self.connected = true;
                     if let Some(x) = self.on_connected.take() {
                         // We don't care if the on-connected future was dropped
