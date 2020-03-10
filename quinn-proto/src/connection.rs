@@ -1911,8 +1911,17 @@ where
 
                     if frame.retire_prior_to > self.first_unretired_cid {
                         self.first_unretired_cid = frame.retire_prior_to;
-                        self.rem_cids
-                            .retain(|x| x.sequence >= frame.retire_prior_to);
+                        // TODO: Replace with drain_filter once
+                        // https://github.com/rust-lang/rust/issues/43244 lands
+                        for i in (0..self.rem_cids.len()).rev() {
+                            if self.rem_cids[i].sequence < frame.retire_prior_to {
+                                let retired = self.rem_cids.swap_remove(i);
+                                self.space_mut(SpaceId::Data)
+                                    .pending
+                                    .retire_cids
+                                    .push(retired.sequence);
+                            }
+                        }
                     }
 
                     if self.rem_cids.len() as u64 == REM_CID_COUNT {
