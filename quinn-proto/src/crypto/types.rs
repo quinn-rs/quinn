@@ -85,6 +85,15 @@ impl IntoIterator for CertificateChain {
     }
 }
 
+impl<'a> IntoIterator for &'a CertificateChain {
+    type Item = &'a rustls::Certificate;
+    type IntoIter = std::slice::Iter<'a, rustls::Certificate>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.certs.iter()
+    }
+}
+
 /// The private key of a TLS certificate to be used by a server
 #[derive(Debug, Clone)]
 pub struct PrivateKey {
