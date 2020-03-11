@@ -90,6 +90,9 @@ impl TransportConfig {
     ///
     /// The true idle timeout is the minimum of this and the peer's own max idle timeout. `None`
     /// represents an infinite timeout.
+    ///
+    /// **WARNING**: If a peer or its network path malfunctions or acts maliciously, an infinite
+    /// idle timeout can result in permanently hung futures!
     pub fn max_idle_timeout(&mut self, value: Option<Duration>) -> Result<&mut Self, ConfigError> {
         if value.map_or(false, |x| x.as_millis() > VarInt::MAX.0 as u128) {
             return Err(ConfigError::OutOfBounds);
