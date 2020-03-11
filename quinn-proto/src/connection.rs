@@ -1157,7 +1157,7 @@ where
                 }
             }
             NewIdentifiers(ids) => {
-                ids.into_iter().for_each(|frame| {
+                ids.into_iter().rev().for_each(|frame| {
                     self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
                 });
             }
