@@ -1261,19 +1261,13 @@ where
                     None => trace_span!("recv", space = ?packet.header.space()),
                 };
                 let _guard = span.enter();
-                let duplicate = number.and_then(|n| {
-                    if self.space_mut(packet.header.space()).dedup.insert(n) {
-                        Some(n)
-                    } else {
-                        None
-                    }
-                });
 
-                if let Some(number) = duplicate {
+                let is_duplicate = |n| self.space_mut(packet.header.space()).dedup.insert(n);
+                if number.map_or(false, is_duplicate) {
                     if stateless_reset {
                         Err(ConnectionError::Reset)
                     } else {
-                        warn!("discarding possible duplicate packet {}", number);
+                        warn!("discarding possible duplicate packet");
                         return;
                     }
                 } else if self.state.is_handshake() && packet.header.is_short() {
