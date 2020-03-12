@@ -45,7 +45,7 @@ criterion = "0.3"
 directories = "2.0.1"
 proptest = "0.9.1"
 rand = "0.7.0"
-rcgen = "0.7"
+rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["io-util", "macros", "rt-threaded", "time"] }
 tracing-subscriber = "0.2.1"
