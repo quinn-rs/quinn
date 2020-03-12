@@ -52,6 +52,11 @@ impl CertificateChain {
     pub fn from_certs(certs: impl IntoIterator<Item = Certificate>) -> Self {
         certs.into_iter().collect()
     }
+
+    /// An iterator over the certificates in the chain
+    pub fn iter(&self) -> impl Iterator<Item = &rustls::Certificate> {
+        self.certs.iter()
+    }
 }
 
 impl std::iter::FromIterator<Certificate> for CertificateChain {
@@ -68,6 +73,24 @@ impl std::iter::FromIterator<Certificate> for CertificateChain {
 impl From<Vec<rustls::Certificate>> for CertificateChain {
     fn from(certs: Vec<rustls::Certificate>) -> Self {
         Self { certs }
+    }
+}
+
+impl IntoIterator for CertificateChain {
+    type Item = rustls::Certificate;
+    type IntoIter = std::vec::IntoIter<rustls::Certificate>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.certs.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a CertificateChain {
+    type Item = &'a rustls::Certificate;
+    type IntoIter = std::slice::Iter<'a, rustls::Certificate>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.certs.iter()
     }
 }
 
