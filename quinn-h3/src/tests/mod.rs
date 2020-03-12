@@ -1,3 +1,4 @@
+#![cfg_attr(tarpaulin, skip)]
 use std::time::Duration;
 
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
