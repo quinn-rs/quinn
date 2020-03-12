@@ -1,16 +1,15 @@
-use std::{cmp, fs, net::SocketAddr, path::PathBuf};
+use std::{ascii, cmp, fs, net::SocketAddr, path::PathBuf, str};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
+use futures::{AsyncReadExt, AsyncWriteExt, StreamExt, TryFutureExt};
 use http::{Response, StatusCode};
 use structopt::{self, StructOpt};
-use tracing::error;
+use tracing::{error, info, info_span};
+use tracing_futures::Instrument as _;
 
-use quinn_h3::{
-    self,
-    server::{Builder as ServerBuilder, Connecting, RecvRequest},
-};
+use quinn::SendStream;
+use quinn_h3::{self, server::RecvRequest};
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_server")]
@@ -55,18 +54,29 @@ async fn main() -> Result<()> {
     let cert_chain =
         quinn::CertificateChain::from_certs(vec![quinn::Certificate::from_der(&cert_chain)?]);
 
-    let mut server = ServerBuilder::default();
-    server
-        .certificate(cert_chain, key)
-        .expect("failed to add cert");
+    let mut server_config = quinn::ServerConfigBuilder::default();
+    server_config.certificate(cert_chain, key)?;
+    server_config.protocols(&[quinn_h3::ALPN, b"hq-27"]);
+    let mut endpoint_builder = quinn::Endpoint::builder();
+    endpoint_builder.listen(server_config.build());
 
-    let (_, mut incoming) = server.build().expect("bind failed");
+    let listen = "[::]:4433".parse()?;
+    let (_, mut incoming) = endpoint_builder.bind(&listen)?;
 
     println!("server listening");
     while let Some(connecting) = incoming.next().await {
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(connecting).await {
-                error!("handling connection failed: {:?}", e)
+            let protos = connecting.authentication_data().protocol.unwrap();
+            println!("server received connection");
+
+            if protos == b"h3-27" {
+                if let Err(e) = h3_handle_connection(connecting).await {
+                    error!("handling connection failed: {:?}", e)
+                }
+            } else if protos == b"hq-27" {
+                if let Err(e) = hq_handle_connection(connecting).await {
+                    error!("handling connection failed: {:?}", e)
+                }
             }
         });
     }
@@ -74,14 +84,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(connecting: Connecting) -> Result<()> {
-    println!("server received connection");
+async fn h3_handle_connection(connecting: quinn::Connecting) -> Result<()> {
+    let connecting = quinn_h3::server::Connecting::from(connecting);
     let mut incoming = connecting.await.context("accept failed")?;
-
     tokio::spawn(async move {
         while let Some(request) = incoming.next().await {
             tokio::spawn(async move {
-                if let Err(e) = handle_request(request).await {
+                if let Err(e) = h3_handle_request(request).await {
                     eprintln!("request error: {}", e)
                 }
             });
@@ -91,7 +100,7 @@ async fn handle_connection(connecting: Connecting) -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(recv_request: RecvRequest) -> Result<()> {
+async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
     let (request, mut recv_body, sender) = recv_request.await?;
     println!("received request: {:?}", request);
 
@@ -107,18 +116,18 @@ async fn handle_request(recv_request: RecvRequest) -> Result<()> {
     }
 
     match request.uri().path() {
-        "/" => home(sender).await?,
+        "/" => h3_home(sender).await?,
         x if !x.is_empty() => match parse_size(&x[1..]) {
-            Ok(n) => payload(sender, n).await?,
-            Err(_) => home(sender).await?,
+            Ok(n) => h3_payload(sender, n).await?,
+            Err(_) => h3_home(sender).await?,
         },
-        _ => home(sender).await?,
+        _ => h3_home(sender).await?,
     };
 
     Ok(())
 }
 
-async fn home(sender: quinn_h3::server::Sender) -> Result<()> {
+async fn h3_home(sender: quinn_h3::server::Sender) -> Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
         .body(HOME)
@@ -130,7 +139,7 @@ async fn home(sender: quinn_h3::server::Sender) -> Result<()> {
     Ok(())
 }
 
-async fn payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
+async fn h3_payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
     if len > 1_000_000_000 {
         let response = Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -158,6 +167,102 @@ async fn payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
     }
     body_writer.flush().await?;
     body_writer.close().await?;
+
+    Ok(())
+}
+
+async fn hq_handle_connection(conn: quinn::Connecting) -> Result<()> {
+    let quinn::NewConnection {
+        connection,
+        mut bi_streams,
+        ..
+    } = conn.await?;
+    let span = info_span!(
+        "connection",
+        remote = %connection.remote_address(),
+        protocol = %connection
+            .authentication_data()
+            .protocol
+            .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
+    );
+    async {
+        info!("established");
+
+        // Each stream initiated by the client constitutes a new request.
+        while let Some(stream) = bi_streams.next().await {
+            let stream = match stream {
+                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                    info!("connection closed");
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+                Ok(s) => s,
+            };
+            tokio::spawn(
+                hq_handle_request(stream)
+                    .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
+                    .instrument(info_span!("request")),
+            );
+        }
+        Ok(())
+    }
+    .instrument(span)
+    .await?;
+    Ok(())
+}
+
+async fn hq_handle_request((send, recv): (quinn::SendStream, quinn::RecvStream)) -> Result<()> {
+    let req = recv
+        .read_to_end(64 * 1024)
+        .await
+        .map_err(|e| anyhow!("failed reading request: {}", e))?;
+    let mut escaped = String::new();
+    for &x in &req[..] {
+        let part = ascii::escape_default(x).collect::<Vec<_>>();
+        escaped.push_str(str::from_utf8(&part).unwrap());
+    }
+    info!(content = %escaped);
+    // Execute the request
+    hq_process_get(send, &req).await?;
+    Ok(())
+}
+
+async fn hq_process_get(mut send: SendStream, x: &[u8]) -> Result<()> {
+    if x.len() < 4 || &x[0..4] != b"GET " {
+        bail!("missing GET");
+    }
+    if x[4..].len() < 2 || &x[x.len() - 2..] != b"\r\n" {
+        bail!("missing \\r\\n");
+    }
+    let x = &x[4..x.len() - 2];
+    let end = x.iter().position(|&c| c == b' ').unwrap_or_else(|| x.len());
+    let path = str::from_utf8(&x[..end]).context("path is malformed UTF-8")?;
+
+    // Write the response
+    match parse_size(path) {
+        Ok(n) if n <= 1_000_000_000 => {
+            let mut remaining = n;
+            while remaining > 0 {
+                let size = cmp::min(remaining, TEXT.len());
+                send.write_all(&TEXT[..size])
+                    .await
+                    .map_err(|e| anyhow!("failed to send response: {}", e))?;
+                remaining -= size;
+            }
+        }
+        Ok(_) | Err(_) => {
+            send.write_all(&HOME.as_bytes())
+                .await
+                .map_err(|e| anyhow!("failed to send response: {}", e))?;
+        }
+    }
+
+    // Gracefully terminate the stream
+    send.finish()
+        .await
+        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
 
     Ok(())
 }
