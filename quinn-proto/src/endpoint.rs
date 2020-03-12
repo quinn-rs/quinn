@@ -25,8 +25,7 @@ use crate::{
         ServerConfig,
     },
     transport_parameters::TransportParameters,
-    Side, Transmit, TransportError, LOC_CID_COUNT, MAX_CID_SIZE, MIN_INITIAL_SIZE,
-    RESET_TOKEN_SIZE, VERSION,
+    Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// The main entry point to the library
@@ -104,13 +103,8 @@ where
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(max) => {
-                if self.config.local_cid_len != 0 {
-                    // We've already issued one CID as part of the normal handshake process.
-                    return Some(
-                        self.send_new_identifiers(ch, max.min(LOC_CID_COUNT - 1) as usize),
-                    );
-                }
+            NeedIdentifiers(n) => {
+                return Some(self.send_new_identifiers(ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -360,7 +354,7 @@ where
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: usize) -> ConnectionEvent {
+    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
             let id = self.new_cid();
