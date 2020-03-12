@@ -8,7 +8,7 @@ use std::{
 
 use futures::{ready, Stream};
 use http::{response, Request, Response};
-use quinn::{CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream};
+use quinn::{self, CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream};
 use quinn_proto::{Side, StreamId};
 use rustls::TLSError;
 
@@ -161,6 +161,24 @@ impl Future for Connecting {
         )?;
         tokio::spawn(ConnectionDriver(conn_ref.clone()));
         Poll::Ready(Ok(IncomingRequest(conn_ref)))
+    }
+}
+
+impl From<quinn::Connecting> for Connecting {
+    fn from(connecting: quinn::Connecting) -> Self {
+        Self {
+            connecting,
+            settings: Settings::default(),
+        }
+    }
+}
+
+impl Connecting {
+    pub fn from_quic(connecting: quinn::Connecting, settings: Settings) -> Self {
+        Self {
+            connecting,
+            settings,
+        }
     }
 }
 
