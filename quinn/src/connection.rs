@@ -85,6 +85,19 @@ where
             Err(self)
         }
     }
+
+    /// Data conveyed by the peer during the handshake, including cryptographic identity
+    ///
+    /// Since the handshake is incomplete at this point, the returned data is likely to be
+    /// incomplete as well.
+    pub fn authentication_data(&self) -> S::AuthenticationData {
+        (self.conn.as_ref().unwrap().0)
+            .lock()
+            .unwrap()
+            .inner
+            .crypto_session()
+            .authentication_data()
+    }
 }
 
 impl<S> Future for Connecting<S>
