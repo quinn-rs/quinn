@@ -71,3 +71,9 @@ jobs:
         with:
           name: code-coverage-report
           path: cobertura.xml
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: EmbarkStudios/cargo-deny-action@v0

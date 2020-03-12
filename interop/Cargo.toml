@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Jean-Christophe BEGUE <begue.jc@gmail.com>"]
 edition = "2018"
 default-run = "main"
+publish = false
 
 [dependencies]
 anyhow = "1.0.22"
