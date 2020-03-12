@@ -28,7 +28,7 @@ use crate::{
     timer::{Timer, TimerTable},
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
+    LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };
 
@@ -1484,9 +1484,7 @@ where
                             }
                             self.validate_params(&params)?;
                             self.set_params(params);
-                            if self.endpoint_config.local_cid_len != 0 {
-                                self.issue_cids(params.active_connection_id_limit);
-                            }
+                            self.issue_cids();
                         } else {
                             // Server-only
                             self.space_mut(SpaceId::Data).pending.handshake_done = true;
@@ -1533,9 +1531,7 @@ where
                                     })?;
                             self.validate_params(&params)?;
                             self.set_params(params);
-                            if self.endpoint_config.local_cid_len != 0 {
-                                self.issue_cids(params.active_connection_id_limit);
-                            }
+                            self.issue_cids();
                             self.init_0rtt();
                         }
                         Ok(())
@@ -2138,7 +2134,14 @@ where
         Ok(())
     }
 
-    fn issue_cids(&mut self, n: u64) {
+    /// Issue an initial set of connection IDs to the peer
+    fn issue_cids(&mut self) {
+        if self.endpoint_config.local_cid_len == 0 {
+            return;
+        }
+
+        let initially_active = 1 + self.params.preferred_address.is_some() as u64;
+        let n = (self.params.active_connection_id_limit - initially_active).max(LOC_CID_COUNT - 1);
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
         self.cids_issued += n;
