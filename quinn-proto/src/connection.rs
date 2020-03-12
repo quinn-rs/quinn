@@ -645,7 +645,7 @@ where
             if !packet.retransmits.is_empty() {
                 // Remove retransmitted data from the old packet so we don't end up retransmitting
                 // it *again* even if the copy we're sending now gets acknowledged.
-                space.pending += mem::replace(&mut packet.retransmits, Retransmits::default());
+                space.pending += mem::take(&mut packet.retransmits);
                 return;
             }
         }
