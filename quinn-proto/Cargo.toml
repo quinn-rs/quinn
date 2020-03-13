@@ -40,5 +40,5 @@ webpki = { version = "0.21", optional = true }
 assert_matches = "1.1"
 hex-literal = "0.2.0"
 rcgen = "0.8"
-tracing-subscriber = "0.2.0"
+tracing-subscriber = { version = "0.2.3", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
 lazy_static = "1"
