@@ -36,10 +36,11 @@ Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
 ## Features
 
 * Simultaneous client/server operation
-* Ordered and unordered reads for improved performance
+* Ordered and unordered stream reads for improved performance
 * Works on stable Rust, tested on Linux, macOS and Windows
 * Pluggable cryptography, with a standard implementation backed by
   [rustls][rustls] and [*ring*][ring]
+* Application-layer datagrams for small, unreliable messages
 
 ## Status
 
