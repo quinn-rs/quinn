@@ -1,12 +1,14 @@
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    ops::RangeFrom,
+    sync::{Arc, Mutex},
     thread,
 };
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use bencher::{benchmark_group, benchmark_main, Bencher};
 use futures::StreamExt;
 use http::{Request, Response, StatusCode};
+use lazy_static::lazy_static;
 use tokio::{
     io::AsyncWriteExt as _,
     runtime::{Builder, Runtime},
@@ -17,39 +19,50 @@ use tracing_futures::Instrument as _;
 use quinn::{ClientConfigBuilder, ServerConfigBuilder};
 use quinn_h3::{self, client, server};
 
-criterion_group!(benches_h3, throughput);
-criterion_main!(benches_h3);
+benchmark_group!(
+    benches,
+    throughput_1k,
+    throughput_32k,
+    throughput_64k,
+    throughput_128k,
+    throughput_1m
+);
+benchmark_main!(benches);
 
-fn throughput(c: &mut Criterion) {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish(),
-    )
-    .unwrap();
+fn throughput_1k(bench: &mut Bencher) {
+    throughput(bench, 1024)
+}
+
+fn throughput_32k(bench: &mut Bencher) {
+    throughput(bench, 32 * 1024)
+}
+
+fn throughput_64k(bench: &mut Bencher) {
+    throughput(bench, 64 * 1024)
+}
+
+fn throughput_128k(bench: &mut Bencher) {
+    throughput(bench, 128 * 1024)
+}
+
+fn throughput_1m(bench: &mut Bencher) {
+    throughput(bench, 1024 * 1024)
+}
+
+fn throughput(bench: &mut Bencher, frame_size: usize) {
+    let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = Context::new();
-    let mut group = c.benchmark_group("throughput");
 
     let (addr, _) = ctx.spawn_server();
     let (client, mut runtime) = ctx.make_client(addr);
     let total_size = 10 * 1024 * 1024;
 
-    group.sample_size(10);
-    group.throughput(Throughput::Bytes(total_size as u64));
+    bench.bytes = total_size as u64;
 
-    for frame_size in [1024, 65535 / 2, 65535, 128 * 1024, 1024 * 1024].iter() {
-        group.bench_function(
-            format!("download: {} by frames of {} ", total_size, frame_size),
-            |b| {
-                b.iter(|| {
-                    runtime.block_on(async { download(&client, *frame_size, total_size).await })
-                })
-            },
-        );
-    }
-
-    group.finish();
+    bench.iter(|| {
+        runtime.block_on(async { download(&client, frame_size, total_size).await });
+    });
 }
 
 async fn download(client: &client::Connection, frame_size: usize, total_size: usize) {
@@ -97,8 +110,13 @@ impl Context {
     }
 
     pub fn spawn_server(&self) -> (SocketAddr, thread::JoinHandle<()>) {
-        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 4433);
-        let server = self.server_config.clone();
+        // TODO: Let the OS choose a free port for us
+        let addr = SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            PORTS.lock().unwrap().next().unwrap(),
+        );
+        let mut server = self.server_config.clone();
+        server.listen(addr).unwrap();
         debug!("server bind");
         let handle = thread::spawn(move || {
             let my_span = span!(Level::TRACE, "server");
@@ -179,4 +197,8 @@ fn rt() -> Runtime {
         .enable_all()
         .build()
         .unwrap()
+}
+
+lazy_static! {
+    pub static ref PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
 }
