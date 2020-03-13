@@ -4,7 +4,7 @@ use std::{
     thread,
 };
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use bencher::{benchmark_group, benchmark_main, Bencher};
 use futures::StreamExt;
 use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
@@ -12,57 +12,46 @@ use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
 
-criterion_group!(benches, throughput);
-criterion_main!(benches);
+benchmark_group!(benches, large_streams, small_streams);
+benchmark_main!(benches);
 
-fn throughput(c: &mut Criterion) {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish(),
-    )
-    .unwrap();
+fn large_streams(bench: &mut Bencher) {
+    let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = Context::new();
-    let mut group = c.benchmark_group("throughput");
-    {
-        let (addr, thread) = ctx.spawn_server();
-        let (endpoint, client, mut runtime) = ctx.make_client(addr);
-        const DATA: &[u8] = &[0xAB; 128 * 1024];
-        group.throughput(Throughput::Bytes(DATA.len() as u64));
-        group.bench_function("large streams", |b| {
-            b.iter(|| {
-                runtime.block_on(async {
-                    let mut stream = client.open_uni().await.unwrap();
-                    stream.write_all(DATA).await.unwrap();
-                    stream.finish().await.unwrap();
-                });
-            })
+    let (addr, thread) = ctx.spawn_server();
+    let (endpoint, client, mut runtime) = ctx.make_client(addr);
+    const DATA: &[u8] = &[0xAB; 128 * 1024];
+    bench.bytes = DATA.len() as u64;
+    bench.iter(|| {
+        runtime.block_on(async {
+            let mut stream = client.open_uni().await.unwrap();
+            stream.write_all(DATA).await.unwrap();
+            stream.finish().await.unwrap();
         });
-        drop(client);
-        runtime.block_on(endpoint.wait_idle());
-        thread.join().unwrap();
-    }
+    });
+    drop(client);
+    runtime.block_on(endpoint.wait_idle());
+    thread.join().unwrap();
+}
 
-    {
-        let (addr, thread) = ctx.spawn_server();
-        let (endpoint, client, mut runtime) = ctx.make_client(addr);
-        const DATA: &[u8] = &[0xAB; 1];
-        group.throughput(Throughput::Elements(1));
-        group.bench_function("small streams", |b| {
-            b.iter(|| {
-                runtime.block_on(async {
-                    let mut stream = client.open_uni().await.unwrap();
-                    stream.write_all(DATA).await.unwrap();
-                });
-            })
+fn small_streams(bench: &mut Bencher) {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let ctx = Context::new();
+    let (addr, thread) = ctx.spawn_server();
+    let (endpoint, client, mut runtime) = ctx.make_client(addr);
+    const DATA: &[u8] = &[0xAB; 1];
+    bench.bytes = 1;
+    bench.iter(|| {
+        runtime.block_on(async {
+            let mut stream = client.open_uni().await.unwrap();
+            stream.write_all(DATA).await.unwrap();
         });
-        drop(client);
-        runtime.block_on(endpoint.wait_idle());
-        thread.join().unwrap();
-    }
-
-    group.finish();
+    });
+    drop(client);
+    runtime.block_on(endpoint.wait_idle());
+    thread.join().unwrap();
 }
 
 struct Context {

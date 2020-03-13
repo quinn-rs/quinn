@@ -41,13 +41,13 @@ webpki = { version = "0.21", optional = true }
 [dev-dependencies]
 anyhow = "1.0.22"
 crc = "1.8.1"
-criterion = "0.3"
+bencher = "0.1.5"
 directories = "2.0.0"
 rand = "0.7"
 rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["rt-threaded", "time", "macros"] }
-tracing-subscriber = "0.2.0"
+tracing-subscriber = "0.2.3"
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 unwrap = "1.2.1"
 url = "2"
