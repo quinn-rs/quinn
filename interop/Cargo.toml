@@ -28,5 +28,5 @@ name = "main"
 path = "src/main.rs"
 
 [[bin]]
-name = "h3_server"
-path = "src/h3_server.rs"
+name = "server"
+path = "src/server.rs"
