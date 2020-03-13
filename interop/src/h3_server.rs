@@ -117,11 +117,10 @@ async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
 
     match request.uri().path() {
         "/" => h3_home(sender).await?,
-        x if !x.is_empty() => match parse_size(&x[1..]) {
+        path => match parse_size(path) {
             Ok(n) => h3_payload(sender, n).await?,
             Err(_) => h3_home(sender).await?,
         },
-        _ => h3_home(sender).await?,
     };
 
     Ok(())
@@ -268,10 +267,14 @@ async fn hq_process_get(mut send: SendStream, x: &[u8]) -> Result<()> {
 }
 
 fn parse_size(literal: &str) -> Result<usize> {
-    let pos = literal
+    if literal.is_empty() {
+        return Err(anyhow!("path empty"));
+    }
+    let pos = literal[1..]
         .find(|c: char| !c.is_ascii_digit())
+        .map(|p| p + 1)
         .unwrap_or_else(|| literal.len());
-    let num: usize = literal[..pos]
+    let num: usize = literal[1..pos]
         .parse()
         .map_err(|_| anyhow!("parse failed"))?;
     let scale = match literal[pos..].to_uppercase().as_str() {
