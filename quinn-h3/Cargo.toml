@@ -20,7 +20,6 @@ all-features = true
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
-travis-ci = { repository = "djc/quinn" }
 
 [dependencies]
 bitlab = "0.8.1"
