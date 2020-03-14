@@ -25,7 +25,6 @@ tls-rustls = ["rustls", "webpki", "proto/tls-rustls"]
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
-azure-devops = { project = "dochtman/Projects", pipeline = "Quinn", build = "1" }
 
 [dependencies]
 bytes = "0.5.2"
