@@ -13,6 +13,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
 
 use crate::{
+    cid_queue::CidQueue,
     coding::BufMutExt,
     crypto::{self, HeaderKeys, Keys},
     frame,
@@ -21,14 +22,14 @@ use crate::{
     range_set::RangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-        EndpointEvent, EndpointEventInner, ResetToken, ServerConfig, TransportConfig,
+        EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
     },
     spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket},
     streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError},
     timer::{Timer, TimerTable},
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, REM_CID_COUNT, RESET_TOKEN_SIZE,
+    LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };
 
@@ -153,16 +154,7 @@ where
 
     streams: Streams,
     /// Surplus remote CIDs for future use on new paths
-    ///
-    /// Sequence numbers start at `self.next_rem_cid_seq` and are contiguous, including `None`
-    /// slots. Always exactly REM_CID_COUNT elements long. Maintaining a fixed-size sliding window
-    /// allows us to easily discard duplicate and obsolete NEW_CONNECTION_ID frames fast and with
-    /// constant memory.
-    ///
-    /// Always > self.rem_cid_seq, by exactly 1 except when the peer prompts us to retire CIDs.
-    rem_cids: VecDeque<Option<(ConnectionId, ResetToken)>>,
-    /// Sequence number of the first element of rem_cids
-    next_rem_cid_seq: u64,
+    rem_cids: CidQueue,
     /// State of the unreliable datagram extension
     datagrams: DatagramState,
 }
@@ -265,8 +257,7 @@ where
             streams: Streams::new(side, config.stream_window_uni, config.stream_window_bidi),
             datagrams: DatagramState::new(),
             config,
-            next_rem_cid_seq: 1,
-            rem_cids: (0..REM_CID_COUNT).map(|_| None).collect(),
+            rem_cids: CidQueue::new(1),
             rng,
         };
         if side.is_client() {
@@ -1909,51 +1900,34 @@ where
                             "NEW_CONNECTION_ID retiring unissued CIDs",
                         ));
                     }
-                    // frame.retire_prior_to might be arbitrarily low, but it might also be
-                    // necessary for this NEW_CONNECTION_ID frame to fall within the limit.
-                    if frame
-                        .sequence
-                        .checked_sub(self.rem_cid_seq.max(frame.retire_prior_to))
-                        .map_or(false, |x| x > REM_CID_COUNT)
-                    {
-                        return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
-                    }
 
-                    if frame.sequence < self.rem_cid_seq {
-                        trace!("discarding already-retired");
-                        self.space_mut(SpaceId::Data)
-                            .pending
-                            .retire_cids
-                            .push(frame.sequence);
-                        continue;
-                    }
+                    let retired = self.rem_cids.retire_prior_to(frame.retire_prior_to);
+                    self.space_mut(SpaceId::Data)
+                        .pending
+                        .retire_cids
+                        .extend(retired);
 
-                    if frame.retire_prior_to > self.rem_cid_seq {
-                        let retired_count = (frame.retire_prior_to - self.rem_cid_seq) as usize;
-                        trace!("retiring {} older CIDs on request", retired_count);
-                        self.rem_cids.drain(..retired_count - 1); // subtract 1 to account for self.rem_cid
-                        self.rem_cids.resize(REM_CID_COUNT as usize, None);
-                        self.next_rem_cid_seq = frame.retire_prior_to;
-                        // Retire all buffered CIDs. The current CID will be retired below when we
-                        // call update_rem_cid.
-                        let retired_ids = (self.rem_cid_seq + 1)..frame.retire_prior_to;
-                        self.space_mut(SpaceId::Data)
-                            .pending
-                            .retire_cids
-                            .extend(retired_ids);
+                    // Must be after retire_prior_to processing in case this CID has the highest
+                    // permitted sequence number
+                    use crate::cid_queue::InsertError;
+                    match self.rem_cids.insert(IssuedCid {
+                        sequence: frame.sequence,
+                        id: frame.id,
+                        reset_token: frame.reset_token,
+                    }) {
+                        Ok(()) => {}
+                        Err(InsertError::ExceedsLimit) => {
+                            return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
+                        }
+                        Err(InsertError::Retired) => {
+                            trace!("discarding already-retired");
+                            self.space_mut(SpaceId::Data)
+                                .pending
+                                .retire_cids
+                                .push(frame.sequence);
+                            continue;
+                        }
                     }
-
-                    if frame
-                        .sequence
-                        .checked_sub(self.next_rem_cid_seq)
-                        .map_or(true, |i| self.rem_cids[i as usize].is_some())
-                    {
-                        trace!("discarding duplicate");
-                        continue;
-                    }
-
-                    let index = (frame.sequence - self.next_rem_cid_seq) as usize;
-                    self.rem_cids[index] = Some((frame.id, frame.reset_token));
 
                     if self.side.is_server() && self.params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
@@ -2103,31 +2077,23 @@ where
 
     /// Returns Err(()) if no CIDs were available
     fn update_rem_cid(&mut self) -> Result<(), ()> {
-        // Find the lowest-numbered remote CID we can. REM_CID_COUNT is small so a linear search is
-        // fine.
-        let index = self.rem_cids.iter().position(|x| x.is_some()).ok_or(())?;
-        let sequence = self.next_rem_cid_seq + index as u64;
-        let (id, reset_token) = self.rem_cids[index].take().unwrap();
-        trace!("switching to remote CID {}: {}", sequence, id);
+        let (cid, retired) = self.rem_cids.next().ok_or(())?;
+        trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
 
         // Retire the current remote CID and any CIDs we had to skip.
-        let retired = &mut self.spaces[SpaceId::Data as usize].pending.retire_cids;
-        retired.push(self.rem_cid_seq);
-        let base = self.next_rem_cid_seq;
-        retired.extend((0..index as u64).map(|x| x + base));
-        self.rem_cids.drain(..index);
-        self.rem_cids.resize(REM_CID_COUNT as usize, None);
-        self.next_rem_cid_seq = sequence + 1;
+        let retire_cids = &mut self.spaces[SpaceId::Data as usize].pending.retire_cids;
+        retire_cids.push(self.rem_cid_seq);
+        retire_cids.extend(retired);
 
         // Apply the new CID
-        self.rem_cid = id;
-        self.rem_cid_seq = sequence;
+        self.rem_cid = cid.id;
+        self.rem_cid_seq = cid.sequence;
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(
                 self.path.remote,
-                reset_token,
+                cid.reset_token,
             ));
-        self.params.stateless_reset_token = Some(reset_token);
+        self.params.stateless_reset_token = Some(cid.reset_token);
 
         // Reduce linkability
         self.spin = false;
