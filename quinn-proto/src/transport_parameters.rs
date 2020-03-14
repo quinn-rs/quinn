@@ -15,10 +15,11 @@ use bytes::{buf::ext::BufExt as _, Buf, BufMut};
 use err_derive::Error;
 
 use crate::{
+    cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     crypto,
     shared::{ConnectionId, EndpointConfig, ResetToken, ServerConfig},
-    Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, REM_CID_COUNT, RESET_TOKEN_SIZE,
+    Side, TransportConfig, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -127,7 +128,8 @@ impl TransportParameters {
             active_connection_id_limit: if endpoint_config.local_cid_len == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
-                REM_CID_COUNT
+                // + 1 to account for the currently used CID, which isn't kept in the queue
+                CidQueue::LEN as u64 + 1
             },
             max_datagram_frame_size: config
                 .datagram_receive_buffer_size
