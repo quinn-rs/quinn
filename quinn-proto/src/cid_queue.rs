@@ -19,7 +19,7 @@ pub struct CidQueue {
 }
 
 impl CidQueue {
-    pub const LEN: usize = 8;
+    pub const LEN: usize = 4;
 
     pub fn new(offset: u64) -> Self {
         Self {
