@@ -229,13 +229,12 @@ where
         let _guard = span.enter();
 
         loop {
-            let now = Instant::now();
             let mut keep_going = false;
             if let Err(e) = conn.process_conn_events(cx) {
                 conn.terminate(e);
                 return Poll::Ready(());
             }
-            conn.drive_transmit(now);
+            conn.drive_transmit();
             keep_going |= conn.drive_timer(cx);
             conn.forward_endpoint_events();
             conn.forward_app_events();
@@ -646,7 +645,8 @@ impl<S> ConnectionInner<S>
 where
     S: proto::crypto::Session,
 {
-    fn drive_transmit(&mut self, now: Instant) {
+    fn drive_transmit(&mut self) {
+        let now = Instant::now();
         while let Some(t) = self.inner.poll_transmit(now) {
             // If the endpoint driver is gone, noop.
             let _ = self
