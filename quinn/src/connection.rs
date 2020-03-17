@@ -236,7 +236,7 @@ where
                 return Poll::Ready(());
             }
             conn.drive_transmit(now);
-            keep_going |= conn.drive_timer(cx, now);
+            keep_going |= conn.drive_timer(cx);
             conn.forward_endpoint_events();
             conn.forward_app_events();
             if !keep_going || conn.inner.is_drained() {
@@ -747,12 +747,15 @@ where
         }
     }
 
-    fn drive_timer(&mut self, cx: &mut Context, now: Instant) -> bool {
+    fn drive_timer(&mut self, cx: &mut Context) -> bool {
         let mut keep_going = false;
         loop {
             if let Some(ref mut delay) = self.timer {
                 if delay.poll_unpin(cx) == Poll::Ready(()) {
-                    self.inner.handle_timeout(now);
+                    // We must get a fresh `now` each iteration. If the value were cached and tokio
+                    // deems a timer for a later time than the cached value to be expired, we'd get
+                    // stuck in an infinite loop resetting it.
+                    self.inner.handle_timeout(Instant::now());
                     self.timer = None;
                     keep_going = true;
                 }
