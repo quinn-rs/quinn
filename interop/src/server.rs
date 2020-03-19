@@ -1,4 +1,9 @@
-use std::{ascii, cmp, fs, net::SocketAddr, path::PathBuf, str};
+use std::{
+    ascii, cmp, fs,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    str,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
@@ -57,13 +62,25 @@ async fn main() -> Result<()> {
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.certificate(cert_chain, key)?;
     server_config.protocols(&[quinn_h3::ALPN, b"hq-27"]);
+
+    let main = server(server_config.clone(), 4433);
+    let other = server(server_config.clone(), 443);
+
+    server_config.use_stateless_retry(true);
+    let retry = server(server_config.clone(), 4434);
+
+    tokio::try_join!(main, other, retry)?;
+
+    Ok(())
+}
+
+async fn server(server_config: quinn::ServerConfigBuilder, port: u16) -> Result<()> {
     let mut endpoint_builder = quinn::Endpoint::builder();
     endpoint_builder.listen(server_config.build());
+    let (_, mut incoming) =
+        endpoint_builder.bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))?;
 
-    let listen = "[::]:4433".parse()?;
-    let (_, mut incoming) = endpoint_builder.bind(&listen)?;
-
-    println!("server listening");
+    println!("server listening on {}", port);
     while let Some(connecting) = incoming.next().await {
         tokio::spawn(async move {
             let protos = connecting.authentication_data().protocol.unwrap();
@@ -80,7 +97,6 @@ async fn main() -> Result<()> {
             }
         });
     }
-
     Ok(())
 }
 
