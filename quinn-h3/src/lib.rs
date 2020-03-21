@@ -28,6 +28,8 @@ pub mod server;
 mod frame;
 mod streams;
 
+use quinn::WriteError;
+
 use err_derive::Error;
 
 use proto::ErrorCode;
@@ -43,7 +45,7 @@ pub enum Error {
     #[error(display = "QUIC protocol error: {}", _0)]
     Quic(quinn::ConnectionError),
     #[error(display = "QUIC write error: {}", _0)] // TODO to be refined
-    Write(quinn::WriteError),
+    Write(WriteError),
     #[error(display = "Internal error: {}", _0)]
     Internal(String),
     #[error(display = "Incorrect peer behavior: {}", _0)]
@@ -56,6 +58,8 @@ pub enum Error {
     Overflow,
     #[error(display = "Polled after finished")]
     Poll,
+    #[error(display = "Client cancelled request")]
+    RequestCancelled,
 }
 
 impl Error {
@@ -91,9 +95,14 @@ impl From<quinn::ConnectionError> for Error {
     }
 }
 
-impl From<quinn::WriteError> for Error {
-    fn from(err: quinn::WriteError) -> Error {
-        Error::Write(err)
+impl From<WriteError> for Error {
+    fn from(err: WriteError) -> Error {
+        match err {
+            WriteError::Stopped(c) if c == ErrorCode::REQUEST_CANCELLED.into() => {
+                Error::RequestCancelled
+            }
+            _ => Error::Write(err),
+        }
     }
 }
 
