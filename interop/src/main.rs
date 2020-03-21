@@ -307,7 +307,7 @@ impl State {
             Alpn::Hq => None,
             _ => {
                 let mut h3_client = quinn_h3::client::Builder::default();
-                h3_client.settings(Settings::default());
+                h3_client.settings(Settings::new());
                 Some(h3_client.endpoint(endpoint.clone()))
             }
         };
