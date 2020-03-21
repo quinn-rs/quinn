@@ -145,6 +145,41 @@ async fn client_cancel_response() {
     );
 }
 
+#[tokio::test]
+async fn go_away() {
+    let helper = Helper::new();
+
+    let (_, mut incoming) = helper.make_server();
+    let server_handle = tokio::spawn(async move {
+        let mut incoming_req = incoming
+            .next()
+            .await
+            .expect("connecting")
+            .await
+            .expect("accept");
+        let recv_req = incoming_req.next().await.expect("wait request");
+        incoming_req.go_away();
+        let (_, _, sender) = recv_req.await.expect("recv_req");
+        sender
+            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            .await
+            .map(|_| ())
+    });
+
+    let conn = helper.make_connection().await;
+    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    assert!(resp.await.is_ok());
+
+    delay_for(Duration::from_millis(50)).await;
+    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    assert_matches!(
+        resp.await.map(|_| ()),
+        Err(Error::Http(HttpError::RequestRejected, None))
+    );
+
+    assert!(timeout_join(server_handle).await.is_ok());
+}
+
 async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), crate::Error> {
     for _ in 0..n {
         let (mut incoming_req, _) = incoming
