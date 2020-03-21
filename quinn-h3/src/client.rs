@@ -262,10 +262,14 @@ impl RecvResponse {
         }
     }
 
-    pub fn cancel(self) {
-        if let RecvResponseState::Receiving(recv) = self.state {
-            recv.reset(ErrorCode::REQUEST_CANCELLED);
-        }
+    pub fn cancel(mut self) {
+        let recv = match mem::replace(&mut self.state, RecvResponseState::Finished) {
+            RecvResponseState::Receiving(recv) => recv,
+            RecvResponseState::Decoding(_) => self.recv.take().expect("cancel recv"),
+            _ => return,
+        };
+        self.conn.h3.lock().unwrap().cancel_request(self.stream_id);
+        recv.reset(ErrorCode::REQUEST_CANCELLED);
     }
 }
 

@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use http::{Response, StatusCode};
+use tokio::time::{delay_for, Duration};
 
-use crate::Error;
-use crate::{proto::frame::DataFrame, server::IncomingConnection};
+use crate::{proto::frame::DataFrame, server::IncomingConnection, Error};
 
 mod helpers;
 use helpers::{get, post, timeout_join, Helper};
@@ -111,6 +111,38 @@ async fn client_send_stream_body() {
     drop(conn);
 
     assert_eq!(timeout_join(server_handle).await, "the body");
+}
+
+#[tokio::test]
+async fn client_cancel_response() {
+    let helper = Helper::new();
+
+    let (_, mut incoming) = helper.make_server();
+    let server_handle = tokio::spawn(async move {
+        let mut incoming_req = incoming
+            .next()
+            .await
+            .expect("connecting")
+            .await
+            .expect("accept");
+        let recv_req = incoming_req.next().await.expect("wait request");
+        delay_for(Duration::from_millis(25)).await;
+        let (_, _, sender) = recv_req.await.expect("recv_req");
+        sender
+            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            .await
+            .map(|_| ())
+    });
+
+    let conn = helper.make_connection().await;
+    delay_for(Duration::from_millis(50)).await;
+    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    resp.cancel();
+
+    assert_matches!(
+        timeout_join(server_handle).await,
+        Err(Error::RequestCancelled)
+    );
 }
 
 async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), crate::Error> {

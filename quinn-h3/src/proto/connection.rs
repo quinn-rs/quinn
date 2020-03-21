@@ -205,6 +205,13 @@ impl Connection {
         self.requests_in_flight.retain(|i| i.0 <= id.0);
     }
 
+    pub fn stream_cancel(&mut self, stream_id: StreamId) {
+        qpack::stream_canceled(
+            stream_id.0,
+            &mut self.pending_streams[PendingStreamType::Decoder as usize],
+        );
+    }
+
     pub fn is_closing(&self) -> bool {
         self.go_away
     }

@@ -151,6 +151,11 @@ impl ConnectionInner {
         }
     }
 
+    pub fn cancel_request(&mut self, stream_id: StreamId) {
+        self.inner.stream_cancel(stream_id);
+        self.wake();
+    }
+
     pub fn terminate(&mut self) {
         self.closed = true;
 
