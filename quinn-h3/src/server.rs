@@ -211,6 +211,12 @@ impl Connecting {
 
 pub struct IncomingRequest(ConnectionRef);
 
+impl IncomingRequest {
+    pub fn go_away(&mut self) {
+        self.0.h3.lock().unwrap().inner.go_away();
+    }
+}
+
 impl Stream for IncomingRequest {
     type Item = RecvRequest;
 
