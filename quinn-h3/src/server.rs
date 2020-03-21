@@ -43,7 +43,7 @@ impl Default for Builder {
         Self {
             config,
             listen: None,
-            settings: Settings::default(),
+            settings: Settings::new(),
         }
     }
 }
@@ -54,7 +54,7 @@ impl Builder {
         Self {
             config,
             listen: None,
-            settings: Settings::default(),
+            settings: Settings::new(),
         }
     }
 
@@ -195,7 +195,7 @@ impl From<quinn::Connecting> for Connecting {
     fn from(connecting: quinn::Connecting) -> Self {
         Self {
             connecting,
-            settings: Settings::default(),
+            settings: Settings::new(),
         }
     }
 }

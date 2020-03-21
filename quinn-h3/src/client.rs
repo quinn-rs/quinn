@@ -40,7 +40,7 @@ impl Default for Builder {
 
         Self {
             client_config,
-            settings: Settings::default(),
+            settings: Settings::new(),
         }
     }
 }
