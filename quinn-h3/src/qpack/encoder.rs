@@ -145,6 +145,14 @@ pub fn on_decoder_recv<R: Buf>(table: &mut DynamicTable, read: &mut R) -> Result
     while let Some(instruction) = parse_instruction(read)? {
         match instruction {
             Instruction::Untrack(stream_id) => table.untrack_block(stream_id)?,
+            Instruction::StreamCancel(stream_id) => {
+                // Untrack block twice, as this stream might have a trailer in addition to
+                // the header. Failures are ignored as blocks might have been acked before
+                // cancellation.
+                if table.untrack_block(stream_id).is_ok() {
+                    let _ = table.untrack_block(stream_id);
+                }
+            }
             Instruction::ReceivedRefIncrement(increment) => {
                 table.update_largest_received(increment)
             }
@@ -169,7 +177,7 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
             HeaderAck::decode(&mut buf)?.map(|x| Instruction::Untrack(x.0))
         }
         DecoderInstruction::StreamCancel => {
-            StreamCancel::decode(&mut buf)?.map(|x| Instruction::Untrack(x.0))
+            StreamCancel::decode(&mut buf)?.map(|x| Instruction::StreamCancel(x.0))
         }
     };
 
@@ -185,6 +193,7 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
 enum Instruction {
     ReceivedRefIncrement(usize),
     Untrack(u64),
+    StreamCancel(u64),
 }
 
 pub fn set_dynamic_table_size<W: BufMut>(
@@ -518,12 +527,12 @@ mod tests {
         let mut cur = Cursor::new(&buf);
         assert_eq!(
             parse_instruction(&mut cur),
-            Ok(Some(Instruction::Untrack(2)))
+            Ok(Some(Instruction::StreamCancel(2)))
         );
     }
 
     #[test]
-    fn decoder_accept_trucated() {
+    fn decoder_accept_truncated() {
         let mut buf = vec![];
         StreamCancel(2321).encode(&mut buf);
 
@@ -533,7 +542,7 @@ mod tests {
         let mut cur = Cursor::new(&buf);
         assert_eq!(
             parse_instruction(&mut cur),
-            Ok(Some(Instruction::Untrack(2321)))
+            Ok(Some(Instruction::StreamCancel(2321)))
         );
     }
 
@@ -550,7 +559,7 @@ mod tests {
         );
 
         let mut buf = vec![];
-        StreamCancel(4).encode(&mut buf);
+        HeaderAck(4).encode(&mut buf);
 
         let mut cur = Cursor::new(&buf);
         assert_eq!(
