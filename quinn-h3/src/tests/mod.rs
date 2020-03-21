@@ -31,7 +31,7 @@ async fn serve_one(mut incoming: IncomingConnection) -> Result<(), crate::Error>
 #[tokio::test(threaded_scheduler)]
 async fn incoming_request_stream_ends_on_client_closure() {
     let helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_one(incoming).await });
 
     let conn = helper.make_connection().await;
@@ -44,7 +44,7 @@ async fn incoming_request_stream_ends_on_client_closure() {
 #[tokio::test(threaded_scheduler)]
 async fn incoming_request_stream_closed_on_client_drop() {
     let helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_one(incoming).await });
 
     let conn = helper.make_connection().await;
@@ -79,7 +79,7 @@ async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> Stri
 async fn client_send_body() {
     let helper = Helper::new();
 
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
@@ -97,7 +97,7 @@ async fn client_send_body() {
 async fn client_send_stream_body() {
     let helper = Helper::new();
 
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
@@ -117,7 +117,7 @@ async fn client_send_stream_body() {
 async fn client_cancel_response() {
     let helper = Helper::new();
 
-    let (_, mut incoming) = helper.make_server();
+    let mut incoming = helper.make_server();
     let server_handle = tokio::spawn(async move {
         let mut incoming_req = incoming
             .next()
@@ -149,7 +149,7 @@ async fn client_cancel_response() {
 async fn go_away() {
     let helper = Helper::new();
 
-    let (_, mut incoming) = helper.make_server();
+    let mut incoming = helper.make_server();
     let server_handle = tokio::spawn(async move {
         let mut incoming_req = incoming
             .next()
@@ -209,7 +209,7 @@ async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), 
 #[tokio::test]
 async fn zero_rtt_success() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, zerortt_accepted) = helper.make_0rtt().await;
@@ -224,7 +224,7 @@ async fn zero_rtt_success() {
 #[tokio::test]
 async fn zero_rtt_success_after_handshake() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, zerortt_accepted) = helper.make_0rtt().await;
@@ -239,7 +239,7 @@ async fn zero_rtt_success_after_handshake() {
 #[tokio::test]
 async fn zero_rtt_fails_request_success() {
     let helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_one(incoming).await });
 
     let zero_rtt = helper
@@ -266,7 +266,7 @@ async fn zero_rtt_fails_request_success() {
 #[tokio::test]
 async fn zero_rtt_client_forbids_non_idempotent() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, _) = helper.make_0rtt().await;
@@ -276,7 +276,7 @@ async fn zero_rtt_client_forbids_non_idempotent() {
 #[tokio::test]
 async fn zero_rtt_client_accepts_non_idempotent_after_handshake() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, zero_rtt_accepted) = helper.make_0rtt().await;
@@ -287,7 +287,7 @@ async fn zero_rtt_client_accepts_non_idempotent_after_handshake() {
 #[tokio::test]
 async fn zero_rtt_server_forbids_non_idempotent() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (mut conn, _) = helper.make_fake_0rtt().await;
@@ -306,7 +306,7 @@ async fn zero_rtt_server_forbids_non_idempotent() {
 #[tokio::test]
 async fn zero_rtt_server_accepts_non_idempotent_after_handshake() {
     let mut helper = Helper::new();
-    let (_, incoming) = helper.make_server();
+    let incoming = helper.make_server();
     let server_handle = tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (mut conn, zero_rtt_accepted) = helper.make_fake_0rtt().await;

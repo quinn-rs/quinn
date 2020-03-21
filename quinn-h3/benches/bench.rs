@@ -124,7 +124,7 @@ impl Context {
             let mut runtime = rt();
             let handle = runtime.spawn(
                 async move {
-                    let (_, mut incoming) = server.build().unwrap();
+                    let mut incoming = server.build().unwrap();
                     let mut incoming_req = incoming
                         .next()
                         .await

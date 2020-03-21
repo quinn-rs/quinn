@@ -19,7 +19,7 @@ use crate::{
     headers::SendHeaders,
     proto::frame::HttpFrame,
     proto::headers::Header,
-    server::{self, IncomingConnection, Server},
+    server::{self, IncomingConnection},
     ZeroRttAccepted,
 };
 
@@ -78,7 +78,7 @@ impl Helper {
         }
     }
 
-    pub fn make_server(&self) -> (Server, IncomingConnection) {
+    pub fn make_server(&self) -> IncomingConnection {
         self.server.clone().build().expect("server build")
     }
 

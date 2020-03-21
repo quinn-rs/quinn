@@ -45,10 +45,7 @@ async fn main() -> Result<()> {
         .certificate(certs.0, certs.2)
         .expect("failed to add cert");
 
-    let mut incoming = {
-        let (_server, incoming) = server.build().expect("bind failed");
-        incoming
-    };
+    let mut incoming = server.build().expect("bind failed");
 
     println!("server listening");
     while let Some(connecting) = incoming.next().await {
