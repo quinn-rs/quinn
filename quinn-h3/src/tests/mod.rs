@@ -3,7 +3,7 @@ use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use http::{Response, StatusCode};
 use tokio::time::{delay_for, Duration};
 
-use crate::{proto::frame::DataFrame, server::IncomingConnection, Error};
+use crate::{proto::frame::DataFrame, server::IncomingConnection, Error, HttpError};
 
 mod helpers;
 use helpers::{get, post, timeout_join, Helper};
@@ -141,7 +141,7 @@ async fn client_cancel_response() {
 
     assert_matches!(
         timeout_join(server_handle).await,
-        Err(Error::RequestCancelled)
+        Err(Error::Http(HttpError::RequestCancelled, None))
     );
 }
 

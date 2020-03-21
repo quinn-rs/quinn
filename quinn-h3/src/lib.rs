@@ -28,9 +28,9 @@ pub mod server;
 mod frame;
 mod streams;
 
-use quinn::WriteError;
-
 use err_derive::Error;
+use quinn::{ApplicationClose, ConnectionError, ReadError, WriteError};
+use std::io::ErrorKind;
 
 use proto::ErrorCode;
 
@@ -44,7 +44,9 @@ pub enum Error {
     Proto(proto::connection::Error),
     #[error(display = "QUIC protocol error: {}", _0)]
     Quic(quinn::ConnectionError),
-    #[error(display = "QUIC write error: {}", _0)] // TODO to be refined
+    #[error(display = "QUIC read error: {}", _0)]
+    Read(ReadError),
+    #[error(display = "QUIC write error: {}", _0)]
     Write(WriteError),
     #[error(display = "Internal error: {}", _0)]
     Internal(String),
@@ -58,8 +60,8 @@ pub enum Error {
     Overflow,
     #[error(display = "Polled after finished")]
     Poll,
-    #[error(display = "Client cancelled request")]
-    RequestCancelled,
+    #[error(display = "Http error: {:?}", _0)]
+    Http(HttpError, Option<String>),
 }
 
 impl Error {
@@ -95,12 +97,34 @@ impl From<quinn::ConnectionError> for Error {
     }
 }
 
+impl From<ErrorCode> for Error {
+    fn from(code: ErrorCode) -> Self {
+        Error::Http(code.into(), None)
+    }
+}
+
+impl From<ReadError> for Error {
+    fn from(err: ReadError) -> Error {
+        match err {
+            ReadError::Reset(c) => ErrorCode::from(c).into(),
+            _ => Error::Read(err),
+        }
+    }
+}
+
 impl From<WriteError> for Error {
     fn from(err: WriteError) -> Error {
         match err {
-            WriteError::Stopped(c) if c == ErrorCode::REQUEST_CANCELLED.into() => {
-                Error::RequestCancelled
-            }
+            WriteError::Stopped(c) => ErrorCode::from(c).into(),
+            WriteError::ConnectionClosed(ConnectionError::ApplicationClosed(
+                ApplicationClose {
+                    error_code,
+                    ref reason,
+                },
+            )) => Error::Http(
+                ErrorCode::from(error_code).into(),
+                Some(String::from_utf8_lossy(reason).to_string()),
+            ),
             _ => Error::Write(err),
         }
     }
@@ -108,6 +132,14 @@ impl From<WriteError> for Error {
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {
+        if err.kind() == ErrorKind::ConnectionReset && err.get_ref().is_some() {
+            let err = err.into_inner().unwrap();
+            let e = match err.downcast::<ReadError>() {
+                Ok(e) => return (*e).into(),
+                Err(e) => e,
+            };
+            return Error::Io(std::io::Error::new(ErrorKind::ConnectionReset, e));
+        }
         Error::Io(err)
     }
 }
@@ -115,7 +147,7 @@ impl From<std::io::Error> for Error {
 impl From<frame::Error> for Error {
     fn from(err: frame::Error) -> Error {
         match err {
-            frame::Error::Io(e) => Error::Io(e),
+            frame::Error::Io(e) => e.into(),
             e => Error::Peer(format!("received an invalid frame: {:?}", e)),
         }
     }
@@ -124,6 +156,59 @@ impl From<frame::Error> for Error {
 impl From<proto::headers::Error> for Error {
     fn from(err: proto::headers::Error) -> Error {
         Error::Peer(format!("invalid headers: {:?}", err))
+    }
+}
+
+#[derive(Debug)]
+pub enum HttpError {
+    NoError,
+    GeneralProtocolError,
+    InternalError,
+    StreamCreationError,
+    ClosedCriticalStream,
+    FrameUnexpected,
+    FrameError,
+    ExcessiveLoad,
+    IdError,
+    SettingsError,
+    MissingSettings,
+    RequestRejected,
+    RequestCancelled,
+    RequestIncomplete,
+    EarlyResponse,
+    ConnectError,
+    VersionFallback,
+    QpackDecompressionFailed,
+    QpackEncoderStreamError,
+    QpackDecoderStreamError,
+    Unknown(u32),
+}
+
+impl From<ErrorCode> for HttpError {
+    fn from(code: ErrorCode) -> Self {
+        match code {
+            ErrorCode::NO_ERROR => HttpError::NoError,
+            ErrorCode::GENERAL_PROTOCOL_ERROR => HttpError::GeneralProtocolError,
+            ErrorCode::INTERNAL_ERROR => HttpError::InternalError,
+            ErrorCode::STREAM_CREATION_ERROR => HttpError::StreamCreationError,
+            ErrorCode::CLOSED_CRITICAL_STREAM => HttpError::ClosedCriticalStream,
+            ErrorCode::FRAME_UNEXPECTED => HttpError::FrameUnexpected,
+            ErrorCode::FRAME_ERROR => HttpError::FrameError,
+            ErrorCode::EXCESSIVE_LOAD => HttpError::ExcessiveLoad,
+            ErrorCode::ID_ERROR => HttpError::IdError,
+            ErrorCode::SETTINGS_ERROR => HttpError::SettingsError,
+            ErrorCode::MISSING_SETTINGS => HttpError::MissingSettings,
+            ErrorCode::REQUEST_REJECTED => HttpError::RequestRejected,
+            ErrorCode::REQUEST_CANCELLED => HttpError::RequestCancelled,
+            ErrorCode::REQUEST_INCOMPLETE => HttpError::RequestIncomplete,
+            ErrorCode::EARLY_RESPONSE => HttpError::EarlyResponse,
+            ErrorCode::CONNECT_ERROR => HttpError::ConnectError,
+            ErrorCode::VERSION_FALLBACK => HttpError::VersionFallback,
+            ErrorCode::QPACK_DECOMPRESSION_FAILED => HttpError::QpackDecompressionFailed,
+            ErrorCode::QPACK_ENCODER_STREAM_ERROR => HttpError::QpackEncoderStreamError,
+            ErrorCode::QPACK_DECODER_STREAM_ERROR => HttpError::QpackDecoderStreamError,
+            _ => HttpError::Unknown(code.0),
+        }
     }
 }
 

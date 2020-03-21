@@ -95,3 +95,9 @@ impl From<ErrorCode> for VarInt {
         error.0.into()
     }
 }
+
+impl From<VarInt> for ErrorCode {
+    fn from(error: VarInt) -> ErrorCode {
+        ErrorCode(error.into_inner() as u32)
+    }
+}
