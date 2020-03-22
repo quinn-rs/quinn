@@ -15,6 +15,9 @@ pub struct CidQueue {
     /// Index at which circular buffer addressing is based
     cursor: usize,
     /// Sequence number of `self.buffer[cursor]`
+    ///
+    /// The CID sequenced immediately prior to this is the active CID, which this data structure is
+    /// not responsible for retiring.
     offset: u64,
 }
 
@@ -30,6 +33,10 @@ impl CidQueue {
     }
 
     pub fn insert(&mut self, cid: IssuedCid) -> Result<(), InsertError> {
+        if cid.sequence + 1 == self.offset {
+            // This is a duplicate of the active CID.
+            return Ok(());
+        }
         let index = match cid.sequence.checked_sub(self.offset) {
             None => return Err(InsertError::Retired),
             Some(x) => x,
@@ -194,6 +201,28 @@ mod tests {
         let mut q = CidQueue::new(0);
         q.insert(cid(0)).unwrap();
         q.next().unwrap();
-        assert_eq!(q.insert(cid(0)), Err(InsertError::Retired));
+        assert_eq!(q.insert(cid(0)), Ok(()), "reinserting active CID succeeds");
+        assert!(q.next().is_none(), "active CID isn't requeued");
+        q.insert(cid(1)).unwrap();
+        q.next().unwrap();
+        assert_eq!(
+            q.insert(cid(0)),
+            Err(InsertError::Retired),
+            "previous active CID is already retired"
+        );
+    }
+
+    #[test]
+    fn retire_then_insert_next() {
+        let mut q = CidQueue::new(0);
+        for i in 0..CidQueue::LEN as u64 {
+            q.insert(cid(i)).unwrap();
+        }
+        q.next().unwrap();
+        q.insert(cid(CidQueue::LEN as u64)).unwrap();
+        assert_eq!(
+            q.insert(cid(CidQueue::LEN as u64 + 1)),
+            Err(InsertError::ExceedsLimit)
+        );
     }
 }

@@ -56,7 +56,10 @@ where
     rem_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
-    /// Sequence number of `rem_cid`. Always < self.next_rem_cid_seq, usually by exactly 1.
+    /// Sequence number of `rem_cid`
+    ///
+    /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
+    /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
     path: PathData,
     prev_path: Option<PathData>,
