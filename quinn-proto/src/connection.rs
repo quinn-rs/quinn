@@ -2106,8 +2106,8 @@ where
             return;
         }
 
-        let initially_active = 1 + self.params.preferred_address.is_some() as u64;
-        let n = (self.params.active_connection_id_limit - initially_active).min(LOC_CID_COUNT - 1);
+        // Subtract 1 to account for the CID we supplied while handshaking
+        let n = self.params.active_connection_id_limit.min(LOC_CID_COUNT) - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
         self.cids_issued += n;
