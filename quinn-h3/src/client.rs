@@ -125,15 +125,13 @@ impl Connection {
         &self,
         request: Request<T>,
     ) -> Result<(RecvResponse, BodyWriter), Error> {
-        let (
-            request::Parts {
-                method,
-                uri,
-                headers,
-                ..
-            },
-            body,
-        ) = request.into_parts();
+        let (request, body) = request.into_parts();
+        let request::Parts {
+            method,
+            uri,
+            headers,
+            ..
+        } = request;
         let (send, recv) = self.0.quic.open_bi().await?;
 
         if recv.is_0rtt() && !method.is_idempotent() {

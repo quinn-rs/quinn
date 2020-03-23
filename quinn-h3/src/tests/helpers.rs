@@ -138,16 +138,16 @@ pub struct FakeConnection(pub client::Connection);
 
 impl FakeConnection {
     pub async fn post(&mut self) -> FakeRequest {
-        let request = Request::post("https://localhost").body(()).unwrap();
-        let (
-            request::Parts {
-                method,
-                uri,
-                headers,
-                ..
-            },
-            _body,
-        ) = request.into_parts();
+        let (request, _) = Request::post("https://localhost")
+            .body(())
+            .unwrap()
+            .into_parts();
+        let request::Parts {
+            method,
+            uri,
+            headers,
+            ..
+        } = request;
         let (send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
 
         let stream_id = send.id();
