@@ -14,18 +14,18 @@ extern crate assert_matches;
 #[cfg(test)]
 mod tests;
 
-pub use body::Body;
+pub use body::{Body, BodyReader, BodyWriter};
 pub use proto::settings::Settings;
 
-pub mod body;
 pub mod client;
-pub mod connection;
-pub mod headers;
-pub mod proto;
-pub mod qpack;
 pub mod server;
 
+mod body;
+mod connection;
 mod frame;
+mod headers;
+mod proto;
+mod qpack;
 mod streams;
 
 use err_derive::Error;
