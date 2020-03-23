@@ -150,18 +150,17 @@ impl Connecting {
             connecting,
             settings,
         } = self;
-        let (
-            quinn::NewConnection {
-                connection,
-                bi_streams,
-                uni_streams,
-                ..
-            },
-            zerortt_accepted,
-        ) = connecting.into_0rtt().map_err(|connecting| Self {
-            connecting,
-            settings: settings.clone(),
-        })?;
+        let (new_connection, zerortt_accepted) =
+            connecting.into_0rtt().map_err(|connecting| Self {
+                connecting,
+                settings: settings.clone(),
+            })?;
+        let quinn::NewConnection {
+            connection,
+            bi_streams,
+            uni_streams,
+            ..
+        } = new_connection;
 
         let conn_ref =
             ConnectionRef::new(connection, Side::Server, uni_streams, bi_streams, settings);
@@ -354,12 +353,10 @@ impl Sender {
         self,
         response: Response<T>,
     ) -> Result<BodyWriter, Error> {
-        let (
-            response::Parts {
-                status, headers, ..
-            },
-            body,
-        ) = response.into_parts();
+        let (response, body) = response.into_parts();
+        let response::Parts {
+            status, headers, ..
+        } = response;
 
         let send = SendHeaders::new(
             Header::response(status, headers),
