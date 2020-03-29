@@ -5,7 +5,8 @@ use err_derive::Error;
 use tracing::debug;
 
 use crate::{
-    assembler::Assembler, frame, range_set::RangeSet, Dir, Side, StreamId, TransportError, VarInt,
+    assembler::Assembler, frame, range_set::RangeSet, transport_parameters::TransportParameters,
+    Dir, Side, StreamId, TransportError, VarInt,
 };
 
 pub(crate) struct Streams {
@@ -40,21 +41,21 @@ impl Streams {
 
         for dir in Dir::iter() {
             for i in 0..this.max_remote[dir as usize] {
-                this.insert(true, StreamId::new(!side, dir, i));
+                this.insert(None, true, StreamId::new(!side, dir, i));
             }
         }
 
         this
     }
 
-    pub fn open(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
+    pub fn open(&mut self, params: &TransportParameters, side: Side, dir: Dir) -> Option<StreamId> {
         if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
 
         self.next[dir as usize] += 1;
         let id = StreamId::new(side, dir, self.next[dir as usize] - 1);
-        self.insert(false, id);
+        self.insert(Some(params), false, id);
         self.send_streams += 1;
         Some(id)
     }
@@ -63,10 +64,10 @@ impl Streams {
         self.send_streams
     }
 
-    pub fn alloc_remote_stream(&mut self, side: Side, dir: Dir) {
+    pub fn alloc_remote_stream(&mut self, params: &TransportParameters, side: Side, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!side, dir, self.max_remote[dir as usize] - 1);
-        self.insert(true, id);
+        self.insert(Some(params), true, id);
     }
 
     pub fn accept(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
@@ -201,10 +202,17 @@ impl Streams {
         id.index() >= self.next[id.dir() as usize]
     }
 
-    fn insert(&mut self, remote: bool, id: StreamId) {
+    fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
-            assert!(self.send.insert(id, Send::new()).is_none());
+            let max_data = params.map_or(0, |params| match id.dir() {
+                Dir::Uni => params.initial_max_stream_data_uni,
+                // Remote/local appear reversed here because the transport parameters are named from
+                // the perspective of the peer.
+                Dir::Bi if remote => params.initial_max_stream_data_bidi_local,
+                Dir::Bi => params.initial_max_stream_data_bidi_remote,
+            });
+            assert!(self.send.insert(id, Send::new(max_data)).is_none());
         }
         if bi || remote {
             assert!(self.recv.insert(id, Recv::new()).is_none());
@@ -222,10 +230,10 @@ pub(crate) struct Send {
 }
 
 impl Send {
-    pub fn new() -> Self {
+    pub fn new(max_data: u64) -> Self {
         Self {
             offset: 0,
-            max_data: 0,
+            max_data,
             state: SendState::Ready,
             bytes_in_flight: 0,
         }
