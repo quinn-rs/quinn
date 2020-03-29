@@ -1390,3 +1390,46 @@ fn finish_retransmit() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
 }
+
+/// Ensures that exchanging data on a client-initiated bidirectional stream works past the initial
+/// stream window.
+#[test]
+fn repeated_request_response() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            stream_window_bidi: 1,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    const REQUEST: &[u8] = b"hello";
+    const RESPONSE: &[u8] = b"world";
+    for _ in 0..3 {
+        let s = pair.client_conn_mut(client_ch).open(Dir::Bi).unwrap();
+
+        pair.client_conn_mut(client_ch).write(s, REQUEST).unwrap();
+        pair.client_conn_mut(client_ch).finish(s).unwrap();
+
+        pair.drive();
+
+        assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
+        assert_matches!(
+            pair.server_conn_mut(server_ch).read_unordered(s),
+            Ok(Some((ref data, 0))) if data == REQUEST
+        );
+        assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+        pair.server_conn_mut(server_ch).write(s, RESPONSE).unwrap();
+        pair.server_conn_mut(server_ch).finish(s).unwrap();
+
+        pair.drive();
+
+        assert_matches!(
+            pair.client_conn_mut(client_ch).read_unordered(s),
+            Ok(Some((ref data, 0))) if data == RESPONSE
+        );
+        assert_matches!(pair.client_conn_mut(client_ch).read_unordered(s), Ok(None));
+    }
+}
