@@ -2723,12 +2723,8 @@ where
         if self.state.is_closed() {
             return None;
         }
-        let id = self.streams.open(self.side, dir)?;
-        // TODO: Queue STREAM_ID_BLOCKED if None
-        self.streams.send_mut(id).unwrap().max_data = match dir {
-            Dir::Uni => self.params.initial_max_stream_data_uni,
-            Dir::Bi => self.params.initial_max_stream_data_bidi_remote,
-        } as u64;
+        // TODO: Queue STREAM_ID_BLOCKED if this fails
+        let id = self.streams.open(&self.params, self.side, dir)?;
         Some(id)
     }
 
@@ -2750,7 +2746,8 @@ where
                 space.pending.max_uni_stream_id = true;
             }
         }
-        self.streams.alloc_remote_stream(self.side, dir);
+        self.streams
+            .alloc_remote_stream(&self.params, self.side, dir);
     }
 
     /// Accept a remotely initiated stream of a certain directionality, if possible
