@@ -383,6 +383,7 @@ impl TransportParameters {
         if params.ack_delay_exponent > 20
             || params.max_ack_delay >= 1 << 14
             || params.active_connection_id_limit < 2
+            || params.max_udp_payload_size < 1200
             || (side.is_server()
                 && (params.original_connection_id.is_some()
                     || params.stateless_reset_token.is_some()
