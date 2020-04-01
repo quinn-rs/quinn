@@ -91,7 +91,26 @@ pub struct Client {
     settings: Settings,
 }
 
+impl Default for Client {
+    /// Create a new HTTP/3 client endpoint with crate's recomended settings
+    fn default() -> Self {
+        Builder::default().build().expect("build default client")
+    }
+}
+
 impl Client {
+    /// Connect to a remote server endpoint
+    ///
+    /// Initiates a hanshake with an endpoint. The `server_name` argument is  used to
+    /// authenticate the server, it must be covered by its certificate.
+    ///
+    /// This method spawns a driver task for endpoint's IOs management at the QUIC level.
+    /// Therefore, it must be called in tokio runtime context.
+    ///
+    /// On success, this method returns a [`Connecting`] future, representing the handhake
+    /// completion.
+    ///
+    /// [`Connecting`]: struct.Connecting.html
     pub fn connect(
         &self,
         addr: &SocketAddr,
