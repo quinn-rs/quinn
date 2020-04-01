@@ -22,7 +22,10 @@ pub(crate) struct Streams {
     pub next_remote: [u64; 2],
     // Next to report to the application, once opened
     next_reported_remote: [u64; 2],
-    // Outbound streams
+    /// Number of outbound streams
+    ///
+    /// This differs from `self.send.len()` in that it does not include streams that the peer is
+    /// permitted to open but which have not yet been opened.
     send_streams: usize,
 }
 
