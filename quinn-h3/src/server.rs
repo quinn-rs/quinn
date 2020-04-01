@@ -46,7 +46,7 @@ impl Builder {
         config.protocols(&[crate::ALPN]);
         Self {
             config,
-            listen: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 4433, 0, 0).into(),
+            listen: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 443, 0, 0).into(),
             settings: Settings::new(),
         }
     }
