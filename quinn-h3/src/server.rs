@@ -1,7 +1,7 @@
 use std::{
     future::Future,
-    io, mem,
-    net::{SocketAddr, ToSocketAddrs},
+    mem,
+    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -58,14 +58,9 @@ impl Builder {
         }
     }
 
-    pub fn listen<S: ToSocketAddrs>(&mut self, socket: S) -> Result<&mut Self, io::Error> {
-        self.listen = Some(
-            socket
-                .to_socket_addrs()?
-                .next()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no socket found"))?,
-        );
-        Ok(self)
+    pub fn listen(&mut self, addr: SocketAddr) -> &mut Self {
+        self.listen = Some(addr);
+        self
     }
 
     pub fn certificate(

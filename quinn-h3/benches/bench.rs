@@ -116,7 +116,7 @@ impl Context {
             PORTS.lock().unwrap().next().unwrap(),
         );
         let mut server = self.server_config.clone();
-        server.listen(addr).unwrap();
+        server.listen(addr);
         debug!("server bind");
         let handle = thread::spawn(move || {
             let my_span = span!(Level::TRACE, "server");
