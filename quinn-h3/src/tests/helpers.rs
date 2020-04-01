@@ -52,9 +52,7 @@ impl Helper {
         let Certs { chain, key, cert } = CERTS.clone();
         let mut server = server::Builder::default();
         server.certificate(chain, key).expect("server certs");
-        server
-            .listen(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port))
-            .unwrap();
+        server.listen(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port));
 
         let mut client = client::Builder::default();
         client.add_certificate_authority(cert.clone()).unwrap();
