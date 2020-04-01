@@ -46,32 +46,9 @@ impl Default for Builder {
 }
 
 impl Builder {
-    pub fn with_quic_config(mut client_config: quinn::ClientConfigBuilder) -> Self {
-        client_config.protocols(&[crate::ALPN]);
-        Self {
-            client_config,
-            settings: Settings::new(),
-        }
-    }
-
     pub fn settings(&mut self, settings: Settings) -> &mut Self {
         self.settings = settings;
         self
-    }
-
-    pub fn add_certificate_authority(
-        &mut self,
-        cert: Certificate,
-    ) -> Result<&mut Self, webpki::Error> {
-        self.client_config.add_certificate_authority(cert)?;
-        Ok(self)
-    }
-
-    pub fn endpoint(self, endpoint: Endpoint) -> Client {
-        Client {
-            endpoint,
-            settings: self.settings,
-        }
     }
 
     pub fn build(self) -> Result<Client, quinn::EndpointError> {
@@ -83,6 +60,29 @@ impl Builder {
             endpoint,
             settings: self.settings,
         })
+    }
+
+    pub fn add_certificate_authority(
+        &mut self,
+        cert: Certificate,
+    ) -> Result<&mut Self, webpki::Error> {
+        self.client_config.add_certificate_authority(cert)?;
+        Ok(self)
+    }
+
+    pub fn with_quic_config(mut client_config: quinn::ClientConfigBuilder) -> Self {
+        client_config.protocols(&[crate::ALPN]);
+        Self {
+            client_config,
+            settings: Settings::new(),
+        }
+    }
+
+    pub fn endpoint(self, endpoint: Endpoint) -> Client {
+        Client {
+            endpoint,
+            settings: self.settings,
+        }
     }
 }
 
@@ -117,6 +117,61 @@ impl Client {
         })
     }
 }
+
+pub struct Connecting {
+    connecting: quinn::Connecting,
+    settings: Settings,
+}
+
+impl Connecting {
+    pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
+        let Self {
+            connecting,
+            settings,
+        } = self;
+        match connecting.into_0rtt() {
+            Err(connecting) => Err(Self {
+                connecting,
+                settings,
+            }),
+            Ok((new_conn, zero_rtt)) => {
+                let quinn::NewConnection {
+                    connection,
+                    uni_streams,
+                    bi_streams,
+                    ..
+                } = new_conn;
+                let conn_ref =
+                    ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings);
+                tokio::spawn(ConnectionDriver(conn_ref.clone()));
+                Ok((Connection(conn_ref), zero_rtt))
+            }
+        }
+    }
+}
+
+impl Future for Connecting {
+    type Output = Result<Connection, Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let quinn::NewConnection {
+            connection,
+            uni_streams,
+            bi_streams,
+            ..
+        } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
+        let conn_ref = ConnectionRef::new(
+            connection,
+            Side::Client,
+            uni_streams,
+            bi_streams,
+            self.settings.clone(),
+        );
+        tokio::spawn(ConnectionDriver(conn_ref.clone()));
+        Poll::Ready(Ok(Connection(conn_ref)))
+    }
+}
+
 
 pub struct Connection(ConnectionRef);
 
@@ -184,61 +239,6 @@ impl Drop for Connection {
             .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
     }
 }
-
-pub struct Connecting {
-    connecting: quinn::Connecting,
-    settings: Settings,
-}
-
-impl Connecting {
-    pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
-        let Self {
-            connecting,
-            settings,
-        } = self;
-        match connecting.into_0rtt() {
-            Err(connecting) => Err(Self {
-                connecting,
-                settings,
-            }),
-            Ok((new_conn, zero_rtt)) => {
-                let quinn::NewConnection {
-                    connection,
-                    uni_streams,
-                    bi_streams,
-                    ..
-                } = new_conn;
-                let conn_ref =
-                    ConnectionRef::new(connection, Side::Client, uni_streams, bi_streams, settings);
-                tokio::spawn(ConnectionDriver(conn_ref.clone()));
-                Ok((Connection(conn_ref), zero_rtt))
-            }
-        }
-    }
-}
-
-impl Future for Connecting {
-    type Output = Result<Connection, Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let quinn::NewConnection {
-            connection,
-            uni_streams,
-            bi_streams,
-            ..
-        } = ready!(Pin::new(&mut self.connecting).poll(cx))?;
-        let conn_ref = ConnectionRef::new(
-            connection,
-            Side::Client,
-            uni_streams,
-            bi_streams,
-            self.settings.clone(),
-        );
-        tokio::spawn(ConnectionDriver(conn_ref.clone()));
-        Poll::Ready(Ok(Connection(conn_ref)))
-    }
-}
-
 pub struct RecvResponse {
     state: RecvResponseState,
     conn: ConnectionRef,
