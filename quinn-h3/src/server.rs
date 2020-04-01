@@ -1,7 +1,7 @@
 use std::{
     future::Future,
     mem,
-    net::SocketAddr,
+    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -31,20 +31,13 @@ use crate::{
 #[derive(Clone)]
 pub struct Builder {
     config: quinn::ServerConfigBuilder,
-    listen: Option<SocketAddr>,
+    listen: SocketAddr,
     settings: Settings,
 }
 
 impl Default for Builder {
     fn default() -> Self {
-        let mut config = quinn::ServerConfigBuilder::default();
-        config.protocols(&[crate::ALPN]);
-
-        Self {
-            config,
-            listen: None,
-            settings: Settings::new(),
-        }
+        Self::with_quic_config(quinn::ServerConfigBuilder::default())
     }
 }
 
@@ -53,13 +46,13 @@ impl Builder {
         config.protocols(&[crate::ALPN]);
         Self {
             config,
-            listen: None,
+            listen: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 4433, 0, 0).into(),
             settings: Settings::new(),
         }
     }
 
     pub fn listen(&mut self, addr: SocketAddr) -> &mut Self {
-        self.listen = Some(addr);
+        self.listen = addr;
         self
     }
 
@@ -81,10 +74,7 @@ impl Builder {
         self,
         endpoint: EndpointBuilder,
     ) -> Result<(Server, IncomingConnection), quinn::EndpointError> {
-        let listen = self
-            .listen
-            .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
-        let (_, incoming) = endpoint.bind(&listen)?;
+        let (_, incoming) = endpoint.bind(&self.listen)?;
 
         Ok((
             Server,
@@ -99,10 +89,7 @@ impl Builder {
         let mut endpoint_builder = quinn::Endpoint::builder();
         endpoint_builder.listen(self.config.build());
 
-        let listen = self
-            .listen
-            .unwrap_or_else(|| "[::]:4433".parse().expect("valid listen address"));
-        let (_, incoming) = endpoint_builder.bind(&listen)?;
+        let (_, incoming) = endpoint_builder.bind(&self.listen)?;
 
         Ok((
             Server,
