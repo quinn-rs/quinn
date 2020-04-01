@@ -33,8 +33,8 @@ macro_rules! apply_params {
             // #[doc] name (id) = default,
             /// Milliseconds, disabled if zero
             max_idle_timeout(0x0001) = 0,
-            /// Limits the size of packets that the endpoint is willing to receive
-            max_packet_size(0x0003) = 65527,
+            /// Limits the size of UDP payloads that the endpoint is willing to receive
+            max_udp_payload_size(0x0003) = 65527,
 
             /// Initial value for the maximum amount of data that can be sent on the connection
             initial_max_data(0x0004) = 0,
@@ -406,7 +406,7 @@ mod test {
             initial_max_streams_bidi: 16,
             initial_max_streams_uni: 16,
             ack_delay_exponent: 2,
-            max_packet_size: 1200,
+            max_udp_payload_size: 1200,
             preferred_address: Some(PreferredAddress {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
                 address_v6: None,
