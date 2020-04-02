@@ -349,6 +349,6 @@ impl Sender {
     }
 
     pub fn cancel(mut self) {
-        self.send.reset(ErrorCode::REQUEST_REJECTED.into());
+        self.send.reset(ErrorCode::REQUEST_CANCELLED.into());
     }
 }
