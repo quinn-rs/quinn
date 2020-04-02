@@ -1307,7 +1307,9 @@ fn finish_acked() {
 
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    info!("client sends data to server");
     pair.drive_client(); // send data to server
+    info!("server acknowledges data");
     pair.drive_server(); // process data and send data ack
 
     // Receive data
@@ -1330,10 +1332,12 @@ fn finish_acked() {
     // Finish before receiving data ack
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     // Send FIN, receive data ack
+    info!("client receives ACK, sends FIN");
     pair.drive_client();
     // Check for premature finish from data ack
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     // Process FIN ack
+    info!("server ACKs FIN");
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
