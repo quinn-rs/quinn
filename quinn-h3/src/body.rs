@@ -31,8 +31,18 @@ use crate::{
     Error,
 };
 
+/// Simple body representation
+///
+/// It is intended to be constructed from common types such as `&str`, and be passed
+/// to [`http::Request<B>`] or [`http::Response<B>`] as the B parameter. It's is intended
+/// as a convenient way to send simple and small bodies.
+///
+/// [`http::Request<B>`]: https://docs.rs/http/*/http/request/index.html
+/// [`http::Response<B>`]: https://docs.rs/http/*/http/response/index.html
 pub enum Body {
+    /// Inexistent body
     None,
+    /// Buffer-contained body
     Buf(Bytes),
 }
 
@@ -54,6 +64,20 @@ impl From<&str> for Body {
     }
 }
 
+/// Read the body of a request or response
+///
+/// This lets you stream a received body through [`AsyncRead`]. You can also use [`data()`] for
+/// a less composable, but more efficient way to receive the body.
+///
+/// It it emitted by [`client::RecvResponse`] and [`server::RecvRequest`] futures.
+///
+/// This object manages the request nominal termination when originated from [`client::RecvResponse`].
+/// You must be careful not to drop it until your client app is done with this request.
+///
+/// [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
+/// [`data()`]: #method.data
+/// [`client::RecvResponse`]: client/struct.RecvResponse.html
+/// [`server::RecvRequest`]: server/struct.RecvRequest.html
 pub struct BodyReader {
     recv: Option<FrameStream>,
     trailers: Option<HeadersFrame>,
@@ -80,10 +104,60 @@ impl BodyReader {
         }
     }
 
+    /// Receive a chunk of data
+    ///
+    /// This method is the fastest way of receiving a body's data, as it returns references to the
+    /// underlying QUIC reordered data directly. [`AsyncRead`] has an internal buffer and works
+    /// by copying it into the user's buffers, which can represent unwanted overhead for some
+    /// applications.
+    ///
+    /// ```
+    /// # use anyhow::Result;
+    /// # use bytes::Bytes;
+    /// # fn do_stuff(bytes: &Bytes) {}
+    /// use quinn_h3::BodyReader;
+    ///
+    /// async fn consume_body(body_reader: &mut BodyReader) -> Result<()> {
+    ///     while let Some(result) = body_reader.data().await {
+    ///        do_stuff(&result?);
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
     pub async fn data(&mut self) -> Option<Result<Bytes, Error>> {
         futures_util::future::poll_fn(move |cx| self.poll_read(cx)).await
     }
 
+    /// Try to receive the trailers
+    ///
+    /// If a trailer block has been received after the body, this method will decode it and
+    /// return `Some()`. This value is populated by reading methods: [`data()`] and
+    /// `AsyncRead::poll_read()`. So this returns `None` when the body has not been completely
+    /// consumed with either of them.
+    ///
+    /// ```
+    /// # use anyhow::Result;
+    /// # use bytes::Bytes;
+    /// # fn do_stuff(bytes: &Bytes) {}
+    /// use futures::AsyncReadExt;
+    /// use quinn_h3::BodyReader;
+    ///
+    /// async fn get_trailers(body_reader: &mut BodyReader) -> Result<()> {
+    ///     // Consume the body to the end
+    ///     let mut body = String::new();
+    ///     body_reader.read_to_string(&mut body).await?;
+    ///
+    ///     // Get the trailers if any
+    ///     if let Some(trailers) = body_reader.trailers().await {
+    ///         println!("trailers: {:?}", trailers?);
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// [`data()`]: #method.data
     pub async fn trailers(&mut self) -> Option<Result<Header, Error>> {
         let trailers = self.trailers.take();
         let Self {
@@ -95,6 +169,9 @@ impl BodyReader {
         }
     }
 
+    /// Cancel the request or response associated with this body
+    ///
+    /// The peer will receive a request error with `REQUEST_CANCELLED` code.
     pub fn cancel(mut self) {
         if let Some(recv) = self.recv.take() {
             recv.reset(ErrorCode::REQUEST_CANCELLED);
@@ -228,6 +305,25 @@ impl Drop for BodyReader {
     }
 }
 
+/// Send the body of a request or response
+///
+/// Use this to send a body's data through an [`AsyncWrite`] implementation. You can optionally
+/// send [`trailers`] once everything is transmitted.
+///
+/// You need to wait for transfer completion by calling [`close()`], otherwise the transmission integrity
+/// is not garanteed.
+///
+/// This is emitted by [`client::Connection::send_request()`] and [`server::Sender::send_response()`].
+///
+/// If originating from [`server::Sender::send_response()`], this manages the nominal request
+/// termination on drop. Be careful to keep it within scope until your server app is done with this
+/// response.
+///
+/// [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
+/// [`trailers`]: #method.trailers
+/// [`close()`]: #method.close
+/// [`client::Connection::send_request()`]: ../client/struct.Connection.html#method.send_request
+/// [`server::Sender::send_response()`]: ../server/struct.Sender.html#method.send_response
 pub struct BodyWriter {
     state: BodyWriterState,
     conn: ConnectionRef,
@@ -250,6 +346,24 @@ impl BodyWriter {
         }
     }
 
+    /// Send the trailers and terminate request
+    ///
+    /// ```
+    /// # use anyhow::Result;
+    /// use futures::AsyncWriteExt;
+    /// use http::header::HeaderMap;
+    /// use quinn_h3::BodyWriter;
+    ///
+    /// async fn send_body_and_trailers(mut body_writer: BodyWriter) -> Result<()> {
+    ///     body_writer.write_all(b"wait for it").await?;
+    ///
+    ///     let mut trailers = HeaderMap::new();
+    ///     trailers.insert("trailing", "here".parse()?);
+    ///     body_writer.trailers(trailers).await?;
+    ///    
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn trailers(mut self, trailers: HeaderMap) -> Result<(), Error> {
         match mem::replace(&mut self.state, BodyWriterState::Finished) {
             BodyWriterState::Idle(send) => {
@@ -262,12 +376,18 @@ impl BodyWriter {
         }
     }
 
+    /// Close the sending half of a request after flushing data
+    ///
+    /// You need to call this method if you want to be sure the body has been completely transmitted.
     pub async fn close(mut self) -> Result<(), Error> {
         futures_util::future::poll_fn(|cx| self.poll_close_inner(cx))
             .await
             .map_err(Into::into)
     }
 
+    /// Cancel the request
+    ///
+    /// The peer will receive a request error with `REQUEST_CANCELLED` code.
     pub fn cancel(mut self) {
         let state = mem::replace(&mut self.state, BodyWriterState::Finished);
         match state {
