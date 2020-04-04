@@ -132,7 +132,7 @@ use crate::{
         ErrorCode,
     },
     streams::Reset,
-    try_take, Error, Settings,
+    Error, Settings,
 };
 
 /// Configure and build a HTTP/3.0 server
@@ -646,8 +646,10 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
                     self.state = RecvRequestState::Finished;
-                    let (recv, mut send) =
-                        try_take(&mut self.streams, "Recv request invalid state")?;
+                    let (recv, mut send) = self
+                        .streams
+                        .take()
+                        .ok_or_else(|| Error::internal("Recv request invalid state"))?;
                     let request = match self.build_request(header) {
                         Ok(r) => r,
                         Err(e) => {
