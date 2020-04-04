@@ -36,6 +36,14 @@ impl Codec for SettingId {
     }
 }
 
+/// Settings for a HTTP/3 connection
+///
+/// The HTTP/3 protocol offers a few settings to configure limits and header encoding
+/// parameters of a connection.
+///
+/// See the [QPACK] specification for more details.
+///
+/// [QPACK]: https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html
 #[derive(Clone, Debug)]
 pub struct Settings {
     max_header_list_size: u64,
@@ -56,6 +64,8 @@ impl Default for Settings {
 
 impl Settings {
     /// Create settings with quinn-h3's recomended values
+    ///
+    /// Enables `QPACK`.
     pub fn new() -> Self {
         Self {
             max_header_list_size: 0,
@@ -64,6 +74,9 @@ impl Settings {
         }
     }
 
+    /// The maximum number of entries in headers and trailers
+    ///
+    /// `0` means infinity.
     pub fn max_header_list_size(&self) -> u64 {
         if self.max_header_list_size == 0 {
             return std::u64::MAX;
@@ -71,14 +84,23 @@ impl Settings {
         self.max_header_list_size
     }
 
+    /// The maximum size for `QPACK` encoding dynamic table
+    ///
+    /// `0` means `QPACK` is disabled.
     pub fn qpack_max_table_capacity(&self) -> u64 {
         self.qpack_max_table_capacity
     }
 
+    /// The maximum number of request waiting to be decoded with arriving encoder data
+    ///
+    /// If `0`, the peer won't send any dynamically encoded headers.
     pub fn qpack_max_blocked_streams(&self) -> u64 {
         self.qpack_max_blocked_streams
     }
 
+    /// Set the maximum number of entries in headers and trailers
+    ///
+    /// `0` means infinity.
     pub fn set_max_header_list_size(&mut self, value: u64) -> Result<&mut Self, InvalidValue> {
         if value > VarInt::MAX.into_inner() as u64 {
             return Err(InvalidValue(SettingId::QPACK_MAX_TABLE_CAPACITY, value));
@@ -87,6 +109,9 @@ impl Settings {
         Ok(self)
     }
 
+    /// Set the maximum size for `QPACK` encoding dynamic table
+    ///
+    /// If `0`, the peer won't send any dynamically encoded headers.
     pub fn set_qpack_max_blocked_streams(&mut self, value: u64) -> Result<&mut Self, InvalidValue> {
         if value > MAX_BLOCKED_STREAMS_MAX {
             return Err(InvalidValue(SettingId::QPACK_MAX_BLOCKED_STREAMS, value));
@@ -95,6 +120,9 @@ impl Settings {
         Ok(self)
     }
 
+    /// Set the maximum number of request waiting to be decoded with arriving encoder data
+    ///
+    /// Set this to `0` to disable `QPACK`.
     pub fn set_qpack_max_table_capacity(&mut self, value: u64) -> Result<&mut Self, InvalidValue> {
         if value > MAX_TABLE_CAPACITY_MAX {
             return Err(InvalidValue(SettingId::QPACK_MAX_TABLE_CAPACITY, value));
