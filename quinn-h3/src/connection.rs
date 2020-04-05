@@ -485,9 +485,10 @@ impl ConnectionInner {
             }
             match Pin::new(&mut self.send_unis[ty as usize]).poll(cx) {
                 Poll::Ready(Err(err)) => {
-                    return Err(DriverError::peer(
+                    return Err(DriverError(
+                        err,
                         ErrorCode::CLOSED_CRITICAL_STREAM,
-                        format!("{:?}", err),
+                        "".into(),
                     ));
                 }
                 Poll::Ready(Ok(_)) => {
