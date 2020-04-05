@@ -270,6 +270,20 @@ impl Client {
                 .connect_with(client_config, addr, server_name)?,
         })
     }
+
+    /// Wait for all connections on the endpoint to be cleanly shut down
+    ///
+    /// Waiting for this condition before exiting ensures that a good-faith effort is made to notify
+    /// peers of recent connection closes, whereas exiting immediately could force them to wait out
+    /// the idle timeout period.
+    ///
+    /// Does not proactively close existing connections. Consider calling [`Connection::close()`] if
+    /// that is desired.
+    ///
+    /// [`Connection::close`]: struct.Connection.html#method.close
+    pub async fn wait_idle(&mut self) {
+        self.endpoint.wait_idle().await;
+    }
 }
 
 /// HTTP/3 handshake future
