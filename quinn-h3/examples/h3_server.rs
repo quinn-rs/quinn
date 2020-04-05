@@ -1,29 +1,27 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fs, io, net::SocketAddr, path::PathBuf};
 
-use anyhow::{anyhow, Result};
-use futures::{AsyncReadExt, StreamExt};
+use anyhow::{bail, Context, Result};
+use futures::{AsyncWriteExt, StreamExt};
 use http::{Response, StatusCode};
+use quinn::{CertificateChain, PrivateKey};
 use structopt::{self, StructOpt};
-use tracing::error;
+use tracing::{error, info};
+use tracing_subscriber::filter::LevelFilter;
 
 use quinn_h3::{
     self,
-    server::{Builder as ServerBuilder, IncomingRequest, RecvRequest},
+    server::{self, RecvRequest},
 };
-
-mod shared;
-use shared::build_certs;
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_server")]
 struct Opt {
-    /// TLS private key in PEM format
+    /// TLS private key in DER format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     key: Option<PathBuf>,
-    /// TLS certificate in PEM format
+    /// TLS certificate in DER format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
-    /// Enable stateless retries
     /// Address to listen on
     #[structopt(long = "listen", default_value = "0.0.0.0:4433")]
     listen: SocketAddr,
@@ -33,43 +31,46 @@ struct Opt {
 async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(LevelFilter::INFO.into()),
+            )
             .finish(),
-    )
-    .unwrap();
+    )?;
     let opt = Opt::from_args();
-    let certs = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
+    let (cert, key) = build_certs(&opt.key, &opt.cert).expect("failed to build certs");
 
-    let mut server = ServerBuilder::default();
+    // Configure a server endpoint
+    let mut server = server::Builder::default();
     server
-        .certificate(certs.0, certs.2)
+        .listen(opt.listen)
+        .certificate(cert, key)
         .expect("failed to add cert");
 
+    // Build it, get a stream of incoming connections
     let mut incoming = server.build().expect("bind failed");
 
-    println!("server listening");
+    info!("server listening on {}", opt.listen);
+
+    // Handle each connection concurrently, spawning a new task for each of one them
     while let Some(connecting) = incoming.next().await {
-        println!("server received connection");
-        match connecting.await {
-            Err(e) => error!("accept failed: {:?}", e),
-            Ok(connection) => {
-                let _ = tokio::spawn(async move {
-                    if let Err(e) = handle_connection(connection).await {
-                        error!("handling connection failed: {:?}", e);
-                    }
-                });
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_connection(mut incoming: IncomingRequest) -> Result<()> {
-    while let Some(request) = incoming.next().await {
         tokio::spawn(async move {
-            if let Err(e) = handle_request(request).await {
-                eprintln!("request error: {}", e)
+            // Wait for the handshake to complete, get a stream of incoming requests
+            let mut incoming_request = match connecting.await {
+                Ok(incoming_request) => incoming_request,
+                Err(e) => {
+                    error!("handshake failed: {:?}", e);
+                    return;
+                }
+            };
+
+            // Handle each request concurently
+            while let Some(request) = incoming_request.next().await {
+                tokio::spawn(async move {
+                    if let Err(e) = handle_request(request).await {
+                        error!("request failed: {:?}", e);
+                    };
+                });
             }
         });
     }
@@ -78,30 +79,57 @@ async fn handle_connection(mut incoming: IncomingRequest) -> Result<()> {
 }
 
 async fn handle_request(recv_request: RecvRequest) -> Result<()> {
-    let (request, mut recv_body, sender) = recv_request.await?;
-    println!("received request: {:?}", request);
-
-    let mut body = Vec::with_capacity(1024);
-    recv_body
-        .read_to_end(&mut body)
-        .await
-        .map_err(|e| anyhow!("failed to send response headers: {:?}", e))?;
-
-    println!("received body: {}", String::from_utf8_lossy(&body));
-    if let Some(trailers) = recv_body.trailers().await {
-        println!("received trailers: {:?}", trailers);
-    }
+    // Receive the request's headers
+    let (request, _body_reader, sender) = recv_request.await?;
+    info!("received request: {:?}", request);
 
     let response = Response::builder()
         .status(StatusCode::OK)
         .header("response", "header")
-        .body("response body")
-        .expect("failed to build response");
+        .body(())?;
 
-    sender
-        .send_response(response)
-        .await
-        .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
+    // Send the response's headers
+    let mut body_writer = sender.send_response(response).await?;
+    // Use AsyncWrite to send the response's body
+    body_writer.write_all(b"Greetings over HTTP/3").await?;
 
     Ok(())
+}
+
+pub fn build_certs(
+    key: &Option<PathBuf>,
+    cert: &Option<PathBuf>,
+) -> Result<(CertificateChain, PrivateKey)> {
+    if let (Some(ref key_path), Some(ref cert_path)) = (key, cert) {
+        let key = fs::read(key_path).context("failed to read private key")?;
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
+        let cert = quinn::Certificate::from_der(&cert_chain)?;
+        let cert_chain = quinn::CertificateChain::from_certs(vec![cert]);
+        Ok((cert_chain, key))
+    } else {
+        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let path = dirs.data_local_dir();
+        let cert_path = path.join("cert.der");
+        let key_path = path.join("key.der");
+        let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
+            Ok(x) => x,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                info!("generating self-signed certificate");
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+                let key = cert.serialize_private_key_der();
+                let cert = cert.serialize_der().unwrap();
+                fs::create_dir_all(&path).context("failed to create certificate directory")?;
+                fs::write(&cert_path, &cert).context("failed to write certificate")?;
+                fs::write(&key_path, &key).context("failed to write private key")?;
+                (cert, key)
+            }
+            Err(e) => {
+                bail!("failed to read certificate: {}", e);
+            }
+        };
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert = quinn::Certificate::from_der(&cert)?;
+        Ok((quinn::CertificateChain::from_certs(vec![cert]), key))
+    }
 }
