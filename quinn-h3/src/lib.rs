@@ -1,3 +1,74 @@
+//! HTTP/3 support for tokio.
+//!
+//! This library is an asynchronous implementation of the [HTTP/3] protocol, part of the [`quinn`]
+//! project: a [QUIC] transport protocol implementation.
+//!
+//! This crate is built to integrate well into the rust `async` and [`tokio`] ecosystem. It is heavily
+//! inspired by the [`h2`] crate's API, with the hope of making integration easier for downstream projects.
+//!
+//! # About HTTP/3
+//!
+//! HTTP/3 is the upcoming third major version of the Hypertext Transfer Protocol. It's built on top
+//! of a new transport protocol over UDP: [QUIC]. It addresses the shortcomings that [HTTP/2]
+//! suffers from being built on top of TCP, such as [Head-Of-Line blocking] and handshake latencies.
+//! Thanks to QUIC streams multiplexing features over UDP, requests are made independent from each other
+//! at the data transmissionlevel.
+//!
+//! Unlike HTTP/1, it exchanges headers in binary format, and compresses them with [QPACK].
+//!
+//! It also offers Server Push features similar to HTTP/2.
+//!
+//! The HTTP/3 specification has not yet been stabilized. The version currently implemented by this
+//! crate is [draft-27].
+//!
+//! # Crate overview
+//!
+//! This crate is split into two main [`client`] and [`server`] modules. Body handling is done
+//! through [`BodyReader`] and [`BodyWriter`] which respectively implement [`AsyncRead`] and
+//! [`AsyncWrite`].
+//!
+//! This crate makes extensive use of hyperium's [`http`] crate, which helps constructing
+//! [`Request`]s and [`Response`]s compatible with all the HTTP versions out there.
+//!
+//! # Crate status
+//!
+//! This crate is in an experimental state. For now, it has multiple improvement vectors:
+//!
+//! * Though having been tested as compatible with a majority of other HTTP/3 implementations,
+//!   `quinn-h3` does not implement all interoperability tests for the moment.
+//! * The CONNECT method and associated proxy features are not implemented.
+//! * Server PUSH is not implemented.
+//!
+//! # Getting started
+//!
+//! Give the examples a try:
+//!
+//! ```sh
+//! cargo run --example h3_server &
+//! cargo run --example h3_client
+//! ```
+//!
+//! [HTTP/3]: https://en.wikipedia.org/wiki/HTTP/3
+//! [`quinn`]: https://docs.rs/quinn
+//! [`tokio`]: https://docs.rs/tokio
+//! [`h2`]: https://docs.rs/h2
+//! [QUIC]: https://en.wikipedia.org/wiki/QUIC
+//! [HTTP/2]: https://en.wikipedia.org/wiki/HTTP/2
+//! [Head-Of-Line blocking]: https://en.wikipedia.org/wiki/Head-of-line_blocking
+//! [QPACK]: https://datatracker.ietf.org/doc/draft-ietf-quic-qpack/
+//! [draft-27]: https://tools.ietf.org/html/draft-ietf-quic-http-27
+//! [Server Push]: https://en.wikipedia.org/wiki/HTTP/2_Server_Push
+//! [`client`]: client/index.html
+//! [`server`]: server/index.html
+//! [`BodyReader`]: struct.BodyReader.html
+//! [`BodyWriter`]: struct.BodyWriter.html
+//! [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
+//! [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
+//! [`http`]: https://docs.rs/http/*/http/index.html
+//! [`Request`]: https://docs.rs/http/*/http/request/index.html
+//! [`Response`]: https://docs.rs/http/*/http/response/index.html
+
+#![warn(missing_docs)]
 #![allow(clippy::identity_op)]
 
 #[macro_use]
@@ -175,9 +246,9 @@ impl From<proto::headers::Error> for Error {
 
 /// Errors defined by the HTTP/3 protocol
 ///
-/// Read the [`HTTP/3 specification`] for more details.
+/// Read the [HTTP/3 specification] for more details.
 ///
-/// [`HTTP/3 specification`]: https://quicwg.org/base-drafts/draft-ietf-quic-http.html#name-http-3-error-codes
+/// [HTTP/3 specification]: https://quicwg.org/base-drafts/draft-ietf-quic-http.html#name-http-3-error-codes
 #[derive(Debug)]
 pub enum HttpError {
     /// This is used when the connection or stream needs to be closed, but there is no error to signal
