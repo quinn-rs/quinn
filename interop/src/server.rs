@@ -1,5 +1,7 @@
 use std::{
-    ascii, cmp, fs,
+    ascii, cmp,
+    ffi::OsStr,
+    fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     str,
@@ -19,7 +21,7 @@ use quinn_h3::{self, server::RecvRequest};
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_server")]
 struct Opt {
-    /// TLS private key in PEM format
+    /// TLS private key
     #[structopt(
         parse(from_os_str),
         short = "k",
@@ -28,7 +30,7 @@ struct Opt {
         default_value = "key.der"
     )]
     key: PathBuf,
-    /// TLS certificate in PEM format
+    /// TLS certificate
     #[structopt(
         parse(from_os_str),
         short = "c",
@@ -53,23 +55,30 @@ async fn main() -> Result<()> {
     .unwrap();
     let opt = Opt::from_args();
 
-    let key = fs::read(opt.key).context("failed to read private key")?;
-    let key = quinn::PrivateKey::from_der(&key[..])?;
-    let cert_chain = fs::read(opt.cert).context("failed to read certificate chain")?;
-    let cert_chain =
-        quinn::CertificateChain::from_certs(vec![quinn::Certificate::from_der(&cert_chain)?]);
+    let key = fs::read(&opt.key).context("failed to read private key")?;
+    let key = match opt.key.as_path().extension().and_then(OsStr::to_str) {
+        Some("der") => quinn::PrivateKey::from_der(&key[..])?,
+        _ => quinn::PrivateKey::from_pem(&key[..])?,
+    };
+
+    let cert_chain = fs::read(&opt.cert).context("failed to read certificate chain")?;
+    let cert_chain = match opt.cert.as_path().extension().and_then(OsStr::to_str) {
+        Some("der") => {
+            quinn::CertificateChain::from_certs(vec![quinn::Certificate::from_der(&cert_chain)?])
+        }
+        _ => quinn::CertificateChain::from_pem(&cert_chain)?,
+    };
 
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.certificate(cert_chain, key)?;
     server_config.protocols(&[quinn_h3::ALPN, b"hq-27"]);
 
     let main = server(server_config.clone(), 4433);
-    let other = server(server_config.clone(), 443);
-
+    let default = server(server_config.clone(), 443);
     server_config.use_stateless_retry(true);
     let retry = server(server_config.clone(), 4434);
 
-    tokio::try_join!(main, other, retry)?;
+    tokio::try_join!(main, default, retry)?;
 
     Ok(())
 }
