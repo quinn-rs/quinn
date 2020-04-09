@@ -41,7 +41,7 @@ struct Opt {
     cert: PathBuf,
     /// Enable stateless retries
     /// Address to listen on
-    #[structopt(long = "listen", default_value = "0.0.0.0:4433")]
+    #[structopt(long = "listen", short = "l", default_value = "0.0.0.0:4433")]
     listen: SocketAddr,
 }
 
