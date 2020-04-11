@@ -232,19 +232,19 @@ impl State {
     async fn run_hq(self) -> Result<InteropResult> {
         if self.peer.sequential {
             Ok(build_result(
-                self.core().await,
-                self.key_update().await,
-                self.rebind().await,
-                self.retry().await,
+                self.core_hq().await,
+                self.key_update_hq().await,
+                self.rebind_hq().await,
+                self.retry_hq().await,
                 self.throughput_hq().await,
                 None,
             ))
         } else {
             let (core, key_update, rebind, retry, throughput) = tokio::join!(
-                self.core(),
-                self.key_update(),
-                self.rebind(),
-                self.retry(),
+                self.core_hq(),
+                self.key_update_hq(),
+                self.rebind_hq(),
+                self.retry_hq(),
                 self.throughput_hq()
             );
             Ok(build_result(
@@ -337,7 +337,7 @@ impl State {
         })
     }
 
-    async fn core(&self) -> Result<InteropResult> {
+    async fn core_hq(&self) -> Result<InteropResult> {
         let mut result = InteropResult::default();
         let new_conn = self
             .endpoint
@@ -350,7 +350,7 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream, "/")
+        hq_get(stream, "/")
             .await
             .map_err(|e| anyhow!("simple request failed: {}", e))?;
         result.stream_data = true;
@@ -377,7 +377,7 @@ impl State {
                     .open_bi()
                     .await
                     .map_err(|e| anyhow!("failed to open 0-RTT stream: {}", e))?;
-                get(stream, "/")
+                hq_get(stream, "/")
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
                 result.zero_rtt = true;
@@ -401,7 +401,7 @@ impl State {
         Ok(result)
     }
 
-    async fn key_update(&self) -> Result<()> {
+    async fn key_update_hq(&self) -> Result<()> {
         let new_conn = self
             .endpoint
             .connect(&self.remote, &self.host)?
@@ -413,18 +413,18 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream, "/").await?;
+        hq_get(stream, "/").await?;
         conn.force_key_update();
         let stream = conn
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream, "/").await?;
+        hq_get(stream, "/").await?;
         conn.close(0u32.into(), b"done");
         Ok(())
     }
 
-    async fn retry(&self) -> Result<()> {
+    async fn retry_hq(&self) -> Result<()> {
         let mut remote = self.remote;
         remote.set_port(self.peer.retry_port);
 
@@ -438,12 +438,12 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream, "/").await?;
+        hq_get(stream, "/").await?;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
 
-    async fn rebind(&self) -> Result<()> {
+    async fn rebind_hq(&self) -> Result<()> {
         let mut endpoint = quinn::Endpoint::builder();
         endpoint.default_client_config(self.client_config.clone());
         let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
@@ -459,7 +459,7 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream, "/").await?;
+        hq_get(stream, "/").await?;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
@@ -479,7 +479,7 @@ impl State {
                 .open_bi()
                 .await
                 .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-            let body = get(stream, &format!("/{}", size)).await?;
+            let body = hq_get(stream, &format!("/{}", size)).await?;
             if body.len() != *size {
                 return Err(anyhow!("hq {} responded {} B", uri, body.len()));
             }
@@ -808,7 +808,7 @@ async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<
     Ok(total_len)
 }
 
-async fn get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {
+async fn hq_get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {
     let (mut send, recv) = stream;
     send.write_all(&format!("GET {}\r\n", path).as_bytes())
         .await
