@@ -1,6 +1,7 @@
 #![allow(clippy::mutex_atomic)]
 
 use std::{
+    env,
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -12,7 +13,8 @@ use hyper::body::HttpBody as _;
 use lazy_static::lazy_static;
 use quinn_h3::Settings;
 use structopt::StructOpt;
-use tracing::{error, info, warn};
+use tracing::{error, info, info_span, warn};
+use tracing_futures::Instrument as _;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
@@ -147,6 +149,9 @@ lazy_static! {
 async fn main() {
     let opt = Opt::from_args();
     let mut code = 0;
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", "info");
+    }
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -195,7 +200,8 @@ async fn main() {
 
     let keylog = opt.keylog;
     let results = future::join_all(peers.into_iter().map(|peer| async move {
-        let result = run(&peer, keylog).await;
+        let span = info_span!("peer", name = peer.name.as_str());
+        let result = run(&peer, keylog).instrument(span).await;
         (peer, result)
     }));
     for (peer, result) in results.await {
@@ -213,8 +219,8 @@ async fn main() {
 async fn run(peer: &Peer, keylog: bool) -> Result<String> {
     let state = State::try_new(&peer, keylog)?;
     let result = match peer.alpn {
-        Alpn::Hq => state.run_hq().await?,
-        _ => state.run_h3().await?,
+        Alpn::Hq => state.run_hq().instrument(info_span!("hq")).await?,
+        _ => state.run_h3().instrument(info_span!("h3")).await?,
     };
     Ok(result.format())
 }
@@ -232,20 +238,24 @@ impl State {
     async fn run_hq(self) -> Result<InteropResult> {
         if self.peer.sequential {
             Ok(build_result(
-                self.core_hq().await,
-                self.key_update_hq().await,
-                self.rebind_hq().await,
-                self.retry_hq().await,
-                self.throughput_hq().await,
+                self.core_hq().instrument(info_span!("core")).await,
+                self.key_update_hq()
+                    .instrument(info_span!("key_update"))
+                    .await,
+                self.rebind_hq().instrument(info_span!("rebind")).await,
+                self.retry_hq().instrument(info_span!("retry")).await,
+                self.throughput_hq()
+                    .instrument(info_span!("throughput"))
+                    .await,
                 None,
             ))
         } else {
             let (core, key_update, rebind, retry, throughput) = tokio::join!(
-                self.core_hq(),
-                self.key_update_hq(),
-                self.rebind_hq(),
-                self.retry_hq(),
-                self.throughput_hq()
+                self.core_hq().instrument(info_span!("core")),
+                self.key_update_hq().instrument(info_span!("key_update")),
+                self.rebind_hq().instrument(info_span!("rebind")),
+                self.retry_hq().instrument(info_span!("retry")),
+                self.throughput_hq().instrument(info_span!("throughput"))
             );
             Ok(build_result(
                 core, key_update, rebind, retry, throughput, None,
@@ -256,21 +266,25 @@ impl State {
     async fn run_h3(self) -> Result<InteropResult> {
         if self.peer.sequential {
             Ok(build_result(
-                self.core_h3().await,
-                self.key_update_h3().await,
-                self.rebind_h3().await,
-                self.retry_h3().await,
-                self.throughput_h3().await,
-                Some(self.h3().await),
+                self.core_h3().instrument(info_span!("core")).await,
+                self.key_update_h3()
+                    .instrument(info_span!("key_update"))
+                    .await,
+                self.rebind_h3().instrument(info_span!("rebind")).await,
+                self.retry_h3().instrument(info_span!("retry")).await,
+                self.throughput_h3()
+                    .instrument(info_span!("throughput"))
+                    .await,
+                Some(self.h3().instrument(info_span!("h3")).await),
             ))
         } else {
             let (core, key_update, rebind, retry, throughput, h3) = tokio::join!(
-                self.core_h3(),
-                self.key_update_h3(),
-                self.rebind_h3(),
-                self.retry_h3(),
-                self.throughput_h3(),
-                self.h3(),
+                self.core_h3().instrument(info_span!("core")),
+                self.key_update_h3().instrument(info_span!("key_update")),
+                self.rebind_h3().instrument(info_span!("rebind")),
+                self.retry_h3().instrument(info_span!("retry")),
+                self.throughput_h3().instrument(info_span!("throughput")),
+                self.h3().instrument(info_span!("h3")),
             );
             Ok(build_result(
                 core,
