@@ -333,7 +333,7 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream)
+        get(stream, "/")
             .await
             .map_err(|e| anyhow!("simple request failed: {}", e))?;
         result.stream_data = true;
@@ -360,7 +360,7 @@ impl State {
                     .open_bi()
                     .await
                     .map_err(|e| anyhow!("failed to open 0-RTT stream: {}", e))?;
-                get(stream)
+                get(stream, "/")
                     .await
                     .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
                 result.zero_rtt = true;
@@ -396,13 +396,13 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream).await?;
+        get(stream, "/").await?;
         conn.force_key_update();
         let stream = conn
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream).await?;
+        get(stream, "/").await?;
         conn.close(0u32.into(), b"done");
         Ok(())
     }
@@ -421,7 +421,7 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream).await?;
+        get(stream, "/").await?;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
@@ -442,7 +442,7 @@ impl State {
             .open_bi()
             .await
             .map_err(|e| anyhow!("failed to open stream: {}", e))?;
-        get(stream).await?;
+        get(stream, "/").await?;
         new_conn.connection.close(0u32.into(), b"done");
         Ok(())
     }
@@ -671,9 +671,9 @@ async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<
     Ok(total_len)
 }
 
-async fn get(stream: (quinn::SendStream, quinn::RecvStream)) -> Result<Vec<u8>> {
+async fn get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {
     let (mut send, recv) = stream;
-    send.write_all(b"GET /index.html\r\n")
+    send.write_all(&format!("GET {}\r\n", path).as_bytes())
         .await
         .map_err(|e| anyhow!("failed to send request: {}", e))?;
     send.finish()
