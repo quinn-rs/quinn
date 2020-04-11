@@ -3,11 +3,12 @@
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::future;
+use hyper::body::HttpBody as _;
 use lazy_static::lazy_static;
 use quinn_h3::Settings;
 use structopt::StructOpt;
@@ -235,12 +236,20 @@ impl State {
                 self.key_update().await,
                 self.rebind().await,
                 self.retry().await,
+                self.throughput_hq().await,
                 None,
             ))
         } else {
-            let (core, key_update, rebind, retry) =
-                future::join4(self.core(), self.key_update(), self.rebind(), self.retry()).await;
-            Ok(build_result(core, key_update, rebind, retry, None))
+            let (core, key_update, rebind, retry, throughput) = tokio::join!(
+                self.core(),
+                self.key_update(),
+                self.rebind(),
+                self.retry(),
+                self.throughput_hq()
+            );
+            Ok(build_result(
+                core, key_update, rebind, retry, throughput, None,
+            ))
         }
     }
 
@@ -251,18 +260,26 @@ impl State {
                 self.key_update_h3().await,
                 self.rebind_h3().await,
                 self.retry_h3().await,
+                self.throughput_h3().await,
                 Some(self.h3().await),
             ))
         } else {
-            let (core, key_update, rebind, retry, h3) = future::join5(
+            let (core, key_update, rebind, retry, throughput, h3) = tokio::join!(
                 self.core_h3(),
                 self.key_update_h3(),
                 self.rebind_h3(),
                 self.retry_h3(),
+                self.throughput_h3(),
                 self.h3(),
-            )
-            .await;
-            Ok(build_result(core, key_update, rebind, retry, Some(h3)))
+            );
+            Ok(build_result(
+                core,
+                key_update,
+                rebind,
+                retry,
+                throughput,
+                Some(h3),
+            ))
         }
     }
 
@@ -447,6 +464,62 @@ impl State {
         Ok(())
     }
 
+    async fn throughput_hq(&self) -> Result<()> {
+        for size in [5_000_000, 10_000_000usize].iter() {
+            let uri = self.peer.uri(&format!("/{}", size));
+            let conn = self
+                .endpoint
+                .connect(&self.remote, &self.host)?
+                .await
+                .map_err(|e| anyhow!("failed to connect: {}", e))?
+                .connection;
+
+            let start = Instant::now();
+            let stream = conn
+                .open_bi()
+                .await
+                .map_err(|e| anyhow!("failed to open stream: {}", e))?;
+            let body = get(stream, &format!("/{}", size)).await?;
+            if body.len() != *size {
+                return Err(anyhow!("hq {} responded {} B", uri, body.len()));
+            }
+            let elapsed_hq = start.elapsed();
+            conn.close(0x100u16.into(), b"NO_ERROR");
+
+            let mut h2 = hyper::client::Builder::default();
+            h2.http2_only(true);
+            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::new());
+            let response = client.get(self.peer.uri("/")).await?;
+            let _ = hyper::body::to_bytes(response).await?;
+
+            let start = Instant::now();
+            let mut response = client.get(uri.clone()).await?;
+            let mut total_len = 0usize;
+            while let Some(b) = response.body_mut().data().await {
+                total_len += b?.len()
+            }
+            if total_len != *size {
+                return Err(anyhow!("h2 {} responded {} B", uri, total_len));
+            }
+            let elapsed_h2 = start.elapsed();
+
+            let percentage = (elapsed_hq.as_nanos() as f64 - elapsed_h2.as_nanos() as f64)
+                / elapsed_h2.as_nanos() as f64
+                * 100.0;
+            info!(
+                size = size,
+                h3 = elapsed_hq.as_millis() as usize,
+                h2 = elapsed_h2.as_millis() as usize,
+                "hq time {:+.2}% of h2's",
+                percentage
+            );
+            if percentage > 30.0 {
+                return Err(anyhow!("Throughput {} is {:+.2}% slower", size, percentage));
+            }
+        }
+        Ok(())
+    }
+
     async fn h3(&self) -> Result<()> {
         if let Alpn::Hq = self.peer.alpn {
             return Err(anyhow!("H3 not implemented on this peer"));
@@ -463,6 +536,60 @@ impl State {
             .await
             .map_err(|e| anyhow!("h3 request failed: {}", e))?;
         conn.close();
+        Ok(())
+    }
+
+    async fn throughput_h3(&self) -> Result<()> {
+        if let Alpn::Hq = self.peer.alpn {
+            return Err(anyhow!("H3 not implemented on this peer"));
+        }
+
+        for size in [5_000_000, 10_000_000usize].iter() {
+            let uri = self.peer.uri(&format!("/{}", size));
+            let conn = self
+                .h3_client
+                .as_ref()
+                .unwrap()
+                .connect(&self.remote, &self.host)?
+                .await
+                .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+
+            let start = Instant::now();
+            h3_get(&conn, &uri).await.context("h3 request failed")?;
+            let elapsed_h3 = start.elapsed();
+            conn.close();
+
+            let mut h2 = hyper::client::Builder::default();
+            h2.http2_only(true);
+            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::new());
+            let response = client.get(self.peer.uri("/")).await?;
+            let _ = hyper::body::to_bytes(response).await?;
+
+            let start = Instant::now();
+            let mut response = client.get(uri.clone()).await?;
+            let mut total_len = 0usize;
+            while let Some(b) = response.body_mut().data().await {
+                total_len += b?.len()
+            }
+            if total_len != *size {
+                return Err(anyhow!("h2 {} responded {} B", uri, total_len));
+            }
+            let elapsed_h2 = start.elapsed();
+
+            let percentage = (elapsed_h3.as_nanos() as f64 - elapsed_h2.as_nanos() as f64)
+                / elapsed_h2.as_nanos() as f64
+                * 100.0;
+            info!(
+                size = size,
+                h3 = elapsed_h3.as_millis() as usize,
+                h2 = elapsed_h2.as_millis() as usize,
+                "h3 time {:+.2}% of h2's",
+                percentage
+            );
+            if percentage > 30.0 {
+                return Err(anyhow!("Throughput {} is {:+.2}% slower", size, percentage));
+            }
+        }
         Ok(())
     }
 
@@ -590,6 +717,7 @@ struct InteropResult {
     rebinding: bool,
     zero_rtt: bool,
     retry: bool,
+    throughput: bool,
     h3: bool,
 }
 
@@ -620,6 +748,9 @@ impl InteropResult {
         if self.key_update {
             string.push_str("U");
         }
+        if self.throughput {
+            string.push_str("T");
+        }
         if self.h3 {
             string.push_str("3");
         }
@@ -627,11 +758,13 @@ impl InteropResult {
     }
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn build_result(
     core: Result<InteropResult>,
     key_update: Result<()>,
     rebind: Result<()>,
     retry: Result<()>,
+    throughput: Result<()>,
     h3: Option<Result<()>>,
 ) -> InteropResult {
     let mut result = core.unwrap_or_else(|e| {
@@ -649,6 +782,10 @@ fn build_result(
     match retry {
         Ok(_) => result.retry = true,
         Err(e) => error!("retry failed: {}", e),
+    }
+    match throughput {
+        Ok(_) => result.throughput = true,
+        Err(e) => error!("throughput failed: {}", e),
     }
     match h3 {
         Some(Ok(_)) => result.h3 = true,
