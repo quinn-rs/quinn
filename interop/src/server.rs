@@ -4,14 +4,19 @@ use std::{
     fs,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    str,
+    pin::Pin,
+    str, sync,
+    task::{Context, Poll},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use futures::{AsyncReadExt, AsyncWriteExt, StreamExt, TryFutureExt};
+use futures::{ready, AsyncReadExt, Future, StreamExt, TryFutureExt};
 use http::{Response, StatusCode};
+use hyper::service::{make_service_fn, service_fn};
 use structopt::{self, StructOpt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::{server::TlsStream, TlsAcceptor};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -77,7 +82,7 @@ async fn main() -> Result<()> {
     server_config.use_stateless_retry(true);
     let retry = server(server_config.clone(), 4434);
 
-    tokio::try_join!(main, default, retry)?;
+    tokio::try_join!(main, default, retry, h2_server(server_config.clone()))?;
 
     Ok(())
 }
@@ -172,24 +177,18 @@ async fn h3_payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> 
         return Ok(());
     }
 
+    let mut buf = TEXT.repeat(len / TEXT.len() + 1);
+    buf.truncate(len);
+
     let response = Response::builder()
         .status(StatusCode::OK)
-        .body(())
+        .body(Bytes::from(buf))
         .expect("failed to build response");
 
-    let mut body_writer = sender
+    sender
         .send_response(response)
         .await
         .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
-
-    let mut remaining = len;
-    while remaining > 0 {
-        let size = cmp::min(remaining, TEXT.len());
-        body_writer.write_all(&TEXT[..size]).await?;
-        remaining -= size;
-    }
-    body_writer.flush().await?;
-    body_writer.close().await?;
 
     Ok(())
 }
@@ -308,6 +307,98 @@ fn parse_size(literal: &str) -> Result<usize> {
         _ => 1,
     };
     Ok(num * scale)
+}
+
+fn h2_home() -> hyper::Response<hyper::Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(HOME.into())
+        .expect("failed to build response")
+}
+
+fn h2_payload(len: usize) -> hyper::Response<hyper::Body> {
+    if len > 1_000_000_000 {
+        let response = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Bytes::from(format!("requested {}: too large", len)).into())
+            .expect("failed to build response");
+        return response;
+    }
+
+    let mut buf = TEXT.repeat(len / TEXT.len() + 1);
+    buf.truncate(len);
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(buf.into())
+        .expect("failed to build response")
+}
+
+async fn h2_handle(request: hyper::Request<hyper::Body>) -> Result<hyper::Response<hyper::Body>> {
+    Ok(match request.uri().path() {
+        "/" => h2_home(),
+        path => match parse_size(path) {
+            Ok(n) => h2_payload(n),
+            Err(_) => h2_home(),
+        },
+    })
+}
+
+async fn h2_server(server_config: quinn::ServerConfigBuilder) -> Result<()> {
+    let mut tls_cfg = (*server_config.build().crypto).clone();
+    tls_cfg.set_protocols(&[b"h2".to_vec()]);
+    let tls_acceptor = TlsAcceptor::from(sync::Arc::new(tls_cfg));
+
+    let tcp = TcpListener::bind(&SocketAddr::new([0, 0, 0, 0].into(), 443)).await?;
+
+    let service = make_service_fn(|_conn| async { Ok::<_, anyhow::Error>(service_fn(h2_handle)) });
+    let server = hyper::Server::builder(HyperAcceptor::new(tcp, tls_acceptor))
+        .http2_only(true)
+        .serve(service);
+
+    if let Err(e) = server.await {
+        error!("server error: {}", e);
+    }
+    Ok(())
+}
+
+struct HyperAcceptor {
+    tcp: TcpListener,
+    tls: TlsAcceptor,
+    handshake: Option<tokio_rustls::Accept<TcpStream>>,
+}
+
+impl HyperAcceptor {
+    pub fn new(tcp: TcpListener, tls: TlsAcceptor) -> Self {
+        Self {
+            tls,
+            tcp,
+            handshake: None,
+        }
+    }
+}
+
+impl hyper::server::accept::Accept for HyperAcceptor {
+    type Conn = TlsStream<TcpStream>;
+    type Error = anyhow::Error;
+
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
+        loop {
+            match self.handshake {
+                Some(ref mut h) => {
+                    let conn = ready!(Pin::new(h).poll(cx))?;
+                    std::mem::replace(&mut self.handshake, None);
+                    return Poll::Ready(Some(Ok(conn)));
+                }
+                None => {
+                    let (stream, _) = ready!(self.tcp.poll_accept(cx))?;
+                    self.handshake = Some(self.tls.accept(stream));
+                }
+            }
+        }
+    }
 }
 
 const TEXT: &[u8] =
