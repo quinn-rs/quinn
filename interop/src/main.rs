@@ -527,7 +527,7 @@ impl State {
                 "hq time {:+.2}% of h2's",
                 percentage
             );
-            if percentage > 30.0 {
+            if percentage > 10.0 {
                 return Err(anyhow!("Throughput {} is {:+.2}% slower", size, percentage));
             }
         }
@@ -600,7 +600,7 @@ impl State {
                 "h3 time {:+.2}% of h2's",
                 percentage
             );
-            if percentage > 30.0 {
+            if percentage > 10.0 {
                 return Err(anyhow!("Throughput {} is {:+.2}% slower", size, percentage));
             }
         }
