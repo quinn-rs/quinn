@@ -302,24 +302,21 @@ fn congestion() {
     let mut pair = Pair::default();
     let (client_ch, _) = pair.connect();
 
-    let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
+    const TARGET: u64 = 2048;
+    assert!(pair.client_conn_mut(client_ch).congestion_state() > TARGET);
     let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
-    loop {
-        match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
-            Ok(n) => {
-                assert!(n <= 1024);
-                pair.drive_client();
-            }
-            Err(WriteError::Blocked) => {
-                break;
-            }
-            Err(e) => {
-                panic!("unexpected write error: {}", e);
-            }
-        }
+    // Send data without receiving ACKs until the congestion state falls below target
+    while pair.client_conn_mut(client_ch).congestion_state() > TARGET {
+        let n = pair
+            .client_conn_mut(client_ch)
+            .write(s, &[42; 1024])
+            .unwrap();
+        assert_eq!(n, 1024);
+        pair.drive_client();
     }
+    // Ensure that the congestion state recovers after receiving the ACKs
     pair.drive();
-    assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
+    assert!(pair.client_conn_mut(client_ch).congestion_state() >= TARGET);
     pair.client_conn_mut(client_ch)
         .write(s, &[42; 1024])
         .unwrap();
@@ -1148,27 +1145,24 @@ fn congested_tail_loss() {
     let mut pair = Pair::default();
     let (client_ch, _) = pair.connect();
 
-    let initial_congestion_state = pair.client_conn_mut(client_ch).congestion_state();
+    const TARGET: u64 = 2048;
+    assert!(pair.client_conn_mut(client_ch).congestion_state() > TARGET);
     let s = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
-    loop {
-        match pair.client_conn_mut(client_ch).write(s, &[42; 1024]) {
-            Ok(n) => {
-                assert!(n <= 1024);
-                pair.drive_client();
-            }
-            Err(WriteError::Blocked) => {
-                break;
-            }
-            Err(e) => {
-                panic!("unexpected write error: {}", e);
-            }
-        }
+    // Send data without receiving ACKs until the congestion state falls below target
+    while pair.client_conn_mut(client_ch).congestion_state() > TARGET {
+        let n = pair
+            .client_conn_mut(client_ch)
+            .write(s, &[42; 1024])
+            .unwrap();
+        assert_eq!(n, 1024);
+        pair.drive_client();
     }
     assert!(!pair.server.inbound.is_empty());
     pair.server.inbound.clear();
+    // Ensure that the congestion state recovers after retransmits occur and are ACKed
     info!("recovering");
     pair.drive();
-    assert!(pair.client_conn_mut(client_ch).congestion_state() >= initial_congestion_state);
+    assert!(pair.client_conn_mut(client_ch).congestion_state() > TARGET);
     pair.client_conn_mut(client_ch)
         .write(s, &[42; 1024])
         .unwrap();
