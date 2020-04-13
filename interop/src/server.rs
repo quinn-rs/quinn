@@ -22,6 +22,7 @@ use tracing_futures::Instrument as _;
 
 use quinn::SendStream;
 use quinn_h3::{self, server::RecvRequest};
+use sync::Arc;
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_server")]
@@ -88,8 +89,15 @@ async fn main() -> Result<()> {
 }
 
 async fn server(server_config: quinn::ServerConfigBuilder, port: u16) -> Result<()> {
+    let mut transport = quinn::TransportConfig::default();
+    transport.initial_window(1024 * 1024);
+    transport.send_window(1024 * 1024 * 3);
+    transport.receive_window(1024 * 1024);
+    let mut server_config = server_config.build();
+    server_config.transport = Arc::new(transport);
+
     let mut endpoint_builder = quinn::Endpoint::builder();
-    endpoint_builder.listen(server_config.build());
+    endpoint_builder.listen(server_config);
     let (_, mut incoming) =
         endpoint_builder.bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))?;
 
