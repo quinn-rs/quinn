@@ -73,7 +73,7 @@ where
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
-    /// Streams on which writing was blocked on *connection-level* flow or congestion control
+    /// Streams on which writing was blocked on *connection-level* flow control
     blocked_streams: HashSet<StreamId>,
     /// Limit on outgoing data, dictated by peer
     max_data: u64,
@@ -350,7 +350,7 @@ where
         if ack.largest >= self.space(space).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
-        let was_blocked = self.blocked();
+        let was_blocked = self.flow_blocked();
         let new_largest = {
             let space = self.space_mut(space);
             if space
@@ -426,7 +426,7 @@ where
         }
 
         self.set_loss_detection_timer();
-        if was_blocked && !self.blocked() {
+        if was_blocked && !self.flow_blocked() {
             for stream in self.blocked_streams.drain() {
                 self.events.push_back(Event::StreamWritable { stream });
             }
@@ -1740,9 +1740,9 @@ where
                     self.path_challenge = None;
                 }
                 Frame::MaxData(bytes) => {
-                    let was_blocked = self.blocked();
+                    let was_blocked = self.flow_blocked();
                     self.max_data = cmp::max(bytes, self.max_data);
-                    if was_blocked && !self.blocked() {
+                    if was_blocked && !self.flow_blocked() {
                         for stream in self.blocked_streams.drain() {
                             self.events.push_back(Event::StreamWritable { stream });
                         }
@@ -2832,14 +2832,14 @@ where
         Ok(())
     }
 
+    /// Whether UDP transmits are currently blocked by link congestion
     fn congestion_blocked(&self) -> bool {
         self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion_window
     }
 
-    fn blocked(&self) -> bool {
-        self.data_sent >= self.max_data
-            || self.congestion_blocked()
-            || self.unacked_data >= self.config.send_window
+    /// Whether application stream writes are currently blocked on connection-level flow control
+    fn flow_blocked(&self) -> bool {
+        self.data_sent >= self.max_data || self.unacked_data >= self.config.send_window
     }
 
     fn decrypt_packet(
@@ -2936,12 +2936,8 @@ where
             return Err(WriteError::Blocked);
         }
 
-        if self.blocked() {
-            if self.congestion_blocked() {
-                trace!(%stream, "write blocked by congestion");
-            } else {
-                trace!(%stream, "write blocked by connection-level flow control");
-            }
+        if self.flow_blocked() {
+            trace!(%stream, "write blocked by connection-level flow control");
             self.blocked_streams.insert(stream);
             return Err(WriteError::Blocked);
         }
