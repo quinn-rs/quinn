@@ -25,7 +25,6 @@ codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
 
 [dependencies]
-bitlab = "0.8.1"
 bytes = "0.5.2"
 err-derive = "0.2.3"
 futures = "0.3.1"

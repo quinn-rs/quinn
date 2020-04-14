@@ -1,6 +1,3 @@
-#![allow(clippy::ptr_arg)] // bitlab doesn't handle `&[u8]` for some reason
-use bitlab::*;
-
 use super::BitWindow;
 
 #[derive(Debug, PartialEq)]
@@ -22,7 +19,7 @@ struct HuffmanDecoder {
 }
 
 impl HuffmanDecoder {
-    fn check_eof(&self, bit_pos: &mut BitWindow, input: &Vec<u8>) -> Result<Option<u32>, Error> {
+    fn check_eof(&self, bit_pos: &mut BitWindow, input: &[u8]) -> Result<Option<u32>, Error> {
         use std::cmp::Ordering;
         match ((bit_pos.byte + 1) as usize).cmp(&input.len()) {
             // Position is out-of-range
@@ -33,9 +30,9 @@ impl HuffmanDecoder {
             Ordering::Equal => {
                 let side = bit_pos.opposite_bit_window();
 
-                let rest = match input.get_u8(side.byte, side.bit, side.count) {
+                let rest = match read_bits(input, side.byte, side.bit, side.count) {
                     Ok(x) => x,
-                    Err(_) => {
+                    Err(()) => {
                         return Err(Error::MissingBits(side));
                     }
                 };
@@ -50,14 +47,14 @@ impl HuffmanDecoder {
         Err(Error::MissingBits(bit_pos.clone()))
     }
 
-    fn fetch_value(&self, bit_pos: &mut BitWindow, input: &Vec<u8>) -> Result<Option<u32>, Error> {
-        match input.get_u32(bit_pos.byte, bit_pos.bit, bit_pos.count) {
-            Ok(value) => Ok(Some(value)),
-            Err(_) => self.check_eof(bit_pos, &input),
+    fn fetch_value(&self, bit_pos: &mut BitWindow, input: &[u8]) -> Result<Option<u32>, Error> {
+        match read_bits(input, bit_pos.byte, bit_pos.bit, bit_pos.count) {
+            Ok(value) => Ok(Some(value as u32)),
+            Err(()) => self.check_eof(bit_pos, &input),
         }
     }
 
-    fn decode_next(&self, bit_pos: &mut BitWindow, input: &Vec<u8>) -> Result<Option<u8>, Error> {
+    fn decode_next(&self, bit_pos: &mut BitWindow, input: &[u8]) -> Result<Option<u8>, Error> {
         bit_pos.forwards(self.lookup);
 
         let value = match self.fetch_value(bit_pos, input) {
@@ -76,6 +73,29 @@ impl HuffmanDecoder {
             DecodeValue::Partial(d) => d.decode_next(bit_pos, input),
         }
     }
+}
+
+/// Read `len` bits from the `src` slice at the specified position
+///
+/// Never read more than 8 bits at a time. `bit_offset` may be larger than 8.
+fn read_bits(src: &[u8], mut byte_offset: u32, mut bit_offset: u32, len: u32) -> Result<u8, ()> {
+    if len == 0 || len > 8 || src.len() as u32 * 8 < (byte_offset * 8) + bit_offset + len {
+        return Err(());
+    }
+
+    // Deal with `bit_offset` > 8
+    byte_offset += bit_offset / 8;
+    bit_offset -= (bit_offset / 8) * 8;
+
+    Ok(if bit_offset + len <= 8 {
+        // Read all the bits from a single byte
+        (src[byte_offset as usize] << bit_offset) >> (8 - len)
+    } else {
+        // The range of bits spans over 2 bytes
+        let mut result = (src[byte_offset as usize] as u16) << 8;
+        result |= src[byte_offset as usize + 1] as u16;
+        ((result << bit_offset) >> (16 - len)) as u8
+    })
 }
 
 macro_rules! bits_decode {
@@ -306,6 +326,43 @@ impl HpackStringDecode for Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_read_bits() {
+        // Basic case (within one byte, aligned with start)
+        assert_eq!(read_bits(&[0b1010_1010], 0, 0, 5), Ok(0b1_0101));
+        // Within one byte, aligned with end of byte
+        assert_eq!(read_bits(&[0b1010_1010], 0, 3, 5), Ok(0b1010));
+        // Within one byte, unaligned with either side
+        assert_eq!(read_bits(&[0b1010_1010], 0, 3, 3), Ok(0b10));
+        // `len` == 0
+        assert_eq!(read_bits(&[0b1010_1010], 0, 0, 0), Err(()));
+        // `len` > 8
+        assert_eq!(read_bits(&[0b1010_1010], 0, 0, 9), Err(()));
+
+        // `bit_offset` > 7
+        assert_eq!(
+            read_bits(&[0b1010_1010, 0b1010_1010], 0, 8, 8),
+            Ok(0b1010_1010)
+        );
+        // Read spanning two bytes
+        assert_eq!(
+            read_bits(&[0b1010_1010, 0b1010_1010], 0, 4, 8),
+            Ok(0b1010_1010)
+        );
+        // Read with non-zero `byte_offset`
+        assert_eq!(
+            read_bits(&[0b1010_1010, 0b1010_1010], 1, 0, 5),
+            Ok(0b1_0101)
+        );
+        // Read with `bit_offset` > 7, unaligned with either side
+        assert_eq!(
+            read_bits(&[0b1010_1010, 0b1010_1010], 0, 10, 5),
+            Ok(0b1_0101)
+        );
+        // Read with `bit_offset` > 7 past end of input slice
+        assert_eq!(read_bits(&[0b1010_1010, 0b1010_1010], 0, 16, 5), Err(()));
+    }
 
     macro_rules! decoding {
         [ $( $code:expr => $( $byte:expr ),* ; )* ] => { $( {
