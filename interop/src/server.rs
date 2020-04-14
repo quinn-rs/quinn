@@ -2,7 +2,7 @@ use std::{
     ascii, cmp,
     ffi::OsStr,
     fs,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     pin::Pin,
     str, sync,
@@ -46,8 +46,8 @@ struct Opt {
     )]
     cert: PathBuf,
     /// Address to listen on
-    #[structopt(long = "listen", short = "l", default_value = "0.0.0.0:4433")]
-    listen: SocketAddr,
+    #[structopt(long = "listen", short = "l", default_value = "::")]
+    listen: IpAddr,
 }
 
 #[tokio::main]
@@ -78,17 +78,17 @@ async fn main() -> Result<()> {
     server_config.certificate(cert_chain, key)?;
     server_config.protocols(&[quinn_h3::ALPN, b"hq-27"]);
 
-    let main = server(server_config.clone(), 4433);
-    let default = server(server_config.clone(), 443);
+    let main = server(server_config.clone(), SocketAddr::new(opt.listen, 4433));
+    let default = server(server_config.clone(), SocketAddr::new(opt.listen, 443));
     server_config.use_stateless_retry(true);
-    let retry = server(server_config.clone(), 4434);
+    let retry = server(server_config.clone(), SocketAddr::new(opt.listen, 4434));
 
     tokio::try_join!(main, default, retry, h2_server(server_config.clone()))?;
 
     Ok(())
 }
 
-async fn server(server_config: quinn::ServerConfigBuilder, port: u16) -> Result<()> {
+async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_window(1024 * 1024);
     transport.send_window(1024 * 1024 * 3);
@@ -98,10 +98,9 @@ async fn server(server_config: quinn::ServerConfigBuilder, port: u16) -> Result<
 
     let mut endpoint_builder = quinn::Endpoint::builder();
     endpoint_builder.listen(server_config);
-    let (_, mut incoming) =
-        endpoint_builder.bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))?;
+    let (_, mut incoming) = endpoint_builder.bind(&addr)?;
 
-    println!("server listening on {}", port);
+    println!("server listening on {}", addr);
     while let Some(connecting) = incoming.next().await {
         tokio::spawn(async move {
             let protos = connecting.authentication_data().protocol.unwrap();
