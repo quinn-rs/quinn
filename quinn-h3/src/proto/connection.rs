@@ -47,6 +47,9 @@ pub struct Connection {
     pending_streams: [BytesMut; 3],
     requests_in_flight: VecDeque<StreamId>,
     go_away: bool,
+
+    #[cfg(feature = "interop-test-accessors")]
+    pub had_refs: bool,
 }
 
 impl Connection {
@@ -74,6 +77,9 @@ impl Connection {
             encoder_table: DynamicTable::new(),
             requests_in_flight: VecDeque::with_capacity(32),
             go_away: false,
+
+            #[cfg(feature = "interop-test-accessors")]
+            had_refs: false,
         }
     }
 
@@ -113,6 +119,10 @@ impl Connection {
             Err(e) => Err(Error::DecodeError { reason: e }),
             Ok((decoded, had_refs)) => {
                 if had_refs {
+                    #[cfg(feature = "interop-test-accessors")]
+                    {
+                        self.had_refs = had_refs;
+                    }
                     qpack::ack_header(
                         stream_id.0,
                         &mut self.pending_streams[PendingStreamType::Decoder as usize],
@@ -285,6 +295,9 @@ mod tests {
                 ],
                 requests_in_flight: VecDeque::with_capacity(32),
                 go_away: false,
+
+                #[cfg(feature = "interop-test-accessors")]
+                had_refs: false,
             }
         }
     }
