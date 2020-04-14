@@ -15,7 +15,7 @@ hyper = "0.13"
 hyper-rustls = "0.20"
 lazy_static = "1"
 quinn = { path = "../quinn" }
-quinn-h3 = { path = "../quinn-h3" }
+quinn-h3 = { path = "../quinn-h3", features = ["interop-test-accessors"] }
 quinn-proto = { path = "../quinn-proto" }
 rustls = { version = "0.17", features = ["dangerous_configuration"] }
 structopt = "0.3.0"
