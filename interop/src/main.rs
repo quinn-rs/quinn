@@ -13,7 +13,7 @@ use hyper::body::HttpBody as _;
 use lazy_static::lazy_static;
 use quinn_h3::Settings;
 use structopt::StructOpt;
-use tracing::{error, info, info_span, warn};
+use tracing::{debug, error, info, info_span, warn};
 use tracing_futures::Instrument as _;
 
 #[derive(StructOpt, Debug)]
@@ -248,6 +248,7 @@ impl State {
                     .instrument(info_span!("throughput"))
                     .await,
                 None,
+                None,
             ))
         } else {
             let (core, key_update, rebind, retry, throughput) = tokio::join!(
@@ -258,7 +259,7 @@ impl State {
                 self.throughput_hq().instrument(info_span!("throughput"))
             );
             Ok(build_result(
-                core, key_update, rebind, retry, throughput, None,
+                core, key_update, rebind, retry, throughput, None, None,
             ))
         }
     }
@@ -276,15 +277,22 @@ impl State {
                     .instrument(info_span!("throughput"))
                     .await,
                 Some(self.h3().instrument(info_span!("h3")).await),
+                Some(
+                    self.dynamic_encoding()
+                        .instrument(info_span!("dynamic_encoding"))
+                        .await,
+                ),
             ))
         } else {
-            let (core, key_update, rebind, retry, throughput, h3) = tokio::join!(
+            let (core, key_update, rebind, retry, throughput, h3, dynamic_encoding) = tokio::join!(
                 self.core_h3().instrument(info_span!("core")),
                 self.key_update_h3().instrument(info_span!("key_update")),
                 self.rebind_h3().instrument(info_span!("rebind")),
                 self.retry_h3().instrument(info_span!("retry")),
                 self.throughput_h3().instrument(info_span!("throughput")),
                 self.h3().instrument(info_span!("h3")),
+                self.dynamic_encoding()
+                    .instrument(info_span!("dynamic_encoding")),
             );
             Ok(build_result(
                 core,
@@ -293,6 +301,7 @@ impl State {
                 retry,
                 throughput,
                 Some(h3),
+                Some(dynamic_encoding),
             ))
         }
     }
@@ -722,6 +731,27 @@ impl State {
         conn.close();
         Ok(())
     }
+
+    async fn dynamic_encoding(&self) -> Result<()> {
+        let conn = self
+            .h3_client
+            .as_ref()
+            .unwrap()
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
+        h3_get(&conn, &self.peer.uri("/"))
+            .await
+            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
+        h3_get(&conn, &self.peer.uri("/"))
+            .await
+            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
+        if !conn.had_refs() {
+            return Err(anyhow!("No dynamic table entry was referenced"));
+        }
+        conn.close();
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -736,6 +766,7 @@ struct InteropResult {
     retry: bool,
     throughput: bool,
     h3: bool,
+    dynamic_encoding: bool,
 }
 
 impl InteropResult {
@@ -771,6 +802,9 @@ impl InteropResult {
         if self.h3 {
             string.push_str("3");
         }
+        if self.dynamic_encoding {
+            string.push_str("d");
+        }
         string
     }
 }
@@ -783,6 +817,7 @@ fn build_result(
     retry: Result<()>,
     throughput: Result<()>,
     h3: Option<Result<()>>,
+    dynamic_encoding: Option<Result<()>>,
 ) -> InteropResult {
     let mut result = core.unwrap_or_else(|e| {
         error!("core functionality failed: {}", e);
@@ -809,14 +844,19 @@ fn build_result(
         Some(Err(e)) => error!("retry failed: {}", e),
         None => (),
     }
+    match dynamic_encoding {
+        Some(Ok(_)) => result.dynamic_encoding = true,
+        Some(Err(e)) => error!("dynamic encoding failed: {}", e),
+        None => (),
+    }
     result
 }
 
 async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<usize> {
     let (response, _) = conn.send_request(http::Request::get(uri).body(())?).await?;
 
-    let (_, mut recv_body) = response.await?;
-
+    let (resp, mut recv_body) = response.await?;
+    debug!("resp: {:?}", resp);
     let mut total_len = 0usize;
     while let Some(d) = recv_body.data().await {
         total_len += d?.len()
