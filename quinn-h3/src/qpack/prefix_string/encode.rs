@@ -1738,7 +1738,7 @@ mod tests {
     #[test]
     fn byte_count_exact_when_bit_count_multiple_of_8() {
         let encoded = vec![
-            0x8cu8, 0x2d, 0x4b, 0x70, 0xdd, 0xf4, 0x5a, 0xbe, 0xfb, 0x40, 0x05, 0xdb,
+            0x8c, 0x2d, 0x4b, 0x70, 0xdd, 0xf4, 0x5a, 0xbe, 0xfb, 0x40, 0x05, 0xdb,
         ];
 
         let mut res = Vec::new();
@@ -1748,7 +1748,7 @@ mod tests {
 
         let reencoded = res.hpack_encode();
 
-        assert_eq!(reencoded.unwrap().last(), Some(&0xdbu8));
+        assert_eq!(reencoded.unwrap().last(), Some(&0xdb));
     }
 
     #[test]
@@ -1765,6 +1765,6 @@ mod tests {
 
         let reencoded = res.hpack_encode();
 
-        assert_eq!(reencoded.unwrap().last(), Some(&0xfcu8));
+        assert_eq!(reencoded.unwrap().last(), Some(&0xfc));
     }
 }
