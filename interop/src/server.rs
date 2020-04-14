@@ -166,6 +166,7 @@ async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
 async fn h3_home(sender: quinn_h3::server::Sender) -> Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
+        .header("server", VERSION)
         .body(HOME)
         .expect("failed to build response");
     sender
@@ -179,6 +180,7 @@ async fn h3_payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> 
     if len > 1_000_000_000 {
         let response = Response::builder()
             .status(StatusCode::BAD_REQUEST)
+            .header("server", VERSION)
             .body(Bytes::from(format!("requested {}: too large", len)))
             .expect("failed to build response");
         sender.send_response(response).await?;
@@ -190,6 +192,7 @@ async fn h3_payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> 
 
     let response = Response::builder()
         .status(StatusCode::OK)
+        .header("server", VERSION)
         .body(Bytes::from(buf))
         .expect("failed to build response");
 
@@ -445,3 +448,5 @@ const HOME: &str = r##"
   </body>
 </html>
 "##;
+
+const VERSION: &str = "quinn-h3:0.0.1";
