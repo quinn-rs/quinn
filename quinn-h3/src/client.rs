@@ -708,3 +708,12 @@ impl Connection {
         &self.0
     }
 }
+
+#[cfg(feature = "interop-test-accessors")]
+impl Connection {
+    /// Return true if one header has been decoded with the help of a dynamic QPACK entry.
+    pub fn had_refs(&self) -> bool {
+        let conn = self.0.h3.lock().unwrap();
+        conn.inner.had_refs
+    }
+}

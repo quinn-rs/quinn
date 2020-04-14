@@ -17,6 +17,9 @@ edition = "2018"
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+interop-test-accessors = []
+
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
