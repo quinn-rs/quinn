@@ -1,5 +1,3 @@
-use bitlab::*;
-
 use super::BitWindow;
 
 #[derive(Debug, PartialEq)]
@@ -27,15 +25,6 @@ impl HuffmanEncoder {
         HuffmanEncoder {
             buffer_pos: BitWindow::new(),
             buffer: Vec::new(),
-        }
-    }
-
-    fn create_error(&self, text: String) -> Error {
-        Error {
-            buffer_pos: self.buffer_pos.clone(),
-            len: self.buffer.len(),
-            capacity: self.buffer.capacity(),
-            text,
         }
     }
 
@@ -75,14 +64,7 @@ impl HuffmanEncoder {
             self.buffer_pos.forwards(if rest < 8 { rest } else { 8 });
             rest -= self.buffer_pos.count;
 
-            self.buffer
-                .set(
-                    self.buffer_pos.byte,
-                    self.buffer_pos.bit,
-                    self.buffer_pos.count,
-                    part,
-                )
-                .map_err(|x| self.create_error(x))?;
+            write_bits(&mut self.buffer, &self.buffer_pos, part)
         }
 
         Ok(())
@@ -92,6 +74,43 @@ impl HuffmanEncoder {
         Ok(self.buffer)
     }
 }
+
+/// Write bits from `value` to the `out` slice
+///
+/// Write the least significant `pos.count` bits from `value` to the position specified by
+/// `(pos.byte, pos.bit)`. Writes may span multiple bytes. `out` is expected to be long enough
+/// to write these bits; this is ensured by `HuffmanEncoder::ensure_free_space()`, which is
+/// always called prior to calling this function.
+///
+/// The bits to be written to are expected to be set to 1 when calling this function. Similarly,
+/// this function maintains the invariant that unused bits in the output bytes are set to 1.
+fn write_bits(out: &mut [u8], pos: &BitWindow, value: u8) {
+    debug_assert!(pos.bit < 8);
+    debug_assert!(pos.count <= 8);
+    debug_assert!(pos.count > 0);
+
+    if (pos.bit + pos.count) <= 8 {
+        // Bits to be written to fit in a single byte
+        debug_assert_eq!(out[pos.byte as usize] | PAD_LEFT[pos.bit as usize], 255);
+        let pad_left = out[pos.byte as usize] | PAD_RIGHT[(8 - pos.bit) as usize];
+        let shifted = value << (8 - pos.bit - pos.count) | PAD_LEFT[pos.bit as usize];
+        let pad_right = PAD_RIGHT[(8 - pos.count - pos.bit) as usize];
+        out[pos.byte as usize] = (pad_left & shifted) | pad_right;
+    } else {
+        // Bits to be written to span two bytes
+        debug_assert_eq!(out[pos.byte as usize] | PAD_LEFT[pos.bit as usize], 255);
+        let split = 8 - pos.bit;
+        let pad_left = out[pos.byte as usize] | PAD_RIGHT[split as usize];
+        let shifted = (value >> (pos.count - split)) | PAD_LEFT[pos.bit as usize];
+        out[pos.byte as usize] = pad_left & shifted;
+
+        let rem = 8 - (pos.count - split);
+        out[(pos.byte + 1) as usize] = (value << rem) | PAD_RIGHT[rem as usize];
+    }
+}
+
+const PAD_RIGHT: [u8; 9] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
+const PAD_LEFT: [u8; 9] = [0, 128, 192, 224, 240, 248, 252, 254, 255];
 
 macro_rules! bits_encode {
     [ $( ( $len:expr => [ $( $byte:expr ),* ] ), )* ] => {
@@ -380,6 +399,42 @@ impl HpackStringEncode for Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_set_bits() {
+        let mut buf = [0b1111_1111; 16];
+        let mut pos = BitWindow::default();
+
+        // Write a full 8 bits into a single byte
+        pos.count = 8;
+        write_bits(&mut buf, &pos, 0b1_0101);
+        assert_eq!(&buf[..1], &[0b1_0101]);
+        pos.byte += 1;
+
+        // 7-bit byte-spanning writes at each possible bit offset
+        pos.count = 7;
+        for _ in 0..8 {
+            write_bits(&mut buf, &pos, 0b101_0101);
+            pos.forwards(7);
+        }
+        assert_eq!(
+            &buf[1..8],
+            &[
+                0b1010_1011,
+                0b0101_0110,
+                0b1010_1101,
+                0b0101_1010,
+                0b1011_0101,
+                0b0110_1010,
+                0b1101_0101
+            ]
+        );
+
+        // Single-write partial bits, aligned with byte start
+        pos.count = 5;
+        write_bits(&mut buf, &pos, 0b1_0101);
+        assert_eq!(&buf[8..9], &[0b1010_1111]);
+    }
 
     macro_rules! encoding {
         [ $( $code:expr => $( $byte:expr ),* ; )* ] => { $( {
