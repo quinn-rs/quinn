@@ -236,9 +236,11 @@ struct State {
 
 impl State {
     async fn run_hq(self) -> Result<InteropResult> {
+        // We run core on its own first to ensure the 0-RTT token can be used reliably
+        let core = self.core_hq().instrument(info_span!("core")).await;
         if self.peer.sequential {
             Ok(build_result(
-                self.core_hq().instrument(info_span!("core")).await,
+                core,
                 self.key_update_hq()
                     .instrument(info_span!("key_update"))
                     .await,
@@ -251,8 +253,7 @@ impl State {
                 None,
             ))
         } else {
-            let (core, key_update, rebind, retry, throughput) = tokio::join!(
-                self.core_hq().instrument(info_span!("core")),
+            let (key_update, rebind, retry, throughput) = tokio::join!(
                 self.key_update_hq().instrument(info_span!("key_update")),
                 self.rebind_hq().instrument(info_span!("rebind")),
                 self.retry_hq().instrument(info_span!("retry")),
@@ -265,9 +266,11 @@ impl State {
     }
 
     async fn run_h3(self) -> Result<InteropResult> {
+        // We run core on its own first to ensure the 0-RTT token can be used reliably
+        let core = self.core_h3().instrument(info_span!("core")).await;
         if self.peer.sequential {
             Ok(build_result(
-                self.core_h3().instrument(info_span!("core")).await,
+                core,
                 self.key_update_h3()
                     .instrument(info_span!("key_update"))
                     .await,
@@ -284,8 +287,7 @@ impl State {
                 ),
             ))
         } else {
-            let (core, key_update, rebind, retry, throughput, h3, dynamic_encoding) = tokio::join!(
-                self.core_h3().instrument(info_span!("core")),
+            let (key_update, rebind, retry, throughput, h3, dynamic_encoding) = tokio::join!(
                 self.key_update_h3().instrument(info_span!("key_update")),
                 self.rebind_h3().instrument(info_span!("rebind")),
                 self.retry_h3().instrument(info_span!("retry")),
