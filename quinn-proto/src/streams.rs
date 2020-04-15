@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use err_derive::Error;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     assembler::Assembler,
@@ -37,10 +37,23 @@ pub(crate) struct Streams {
     send_streams: usize,
     /// Streams with outgoing data queued
     pending: Vec<StreamId>,
+
+    /// Streams blocked on connection-level flow control or stream window space
+    ///
+    /// Streams are only added to this list when a write fails.
+    connection_blocked: Vec<StreamId>,
+    /// Connection-level flow control budget dictated by the peer
+    max_data: u64,
+    /// Sum of current offsets of all send streams.
+    data_sent: u64,
+    /// Total quantity of unacknowledged outgoing data
+    unacked_data: u64,
+    /// Configured upper bound for `unacked_data`
+    send_window: u64,
 }
 
 impl Streams {
-    pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64) -> Self {
+    pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64, send_window: u64) -> Self {
         let mut this = Self {
             send: HashMap::default(),
             recv: HashMap::default(),
@@ -51,6 +64,11 @@ impl Streams {
             next_reported_remote: [0, 0],
             send_streams: 0,
             pending: Vec::new(),
+            connection_blocked: Vec::new(),
+            max_data: 0,
+            data_sent: 0,
+            unacked_data: 0,
+            send_window,
         };
 
         for dir in Dir::iter() {
@@ -108,6 +126,8 @@ impl Streams {
             self.next[dir as usize] = 0;
         }
         self.pending.clear();
+        self.data_sent = 0;
+        self.connection_blocked.clear();
     }
 
     pub fn read(
@@ -227,7 +247,8 @@ impl Streams {
                 Dir::Bi if remote => params.initial_max_stream_data_bidi_local,
                 Dir::Bi => params.initial_max_stream_data_bidi_remote,
             });
-            assert!(self.send.insert(id, Send::new(max_data)).is_none());
+            let stream = Send::new(max_data);
+            assert!(self.send.insert(id, stream).is_none());
         }
         if bi || remote {
             assert!(self.recv.insert(id, Recv::new()).is_none());
@@ -236,9 +257,20 @@ impl Streams {
 
     /// Queue `data` to be written for `stream`
     pub fn write(&mut self, id: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        let limit = (self.max_data - self.data_sent).min(self.send_window - self.unacked_data);
         let stream = self.send.get_mut(&id).ok_or(WriteError::UnknownStream)?;
+        if limit == 0 {
+            trace!(stream = %id, "write blocked by connection-level flow control or send window");
+            if !stream.connection_blocked {
+                stream.connection_blocked = true;
+                self.connection_blocked.push(id);
+            }
+            return Err(WriteError::Blocked);
+        }
+
         let was_pending = stream.is_pending();
-        let len = match stream.write(data) {
+        let len = (data.len() as u64).min(limit) as usize;
+        let len = match stream.write(&data[0..len]) {
             Ok(n) => n,
             e @ Err(WriteError::Stopped { .. }) => {
                 self.maybe_cleanup(id);
@@ -246,7 +278,10 @@ impl Streams {
             }
             e @ Err(_) => return e,
         };
-        if !was_pending && !data.is_empty() {
+        self.data_sent += len as u64;
+        self.unacked_data += len as u64;
+        trace!(stream = %id, "wrote {} bytes", len);
+        if !was_pending {
             self.pending.push(id);
         }
         Ok(len)
@@ -267,15 +302,13 @@ impl Streams {
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
     /// state.
-    pub fn reset(
-        &mut self,
-        id: StreamId,
-        stop_reason: Option<VarInt>,
-    ) -> (u64, Option<ResetStatus>) {
-        match self.send.get_mut(&id) {
-            None => (0, None),
-            Some(s) => s.reset(stop_reason),
-        }
+    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
+        let stream = self.send.get_mut(&id)?;
+        // Restore the portion of the send window consumed by the data that we aren't about to
+        // send. We leave flow control alone because the peer's responsible for issuing additional
+        // credit based on the final offset communicated in the RESET_STREAM frame we send.
+        self.unacked_data -= stream.pending.unacked();
+        stream.reset(stop_reason)
     }
 
     pub fn can_send(&self) -> bool {
@@ -323,6 +356,7 @@ impl Streams {
             Some(x) => x,
         };
         let id = frame.id;
+        self.unacked_data -= frame.offsets.end - frame.offsets.start;
         stream.ack(frame);
         if stream.state == SendState::DataRecvd {
             // Guaranteed to succeed on the send side
@@ -362,6 +396,42 @@ impl Streams {
             }
         }
     }
+
+    /// Handle increase to connection-level flow control limit
+    pub fn increase_max_data(&mut self, n: u64) {
+        self.max_data = self.max_data.max(n);
+    }
+
+    /// Fetch a stream for which a write previously failed due to *connection-level* flow control or
+    /// send window limits which no longer apply.
+    pub fn poll_unblocked(&mut self) -> Option<StreamId> {
+        if self.flow_blocked() {
+            // Everything's still blocked
+            return None;
+        }
+
+        while let Some(id) = self.connection_blocked.pop() {
+            let stream = match self.send.get_mut(&id) {
+                None => continue,
+                Some(s) => s,
+            };
+            debug_assert!(stream.connection_blocked);
+            stream.connection_blocked = false;
+            // If it's no longer sensible to write to a stream (even to detect an error) then don't
+            // report it.
+            if stream.state.is_writable() {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    /// Whether application stream writes are currently blocked on connection-level flow control or
+    /// the send window
+    fn flow_blocked(&self) -> bool {
+        self.data_sent >= self.max_data || self.unacked_data >= self.send_window
+    }
 }
 
 #[derive(Debug)]
@@ -370,6 +440,8 @@ pub(crate) struct Send {
     pub state: SendState,
     pending: SendBuffer,
     fin_pending: bool,
+    /// Whether this stream is in the `connection_blocked` list of `Streams`
+    connection_blocked: bool,
 }
 
 impl Send {
@@ -379,6 +451,7 @@ impl Send {
             state: SendState::Ready,
             pending: SendBuffer::new(),
             fin_pending: false,
+            connection_blocked: false,
         }
     }
 
@@ -438,17 +511,9 @@ impl Send {
     /// Returns number of unsent bytes and whether the stream was blocked or finishing, indicating
     /// that the application needs to be notified explicitly if the stream was stopped because no
     /// further write calls will be made.
-    fn reset(&mut self, stop_reason: Option<VarInt>) -> (u64, Option<ResetStatus>) {
-        let mut bytes = 0;
-        loop {
-            let offsets = self.pending.poll_transmit(usize::max_value());
-            if offsets.end == offsets.start {
-                break;
-            }
-            bytes += offsets.end - offsets.start;
-        }
+    fn reset(&mut self, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
         use SendState::*;
-        let status = match self.state {
+        match self.state {
             DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
             DataSent { .. } => {
                 self.state = ResetSent { stop_reason: None };
@@ -456,14 +521,13 @@ impl Send {
             }
             Ready => {
                 self.state = ResetSent { stop_reason };
-                if self.pending.offset() == self.max_data {
+                if self.pending.offset() == self.max_data || self.connection_blocked {
                     Some(ResetStatus::WasBlocked)
                 } else {
                     None
                 }
             }
-        };
-        (bytes, status)
+        }
     }
 
     fn ack(&mut self, frame: frame::StreamMeta) {
@@ -479,6 +543,8 @@ impl Send {
         }
     }
 
+    /// Handle increase to stream-level flow control limit
+    ///
     /// Returns whether the stream was unblocked
     pub fn increase_max_data(&mut self, offset: u64) -> bool {
         if offset <= self.max_data || self.state != SendState::Ready {
@@ -733,6 +799,24 @@ pub(crate) enum SendState {
     DataRecvd,
     /// Reset acknowledged
     ResetRecvd { stop_reason: Option<VarInt> },
+}
+
+impl SendState {
+    fn is_writable(&self) -> bool {
+        use SendState::*;
+        // A stream is writable in Ready state or if it's been stopped and the stop hasn't been
+        // reported
+        match *self {
+            SendState::Ready
+            | ResetSent {
+                stop_reason: Some(_),
+            }
+            | ResetRecvd {
+                stop_reason: Some(_),
+            } => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

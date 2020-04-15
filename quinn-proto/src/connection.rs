@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt, io, mem,
     net::SocketAddr,
     sync::Arc,
@@ -73,18 +73,10 @@ where
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
-    /// Streams on which writing was blocked on *connection-level* flow control
-    blocked_streams: HashSet<StreamId>,
-    /// Limit on outgoing data, dictated by peer
-    max_data: u64,
-    /// Sum of current offsets of all send streams.
-    data_sent: u64,
     /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
     data_recvd: u64,
     /// Limit on incoming data
     local_max_data: u64,
-    /// Stream data we're sending that hasn't been acknowledged or reset yet
-    unacked_data: u64,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -218,12 +210,8 @@ where
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
-            blocked_streams: HashSet::new(),
-            max_data: 0,
-            data_sent: 0,
             data_recvd: 0,
             local_max_data: config.receive_window as u64,
-            unacked_data: 0,
             orig_rem_cid: None,
             lost_packets: 0,
             events: VecDeque::new(),
@@ -257,7 +245,12 @@ where
             total_recvd: 0,
             total_sent: 0,
 
-            streams: Streams::new(side, config.stream_window_uni, config.stream_window_bidi),
+            streams: Streams::new(
+                side,
+                config.stream_window_uni,
+                config.stream_window_bidi,
+                config.send_window,
+            ),
             datagrams: DatagramState::new(),
             config,
             rem_cids: CidQueue::new(1),
@@ -292,6 +285,10 @@ where
             Dir::iter().find(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
         {
             return Some(Event::StreamOpened { dir });
+        }
+
+        if let Some(stream) = self.streams.poll_unblocked() {
+            return Some(Event::StreamWritable { stream });
         }
 
         if let Some(x) = self.events.pop_front() {
@@ -350,7 +347,6 @@ where
         if ack.largest >= self.space(space).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
-        let was_blocked = self.flow_blocked();
         let new_largest = {
             let space = self.space_mut(space);
             if space
@@ -426,11 +422,6 @@ where
         }
 
         self.set_loss_detection_timer();
-        if was_blocked && !self.flow_blocked() {
-            for stream in self.blocked_streams.drain() {
-                self.events.push_back(Event::StreamWritable { stream });
-            }
-        }
         Ok(())
     }
 
@@ -498,7 +489,6 @@ where
         }
 
         for frame in info.stream_frames {
-            self.unacked_data -= frame.offsets.end - frame.offsets.start;
             let id = frame.id;
             if self.streams.ack(frame) {
                 self.events.push_back(Event::StreamFinished {
@@ -865,16 +855,14 @@ where
         );
 
         let stop_reason = if stopped { Some(error_code) } else { None };
-        let (bytes_dropped, status) = self.streams.reset(stream_id, stop_reason);
-        self.unacked_data -= bytes_dropped;
-        let was_conn_blocked = self.blocked_streams.remove(&stream_id);
+        let status = self.streams.reset(stream_id, stop_reason);
         if stopped {
             if status == Some(streams::ResetStatus::WasFinishing) {
                 self.events.push_back(Event::StreamFinished {
                     stream: stream_id,
                     stop_reason,
                 });
-            } else if was_conn_blocked || status == Some(streams::ResetStatus::WasBlocked) {
+            } else if status == Some(streams::ResetStatus::WasBlocked) {
                 self.events
                     .push_back(Event::StreamWritable { stream: stream_id });
             }
@@ -1688,13 +1676,7 @@ where
                     self.path_challenge = None;
                 }
                 Frame::MaxData(bytes) => {
-                    let was_blocked = self.flow_blocked();
-                    self.max_data = cmp::max(bytes, self.max_data);
-                    if was_blocked && !self.flow_blocked() {
-                        for stream in self.blocked_streams.drain() {
-                            self.events.push_back(Event::StreamWritable { stream });
-                        }
-                    }
+                    self.streams.increase_max_data(bytes);
                 }
                 Frame::MaxStreamData { id, offset } => {
                     if id.initiator() != self.side && id.dir() == Dir::Uni {
@@ -2628,7 +2610,7 @@ where
     fn set_params(&mut self, params: TransportParameters) {
         self.streams.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
         self.streams.max[Dir::Uni as usize] = params.initial_max_streams_uni;
-        self.max_data = params.initial_max_data as u64;
+        self.streams.increase_max_data(params.initial_max_data);
         for i in 0..self.streams.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.streams.send_mut(id).unwrap().max_data =
@@ -2696,8 +2678,6 @@ where
     /// If this fails, no [`Event::StreamFinished`] will be generated.
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         self.streams.finish(id)?;
-        // We no longer need to notify the application of capacity for additional writes.
-        self.blocked_streams.remove(&id);
         Ok(())
     }
 
@@ -2757,11 +2737,6 @@ where
     /// Whether UDP transmits are currently blocked by link congestion
     fn congestion_blocked(&self) -> bool {
         self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion_window
-    }
-
-    /// Whether application stream writes are currently blocked on connection-level flow control
-    fn flow_blocked(&self) -> bool {
-        self.data_sent >= self.max_data || self.unacked_data >= self.config.send_window
     }
 
     fn decrypt_packet(
@@ -2857,23 +2832,7 @@ where
             trace!(%stream, "write blocked; connection draining");
             return Err(WriteError::Blocked);
         }
-
-        if self.flow_blocked() {
-            trace!(%stream, "write blocked by connection-level flow control");
-            self.blocked_streams.insert(stream);
-            return Err(WriteError::Blocked);
-        }
-
-        // TODO: Send window in terms of actual buffer size, which includes discontinuously acked
-        // data
-        let len = (data.len() as u64)
-            .min(self.max_data - self.data_sent)
-            .min(self.config.send_window - self.unacked_data) as usize;
-        let n = self.streams.write(stream, &data[0..len])?;
-        self.data_sent += n as u64;
-        self.unacked_data += n as u64;
-        trace!(%stream, "wrote {} bytes", n);
-        Ok(n)
+        self.streams.write(stream, data)
     }
 
     /// Prepare to transmit an unreliable, unordered datagram
@@ -3070,8 +3029,6 @@ where
         for (_, packet) in sent_packets {
             self.in_flight.remove(&packet);
         }
-        self.data_sent = 0;
-        self.blocked_streams.clear();
     }
 }
 

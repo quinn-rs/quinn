@@ -112,6 +112,11 @@ impl SendBuffer {
     pub fn has_unsent_data(&self) -> bool {
         self.unsent != self.offset || !self.retransmits.is_empty()
     }
+
+    /// Compute the amount of data that hasn't been acknowledged
+    pub fn unacked(&self) -> u64 {
+        self.unacked.len() as u64 - self.acks.iter().map(|x| x.end - x.start).sum::<u64>()
+    }
 }
 
 #[cfg(test)]
