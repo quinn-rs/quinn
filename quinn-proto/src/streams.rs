@@ -36,7 +36,7 @@ pub(crate) struct Streams {
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
     /// Streams with outgoing data queued
-    pub pending: Vec<StreamId>,
+    pending: Vec<StreamId>,
 }
 
 impl Streams {
@@ -250,6 +250,17 @@ impl Streams {
             self.pending.push(id);
         }
         Ok(len)
+    }
+
+    /// Set the FIN bit in the next stream frame, generating an empty one if necessary
+    pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
+        let stream = self.send.get_mut(&id).ok_or(FinishError::UnknownStream)?;
+        let was_pending = stream.is_pending();
+        stream.finish()?;
+        if !was_pending {
+            self.pending.push(id);
+        }
+        Ok(())
     }
 
     /// Abandon pending and future transmits

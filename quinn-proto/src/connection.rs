@@ -2695,15 +2695,7 @@ where
     ///
     /// If this fails, no [`Event::StreamFinished`] will be generated.
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
-        let ss = self
-            .streams
-            .send_mut(id)
-            .ok_or(FinishError::UnknownStream)?;
-        let was_pending = ss.is_pending();
-        ss.finish()?;
-        if !was_pending {
-            self.streams.pending.push(id);
-        }
+        self.streams.finish(id)?;
         // We no longer need to notify the application of capacity for additional writes.
         self.blocked_streams.remove(&id);
         Ok(())
