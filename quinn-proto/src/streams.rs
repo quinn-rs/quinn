@@ -169,92 +169,6 @@ impl Streams {
         }
     }
 
-    /// Access a receive stream due to a message from the peer
-    ///
-    /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
-    /// misbehavior.
-    pub fn recv_stream(
-        &mut self,
-        side: Side,
-        id: StreamId,
-    ) -> Result<Option<&mut Recv>, TransportError> {
-        if side == id.initiator() {
-            match id.dir() {
-                Dir::Uni => {
-                    return Err(TransportError::STREAM_STATE_ERROR(
-                        "illegal operation on send-only stream",
-                    ));
-                }
-                Dir::Bi if id.index() >= self.next[Dir::Bi as usize] => {
-                    return Err(TransportError::STREAM_STATE_ERROR(
-                        "operation on unopened stream",
-                    ));
-                }
-                Dir::Bi => {}
-            };
-        } else {
-            let limit = self.max_remote[id.dir() as usize];
-            if id.index() >= limit {
-                return Err(TransportError::STREAM_LIMIT_ERROR(""));
-            }
-        }
-        Ok(self.recv.get_mut(&id))
-    }
-
-    /// Discard state for a stream if it's fully closed.
-    ///
-    /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.send.entry(id) {
-            hash_map::Entry::Vacant(_) => {}
-            hash_map::Entry::Occupied(e) => {
-                if e.get().is_closed() {
-                    self.send_streams -= 1;
-                    e.remove_entry();
-                }
-            }
-        }
-        match self.recv.entry(id) {
-            hash_map::Entry::Vacant(_) => {}
-            hash_map::Entry::Occupied(e) => {
-                if e.get().is_closed() {
-                    e.remove_entry();
-                }
-            }
-        }
-    }
-
-    pub fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
-        self.recv.get_mut(&id)
-    }
-
-    pub fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
-        self.send.get_mut(&id)
-    }
-
-    /// Whether a locally initiated stream has never been open
-    pub fn is_local_unopened(&self, id: StreamId) -> bool {
-        id.index() >= self.next[id.dir() as usize]
-    }
-
-    fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
-        let bi = id.dir() == Dir::Bi;
-        if bi || !remote {
-            let max_data = params.map_or(0, |params| match id.dir() {
-                Dir::Uni => params.initial_max_stream_data_uni,
-                // Remote/local appear reversed here because the transport parameters are named from
-                // the perspective of the peer.
-                Dir::Bi if remote => params.initial_max_stream_data_bidi_local,
-                Dir::Bi => params.initial_max_stream_data_bidi_remote,
-            });
-            let stream = Send::new(max_data);
-            assert!(self.send.insert(id, stream).is_none());
-        }
-        if bi || remote {
-            assert!(self.recv.insert(id, Recv::new()).is_none());
-        }
-    }
-
     /// Queue `data` to be written for `stream`
     pub fn write(&mut self, id: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         let limit = (self.max_data - self.data_sent).min(self.send_window - self.unacked_data);
@@ -425,6 +339,92 @@ impl Streams {
         }
 
         None
+    }
+
+    /// Access a receive stream due to a message from the peer
+    ///
+    /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
+    /// misbehavior.
+    pub fn recv_stream(
+        &mut self,
+        side: Side,
+        id: StreamId,
+    ) -> Result<Option<&mut Recv>, TransportError> {
+        if side == id.initiator() {
+            match id.dir() {
+                Dir::Uni => {
+                    return Err(TransportError::STREAM_STATE_ERROR(
+                        "illegal operation on send-only stream",
+                    ));
+                }
+                Dir::Bi if id.index() >= self.next[Dir::Bi as usize] => {
+                    return Err(TransportError::STREAM_STATE_ERROR(
+                        "operation on unopened stream",
+                    ));
+                }
+                Dir::Bi => {}
+            };
+        } else {
+            let limit = self.max_remote[id.dir() as usize];
+            if id.index() >= limit {
+                return Err(TransportError::STREAM_LIMIT_ERROR(""));
+            }
+        }
+        Ok(self.recv.get_mut(&id))
+    }
+
+    /// Discard state for a stream if it's fully closed.
+    ///
+    /// Called when one side of a stream transitions to a closed state
+    pub fn maybe_cleanup(&mut self, id: StreamId) {
+        match self.send.entry(id) {
+            hash_map::Entry::Vacant(_) => {}
+            hash_map::Entry::Occupied(e) => {
+                if e.get().is_closed() {
+                    self.send_streams -= 1;
+                    e.remove_entry();
+                }
+            }
+        }
+        match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => {}
+            hash_map::Entry::Occupied(e) => {
+                if e.get().is_closed() {
+                    e.remove_entry();
+                }
+            }
+        }
+    }
+
+    pub fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
+        self.recv.get_mut(&id)
+    }
+
+    pub fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
+        self.send.get_mut(&id)
+    }
+
+    /// Whether a locally initiated stream has never been open
+    pub fn is_local_unopened(&self, id: StreamId) -> bool {
+        id.index() >= self.next[id.dir() as usize]
+    }
+
+    fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
+        let bi = id.dir() == Dir::Bi;
+        if bi || !remote {
+            let max_data = params.map_or(0, |params| match id.dir() {
+                Dir::Uni => params.initial_max_stream_data_uni,
+                // Remote/local appear reversed here because the transport parameters are named from
+                // the perspective of the peer.
+                Dir::Bi if remote => params.initial_max_stream_data_bidi_local,
+                Dir::Bi => params.initial_max_stream_data_bidi_remote,
+            });
+            let stream = Send::new(max_data);
+            assert!(self.send.insert(id, stream).is_none());
+        }
+        if bi || remote {
+            assert!(self.recv.insert(id, Recv::new()).is_none());
+        }
     }
 
     /// Whether application stream writes are currently blocked on connection-level flow control or
