@@ -516,7 +516,12 @@ impl State {
 
             let mut h2 = hyper::client::Builder::default();
             h2.http2_only(true);
-            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::new());
+            let mut http = hyper::client::connect::HttpConnector::new();
+            http.enforce_http(false);
+            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::from((
+                http,
+                self.client_config.crypto.clone(),
+            )));
             let response = client.get(self.peer.uri("/")).await?;
             let _ = hyper::body::to_bytes(response).await?;
 
@@ -589,7 +594,12 @@ impl State {
 
             let mut h2 = hyper::client::Builder::default();
             h2.http2_only(true);
-            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::new());
+            let mut http = hyper::client::connect::HttpConnector::new();
+            http.enforce_http(false);
+            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::from((
+                http,
+                self.client_config.crypto.clone(),
+            )));
             let response = client.get(self.peer.uri("/")).await?;
             let _ = hyper::body::to_bytes(response).await?;
 
