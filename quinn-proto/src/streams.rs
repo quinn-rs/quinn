@@ -233,6 +233,24 @@ impl Streams {
         }
     }
 
+    /// Queue `data` to be written for `stream`
+    pub fn write(&mut self, id: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        let stream = self.send.get_mut(&id).ok_or(WriteError::UnknownStream)?;
+        let was_pending = stream.is_pending();
+        let len = match stream.write(data) {
+            Ok(n) => n,
+            e @ Err(WriteError::Stopped { .. }) => {
+                self.maybe_cleanup(id);
+                return e;
+            }
+            e @ Err(_) => return e,
+        };
+        if !was_pending && !data.is_empty() {
+            self.pending.push(id);
+        }
+        Ok(len)
+    }
+
     /// Abandon pending and future transmits
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
@@ -341,18 +359,6 @@ impl Send {
         }
     }
 
-    pub fn write_budget(&mut self) -> Result<u64, WriteError> {
-        if let Some(error_code) = self.take_stop_reason() {
-            return Err(WriteError::Stopped(error_code));
-        }
-        let budget = self.max_data - self.pending.offset();
-        if budget == 0 {
-            Err(WriteError::Blocked)
-        } else {
-            Ok(budget)
-        }
-    }
-
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
     pub fn is_closed(&self) -> bool {
         use self::SendState::*;
@@ -393,6 +399,19 @@ impl Send {
         }
     }
 
+    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        if let Some(error_code) = self.take_stop_reason() {
+            return Err(WriteError::Stopped(error_code));
+        }
+        let budget = self.max_data - self.pending.offset();
+        if budget == 0 {
+            return Err(WriteError::Blocked);
+        }
+        let len = (data.len() as u64).min(budget) as usize;
+        self.pending.write(&data[0..len]);
+        Ok(len)
+    }
+
     /// Returns whether the stream was finishing, indicating that the application needs to be
     /// notified explicitly if the stream was stopped because no further write calls will be made.
     fn reset(&mut self, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
@@ -425,6 +444,16 @@ impl Send {
                 self.state = SendState::DataRecvd;
             }
         }
+    }
+
+    /// Returns whether the stream was unblocked
+    pub fn increase_max_data(&mut self, offset: u64) -> bool {
+        if offset <= self.max_data || self.state != SendState::Ready {
+            return false;
+        }
+        let was_blocked = self.pending.offset() == self.max_data;
+        self.max_data = offset;
+        was_blocked
     }
 
     pub fn offset(&self) -> u64 {

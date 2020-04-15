@@ -849,22 +849,6 @@ where
         self.timers.set(Timer::KeepAlive, now + interval);
     }
 
-    fn queue_stream_data(&mut self, stream: StreamId, data: &[u8]) -> Result<(), WriteError> {
-        let ss = self
-            .streams
-            .send_mut(stream)
-            .ok_or(WriteError::UnknownStream)?;
-        assert_eq!(ss.state, streams::SendState::Ready);
-        let was_pending = ss.is_pending();
-        ss.pending.write(data);
-        if !was_pending {
-            self.streams.pending.push(stream);
-        }
-        self.data_sent += data.len() as u64;
-        self.unacked_data += data.len() as u64;
-        Ok(())
-    }
-
     /// Abandon transmitting data on a stream
     ///
     /// # Panics
@@ -1733,13 +1717,9 @@ where
                         ));
                     }
                     if let Some(ss) = self.streams.send_mut(id) {
-                        // We only care about budget *increases* for *live* streams
-                        if offset > ss.max_data && ss.state == streams::SendState::Ready {
-                            trace!(stream = %id, old = ss.max_data, new = offset, current_offset = ss.offset(), "stream limit increased");
-                            if ss.offset() == ss.max_data {
-                                self.events.push_back(Event::StreamWritable { stream: id });
-                            }
-                            ss.max_data = offset;
+                        if ss.increase_max_data(offset) {
+                            // Unblocked
+                            self.events.push_back(Event::StreamWritable { stream: id });
                         }
                     } else if id.initiator() == self.side() && self.streams.is_local_unopened(id) {
                         debug!("got MAX_STREAM_DATA on unopened {}", id);
@@ -2906,31 +2886,14 @@ where
             return Err(WriteError::Blocked);
         }
 
-        let budget_res = self
-            .streams
-            .send_mut(stream)
-            .ok_or(WriteError::UnknownStream)?
-            .write_budget();
-
-        let stream_budget = match budget_res {
-            Ok(budget) => budget,
-            Err(e @ WriteError::Stopped { .. }) => {
-                self.streams.maybe_cleanup(stream);
-                return Err(e);
-            }
-            Err(e @ WriteError::Blocked) => {
-                trace!(%stream, "write blocked by flow control");
-                return Err(e);
-            }
-            Err(WriteError::UnknownStream) => unreachable!("not returned here"),
-        };
-
-        let conn_budget = cmp::min(
-            self.max_data - self.data_sent,
-            self.config.send_window - self.unacked_data,
-        );
-        let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.queue_stream_data(stream, &data[0..n])?;
+        // TODO: Send window in terms of actual buffer size, which includes discontinuously acked
+        // data
+        let len = (data.len() as u64)
+            .min(self.max_data - self.data_sent)
+            .min(self.config.send_window - self.unacked_data) as usize;
+        let n = self.streams.write(stream, &data[0..len])?;
+        self.data_sent += n as u64;
+        self.unacked_data += n as u64;
         trace!(%stream, "wrote {} bytes", n);
         Ok(n)
     }
