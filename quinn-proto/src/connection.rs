@@ -898,38 +898,18 @@ where
             "only streams supporting outgoing data may be reset"
         );
 
-        // reset is a noop on a closed stream
-        let stream = match self.streams.send_mut(stream_id) {
-            Some(x) => x,
-            None => return,
-        };
         let stop_reason = if stopped { Some(error_code) } else { None };
-
-        use streams::SendState::*;
-        match stream.state {
-            DataRecvd | ResetSent { .. } | ResetRecvd { .. } => {
-                // Nothing to do
-                return;
-            }
-            DataSent { .. } => {
+        let status = self.streams.reset(stream_id, stop_reason);
+        let was_conn_blocked = self.blocked_streams.remove(&stream_id);
+        if stopped {
+            if status == Some(streams::ResetStatus::WasFinishing) {
                 self.events.push_back(Event::StreamFinished {
                     stream: stream_id,
                     stop_reason,
                 });
-                // No need to hold on to the stop_reason since it's propagated above
-                stream.state = ResetSent { stop_reason: None };
-            }
-            _ => {
-                // After we finish up here, we no longer care whether a reset stream was blocked.
-                let was_blocked = self.blocked_streams.remove(&stream_id);
-                // If this is an implicit reset due to `STOP_SENDING` and the caller might have a
-                // blocked write task, notify the caller to try writing again so they'll receive the
-                // `WriteError::Stopped` and the stream can be disposed of.
-                if stopped && (was_blocked || stream.offset == stream.max_data) {
-                    self.events
-                        .push_back(Event::StreamWritable { stream: stream_id });
-                }
-                stream.state = ResetSent { stop_reason };
+            } else if was_conn_blocked || status == Some(streams::ResetStatus::WasBlocked) {
+                self.events
+                    .push_back(Event::StreamWritable { stream: stream_id });
             }
         }
 

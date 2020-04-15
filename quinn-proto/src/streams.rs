@@ -221,6 +221,15 @@ impl Streams {
             assert!(self.recv.insert(id, Recv::new()).is_none());
         }
     }
+
+    /// Abandon pending and future transmits
+    ///
+    /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
+    /// state.
+    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
+        let stream = self.send.get_mut(&id)?;
+        stream.reset(stop_reason)
+    }
 }
 
 #[derive(Debug)]
@@ -287,6 +296,34 @@ impl Send {
             _ => None,
         }
     }
+
+    /// Returns whether the stream was finishing, indicating that the application needs to be
+    /// notified explicitly if the stream was stopped because no further write calls will be made.
+    fn reset(&mut self, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
+        use SendState::*;
+        match self.state {
+            DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
+            DataSent { .. } => {
+                self.state = ResetSent { stop_reason: None };
+                Some(ResetStatus::WasFinishing)
+            }
+            Ready => {
+                self.state = ResetSent { stop_reason };
+                if self.offset == self.max_data {
+                    Some(ResetStatus::WasBlocked)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Interesting states of a stream that's being reset
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum ResetStatus {
+    WasFinishing,
+    WasBlocked,
 }
 
 /// Errors triggered while writing to a send stream
