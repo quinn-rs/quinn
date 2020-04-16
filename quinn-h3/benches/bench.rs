@@ -17,7 +17,7 @@ use tracing::{debug, error_span, span, Level};
 use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, ServerConfigBuilder};
-use quinn_h3::{self, client, server};
+use quinn_h3::{self, client, server, BodyWriter};
 
 benchmark_group!(
     benches,
@@ -119,55 +119,8 @@ impl Context {
         server.listen(addr);
         debug!("server bind");
         let handle = thread::spawn(move || {
-            let my_span = span!(Level::TRACE, "server");
-            let _enter = my_span.enter();
             let mut runtime = rt();
-            let handle = runtime.spawn(
-                async move {
-                    let mut incoming = server.build().unwrap();
-                    let mut incoming_req = incoming
-                        .next()
-                        .await
-                        .expect("accept")
-                        .await
-                        .expect("connect");
-                    debug!("recv incoming");
-                    while let Some(recv_req) = incoming_req.next().await {
-                        let (request, mut body_reader, sender) = recv_req.await.expect("recv_req");
-                        while let Some(_) = body_reader.data().await {}
-
-                        let mut body_writer = sender
-                            .send_response(
-                                Response::builder().status(StatusCode::OK).body(()).unwrap(),
-                            )
-                            .await
-                            .expect("send_response");
-
-                        let frame_size = request
-                            .headers()
-                            .get("frame_size")
-                            .map(|x| x.to_str().unwrap().parse().expect("parse frame size"))
-                            .expect("no frame size");
-                        let mut remaining = request
-                            .headers()
-                            .get("total_size")
-                            .map(|x| x.to_str().unwrap().parse().expect("parse total size"))
-                            .expect("no total size");
-
-                        let data = "a".repeat(frame_size);
-                        while remaining > 0 {
-                            let size = std::cmp::min(frame_size, remaining);
-                            body_writer
-                                .write_all(&data.as_bytes()[..size])
-                                .await
-                                .expect("body write");
-                            remaining -= size;
-                        }
-                    }
-                }
-                .instrument(error_span!("server")),
-            );
-            runtime.block_on(handle).unwrap();
+            runtime.block_on(handle_connection(server).instrument(error_span!("server")));
         });
 
         (addr, handle)
@@ -188,6 +141,47 @@ impl Context {
                 .expect("connecting")
         });
         (connection, runtime)
+    }
+}
+
+async fn handle_connection(server: server::Builder) {
+    let mut incoming_conn = server.build().unwrap();
+    let mut incoming_req = incoming_conn
+        .next()
+        .await
+        .expect("accept")
+        .await
+        .expect("connect");
+    while let Some(recv_req) = incoming_req.next().await {
+        let (request, _, sender) = recv_req.await.expect("recv_req");
+        let body_writer = sender
+            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            .await
+            .expect("send_response");
+
+        let frame_size = request
+            .headers()
+            .get("frame_size")
+            .map(|x| x.to_str().unwrap().parse().expect("parse frame size"))
+            .expect("no frame size");
+        let total_size = request
+            .headers()
+            .get("total_size")
+            .map(|x| x.to_str().unwrap().parse().expect("parse total size"))
+            .expect("no total size");
+        send_body(body_writer, frame_size, total_size).await;
+    }
+}
+
+async fn send_body(mut body_writer: BodyWriter, frame_size: usize, mut total_size: usize) {
+    let data = "a".repeat(frame_size);
+    while total_size > 0 {
+        let size = std::cmp::min(frame_size, total_size);
+        body_writer
+            .write_all(&data.as_bytes()[..size])
+            .await
+            .expect("body write");
+        total_size -= size;
     }
 }
 
