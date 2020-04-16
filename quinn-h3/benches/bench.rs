@@ -6,14 +6,15 @@ use std::{
 };
 
 use bencher::{benchmark_group, benchmark_main, Bencher};
-use futures::StreamExt;
+use futures::{channel::oneshot, StreamExt};
 use http::{Request, Response, StatusCode};
 use lazy_static::lazy_static;
 use tokio::{
     io::AsyncWriteExt as _,
     runtime::{Builder, Runtime},
+    select,
 };
-use tracing::{debug, error_span, span, Level};
+use tracing::{error_span, span, Level};
 use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, ServerConfigBuilder};
@@ -52,17 +53,24 @@ fn throughput_1m(bench: &mut Bencher) {
 fn throughput(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let ctx = Context::new();
+    let mut ctx = Context::new();
 
-    let (addr, _) = ctx.spawn_server();
+    let (addr, server) = ctx.spawn_server();
     let (client, mut runtime) = ctx.make_client(addr);
     let total_size = 10 * 1024 * 1024;
 
     bench.bytes = total_size as u64;
 
     bench.iter(|| {
-        runtime.block_on(async { download(&client, frame_size, total_size).await });
+        runtime.block_on(async {
+            download(&client, frame_size, total_size)
+                .instrument(error_span!("client"))
+                .await
+        });
     });
+    client.close();
+    ctx.stop_server();
+    server.join().expect("server");
 }
 
 async fn download(client: &client::Connection, frame_size: usize, total_size: usize) {
@@ -83,6 +91,7 @@ async fn download(client: &client::Connection, frame_size: usize, total_size: us
 struct Context {
     server_config: server::Builder,
     client_config: client::Builder,
+    stop_server: Option<oneshot::Sender<()>>,
 }
 
 impl Context {
@@ -106,10 +115,11 @@ impl Context {
         Self {
             server_config: server::Builder::with_quic_config(server_config),
             client_config: client::Builder::with_quic_config(client_config),
+            stop_server: None,
         }
     }
 
-    pub fn spawn_server(&self) -> (SocketAddr, thread::JoinHandle<()>) {
+    pub fn spawn_server(&mut self) -> (SocketAddr, thread::JoinHandle<()>) {
         // TODO: Let the OS choose a free port for us
         let addr = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::LOCALHOST),
@@ -117,13 +127,20 @@ impl Context {
         );
         let mut server = self.server_config.clone();
         server.listen(addr);
-        debug!("server bind");
+        let (stop_server, stop_recv) = oneshot::channel::<()>();
+        self.stop_server = Some(stop_server);
         let handle = thread::spawn(move || {
             let mut runtime = rt();
             runtime.block_on(handle_connection(server).instrument(error_span!("server")));
         });
 
         (addr, handle)
+    }
+
+    pub fn stop_server(&mut self) {
+        if let Some(send) = self.stop_server.take() {
+            send.send(()).expect("stop server");
+        }
     }
 
     pub fn make_client(&self, server_addr: SocketAddr) -> (client::Connection, Runtime) {
@@ -144,7 +161,7 @@ impl Context {
     }
 }
 
-async fn handle_connection(server: server::Builder) {
+async fn handle_connection(server: server::Builder, mut stop_recv: oneshot::Receiver<()>) {
     let mut incoming_conn = server.build().unwrap();
     let mut incoming_req = incoming_conn
         .next()
@@ -152,24 +169,29 @@ async fn handle_connection(server: server::Builder) {
         .expect("accept")
         .await
         .expect("connect");
-    while let Some(recv_req) = incoming_req.next().await {
-        let (request, _, sender) = recv_req.await.expect("recv_req");
-        let body_writer = sender
-            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
-            .await
-            .expect("send_response");
+    loop {
+        select! {
+            _ = &mut stop_recv => break,
+            Some(recv_req) = incoming_req.next() => {
+                let (request, _, sender) = recv_req.await.expect("recv_req");
+                let body_writer = sender
+                    .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+                    .await
+                    .expect("send_response");
 
-        let frame_size = request
-            .headers()
-            .get("frame_size")
-            .map(|x| x.to_str().unwrap().parse().expect("parse frame size"))
-            .expect("no frame size");
-        let total_size = request
-            .headers()
-            .get("total_size")
-            .map(|x| x.to_str().unwrap().parse().expect("parse total size"))
-            .expect("no total size");
-        send_body(body_writer, frame_size, total_size).await;
+                let frame_size = request
+                    .headers()
+                    .get("frame_size")
+                    .map(|x| x.to_str().unwrap().parse().expect("parse frame size"))
+                    .expect("no frame size");
+                let total_size = request
+                    .headers()
+                    .get("total_size")
+                    .map(|x| x.to_str().unwrap().parse().expect("parse total size"))
+                    .expect("no total size");
+                send_body(body_writer, frame_size, total_size).await;
+            },
+        }
     }
 }
 
