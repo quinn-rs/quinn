@@ -857,14 +857,17 @@ where
         let stop_reason = if stopped { Some(error_code) } else { None };
         let status = self.streams.reset(stream_id, stop_reason);
         if stopped {
-            if status == Some(streams::ResetStatus::WasFinishing) {
-                self.events.push_back(Event::StreamFinished {
-                    stream: stream_id,
-                    stop_reason,
+            if let Some(status) = status {
+                // The application is waiting for an event on this stream that will never come; notify it.
+                self.events.push_back(match status {
+                    // Finish operation should fail due to stopping
+                    streams::ResetStatus::WasFinishing => Event::StreamFinished {
+                        stream: stream_id,
+                        stop_reason,
+                    },
+                    // Stop will be observed on a future write/finish call.
+                    streams::ResetStatus::WasBlocked => Event::StreamWritable { stream: stream_id },
                 });
-            } else if status == Some(streams::ResetStatus::WasBlocked) {
-                self.events
-                    .push_back(Event::StreamWritable { stream: stream_id });
             }
         }
 
