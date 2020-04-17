@@ -96,8 +96,13 @@ mod connection;
 mod frame;
 mod headers;
 mod proto;
-mod qpack;
 mod streams;
+
+#[cfg(not(feature = "interop-test-accessors"))]
+mod qpack;
+#[cfg(feature = "interop-test-accessors")]
+#[allow(missing_docs)]
+pub mod qpack;
 
 use err_derive::Error;
 use quinn::{ApplicationClose, ConnectionError, ReadError, WriteError};
