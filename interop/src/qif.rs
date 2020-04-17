@@ -244,7 +244,7 @@ impl EncodedFile {
     pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
         let encoded = fs::read(&self.file)?;
         let mut table = qpack::DynamicTable::new();
-        table.inserter().set_max_mem_size(self.table_size)?;
+        table.inserter().set_max_size(self.table_size)?;
         let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
         let mut count = 0;
         let mut blocked: Vec<Vec<u8>> = vec![];
@@ -261,11 +261,11 @@ impl EncodedFile {
                 for (i, block) in blocked.iter_mut().enumerate() {
                     let mut cur = std::io::Cursor::new(&block);
                     match qpack::decode_header(&table, &mut cur) {
-                        Ok(d) => {
+                        Ok((d, _)) => {
                             decoded.push(d);
                             unblocked.push(i);
                         }
-                        Err(qpack::DecoderError::MissingRefs) => (),
+                        Err(qpack::DecoderError::MissingRefs { .. }) => (),
                         Err(e) => Err(e)?,
                     }
                 }
@@ -284,8 +284,8 @@ impl EncodedFile {
 
             let mut cur = std::io::Cursor::new(&buf.bytes()[..]);
             match qpack::decode_header(&table, &mut cur) {
-                Ok(d) => decoded.push(d),
-                Err(qpack::DecoderError::MissingRefs) => {
+                Ok((d, _)) => decoded.push(d),
+                Err(qpack::DecoderError::MissingRefs { .. }) => {
                     if blocked.len() >= self.max_blocked {
                         return Err(Error::MaxBlockedStreamReached);
                     }
@@ -300,7 +300,7 @@ impl EncodedFile {
 
     pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<(), Error> {
         let mut table = qpack::DynamicTable::new();
-        table.inserter().set_max_mem_size(self.table_size)?;
+        table.inserter().set_max_size(self.table_size)?;
         table.set_max_blocked(self.max_blocked)?;
 
         let mut buf = vec![];
@@ -408,10 +408,10 @@ impl QifFile {
 
         for field in value.iter() {
             let field_str = String::from_utf8_lossy(&field.to_owned()).to_string();
-            let other_field = other.next().ok_or(Error::MissingDecoded)?;
+            let other_field = String::from(other.next().cloned().ok_or(Error::MissingDecoded)?);
 
-            if field_str != other_field.to_string() {
-                return Err(Error::NotMatching(field_str, other_field.to_string()));
+            if field_str != other_field {
+                return Err(Error::NotMatching(field_str, other_field));
             }
         }
 

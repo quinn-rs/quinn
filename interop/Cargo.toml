@@ -33,3 +33,7 @@ path = "src/main.rs"
 [[bin]]
 name = "server"
 path = "src/server.rs"
+
+[[bin]]
+name = "qif"
+path = "src/qif.rs"
