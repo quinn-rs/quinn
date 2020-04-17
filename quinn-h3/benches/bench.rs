@@ -1,14 +1,12 @@
 use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-    ops::RangeFrom,
-    sync::{Arc, Mutex},
+    net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
+    sync::Arc,
     thread,
 };
 
 use bencher::{benchmark_group, benchmark_main, Bencher};
 use futures::{channel::oneshot, StreamExt};
 use http::{Request, Response, StatusCode};
-use lazy_static::lazy_static;
 use tokio::{
     io::AsyncWriteExt as _,
     runtime::{Builder, Runtime},
@@ -18,7 +16,11 @@ use tracing::{error_span, span, Level};
 use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, ServerConfigBuilder};
-use quinn_h3::{self, client, server, BodyWriter};
+use quinn_h3::{
+    self, client,
+    server::{self, IncomingConnection},
+    BodyWriter,
+};
 
 benchmark_group!(
     benches,
@@ -120,18 +122,21 @@ impl Context {
     }
 
     pub fn spawn_server(&mut self) -> (SocketAddr, thread::JoinHandle<()>) {
-        // TODO: Let the OS choose a free port for us
-        let addr = SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-            PORTS.lock().unwrap().next().unwrap(),
-        );
-        let mut server = self.server_config.clone();
-        server.listen(addr);
+        let socket = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
+        let addr = socket.local_addr().unwrap();
+        let server = self.server_config.clone();
+
         let (stop_server, stop_recv) = oneshot::channel::<()>();
         self.stop_server = Some(stop_server);
+
         let handle = thread::spawn(move || {
             let mut runtime = rt();
-            runtime.block_on(handle_connection(server).instrument(error_span!("server")));
+            runtime.block_on(async {
+                let incoming_conn = server.with_socket(socket).unwrap();
+                handle_connection(incoming_conn, stop_recv)
+                    .instrument(error_span!("server"))
+                    .await
+            });
         });
 
         (addr, handle)
@@ -161,8 +166,10 @@ impl Context {
     }
 }
 
-async fn handle_connection(server: server::Builder, mut stop_recv: oneshot::Receiver<()>) {
-    let mut incoming_conn = server.build().unwrap();
+async fn handle_connection(
+    mut incoming_conn: IncomingConnection,
+    mut stop_recv: oneshot::Receiver<()>,
+) {
     let mut incoming_req = incoming_conn
         .next()
         .await
@@ -213,8 +220,4 @@ fn rt() -> Runtime {
         .enable_all()
         .build()
         .unwrap()
-}
-
-lazy_static! {
-    pub static ref PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
 }
