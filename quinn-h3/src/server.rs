@@ -241,7 +241,7 @@ impl Builder {
     }
 }
 
-/// Stream of incoming connection for one server endpoint.
+/// Stream of incoming connection for one server endpoint
 ///
 /// Yields a new HTTP/3 connection as soon as the handshake starts. The returned [`Connecting`]
 /// object can then be used either to await the handshake completion or be converted
