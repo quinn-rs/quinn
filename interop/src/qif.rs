@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use bytes::Buf;
 use quinn_h3::qpack;
 use quinn_proto::coding::Codec;
@@ -18,7 +19,7 @@ struct Opt {
     ack_mode: Option<String>,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<()> {
     let opt = Opt::from_args();
     let input = &opt.path;
 
@@ -40,12 +41,11 @@ fn main() -> Result<(), Error> {
     match InputType::what_is(Path::new(input))? {
         InputType::EncodedFile(file, qif) => match file.decode() {
             Err(e) => failures.push((file.file, e)),
-            Ok(ref mut v) if qif.is_some() => {
+            Ok(ref mut v) => {
                 let mut fields = v.iter().flatten();
-                qif.unwrap().compare(&mut fields)?;
+                qif.compare(&mut fields)?;
                 success.push(file.file);
             }
-            Ok(_) => failures.push((file.file, Error::NoQif)),
         },
         InputType::ImplEncodedDir(dir) => {
             for (file, qif) in dir.iter()? {
@@ -56,7 +56,7 @@ fn main() -> Result<(), Error> {
                         qif.unwrap().compare(&mut fields)?;
                         success.push(file.file);
                     }
-                    Ok(_) => failures.push((file.file, Error::NoQif)),
+                    Ok(_) => failures.push((file.file, anyhow!("Could not find qif"))),
                 }
             }
         }
@@ -70,7 +70,7 @@ fn main() -> Result<(), Error> {
                             qif.unwrap().compare(&mut fields)?;
                             success.push(file.file);
                         }
-                        Ok(_) => failures.push((file.file, Error::NoQif)),
+                        Ok(_) => failures.push((file.file, anyhow!("Could not find qif"))),
                     }
                 }
             }
@@ -103,7 +103,7 @@ fn main() -> Result<(), Error> {
                 }
             }
         }
-        _ => unimplemented!(),
+        _ => return Err(anyhow!("Could not guess a dir type for '{}'", input)),
     }
 
     for failure in &failures {
@@ -131,7 +131,13 @@ fn main() -> Result<(), Error> {
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(Error::SomeFailures)
+        Err(anyhow!(
+            "Got some errors: \n{}",
+            failures
+                .iter()
+                .map(|(f, e)| format!("{:?}: {}\n", f, e))
+                .fold(String::new(), |acc, ref p| acc + p)
+        ))
     }
 }
 
@@ -150,11 +156,14 @@ impl<R: Buf> BlockIterator<R> {
         }
     }
 
-    fn next<'a>(&'a mut self) -> Result<Option<Block<'a>>, Error> {
+    fn next<'a>(&'a mut self) -> Result<Option<Block<'a>>> {
         self.buf.advance(self.last_block_len);
         if self.buf.remaining() < mem::size_of::<u64>() + mem::size_of::<u32>() {
             if self.buf.remaining() > 0 {
-                return Err(Error::TrailingData(self.buf.remaining()));
+                return Err(anyhow!(
+                    "Found trailing data after decoding: {} bytes",
+                    self.buf.remaining()
+                ));
             }
             return Ok(None);
         }
@@ -163,7 +172,7 @@ impl<R: Buf> BlockIterator<R> {
         let length = u32::decode(&mut self.buf)? as usize;
 
         if self.buf.remaining() < length {
-            Err(Error::UnexpectedEnd)
+            Err(anyhow!("Unexpectedly reached end"))
         } else {
             self.last_block_len = length;
             let block = std::io::Cursor::new(&self.buf.bytes()[..length]);
@@ -212,7 +221,7 @@ impl EncodedFile {
         table_size: usize,
         max_blocked: usize,
         ack_mode: usize,
-    ) -> Result<EncodedFile, Error> {
+    ) -> Result<EncodedFile> {
         let enc_dir = qif
             .ancestors()
             .skip(2)
@@ -226,10 +235,13 @@ impl EncodedFile {
             fs::create_dir(&enc_dir)?;
         }
 
-        let name = qif.file_stem().ok_or(Error::BadFilename)?;
+        let name = qif
+            .file_stem()
+            .ok_or_else(|| anyhow!("Could not find stem in {:?}", qif))?;
         let enc_file = enc_dir.join(format!(
             "{}.out.{}.{}.{}",
-            name.to_str().ok_or(Error::BadFilename)?,
+            name.to_str()
+                .ok_or_else(|| anyhow!("Could not parse {:?} as utf8 str", qif))?,
             table_size,
             max_blocked,
             ack_mode
@@ -243,7 +255,7 @@ impl EncodedFile {
         })
     }
 
-    pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>, Error> {
+    pub fn decode(&self) -> Result<Vec<Vec<qpack::HeaderField>>> {
         let encoded = fs::read(&self.file)?;
         let mut table = qpack::DynamicTable::new();
         table.inserter().set_max_size(self.table_size)?;
@@ -289,7 +301,7 @@ impl EncodedFile {
                 Ok((d, _)) => decoded.push(d),
                 Err(qpack::DecoderError::MissingRefs { .. }) => {
                     if blocked.len() >= self.max_blocked {
-                        return Err(Error::MaxBlockedStreamReached);
+                        return Err(anyhow!("Max blocked streams exceeded"));
                     }
                     blocked.push(buf.bytes().into());
                 }
@@ -300,7 +312,7 @@ impl EncodedFile {
         Ok(decoded)
     }
 
-    pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<(), Error> {
+    pub fn encode(&self, blocks: Vec<Vec<u8>>) -> Result<()> {
         let mut table = qpack::DynamicTable::new();
         table.inserter().set_max_size(self.table_size)?;
         table.set_max_blocked(self.max_blocked)?;
@@ -360,7 +372,7 @@ impl EncodedFile {
 struct ImplEncodedDir(PathBuf, String);
 
 impl ImplEncodedDir {
-    pub fn iter(&self) -> Result<impl Iterator<Item = (EncodedFile, Option<QifFile>)>, Error> {
+    pub fn iter(&self) -> Result<impl Iterator<Item = (EncodedFile, Option<QifFile>)>> {
         Ok(self
             .0
             .read_dir()?
@@ -378,7 +390,7 @@ impl ImplEncodedDir {
 struct EncodedDir(PathBuf);
 
 impl EncodedDir {
-    pub fn iter(&self) -> Result<impl Iterator<Item = ImplEncodedDir>, Error> {
+    pub fn iter(&self) -> Result<impl Iterator<Item = ImplEncodedDir>> {
         let path = if self.0.file_name().unwrap_or_default() == OsStr::new("encoded") {
             self.0.join("qpack-05")
         } else {
@@ -401,7 +413,7 @@ impl EncodedDir {
 struct QifFile(PathBuf);
 
 impl QifFile {
-    fn compare(&self, other: &mut dyn Iterator<Item = &qpack::HeaderField>) -> Result<(), Error> {
+    fn compare(&self, other: &mut dyn Iterator<Item = &qpack::HeaderField>) -> Result<()> {
         let value = String::from_utf8_lossy(&fs::read(&self.0)?)
             .split('\n')
             .filter(|l| !l.is_empty())
@@ -410,17 +422,26 @@ impl QifFile {
 
         for field in value.iter() {
             let field_str = String::from_utf8_lossy(&field.to_owned()).to_string();
-            let other_field = String::from(other.next().cloned().ok_or(Error::MissingDecoded)?);
+            let other_field = String::from(
+                other
+                    .next()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("Could not find field {} in other block", field_str))?,
+            );
 
             if field_str != other_field {
-                return Err(Error::NotMatching(field_str, other_field));
+                return Err(anyhow!(
+                    "Fields differ: '{}' != '{}'",
+                    field_str,
+                    other_field
+                ));
             }
         }
 
         Ok(())
     }
 
-    fn blocks(&self) -> Result<Vec<Vec<u8>>, Error> {
+    fn blocks(&self) -> Result<Vec<Vec<u8>>> {
         let content = fs::read_to_string(&self.0)?;
 
         let blocks = content
@@ -435,7 +456,7 @@ impl QifFile {
 struct QifDir(PathBuf);
 
 impl QifDir {
-    pub fn iter(&self) -> Result<impl Iterator<Item = QifFile>, Error> {
+    pub fn iter(&self) -> Result<impl Iterator<Item = QifFile>> {
         Ok(self
             .0
             .read_dir()?
@@ -446,7 +467,7 @@ impl QifDir {
 }
 
 enum InputType {
-    EncodedFile(EncodedFile, Option<QifFile>),
+    EncodedFile(EncodedFile, QifFile),
     ImplEncodedDir(ImplEncodedDir),
     EncodedDir(EncodedDir),
     QifFile(QifFile),
@@ -471,7 +492,7 @@ impl InputType {
             && ancestors[2] == OsStr::new("encoded")
     }
 
-    fn is_encoded_dir(path: &Path) -> Result<bool, Error> {
+    fn is_encoded_dir(path: &Path) -> Result<bool> {
         if !path.is_dir() {
             return Ok(false);
         }
@@ -482,7 +503,7 @@ impl InputType {
         )
     }
 
-    fn is_qif_dir(path: &Path) -> Result<bool, Error> {
+    fn is_qif_dir(path: &Path) -> Result<bool> {
         if !path.is_dir() {
             return Ok(false);
         }
@@ -493,18 +514,19 @@ impl InputType {
             .any(|f| f.path().extension() == Some(OsStr::new("qif"))))
     }
 
-    pub fn what_is(path: &Path) -> Result<Self, Error> {
-        let input_type = if path.is_file() {
+    pub fn what_is(path: &Path) -> Result<Self> {
+        let input_type = if !path.exists() {
+            return Err(anyhow!("no such file or directory: {:?}", path));
+        } else if path.is_file() {
             let file_name = path
                 .file_name()
-                .ok_or(Error::BadFilename)?
-                .to_str()
-                .ok_or(Error::BadFilename)?;
+                .and_then(OsStr::to_str)
+                .ok_or_else(|| anyhow!("No file name found in {:?}", path))?;
+
             if file_name.contains(".out") {
-                InputType::EncodedFile(
-                    EncodedFile::new(PathBuf::from(path)),
-                    find_qif(&Path::new(path)).unwrap_or(None),
-                )
+                let qif = find_qif(&Path::new(path))?
+                    .ok_or_else(|| anyhow!("Couldn't find qif file for {:?}", path))?;
+                InputType::EncodedFile(EncodedFile::new(PathBuf::from(path)), qif)
             } else if file_name.ends_with(".qif") {
                 InputType::QifFile(QifFile(PathBuf::from(path)))
             } else {
@@ -533,17 +555,17 @@ impl InputType {
     }
 }
 
-fn find_qif(path: &Path) -> Result<Option<QifFile>, Error> {
+fn find_qif(path: &Path) -> Result<Option<QifFile>> {
     let name = path
         .file_name()
         .and_then(OsStr::to_str)
         .map(|s| s.split('.').take(1).collect::<String>())
-        .ok_or(Error::BadFilename)?;
+        .ok_or_else(|| anyhow!("Could not parse {:?} filename", path.file_name()))?;
 
     Ok(find_qif_dir(path)?.map(|d| QifFile(d.join(name + ".qif"))))
 }
 
-fn find_qif_dir(path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
+fn find_qif_dir(path: &Path) -> Result<Option<PathBuf>> {
     let ancestors = path.ancestors().skip(1).take(5).collect::<Vec<_>>();
     for a in ancestors {
         let mut dir = a.read_dir()?;
@@ -560,50 +582,4 @@ fn find_qif_dir(path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
         }
     }
     Ok(None)
-}
-
-#[derive(Debug)]
-enum Error {
-    TrailingData(usize),
-    UnexpectedEnd,
-    BadFilename,
-    IO(std::io::Error),
-    Decode(qpack::DecoderError),
-    DynamicTable(qpack::DynamicTableError),
-    NoQif,
-    MissingDecoded,
-    NotMatching(String, String),
-    SomeFailures,
-    Encode(qpack::EncoderError),
-    MaxBlockedStreamReached,
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Error {
-        Error::IO(e)
-    }
-}
-
-impl From<qpack::DecoderError> for Error {
-    fn from(e: qpack::DecoderError) -> Error {
-        Error::Decode(e)
-    }
-}
-
-impl From<qpack::EncoderError> for Error {
-    fn from(e: qpack::EncoderError) -> Error {
-        Error::Encode(e)
-    }
-}
-
-impl From<quinn_proto::coding::UnexpectedEnd> for Error {
-    fn from(_: quinn_proto::coding::UnexpectedEnd) -> Error {
-        Error::UnexpectedEnd
-    }
-}
-
-impl From<qpack::DynamicTableError> for Error {
-    fn from(e: qpack::DynamicTableError) -> Error {
-        Error::DynamicTable(e)
-    }
 }
