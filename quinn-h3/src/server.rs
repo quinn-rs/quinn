@@ -108,7 +108,7 @@
 use std::{
     future::Future,
     mem,
-    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
+    net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -234,6 +234,20 @@ impl Builder {
     ) -> Result<IncomingConnection, quinn::EndpointError> {
         let (_, incoming) = endpoint.bind(&self.listen)?;
 
+        Ok(IncomingConnection {
+            incoming,
+            settings: self.settings,
+        })
+    }
+
+    /// Create a new server attaching it to a bound socket
+    pub fn with_socket(
+        self,
+        socket: UdpSocket,
+    ) -> Result<IncomingConnection, quinn::EndpointError> {
+        let mut endpoint_builder = quinn::Endpoint::builder();
+        endpoint_builder.listen(self.config.build());
+        let (_, incoming) = endpoint_builder.with_socket(socket)?;
         Ok(IncomingConnection {
             incoming,
             settings: self.settings,
