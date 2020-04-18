@@ -2589,38 +2589,14 @@ where
 
         // STREAM
         while buf.len() + frame::Stream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let max_data_len = max_size as usize - buf.len() - frame::Stream::SIZE_BOUND;
-            let id = match self.streams.pending.pop() {
+            let meta = match self.streams.poll_transmit(max_size as usize - buf.len()) {
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.streams.send_mut(id) {
-                Some(s) => s,
-                // Stream was reset with pending data and the reset was acknowledged
-                None => continue,
-            };
-            // Reset streams aren't removed from the pending list and still exist while the peer
-            // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
-            // check for them explicitly.
-            if stream.is_reset() {
-                continue;
-            }
-            let offsets = stream.pending.poll_transmit(max_data_len);
-            let fin = offsets.end == stream.pending.offset()
-                && mem::replace(&mut stream.fin_pending, false);
-            if stream.is_pending() {
-                self.streams.pending.push(id);
-            }
-            let meta = frame::StreamMeta { id, offsets, fin };
             trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
             meta.encode(true, buf);
-            buf.put_slice(
-                self.streams
-                    .send_mut(id)
-                    .unwrap()
-                    .pending
-                    .get(meta.offsets.clone()),
-            );
+            let ss = self.streams.send_mut(meta.id).unwrap();
+            buf.put_slice(ss.pending.get(meta.offsets.clone()));
             stream_frames.push(meta);
         }
 
