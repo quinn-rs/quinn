@@ -5,8 +5,6 @@ use std::{
     time::Instant,
 };
 
-use bytes::Bytes;
-
 use crate::{
     assembler::Assembler, crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
 };
@@ -138,21 +136,6 @@ where
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
     }
-
-    pub(crate) fn finish_stream(&mut self, id: StreamId, offset: u64) {
-        for frame in &mut self.pending.stream {
-            if frame.id == id && frame.offset + frame.data.len() as u64 == offset {
-                frame.fin = true;
-                return;
-            }
-        }
-        self.pending.stream.push_back(frame::Stream {
-            id,
-            data: Bytes::new(),
-            offset,
-            fin: true,
-        });
-    }
 }
 
 /// Represents one or more packets subject to retransmission
@@ -168,6 +151,7 @@ pub(crate) struct SentPacket {
     pub(crate) ack_eliciting: bool,
     pub(crate) acks: RangeSet,
     pub(crate) retransmits: Retransmits,
+    pub(crate) stream_frames: Vec<frame::Stream>,
 }
 
 /// Retransmittable data queue
@@ -176,7 +160,6 @@ pub struct Retransmits {
     pub(crate) max_data: bool,
     pub(crate) max_uni_stream_id: bool,
     pub(crate) max_bi_stream_id: bool,
-    pub(crate) stream: VecDeque<frame::Stream>,
     pub(crate) reset_stream: Vec<(StreamId, VarInt)>,
     pub(crate) stop_sending: Vec<frame::StopSending>,
     pub(crate) max_stream_data: HashSet<StreamId>,
@@ -191,7 +174,6 @@ impl Retransmits {
         !self.max_data
             && !self.max_uni_stream_id
             && !self.max_bi_stream_id
-            && self.stream.is_empty()
             && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
             && self.max_stream_data.is_empty()
@@ -208,7 +190,6 @@ impl Default for Retransmits {
             max_data: false,
             max_uni_stream_id: false,
             max_bi_stream_id: false,
-            stream: VecDeque::new(),
             reset_stream: Vec::new(),
             stop_sending: Vec::new(),
             max_stream_data: HashSet::new(),
@@ -227,9 +208,6 @@ impl ::std::ops::AddAssign for Retransmits {
         self.max_data |= rhs.max_data;
         self.max_uni_stream_id |= rhs.max_uni_stream_id;
         self.max_bi_stream_id |= rhs.max_bi_stream_id;
-        for stream in rhs.stream.into_iter().rev() {
-            self.stream.push_front(stream);
-        }
         self.reset_stream.extend_from_slice(&rhs.reset_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);

@@ -497,7 +497,7 @@ where
             }
         }
 
-        for frame in info.retransmits.stream {
+        for frame in info.stream_frames {
             let ss = match self.streams.send_mut(frame.id) {
                 Some(x) => x,
                 None => continue,
@@ -693,6 +693,9 @@ where
                     .unwrap(); // safe: lost_packets is populated just above
                 self.in_flight.remove(&info);
                 self.space_mut(pn_space).pending += info.retransmits;
+                for frame in info.stream_frames {
+                    self.streams.pending.push_front(frame);
+                }
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
@@ -871,15 +874,12 @@ where
         ss.bytes_in_flight += data.len() as u64;
         self.data_sent += data.len() as u64;
         self.unacked_data += data.len() as u64;
-        self.space_mut(SpaceId::Data)
-            .pending
-            .stream
-            .push_back(frame::Stream {
-                offset,
-                fin: false,
-                data,
-                id: stream,
-            });
+        self.streams.pending.push_back(frame::Stream {
+            offset,
+            fin: false,
+            data,
+            id: stream,
+        });
         Ok(())
     }
 
@@ -1391,6 +1391,9 @@ where
                         for (_, info) in zero_rtt {
                             self.in_flight.remove(&info);
                             self.space_mut(SpaceId::Data).pending += info.retransmits;
+                            for frame in info.stream_frames {
+                                self.streams.pending.push_front(frame);
+                            }
                         }
 
                         let token_len = packet.payload.len() - 16;
@@ -2297,7 +2300,7 @@ where
                 Some((exact_number, &crypto.packet)),
             );
 
-            if let Some((sent, acks)) = sent {
+            if let Some((sent, acks, stream_frames)) = sent {
                 // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
                 // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
                 // the need for subtler logic to avoid double-transmitting acks all the time.
@@ -2317,6 +2320,7 @@ where
                         },
                         ack_eliciting,
                         retransmits: sent,
+                        stream_frames,
                     },
                 );
             }
@@ -2344,9 +2348,14 @@ where
         })
     }
 
-    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> (Retransmits, RangeSet) {
+    fn populate_packet(
+        &mut self,
+        space_id: SpaceId,
+        buf: &mut Vec<u8>,
+    ) -> (Retransmits, RangeSet, Vec<frame::Stream>) {
         let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
+        let mut stream_frames = Vec::new();
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
         let tag_len = space
             .crypto
@@ -2585,8 +2594,8 @@ where
         }
 
         // STREAM
-        while buf.len() + frame::Stream::SIZE_BOUND < max_size {
-            let mut stream = match space.pending.stream.pop_front() {
+        while buf.len() + frame::Stream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let mut stream = match self.streams.pending.pop_front() {
                 Some(x) => x,
                 None => break,
             };
@@ -2612,14 +2621,14 @@ where
                 data,
             };
             frame.encode(true, buf);
-            sent.stream.push_back(frame);
             if !stream.data.is_empty() {
                 stream.offset += len as u64;
-                space.pending.stream.push_front(stream);
+                self.streams.pending.push_front(stream);
             }
+            stream_frames.push(frame);
         }
 
-        (sent, acks)
+        (sent, acks, stream_frames)
     }
 
     /// Close a connection immediately
@@ -2753,9 +2762,23 @@ where
             .send_mut(id)
             .ok_or(FinishError::UnknownStream)?;
         ss.finish()?;
-        self.spaces[SpaceId::Data as usize].finish_stream(id, ss.offset);
+
         // We no longer need to notify the application of capacity for additional writes.
         self.blocked_streams.remove(&id);
+
+        let offset = ss.offset;
+        for frame in &mut self.streams.pending {
+            if frame.id == id && frame.offset + frame.data.len() as u64 == offset {
+                frame.fin = true;
+                return Ok(());
+            }
+        }
+        self.streams.pending.push_back(frame::Stream {
+            id,
+            data: Bytes::new(),
+            offset,
+            fin: true,
+        });
         Ok(())
     }
 
@@ -3119,11 +3142,12 @@ where
         &mut self.spaces[id as usize]
     }
 
-    /// Whether we have non-retransmittable 1-RTT data to send
+    /// Whether we have 1-RTT data to send
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.path_challenge_pending
+        self.streams.can_send()
+            || self.path_challenge_pending
             || self.path_response.is_some()
             || !self.datagrams.outgoing.is_empty()
     }
