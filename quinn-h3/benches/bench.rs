@@ -23,14 +23,20 @@ use quinn_h3::{
 };
 
 benchmark_group!(
-    benches,
+    benches_download,
     download_1k,
     download_32k,
     download_64k,
     download_128k,
     download_1m
 );
-benchmark_main!(benches);
+
+benchmark_group!(
+    benches_upload,
+    upload_32k,
+    upload_1m
+);
+benchmark_main!(benches_download, benches_upload);
 
 fn download_1k(bench: &mut Bencher) {
     download(bench, 1024)
@@ -204,6 +210,73 @@ async fn download_server(
                     .expect("no total size");
                 send_body(body_writer, frame_size, total_size).await;
             },
+        }
+    }
+}
+
+
+fn upload_32k(bench: &mut Bencher) {
+    upload(bench, 32 * 1024)
+}
+
+fn upload_1m(bench: &mut Bencher) {
+    upload(bench, 1024 * 1024)
+}
+
+fn upload(bench: &mut Bencher, frame_size: usize) {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let mut ctx = Context::new();
+
+    let (addr, server) = ctx.spawn_server(upload_server);
+    let (client, mut runtime) = ctx.make_client(addr);
+    let total_size = 10 * 1024 * 1024;
+
+    bench.bytes = total_size as u64;
+
+    bench.iter(|| {
+        runtime.block_on(async {
+            upload_client(&client, frame_size, total_size)
+                .instrument(error_span!("client"))
+                .await
+        });
+    });
+    client.close();
+    ctx.stop_server();
+    server.join().expect("server");
+}
+
+async fn upload_client(client: &client::Connection, frame_size: usize, total_size: usize) {
+    let (recv_resp, body_writer) = client
+        .send_request(Request::get("https://localhost/").body(()).unwrap())
+        .await
+        .expect("request");
+    send_body(body_writer, frame_size, total_size).await;
+    let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
+    while let Some(Ok(_)) = body_reader.data().await {}
+}
+
+async fn upload_server(
+    mut incoming_conn: IncomingConnection,
+    mut stop_recv: oneshot::Receiver<()>,
+) {
+    let mut incoming_req = incoming_conn
+        .next()
+        .await
+        .expect("accept")
+        .await
+        .expect("connect");
+    loop {
+        select! {
+            _ = &mut stop_recv => break,
+            Some(recv_req) = incoming_req.next() => {
+                let (_, mut body_reader, sender) = recv_req.await.expect("recv_req");
+                while let Some(_) = body_reader.data().await {}
+                sender
+                    .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+                    .await
+                    .expect("send_response");
+            }
         }
     }
 }
