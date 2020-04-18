@@ -24,35 +24,35 @@ use quinn_h3::{
 
 benchmark_group!(
     benches,
-    throughput_1k,
-    throughput_32k,
-    throughput_64k,
-    throughput_128k,
-    throughput_1m
+    download_1k,
+    download_32k,
+    download_64k,
+    download_128k,
+    download_1m
 );
 benchmark_main!(benches);
 
-fn throughput_1k(bench: &mut Bencher) {
-    throughput(bench, 1024)
+fn download_1k(bench: &mut Bencher) {
+    download(bench, 1024)
 }
 
-fn throughput_32k(bench: &mut Bencher) {
-    throughput(bench, 32 * 1024)
+fn download_32k(bench: &mut Bencher) {
+    download(bench, 32 * 1024)
 }
 
-fn throughput_64k(bench: &mut Bencher) {
-    throughput(bench, 64 * 1024)
+fn download_64k(bench: &mut Bencher) {
+    download(bench, 64 * 1024)
 }
 
-fn throughput_128k(bench: &mut Bencher) {
-    throughput(bench, 128 * 1024)
+fn download_128k(bench: &mut Bencher) {
+    download(bench, 128 * 1024)
 }
 
-fn throughput_1m(bench: &mut Bencher) {
-    throughput(bench, 1024 * 1024)
+fn download_1m(bench: &mut Bencher) {
+    download(bench, 1024 * 1024)
 }
 
-fn throughput(bench: &mut Bencher, frame_size: usize) {
+fn download(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
     let mut ctx = Context::new();
@@ -65,7 +65,7 @@ fn throughput(bench: &mut Bencher, frame_size: usize) {
 
     bench.iter(|| {
         runtime.block_on(async {
-            download(&client, frame_size, total_size)
+            download_client(&client, frame_size, total_size)
                 .instrument(error_span!("client"))
                 .await
         });
@@ -75,7 +75,7 @@ fn throughput(bench: &mut Bencher, frame_size: usize) {
     server.join().expect("server");
 }
 
-async fn download(client: &client::Connection, frame_size: usize, total_size: usize) {
+async fn download_client(client: &client::Connection, frame_size: usize, total_size: usize) {
     let (recv_resp, _) = client
         .send_request(
             Request::get("https://localhost/")
