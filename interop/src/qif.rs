@@ -1,3 +1,38 @@
+/// Offline QPACK interop test tool
+///
+/// QIF - Quic Interop File
+///
+/// # usage:
+///
+/// Clone the interop files from other implementations:
+///
+/// ```sh
+/// git clone git@github.com:qpackers/qifs.git
+/// ```
+///
+/// Run this tool against those:
+///
+/// ```sh
+/// cargo run --bin qif /where/qifs/encoded/
+/// ```
+///
+/// The tool will guess what's in the path given as an argument and run the appropriate
+/// test:
+///
+/// ```
+/// # Decode one file and check result
+/// cargo run --bin qif /where/qifs/encoded/qpack-05/f5/netbsd-hq.out.256.0.1
+/// # Decode all files and check result
+/// cargo run --bin qif /where/qifs/encoded/qpack-05/f5/
+/// cargo run --bin qif /where/qifs/encoded/
+/// # Encode one file
+/// cargo run --bin qif /home/jc/code/perso/qifs/qifs/netbsd.qif
+/// # Encode all files
+/// cargo run --bin qif /home/jc/code/perso/qifs/qifs/
+/// ```
+///
+/// See https://github.com/quicwg/base-drafts/wiki/QPACK-Offline-Interop to know more about
+/// file name formats and codec parameters.
 use anyhow::{anyhow, Result};
 use bytes::Buf;
 use quinn_h3::qpack;
@@ -365,6 +400,7 @@ impl EncodedFile {
             stream_count += 1;
         }
         fs::write(&self.file, buf)?;
+        println!("encoded in {:?}", self.file);
         Ok(())
     }
 }
