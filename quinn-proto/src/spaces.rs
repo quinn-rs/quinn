@@ -151,7 +151,10 @@ pub(crate) struct SentPacket {
     pub(crate) ack_eliciting: bool,
     pub(crate) acks: RangeSet,
     pub(crate) retransmits: Retransmits,
-    pub(crate) stream_frames: Vec<frame::Stream>,
+    /// Metadata for stream frames in a packet
+    ///
+    /// The actual application data is stored with the stream state.
+    pub(crate) stream_frames: Vec<frame::StreamMeta>,
 }
 
 /// Retransmittable data queue

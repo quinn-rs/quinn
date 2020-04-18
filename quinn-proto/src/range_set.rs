@@ -172,10 +172,15 @@ impl RangeSet {
         }
     }
 
-    pub fn pop_min(&mut self) -> Option<Range<u64>> {
+    pub fn peek_min(&self) -> Option<Range<u64>> {
         let (&start, &end) = self.0.iter().next()?;
-        self.0.remove(&start);
         Some(start..end)
+    }
+
+    pub fn pop_min(&mut self) -> Option<Range<u64>> {
+        let result = self.peek_min()?;
+        self.0.remove(&result.start);
+        Some(result)
     }
 }
 

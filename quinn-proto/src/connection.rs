@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
@@ -500,10 +500,11 @@ where
         for frame in info.stream_frames {
             let ss = match self.streams.send_mut(frame.id) {
                 Some(x) => x,
+                // ACK for a closed stream is a noop
                 None => continue,
             };
-            ss.bytes_in_flight -= frame.data.len() as u64;
-            self.unacked_data -= frame.data.len() as u64;
+            ss.pending.ack(frame.offsets.clone());
+            self.unacked_data -= frame.offsets.end - frame.offsets.start;
             if let streams::SendState::DataSent {
                 ref mut finish_acked,
             } = ss.state
@@ -511,7 +512,7 @@ where
                 if frame.fin {
                     *finish_acked = true;
                 }
-                if *finish_acked && ss.bytes_in_flight == 0 {
+                if *finish_acked && ss.pending.in_flight() == 0 {
                     ss.state = streams::SendState::DataRecvd;
                     self.streams.maybe_cleanup(frame.id);
                     self.events.push_back(Event::StreamFinished {
@@ -692,10 +693,10 @@ where
                     .remove(&packet)
                     .unwrap(); // safe: lost_packets is populated just above
                 self.in_flight.remove(&info);
-                self.space_mut(pn_space).pending += info.retransmits;
                 for frame in info.stream_frames {
-                    self.streams.pending.push_front(frame);
+                    self.streams.retransmit(frame);
                 }
+                self.space_mut(pn_space).pending += info.retransmits;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
@@ -863,23 +864,19 @@ where
         self.timers.set(Timer::KeepAlive, now + interval);
     }
 
-    fn queue_stream_data(&mut self, stream: StreamId, data: Bytes) -> Result<(), WriteError> {
+    fn queue_stream_data(&mut self, stream: StreamId, data: &[u8]) -> Result<(), WriteError> {
         let ss = self
             .streams
             .send_mut(stream)
             .ok_or(WriteError::UnknownStream)?;
         assert_eq!(ss.state, streams::SendState::Ready);
-        let offset = ss.offset;
-        ss.offset += data.len() as u64;
-        ss.bytes_in_flight += data.len() as u64;
+        let was_pending = ss.is_pending();
+        ss.pending.write(data);
+        if !was_pending {
+            self.streams.pending.push(stream);
+        }
         self.data_sent += data.len() as u64;
         self.unacked_data += data.len() as u64;
-        self.streams.pending.push_back(frame::Stream {
-            offset,
-            fin: false,
-            data,
-            id: stream,
-        });
         Ok(())
     }
 
@@ -899,15 +896,18 @@ where
         );
 
         // Drain queued data
-        let unacked_data = &mut self.unacked_data;
-        self.streams.pending.retain(|frame| {
-            if frame.id == stream_id {
-                *unacked_data -= frame.data.len() as u64;
-                false
-            } else {
-                true
+        if let Some(stream) = self.streams.send_mut(stream_id) {
+            loop {
+                let offsets = stream.pending.poll_transmit(usize::max_value());
+                if offsets.end == offsets.start {
+                    break;
+                }
+                self.unacked_data -= offsets.end - offsets.start;
             }
-        });
+        } else {
+            // Resetting an already-closed stream is a noop
+            return;
+        }
 
         let stop_reason = if stopped { Some(error_code) } else { None };
         let status = self.streams.reset(stream_id, stop_reason);
@@ -1402,10 +1402,8 @@ where
                         for (_, info) in zero_rtt {
                             self.in_flight.remove(&info);
                             self.space_mut(SpaceId::Data).pending += info.retransmits;
-                            for frame in info.stream_frames {
-                                self.streams.pending.push_front(frame);
-                            }
                         }
+                        self.streams.retransmit_all_for_0rtt();
 
                         let token_len = packet.payload.len() - 16;
                         self.state = State::Handshake(state::Handshake {
@@ -1752,8 +1750,8 @@ where
                     if let Some(ss) = self.streams.send_mut(id) {
                         // We only care about budget *increases* for *live* streams
                         if offset > ss.max_data && ss.state == streams::SendState::Ready {
-                            trace!(stream = %id, old = ss.max_data, new = offset, current_offset = ss.offset, "stream limit increased");
-                            if ss.offset == ss.max_data {
+                            trace!(stream = %id, old = ss.max_data, new = offset, current_offset = ss.offset(), "stream limit increased");
+                            if ss.offset() == ss.max_data {
                                 self.events.push_back(Event::StreamWritable { stream: id });
                             }
                             ss.max_data = offset;
@@ -2363,7 +2361,7 @@ where
         &mut self,
         space_id: SpaceId,
         buf: &mut Vec<u8>,
-    ) -> (Retransmits, RangeSet, Vec<frame::Stream>) {
+    ) -> (Retransmits, RangeSet, Vec<frame::StreamMeta>) {
         let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
         let mut stream_frames = Vec::new();
@@ -2477,7 +2475,7 @@ where
             frame::ResetStream {
                 id,
                 error_code,
-                final_offset: stream.offset,
+                final_offset: stream.offset(),
             }
             .encode(buf);
         }
@@ -2606,29 +2604,39 @@ where
 
         // STREAM
         while buf.len() + frame::Stream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let mut stream = match self.streams.pending.pop_front() {
+            let max_data_len = max_size as usize - buf.len() - frame::Stream::SIZE_BOUND;
+            let id = match self.streams.pending.pop() {
                 Some(x) => x,
                 None => break,
             };
-            let len = cmp::min(
-                stream.data.len(),
-                max_size as usize - buf.len() - frame::Stream::SIZE_BOUND,
-            );
-            let data = stream.data.split_to(len);
-            let fin = stream.fin && stream.data.is_empty();
-            trace!(id = %stream.id, off = stream.offset, len, fin, "STREAM");
-            let frame = frame::Stream {
-                id: stream.id,
-                offset: stream.offset,
-                fin,
-                data,
+            let stream = match self.streams.send_mut(id) {
+                Some(s) => s,
+                // Stream was reset with pending data and the reset was acknowledged
+                None => continue,
             };
-            frame.encode(true, buf);
-            if !stream.data.is_empty() {
-                stream.offset += len as u64;
-                self.streams.pending.push_front(stream);
+            // Reset streams aren't removed from the pending list and still exist while the peer
+            // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
+            // check for them explicitly.
+            if stream.is_reset() {
+                continue;
             }
-            stream_frames.push(frame);
+            let offsets = stream.pending.poll_transmit(max_data_len);
+            let fin = offsets.end == stream.pending.offset()
+                && mem::replace(&mut stream.fin_pending, false);
+            if stream.is_pending() {
+                self.streams.pending.push(id);
+            }
+            let meta = frame::StreamMeta { id, offsets, fin };
+            trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
+            meta.encode(true, buf);
+            buf.put_slice(
+                self.streams
+                    .send_mut(id)
+                    .unwrap()
+                    .pending
+                    .get(meta.offsets.clone()),
+            );
+            stream_frames.push(meta);
         }
 
         (sent, acks, stream_frames)
@@ -2764,24 +2772,13 @@ where
             .streams
             .send_mut(id)
             .ok_or(FinishError::UnknownStream)?;
+        let was_pending = ss.is_pending();
         ss.finish()?;
-
+        if !was_pending {
+            self.streams.pending.push(id);
+        }
         // We no longer need to notify the application of capacity for additional writes.
         self.blocked_streams.remove(&id);
-
-        let offset = ss.offset;
-        for frame in &mut self.streams.pending {
-            if frame.id == id && frame.offset + frame.data.len() as u64 == offset {
-                frame.fin = true;
-                return Ok(());
-            }
-        }
-        self.streams.pending.push_back(frame::Stream {
-            id,
-            data: Bytes::new(),
-            offset,
-            fin: true,
-        });
         Ok(())
     }
 
@@ -2972,7 +2969,7 @@ where
             self.config.send_window - self.unacked_data,
         );
         let n = conn_budget.min(stream_budget).min(data.len() as u64) as usize;
-        self.queue_stream_data(stream, Bytes::copy_from_slice(&data[0..n]))?;
+        self.queue_stream_data(stream, &data[0..n])?;
         trace!(%stream, "wrote {} bytes", n);
         Ok(n)
     }
