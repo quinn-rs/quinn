@@ -563,16 +563,6 @@ pub(crate) enum SendState {
     ResetRecvd { stop_reason: Option<VarInt> },
 }
 
-impl SendState {
-    pub fn was_reset(self) -> bool {
-        use self::SendState::*;
-        match self {
-            ResetSent { .. } | ResetRecvd { .. } => true,
-            _ => false,
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum RecvState {
     Recv { size: Option<u64> },

@@ -898,6 +898,17 @@ where
             "only streams supporting outgoing data may be reset"
         );
 
+        // Drain queued data
+        let unacked_data = &mut self.unacked_data;
+        self.streams.pending.retain(|frame| {
+            if frame.id == stream_id {
+                *unacked_data -= frame.data.len() as u64;
+                false
+            } else {
+                true
+            }
+        });
+
         let stop_reason = if stopped { Some(error_code) } else { None };
         let status = self.streams.reset(stream_id, stop_reason);
         let was_conn_blocked = self.blocked_streams.remove(&stream_id);
@@ -2599,14 +2610,6 @@ where
                 Some(x) => x,
                 None => break,
             };
-            if self
-                .streams
-                .send_mut(stream.id)
-                .map_or(true, |s| s.state.was_reset())
-            {
-                self.unacked_data -= stream.data.len() as u64;
-                continue;
-            }
             let len = cmp::min(
                 stream.data.len(),
                 max_size as usize - buf.len() - frame::Stream::SIZE_BOUND,
