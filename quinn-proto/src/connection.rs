@@ -498,28 +498,13 @@ where
         }
 
         for frame in info.stream_frames {
-            let ss = match self.streams.send_mut(frame.id) {
-                Some(x) => x,
-                // ACK for a closed stream is a noop
-                None => continue,
-            };
-            ss.pending.ack(frame.offsets.clone());
             self.unacked_data -= frame.offsets.end - frame.offsets.start;
-            if let streams::SendState::DataSent {
-                ref mut finish_acked,
-            } = ss.state
-            {
-                if frame.fin {
-                    *finish_acked = true;
-                }
-                if *finish_acked && ss.pending.in_flight() == 0 {
-                    ss.state = streams::SendState::DataRecvd;
-                    self.streams.maybe_cleanup(frame.id);
-                    self.events.push_back(Event::StreamFinished {
-                        stream: frame.id,
-                        stop_reason: None,
-                    });
-                }
+            let id = frame.id;
+            if self.streams.ack(frame) {
+                self.events.push_back(Event::StreamFinished {
+                    stream: id,
+                    stop_reason: None,
+                });
             }
         }
     }
