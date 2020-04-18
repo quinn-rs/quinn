@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map, HashMap},
     mem,
+    ops::Range,
 };
 
 use bytes::Bytes;
@@ -255,9 +256,15 @@ impl Streams {
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
     /// state.
-    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
-        let stream = self.send.get_mut(&id)?;
-        stream.reset(stop_reason)
+    pub fn reset(
+        &mut self,
+        id: StreamId,
+        stop_reason: Option<VarInt>,
+    ) -> (u64, Option<ResetStatus>) {
+        match self.send.get_mut(&id) {
+            None => (0, None),
+            Some(s) => s.reset(stop_reason),
+        }
     }
 
     pub fn can_send(&self) -> bool {
@@ -290,6 +297,11 @@ impl Streams {
             // call `pending_data` and redo the hash lookup, but borrowck objects.
             return Some(frame::StreamMeta { id, offsets, fin });
         }
+    }
+
+    /// Fetch data associated with a fresh `poll_transmit` result
+    pub fn pending_data(&self, id: StreamId, offsets: Range<u64>) -> &[u8] {
+        self.send.get(&id).unwrap().pending.get(offsets)
     }
 
     /// Returns whether the stream was finished
@@ -345,8 +357,8 @@ impl Streams {
 pub(crate) struct Send {
     pub max_data: u64,
     pub state: SendState,
-    pub pending: SendBuffer,
-    pub fin_pending: bool,
+    pending: SendBuffer,
+    fin_pending: bool,
 }
 
 impl Send {
@@ -412,11 +424,20 @@ impl Send {
         Ok(len)
     }
 
-    /// Returns whether the stream was finishing, indicating that the application needs to be
-    /// notified explicitly if the stream was stopped because no further write calls will be made.
-    fn reset(&mut self, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
+    /// Returns number of unsent bytes and whether the stream was blocked or finishing, indicating
+    /// that the application needs to be notified explicitly if the stream was stopped because no
+    /// further write calls will be made.
+    fn reset(&mut self, stop_reason: Option<VarInt>) -> (u64, Option<ResetStatus>) {
+        let mut bytes = 0;
+        loop {
+            let offsets = self.pending.poll_transmit(usize::max_value());
+            if offsets.end == offsets.start {
+                break;
+            }
+            bytes += offsets.end - offsets.start;
+        }
         use SendState::*;
-        match self.state {
+        let status = match self.state {
             DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
             DataSent { .. } => {
                 self.state = ResetSent { stop_reason: None };
@@ -430,7 +451,8 @@ impl Send {
                     None
                 }
             }
-        }
+        };
+        (bytes, status)
     }
 
     fn ack(&mut self, frame: frame::StreamMeta) {

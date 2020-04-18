@@ -864,22 +864,9 @@ where
             "only streams supporting outgoing data may be reset"
         );
 
-        // Drain queued data
-        if let Some(stream) = self.streams.send_mut(stream_id) {
-            loop {
-                let offsets = stream.pending.poll_transmit(usize::max_value());
-                if offsets.end == offsets.start {
-                    break;
-                }
-                self.unacked_data -= offsets.end - offsets.start;
-            }
-        } else {
-            // Resetting an already-closed stream is a noop
-            return;
-        }
-
         let stop_reason = if stopped { Some(error_code) } else { None };
-        let status = self.streams.reset(stream_id, stop_reason);
+        let (bytes_dropped, status) = self.streams.reset(stream_id, stop_reason);
+        self.unacked_data -= bytes_dropped;
         let was_conn_blocked = self.blocked_streams.remove(&stream_id);
         if stopped {
             if status == Some(streams::ResetStatus::WasFinishing) {
@@ -2575,8 +2562,7 @@ where
             };
             trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
             meta.encode(true, buf);
-            let ss = self.streams.send_mut(meta.id).unwrap();
-            buf.put_slice(ss.pending.get(meta.offsets.clone()));
+            buf.put_slice(self.streams.pending_data(meta.id, meta.offsets.clone()));
             stream_frames.push(meta);
         }
 
