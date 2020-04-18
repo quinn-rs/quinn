@@ -239,6 +239,24 @@ impl Streams {
         !self.pending.is_empty()
     }
 
+    /// Returns whether the stream was finished
+    pub fn ack(&mut self, frame: frame::StreamMeta) -> bool {
+        let stream = match self.send.get_mut(&frame.id) {
+            // ACK for a closed stream is a noop
+            None => return false,
+            Some(x) => x,
+        };
+        let id = frame.id;
+        stream.ack(frame);
+        if stream.state == SendState::DataRecvd {
+            // Guaranteed to succeed on the send side
+            self.maybe_cleanup(id);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn retransmit(&mut self, frame: frame::StreamMeta) {
         let stream = match self.send.get_mut(&frame.id) {
             // Loss of data on a closed stream is a noop
@@ -357,6 +375,19 @@ impl Send {
                 } else {
                     None
                 }
+            }
+        }
+    }
+
+    fn ack(&mut self, frame: frame::StreamMeta) {
+        self.pending.ack(frame.offsets);
+        if let SendState::DataSent {
+            ref mut finish_acked,
+        } = self.state
+        {
+            *finish_acked |= frame.fin;
+            if *finish_acked && self.pending.in_flight() == 0 {
+                self.state = SendState::DataRecvd;
             }
         }
     }
