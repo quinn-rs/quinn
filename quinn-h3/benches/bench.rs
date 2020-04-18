@@ -5,7 +5,7 @@ use std::{
 };
 
 use bencher::{benchmark_group, benchmark_main, Bencher};
-use futures::{channel::oneshot, StreamExt};
+use futures::{channel::oneshot, Future, StreamExt};
 use http::{Request, Response, StatusCode};
 use tokio::{
     io::AsyncWriteExt as _,
@@ -57,7 +57,7 @@ fn throughput(bench: &mut Bencher, frame_size: usize) {
 
     let mut ctx = Context::new();
 
-    let (addr, server) = ctx.spawn_server();
+    let (addr, server) = ctx.spawn_server(download_server);
     let (client, mut runtime) = ctx.make_client(addr);
     let total_size = 10 * 1024 * 1024;
 
@@ -121,7 +121,13 @@ impl Context {
         }
     }
 
-    pub fn spawn_server(&mut self) -> (SocketAddr, thread::JoinHandle<()>) {
+    pub fn spawn_server<Fut>(
+        &mut self,
+        service: fn(IncomingConnection, oneshot::Receiver<()>) -> Fut,
+    ) -> (SocketAddr, thread::JoinHandle<()>)
+    where
+        Fut: Future<Output = ()> + 'static,
+    {
         let socket = UdpSocket::bind(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
         let addr = socket.local_addr().unwrap();
         let server = self.server_config.clone();
@@ -133,7 +139,7 @@ impl Context {
             let mut runtime = rt();
             runtime.block_on(async {
                 let incoming_conn = server.with_socket(socket).unwrap();
-                handle_connection(incoming_conn, stop_recv)
+                service(incoming_conn, stop_recv)
                     .instrument(error_span!("server"))
                     .await
             });
@@ -166,7 +172,7 @@ impl Context {
     }
 }
 
-async fn handle_connection(
+async fn download_server(
     mut incoming_conn: IncomingConnection,
     mut stop_recv: oneshot::Receiver<()>,
 ) {
