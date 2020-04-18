@@ -1,4 +1,4 @@
-use std::collections::{hash_map, HashMap};
+use std::collections::{hash_map, HashMap, VecDeque};
 
 use bytes::Bytes;
 use err_derive::Error;
@@ -27,6 +27,8 @@ pub(crate) struct Streams {
     /// This differs from `self.send.len()` in that it does not include streams that the peer is
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
+    /// Queued stream data
+    pub pending: VecDeque<frame::Stream>,
 }
 
 impl Streams {
@@ -40,6 +42,7 @@ impl Streams {
             next_remote: [0, 0],
             next_reported_remote: [0, 0],
             send_streams: 0,
+            pending: VecDeque::new(),
         };
 
         for dir in Dir::iter() {
@@ -229,6 +232,10 @@ impl Streams {
     pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
         let stream = self.send.get_mut(&id)?;
         stream.reset(stop_reason)
+    }
+
+    pub fn can_send(&self) -> bool {
+        !self.pending.is_empty()
     }
 }
 
