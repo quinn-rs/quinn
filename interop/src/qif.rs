@@ -135,6 +135,8 @@ fn main() -> Result<(), Error> {
     }
 }
 
+struct Block<'a>(std::io::Cursor<&'a [u8]>, u64);
+
 struct BlockIterator<R: Buf> {
     buf: R,
     last_block_len: usize,
@@ -148,7 +150,7 @@ impl<R: Buf> BlockIterator<R> {
         }
     }
 
-    fn next<'a>(&'a mut self) -> Result<Option<(std::io::Cursor<&'a [u8]>, u64)>, Error> {
+    fn next<'a>(&'a mut self) -> Result<Option<Block<'a>>, Error> {
         self.buf.advance(self.last_block_len);
         if self.buf.remaining() < mem::size_of::<u64>() + mem::size_of::<u32>() {
             if self.buf.remaining() > 0 {
@@ -166,7 +168,7 @@ impl<R: Buf> BlockIterator<R> {
             self.last_block_len = length;
             let block = std::io::Cursor::new(&self.buf.bytes()[..length]);
 
-            Ok(Some((block, current)))
+            Ok(Some(Block(block, current)))
         }
     }
 }
@@ -251,7 +253,7 @@ impl EncodedFile {
         let mut decoder = vec![];
         let mut decoded = vec![];
 
-        while let Some((mut buf, current)) = blocks.next().expect("next block") {
+        while let Some(Block(mut buf, current)) = blocks.next().expect("next block") {
             if current == 0 {
                 // encoder stream
                 qpack::on_encoder_recv(&mut table.inserter(), &mut buf, &mut decoder)?;
@@ -266,7 +268,7 @@ impl EncodedFile {
                             unblocked.push(i);
                         }
                         Err(qpack::DecoderError::MissingRefs { .. }) => (),
-                        Err(e) => Err(e)?,
+                        Err(e) => return Err(e.into()),
                     }
                 }
 
@@ -291,7 +293,7 @@ impl EncodedFile {
                     }
                     blocked.push(buf.bytes().into());
                 }
-                Err(e) => Err(e)?,
+                Err(e) => return Err(e.into()),
             }
             count += 1;
         }
@@ -553,8 +555,8 @@ fn find_qif_dir(path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
             }
         });
 
-        if found.is_some() {
-            return Ok(Some(found.unwrap()?.path()));
+        if let Some(found) = found {
+            return Ok(Some(found?.path()));
         }
     }
     Ok(None)
