@@ -1,4 +1,7 @@
-use std::{fmt, io, mem, ops::RangeInclusive};
+use std::{
+    fmt, io, mem,
+    ops::{Range, RangeInclusive},
+};
 
 use bytes::{Buf, BufMut, Bytes};
 
@@ -414,10 +417,18 @@ impl FrameStruct for Stream {
     const SIZE_BOUND: usize = 1 + 8 + 8 + 8;
 }
 
-impl Stream {
+/// Metadata from a stream frame
+#[derive(Debug, Clone)]
+pub struct StreamMeta {
+    pub id: StreamId,
+    pub offsets: Range<u64>,
+    pub fin: bool,
+}
+
+impl StreamMeta {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
         let mut ty = *STREAM_TYS.start();
-        if self.offset != 0 {
+        if self.offsets.start != 0 {
             ty |= 0x04;
         }
         if length {
@@ -428,13 +439,12 @@ impl Stream {
         }
         out.write_var(ty); // 1 byte
         out.write(self.id); // <=8 bytes
-        if self.offset != 0 {
-            out.write_var(self.offset); // <=8 bytes
+        if self.offsets.start != 0 {
+            out.write_var(self.offsets.start); // <=8 bytes
         }
         if length {
-            out.write_var(self.data.len() as u64); // <=8 bytes
+            out.write_var(self.offsets.end - self.offsets.start); // <=8 bytes
         }
-        out.put_slice(&self.data);
     }
 }
 

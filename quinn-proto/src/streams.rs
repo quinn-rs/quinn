@@ -1,12 +1,12 @@
-use std::collections::{hash_map, HashMap, VecDeque};
+use std::collections::{hash_map, HashMap};
 
 use bytes::Bytes;
 use err_derive::Error;
 use tracing::debug;
 
 use crate::{
-    assembler::Assembler, frame, range_set::RangeSet, transport_parameters::TransportParameters,
-    Dir, Side, StreamId, TransportError, VarInt,
+    assembler::Assembler, frame, range_set::RangeSet, send_buffer::SendBuffer,
+    transport_parameters::TransportParameters, Dir, Side, StreamId, TransportError, VarInt,
 };
 
 pub(crate) struct Streams {
@@ -27,8 +27,8 @@ pub(crate) struct Streams {
     /// This differs from `self.send.len()` in that it does not include streams that the peer is
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
-    /// Queued stream data
-    pub pending: VecDeque<frame::Stream>,
+    /// Streams with outgoing data queued
+    pub pending: Vec<StreamId>,
 }
 
 impl Streams {
@@ -42,7 +42,7 @@ impl Streams {
             next_remote: [0, 0],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: VecDeque::new(),
+            pending: Vec::new(),
         };
 
         for dir in Dir::iter() {
@@ -99,6 +99,7 @@ impl Streams {
             }
             self.next[dir as usize] = 0;
         }
+        self.pending.clear();
     }
 
     pub fn read(
@@ -237,24 +238,53 @@ impl Streams {
     pub fn can_send(&self) -> bool {
         !self.pending.is_empty()
     }
+
+    pub fn retransmit(&mut self, frame: frame::StreamMeta) {
+        let stream = match self.send.get_mut(&frame.id) {
+            // Loss of data on a closed stream is a noop
+            None => return,
+            Some(x) => x,
+        };
+        if !stream.is_pending() {
+            self.pending.push(frame.id);
+        }
+        stream.fin_pending |= frame.fin;
+        stream.pending.retransmit(frame.offsets);
+    }
+
+    pub fn retransmit_all_for_0rtt(&mut self) {
+        for dir in Dir::iter() {
+            for index in 0..self.next[dir as usize] {
+                let id = StreamId::new(Side::Client, dir, index);
+                let stream = self.send.get_mut(&id).unwrap();
+                if stream.pending.in_flight() == 0 && !stream.fin_pending {
+                    // No data was sent on this stream
+                    continue;
+                }
+                if !stream.is_pending() {
+                    self.pending.push(id);
+                }
+                stream.pending.retransmit_all_for_0rtt();
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Send {
-    pub offset: u64,
     pub max_data: u64,
     pub state: SendState,
-    /// Number of bytes sent but unacked
-    pub bytes_in_flight: u64,
+    pub pending: SendBuffer,
+    pub fin_pending: bool,
 }
 
 impl Send {
     pub fn new(max_data: u64) -> Self {
         Self {
-            offset: 0,
             max_data,
             state: SendState::Ready,
-            bytes_in_flight: 0,
+            pending: SendBuffer::new(),
+            fin_pending: false,
         }
     }
 
@@ -262,7 +292,7 @@ impl Send {
         if let Some(error_code) = self.take_stop_reason() {
             return Err(WriteError::Stopped(error_code));
         }
-        let budget = self.max_data - self.offset;
+        let budget = self.max_data - self.pending.offset();
         if budget == 0 {
             Err(WriteError::Blocked)
         } else {
@@ -279,11 +309,17 @@ impl Send {
         }
     }
 
+    /// Whether the stream has been reset
+    pub fn is_reset(&self) -> bool {
+        matches!(self.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. })
+    }
+
     pub fn finish(&mut self) -> Result<(), FinishError> {
         if self.state == SendState::Ready {
             self.state = SendState::DataSent {
                 finish_acked: false,
             };
+            self.fin_pending = true;
             Ok(())
         } else if let Some(error_code) = self.take_stop_reason() {
             Err(FinishError::Stopped(error_code))
@@ -316,13 +352,21 @@ impl Send {
             }
             Ready => {
                 self.state = ResetSent { stop_reason };
-                if self.offset == self.max_data {
+                if self.pending.offset() == self.max_data {
                     Some(ResetStatus::WasBlocked)
                 } else {
                     None
                 }
             }
         }
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.pending.offset()
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.pending.has_unsent_data() || self.fin_pending
     }
 }
 
