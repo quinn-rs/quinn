@@ -299,8 +299,9 @@ impl Streams {
             for index in 0..self.next[dir as usize] {
                 let id = StreamId::new(Side::Client, dir, index);
                 let stream = self.send.get_mut(&id).unwrap();
-                if stream.pending.in_flight() == 0 && !stream.fin_pending {
-                    // No data was sent on this stream
+                if stream.pending.is_fully_acked() && !stream.fin_pending {
+                    // Stream data can't be acked in 0-RTT, so we must not have sent anything on
+                    // this stream
                     continue;
                 }
                 if !stream.is_pending() {
@@ -537,7 +538,7 @@ impl Send {
         } = self.state
         {
             *finish_acked |= frame.fin;
-            if *finish_acked && self.pending.in_flight() == 0 {
+            if *finish_acked && self.pending.is_fully_acked() {
                 self.state = SendState::DataRecvd;
             }
         }

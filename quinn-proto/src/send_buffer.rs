@@ -21,8 +21,6 @@ pub struct SendBuffer {
     acks: RangeSet,
     /// Previously transmitted ranges deemed lost
     retransmits: RangeSet,
-    /// See the same-named method
-    in_flight: u64,
 }
 
 impl SendBuffer {
@@ -34,7 +32,6 @@ impl SendBuffer {
             unsent: 0,
             acks: RangeSet::new(),
             retransmits: RangeSet::new(),
-            in_flight: 0,
         }
     }
 
@@ -42,14 +39,12 @@ impl SendBuffer {
     pub fn write(&mut self, data: &[u8]) {
         self.unacked.extend_from_slice(data);
         self.offset += data.len() as u64;
-        self.in_flight += data.len() as u64;
     }
 
     /// Discard a range of acknowledged stream data
     ///
     /// Each offset must be acknowledged at most once.
     pub fn ack(&mut self, range: Range<u64>) {
-        self.in_flight -= range.end - range.start;
         self.acks.insert(range);
         while self.acks.min() == Some(self.offset - self.unacked.len() as u64) {
             let prefix = self.acks.pop_min().unwrap();
@@ -101,9 +96,9 @@ impl SendBuffer {
         self.offset
     }
 
-    /// Number of written bytes that have not been acknowledged
-    pub fn in_flight(&self) -> u64 {
-        self.in_flight
+    /// Whether all sent data has been acknowledged
+    pub fn is_fully_acked(&self) -> bool {
+        self.unacked.is_empty()
     }
 
     /// Whether there's data to send
