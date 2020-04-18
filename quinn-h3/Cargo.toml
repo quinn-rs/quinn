@@ -60,5 +60,5 @@ name = "h3_server"
 name = "h3_client"
 
 [[bench]]
-name = "bench"
+name = "throughput"
 harness = false
