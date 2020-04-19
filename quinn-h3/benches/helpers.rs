@@ -17,7 +17,7 @@ use quinn::{ClientConfigBuilder, ServerConfigBuilder};
 use quinn_h3::{
     self, client,
     server::{self, IncomingConnection},
-    BodyWriter,
+    BodyWriter, Settings,
 };
 
 pub struct Context {
@@ -28,6 +28,10 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Self {
+        Self::with_settings(Settings::new())
+    }
+
+    pub fn with_settings(settings: Settings) -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
         let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
@@ -44,9 +48,14 @@ impl Context {
         client_config.add_certificate_authority(cert).unwrap();
         client_config.protocols(&[quinn_h3::ALPN]);
 
+        let mut server_config = server::Builder::with_quic_config(server_config);
+        server_config.settings(settings.clone());
+        let mut client_config = client::Builder::with_quic_config(client_config);
+        client_config.settings(settings);
+
         Self {
-            server_config: server::Builder::with_quic_config(server_config),
-            client_config: client::Builder::with_quic_config(client_config),
+            server_config,
+            client_config,
             stop_server: None,
         }
     }
