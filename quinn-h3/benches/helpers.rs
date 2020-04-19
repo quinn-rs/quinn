@@ -26,11 +26,13 @@ pub struct Context {
     stop_server: Option<oneshot::Sender<()>>,
 }
 
-impl Context {
-    pub fn new() -> Self {
+impl Default for Context {
+    fn default() -> Self {
         Self::with_settings(Settings::new())
     }
+}
 
+impl Context {
     pub fn with_settings(settings: Settings) -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();

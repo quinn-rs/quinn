@@ -46,7 +46,7 @@ pub fn download_1m(bench: &mut Bencher) {
 fn download(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let mut ctx = Context::new();
+    let mut ctx = Context::default();
 
     let (addr, server) = ctx.spawn_server(download_server);
     let (client, mut runtime) = ctx.make_client(addr);
@@ -127,7 +127,7 @@ pub fn upload_1m(bench: &mut Bencher) {
 fn upload(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let mut ctx = Context::new();
+    let mut ctx = Context::default();
 
     let (addr, server) = ctx.spawn_server(upload_server);
     let (client, mut runtime) = ctx.make_client(addr);
