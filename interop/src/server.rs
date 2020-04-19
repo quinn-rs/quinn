@@ -319,9 +319,12 @@ fn parse_size(literal: &str) -> Result<usize> {
     Ok(num * scale)
 }
 
+const ALT_SVC: &str = "h3-27=\":443\"";
+
 fn h2_home() -> hyper::Response<hyper::Body> {
     Response::builder()
         .status(StatusCode::OK)
+        .header("Alt-Svc", ALT_SVC)
         .body(HOME.into())
         .expect("failed to build response")
 }
@@ -330,6 +333,7 @@ fn h2_payload(len: usize) -> hyper::Response<hyper::Body> {
     if len > 1_000_000_000 {
         let response = Response::builder()
             .status(StatusCode::BAD_REQUEST)
+            .header("Alt-Svc", ALT_SVC)
             .body(Bytes::from(format!("requested {}: too large", len)).into())
             .expect("failed to build response");
         return response;
@@ -355,15 +359,13 @@ async fn h2_handle(request: hyper::Request<hyper::Body>) -> Result<hyper::Respon
 
 async fn h2_server(server_config: quinn::ServerConfigBuilder) -> Result<()> {
     let mut tls_cfg = (*server_config.build().crypto).clone();
-    tls_cfg.set_protocols(&[b"h2".to_vec()]);
+    tls_cfg.set_protocols(&[b"h2".to_vec(), b"http/1.1".to_vec()]);
     let tls_acceptor = TlsAcceptor::from(sync::Arc::new(tls_cfg));
 
     let tcp = TcpListener::bind(&SocketAddr::new([0, 0, 0, 0].into(), 443)).await?;
 
     let service = make_service_fn(|_conn| async { Ok::<_, anyhow::Error>(service_fn(h2_handle)) });
-    let server = hyper::Server::builder(HyperAcceptor::new(tcp, tls_acceptor))
-        .http2_only(true)
-        .serve(service);
+    let server = hyper::Server::builder(HyperAcceptor::new(tcp, tls_acceptor)).serve(service);
 
     if let Err(e) = server.await {
         error!("server error: {}", e);
