@@ -1,6 +1,5 @@
 use std::{
     collections::{hash_map, HashMap},
-    mem,
     ops::Range,
 };
 
@@ -247,7 +246,10 @@ impl Streams {
             }
             let offsets = stream.pending.poll_transmit(max_data_len);
             let fin = offsets.end == stream.pending.offset()
-                && mem::replace(&mut stream.fin_pending, false);
+                && matches!(stream.state, SendState::DataSent { .. });
+            if fin {
+                stream.fin_pending = false;
+            }
             if stream.is_pending() {
                 self.pending.push(id);
             }
@@ -440,6 +442,7 @@ pub(crate) struct Send {
     pub max_data: u64,
     pub state: SendState,
     pending: SendBuffer,
+    /// Whether a frame containing a FIN bit must be transmitted, even if we don't have any new data
     fin_pending: bool,
     /// Whether this stream is in the `connection_blocked` list of `Streams`
     connection_blocked: bool,
