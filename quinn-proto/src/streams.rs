@@ -602,7 +602,7 @@ pub enum WriteError {
     UnknownStream,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Recv {
     state: RecvState,
     recvd: RangeSet,
@@ -617,13 +617,7 @@ pub(crate) struct Recv {
 
 impl Recv {
     pub fn new() -> Self {
-        Self {
-            state: RecvState::Recv { size: None },
-            recvd: RangeSet::new(),
-            unordered: false,
-            assembler: Assembler::new(),
-            bytes_read: 0,
-        }
+        Self::default()
     }
 
     pub fn ingest(
@@ -829,6 +823,12 @@ pub(crate) enum RecvState {
     DataRecvd { size: u64 },
     ResetRecvd { size: u64, error_code: VarInt },
     Closed,
+}
+
+impl Default for RecvState {
+    fn default() -> Self {
+        RecvState::Recv { size: None }
+    }
 }
 
 /// Reasons why attempting to finish a stream might fail
