@@ -230,13 +230,19 @@ impl Streams {
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
     /// state.
-    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
-        let stream = self.send.get_mut(&id)?;
+    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) {
+        let stream = match self.send.get_mut(&id) {
+            Some(ss) => ss,
+            None => return,
+        };
+
         // Restore the portion of the send window consumed by the data that we aren't about to
         // send. We leave flow control alone because the peer's responsible for issuing additional
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
         self.unacked_data -= stream.pending.unacked();
-        stream.reset(stop_reason)
+        if let Some(event) = stream.reset(id, stop_reason) {
+            self.events.push_back(event);
+        }
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
@@ -572,25 +578,31 @@ impl Send {
         Ok(len)
     }
 
-    /// Returns number of unsent bytes and whether the stream was blocked or finishing, indicating
-    /// that the application needs to be notified explicitly if the stream was stopped because no
-    /// further write calls will be made.
-    fn reset(&mut self, stop_reason: Option<VarInt>) -> Option<ResetStatus> {
+    /// Update stream state to `ResetSent` if necessary
+    ///
+    /// If it is necessary to notify the application of the new state, return a `StreamEvent`.
+    fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<StreamEvent> {
         use SendState::*;
-        match self.state {
+        let event = match self.state {
             DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
             DataSent { .. } => {
                 self.state = ResetSent { stop_reason: None };
-                Some(ResetStatus::WasFinishing)
+                Some(StreamEvent::Finished { id, stop_reason })
             }
             Ready => {
                 self.state = ResetSent { stop_reason };
                 if self.pending.offset() == self.max_data || self.connection_blocked {
-                    Some(ResetStatus::WasBlocked)
+                    Some(StreamEvent::Writable { id })
                 } else {
                     None
                 }
             }
+        };
+
+        if stop_reason.is_some() {
+            event
+        } else {
+            None
         }
     }
 
@@ -626,13 +638,6 @@ impl Send {
     pub fn is_pending(&self) -> bool {
         self.pending.has_unsent_data() || self.fin_pending
     }
-}
-
-/// Interesting states of a stream that's being reset
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ResetStatus {
-    WasFinishing,
-    WasBlocked,
 }
 
 /// Errors triggered while writing to a send stream
