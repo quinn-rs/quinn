@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use tracing::{debug, error, info, trace, trace_span, warn};
@@ -2301,7 +2301,6 @@ where
     ) -> (Retransmits, RangeSet, Vec<frame::StreamMeta>) {
         let space = &mut self.spaces[space_id as usize];
         let mut sent = Retransmits::default();
-        let mut stream_frames = Vec::new();
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
         let tag_len = space
             .crypto
@@ -2540,16 +2539,11 @@ where
         }
 
         // STREAM
-        while buf.len() + frame::Stream::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let meta = match self.streams.poll_transmit(max_size as usize - buf.len()) {
-                Some(x) => x,
-                None => break,
-            };
-            trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
-            meta.encode(true, buf);
-            buf.put_slice(self.streams.pending_data(meta.id, meta.offsets.clone()));
-            stream_frames.push(meta);
-        }
+        let stream_frames = if space_id == SpaceId::Data {
+            self.streams.write_stream_frames(buf, max_size)
+        } else {
+            Vec::new()
+        };
 
         (sent, acks, stream_frames)
     }
