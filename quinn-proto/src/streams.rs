@@ -1,9 +1,6 @@
-use std::{
-    collections::{hash_map, HashMap},
-    ops::Range,
-};
+use std::collections::{hash_map, HashMap};
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use err_derive::Error;
 use tracing::{debug, trace};
 
@@ -228,16 +225,28 @@ impl Streams {
         !self.pending.is_empty()
     }
 
-    /// Get data to send on a stream frame, if any is available
-    pub fn poll_transmit(&mut self, max_frame_size: usize) -> Option<frame::StreamMeta> {
-        let max_data_len = max_frame_size.checked_sub(frame::Stream::SIZE_BOUND)?;
-        loop {
-            let id = self.pending.pop()?;
+    pub fn write_stream_frames(
+        &mut self,
+        buf: &mut Vec<u8>,
+        max_frame_size: usize,
+    ) -> Vec<frame::StreamMeta> {
+        let mut stream_frames = Vec::new();
+        while buf.len() + frame::Stream::SIZE_BOUND < max_frame_size {
+            let max_data_len =
+                match max_frame_size.checked_sub(buf.len() + frame::Stream::SIZE_BOUND) {
+                    Some(x) => x,
+                    None => break,
+                };
+            let id = match self.pending.pop() {
+                Some(x) => x,
+                None => break,
+            };
             let stream = match self.send.get_mut(&id) {
                 Some(s) => s,
                 // Stream was reset with pending data and the reset was acknowledged
                 None => continue,
             };
+
             // Reset streams aren't removed from the pending list and still exist while the peer
             // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
             // check for them explicitly.
@@ -253,15 +262,15 @@ impl Streams {
             if stream.is_pending() {
                 self.pending.push(id);
             }
-            // Would be nice to return a slice directly here as well so the caller doesn't have to
-            // call `pending_data` and redo the hash lookup, but borrowck objects.
-            return Some(frame::StreamMeta { id, offsets, fin });
-        }
-    }
 
-    /// Fetch data associated with a fresh `poll_transmit` result
-    pub fn pending_data(&self, id: StreamId, offsets: Range<u64>) -> &[u8] {
-        self.send.get(&id).unwrap().pending.get(offsets)
+            let meta = frame::StreamMeta { id, offsets, fin };
+            trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
+            meta.encode(true, buf);
+            buf.put_slice(stream.pending.get(meta.offsets.clone()));
+            stream_frames.push(meta);
+        }
+
+        stream_frames
     }
 
     /// Returns whether the stream was finished
