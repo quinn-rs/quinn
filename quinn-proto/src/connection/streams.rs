@@ -439,15 +439,15 @@ impl Streams {
             if ss.increase_max_data(offset) {
                 self.events.push_back(StreamEvent::Writable { id });
             }
-            Ok(())
         } else if id.initiator() == self.side && self.is_local_unopened(id) {
             debug!("got MAX_STREAM_DATA on unopened {}", id);
-            Err(TransportError::STREAM_STATE_ERROR(
+            return Err(TransportError::STREAM_STATE_ERROR(
                 "MAX_STREAM_DATA on unopened stream",
-            ))
-        } else {
-            Ok(())
+            ));
         }
+
+        self.on_stream_frame(false, id);
+        Ok(())
     }
 
     /// Yield stream events
