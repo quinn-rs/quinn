@@ -2105,7 +2105,6 @@ where
                 }
                 Frame::MaxStreamData { id, offset } => {
                     self.streams.received_max_stream_data(id, offset)?;
-                    self.streams.on_stream_frame(false, id);
                 }
                 Frame::MaxStreams { dir, count } => {
                     if count > MAX_STREAM_COUNT {
