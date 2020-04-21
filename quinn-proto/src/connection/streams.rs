@@ -22,11 +22,11 @@ pub(crate) struct Streams {
     recv: HashMap<StreamId, Recv>,
     next: [u64; 2],
     // Locally initiated
-    pub max: [u64; 2],
+    max: [u64; 2],
     // Maximum that can be remotely initiated
     pub max_remote: [u64; 2],
     // Lowest that hasn't actually been opened
-    pub next_remote: [u64; 2],
+    next_remote: [u64; 2],
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
     /// per directionality
     opened: [bool; 2],
@@ -548,7 +548,7 @@ impl Streams {
     ///
     /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
     /// misbehavior.
-    pub fn recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Recv>, TransportError> {
+    fn recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Recv>, TransportError> {
         if self.side == id.initiator() {
             match id.dir() {
                 Dir::Uni => {
@@ -635,8 +635,8 @@ impl Streams {
 
 #[derive(Debug)]
 pub(crate) struct Send {
-    pub max_data: u64,
-    pub state: SendState,
+    max_data: u64,
+    state: SendState,
     pending: SendBuffer,
     /// Whether a frame containing a FIN bit must be transmitted, even if we don't have any new data
     fin_pending: bool,
@@ -645,7 +645,7 @@ pub(crate) struct Send {
 }
 
 impl Send {
-    pub fn new(max_data: u64) -> Self {
+    fn new(max_data: u64) -> Self {
         Self {
             max_data,
             state: SendState::Ready,
@@ -656,7 +656,7 @@ impl Send {
     }
 
     /// All data acknowledged and STOP_SENDING error code, if any, processed by application
-    pub fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
             DataRecvd | ResetRecvd { stop_reason: None } => true,
@@ -665,11 +665,11 @@ impl Send {
     }
 
     /// Whether the stream has been reset
-    pub fn is_reset(&self) -> bool {
+    fn is_reset(&self) -> bool {
         matches!(self.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. })
     }
 
-    pub fn finish(&mut self) -> Result<(), FinishError> {
+    fn finish(&mut self) -> Result<(), FinishError> {
         if self.state == SendState::Ready {
             self.state = SendState::DataSent {
                 finish_acked: false,
@@ -752,7 +752,7 @@ impl Send {
     /// Handle increase to stream-level flow control limit
     ///
     /// Returns whether the stream was unblocked
-    pub fn increase_max_data(&mut self, offset: u64) -> bool {
+    fn increase_max_data(&mut self, offset: u64) -> bool {
         if offset <= self.max_data || self.state != SendState::Ready {
             return false;
         }
@@ -765,7 +765,7 @@ impl Send {
         self.pending.offset()
     }
 
-    pub fn is_pending(&self) -> bool {
+    fn is_pending(&self) -> bool {
         self.pending.has_unsent_data() || self.fin_pending
     }
 }
@@ -811,7 +811,7 @@ pub(crate) struct Recv {
 }
 
 impl Recv {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self::default()
     }
 
@@ -864,7 +864,7 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         assert!(
             !self.unordered,
             "cannot perform ordered reads following unordered reads on a stream"
@@ -879,7 +879,7 @@ impl Recv {
         }
     }
 
-    pub fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+    fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
         self.unordered = true;
 
         // Return data we already have buffered, regardless of state
@@ -906,7 +906,7 @@ impl Recv {
         }
     }
 
-    pub fn receiving_unknown_size(&self) -> bool {
+    fn receiving_unknown_size(&self) -> bool {
         match self.state {
             RecvState::Recv { size: None } => true,
             _ => false,
@@ -922,16 +922,16 @@ impl Recv {
     }
 
     /// All data read by application
-    pub fn is_closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         self.state == self::RecvState::Closed
     }
 
     /// Offset after the largest byte received
-    pub fn limit(&self) -> u64 {
+    fn limit(&self) -> u64 {
         self.recvd.max().map_or(0, |x| x + 1)
     }
 
-    pub fn final_offset(&self) -> Option<u64> {
+    fn final_offset(&self) -> Option<u64> {
         match self.state {
             RecvState::Recv { size } => size,
             RecvState::ResetRecvd { size, .. } => Some(size),
@@ -940,7 +940,7 @@ impl Recv {
         }
     }
 
-    pub fn reset(&mut self, error_code: VarInt, final_offset: u64) {
+    fn reset(&mut self, error_code: VarInt, final_offset: u64) {
         if self.is_closed() {
             return;
         }
