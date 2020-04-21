@@ -1034,13 +1034,7 @@ where
         }
 
         for frame in info.stream_frames {
-            let id = frame.id;
-            if self.streams.ack(frame) {
-                self.streams.events.push_back(StreamEvent::Finished {
-                    id,
-                    stop_reason: None,
-                });
-            }
+            self.streams.ack(frame);
         }
     }
 
