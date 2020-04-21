@@ -5,7 +5,7 @@ use bytes::{Buf, BytesMut};
 use crate::range_set::RangeSet;
 
 /// Buffer of outgoing retransmittable stream data
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct SendBuffer {
     /// Data queued by the application but not yet acknowledged. May or may not have been sent.
     unacked: BytesMut,
@@ -26,13 +26,7 @@ pub struct SendBuffer {
 impl SendBuffer {
     /// Construct an empty buffer at the initial offset
     pub fn new() -> Self {
-        Self {
-            unacked: BytesMut::new(),
-            offset: 0,
-            unsent: 0,
-            acks: RangeSet::new(),
-            retransmits: RangeSet::new(),
-        }
+        Self::default()
     }
 
     /// Append application data to the end of the stream
