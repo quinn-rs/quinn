@@ -15,14 +15,15 @@ use tracing::{debug, error, info, trace, trace_span, warn};
 use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
+    config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto::{self, HeaderKeys, Keys},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
     range_set::RangeSet,
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
-        EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
+        EndpointEventInner, IssuedCid,
     },
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,

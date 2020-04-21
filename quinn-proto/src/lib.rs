@@ -37,6 +37,9 @@ mod connection;
 pub use crate::connection::{ConnectionError, Event, SendDatagramError};
 pub use crate::connection::{FinishError, ReadError, UnknownStream, WriteError};
 
+mod config;
+pub use config::{ConfigError, TransportConfig};
+
 pub mod crypto;
 #[cfg(feature = "rustls")]
 pub use crypto::{rustls::AuthenticationData, types::*};
@@ -49,9 +52,7 @@ mod endpoint;
 pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};
 
 mod shared;
-pub use crate::shared::{
-    ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
-};
+pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent};
 
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
@@ -59,9 +60,9 @@ pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportE
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
     pub use crate::{
+        config::{ClientConfig, EndpointConfig, ServerConfig},
         connection::Connection,
         endpoint::Endpoint,
-        shared::{ClientConfig, EndpointConfig, ServerConfig},
     };
 }
 
