@@ -217,6 +217,38 @@ impl Streams {
         Ok(len)
     }
 
+    /// Process incoming stream frame
+    pub fn received(
+        &mut self,
+        frame: frame::Stream,
+        received: u64,
+        max_data: u64,
+        receive_window: u64,
+    ) -> Result<Option<u64>, TransportError> {
+        trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
+        let stream = frame.id;
+        let rs = match self.recv_stream(stream) {
+            Err(e) => {
+                debug!("received illegal stream frame");
+                return Err(e);
+            }
+            Ok(None) => {
+                trace!("dropping frame for closed stream");
+                return Ok(None);
+            }
+            Ok(Some(rs)) => rs,
+        };
+
+        if rs.is_finished() {
+            trace!("dropping frame for finished stream");
+            return Ok(None);
+        }
+
+        let ingested = rs.ingest(frame, received, max_data, receive_window)?;
+        self.on_stream_frame(true, stream);
+        Ok(Some(ingested))
+    }
+
     /// Set the FIN bit in the next stream frame, generating an empty one if necessary
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let stream = self.send.get_mut(&id).ok_or(FinishError::UnknownStream)?;
@@ -728,7 +760,7 @@ impl Recv {
         Self::default()
     }
 
-    pub fn ingest(
+    fn ingest(
         &mut self,
         frame: frame::Stream,
         received: u64,
