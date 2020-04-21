@@ -113,9 +113,6 @@ where
     next_crypto: Option<S::Keys>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
-    /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
-    /// per directionality
-    stream_opened: [bool; 2],
     accepted_0rtt: bool,
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
@@ -235,7 +232,6 @@ where
             prev_crypto: None,
             next_crypto: None,
             path_challenge: None,
-            stream_opened: [false, false],
             accepted_0rtt: false,
             permit_idle_reset: true,
             idle_timeout: config.max_idle_timeout,
@@ -293,7 +289,7 @@ where
     /// - a call was made to `handle_timeout`
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(dir) =
-            Dir::iter().find(|&i| mem::replace(&mut self.stream_opened[i as usize], false))
+            Dir::iter().find(|&i| mem::replace(&mut self.streams.opened[i as usize], false))
         {
             return Some(Event::StreamOpened { dir });
         }
@@ -2424,7 +2420,7 @@ where
         let next = &mut self.streams.next_remote[stream.dir() as usize];
         if stream.index() >= *next {
             *next = stream.index() + 1;
-            self.stream_opened[stream.dir() as usize] = true;
+            self.streams.opened[stream.dir() as usize] = true;
         } else if notify_readable {
             self.events.push_back(Event::StreamReadable { stream });
         }
