@@ -10,7 +10,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::{debug, error, info, trace, trace_span, warn};
+use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
     cid_queue::CidQueue,
@@ -1040,19 +1040,7 @@ where
 
         // Update state for confirmed delivery of frames
         for (id, _) in info.retransmits.reset_stream {
-            let ss = match self.streams.send_mut(id) {
-                Some(ss) => ss,
-                None => {
-                    info!("no send stream found for acked reset: {:?}", id);
-                    continue;
-                }
-            };
-            if let streams::SendState::ResetSent { stop_reason } = ss.state {
-                ss.state = streams::SendState::ResetRecvd { stop_reason };
-                if stop_reason.is_none() {
-                    self.streams.maybe_cleanup(id);
-                }
-            }
+            self.streams.reset_acked(id);
         }
 
         for frame in info.stream_frames {
