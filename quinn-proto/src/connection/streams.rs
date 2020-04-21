@@ -23,6 +23,9 @@ pub(crate) struct Streams {
     pub max_remote: [u64; 2],
     // Lowest that hasn't actually been opened
     pub next_remote: [u64; 2],
+    /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
+    /// per directionality
+    pub opened: [bool; 2],
     // Next to report to the application, once opened
     next_reported_remote: [u64; 2],
     /// Number of outbound streams
@@ -56,6 +59,7 @@ impl Streams {
             max: [0, 0],
             max_remote: [max_remote_bi, max_remote_uni],
             next_remote: [0, 0],
+            opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
             pending: Vec::new(),
