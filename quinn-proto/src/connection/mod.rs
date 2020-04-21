@@ -2121,23 +2121,8 @@ where
                     self.streams.increase_max_data(bytes);
                 }
                 Frame::MaxStreamData { id, offset } => {
-                    if id.initiator() != self.side && id.dir() == Dir::Uni {
-                        debug!("got MAX_STREAM_DATA on recv-only {}", id);
-                        return Err(TransportError::STREAM_STATE_ERROR(
-                            "MAX_STREAM_DATA on recv-only stream",
-                        ));
-                    }
-                    if let Some(ss) = self.streams.send_mut(id) {
-                        if ss.increase_max_data(offset) {
-                            // Unblocked
-                            self.streams.events.push_back(StreamEvent::Writable { id });
-                        }
-                    } else if id.initiator() == self.side() && self.streams.is_local_unopened(id) {
-                        debug!("got MAX_STREAM_DATA on unopened {}", id);
-                        return Err(TransportError::STREAM_STATE_ERROR(
-                            "MAX_STREAM_DATA on unopened stream",
-                        ));
-                    }
+                    self.streams
+                        .received_max_stream_data(id, offset, self.side)?;
                     self.on_stream_frame(false, id);
                 }
                 Frame::MaxStreams { dir, count } => {

@@ -371,6 +371,34 @@ impl Streams {
         self.max_data = self.max_data.max(n);
     }
 
+    pub fn received_max_stream_data(
+        &mut self,
+        id: StreamId,
+        offset: u64,
+        side: Side,
+    ) -> Result<(), TransportError> {
+        if id.initiator() != side && id.dir() == Dir::Uni {
+            debug!("got MAX_STREAM_DATA on recv-only {}", id);
+            return Err(TransportError::STREAM_STATE_ERROR(
+                "MAX_STREAM_DATA on recv-only stream",
+            ));
+        }
+
+        if let Some(ss) = self.send_mut(id) {
+            if ss.increase_max_data(offset) {
+                self.events.push_back(StreamEvent::Writable { id });
+            }
+            Ok(())
+        } else if id.initiator() == side && self.is_local_unopened(id) {
+            debug!("got MAX_STREAM_DATA on unopened {}", id);
+            Err(TransportError::STREAM_STATE_ERROR(
+                "MAX_STREAM_DATA on unopened stream",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Yield stream events
     pub fn poll(&mut self) -> Option<StreamEvent> {
         if let Some(dir) = Dir::iter().find(|&i| mem::replace(&mut self.opened[i as usize], false))
