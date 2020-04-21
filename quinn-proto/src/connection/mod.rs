@@ -1348,21 +1348,7 @@ where
         );
 
         let stop_reason = if stopped { Some(error_code) } else { None };
-        let status = self.streams.reset(stream_id, stop_reason);
-        if stopped {
-            if let Some(status) = status {
-                // The application is waiting for an event on this stream that will never come; notify it.
-                self.streams.events.push_back(match status {
-                    // Finish operation should fail due to stopping
-                    streams::ResetStatus::WasFinishing => StreamEvent::Finished {
-                        id: stream_id,
-                        stop_reason,
-                    },
-                    // Stop will be observed on a future write/finish call.
-                    streams::ResetStatus::WasBlocked => StreamEvent::Writable { id: stream_id },
-                });
-            }
-        }
+        self.streams.reset(stream_id, stop_reason);
 
         self.spaces[SpaceId::Data as usize]
             .pending
