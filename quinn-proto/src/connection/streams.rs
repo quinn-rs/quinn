@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub(crate) struct Streams {
+    side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
     send: HashMap<StreamId, Send>,
     recv: HashMap<StreamId, Recv>,
@@ -57,6 +58,7 @@ pub(crate) struct Streams {
 impl Streams {
     pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64, send_window: u64) -> Self {
         let mut this = Self {
+            side,
             send: HashMap::default(),
             recv: HashMap::default(),
             next: [0, 0],
@@ -84,24 +86,24 @@ impl Streams {
         this
     }
 
-    pub fn open(&mut self, params: &TransportParameters, side: Side, dir: Dir) -> Option<StreamId> {
+    pub fn open(&mut self, params: &TransportParameters, dir: Dir) -> Option<StreamId> {
         if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
 
         self.next[dir as usize] += 1;
-        let id = StreamId::new(side, dir, self.next[dir as usize] - 1);
+        let id = StreamId::new(self.side, dir, self.next[dir as usize] - 1);
         self.insert(Some(params), false, id);
         self.send_streams += 1;
         Some(id)
     }
 
-    pub fn set_params(&mut self, params: &TransportParameters, side: Side) {
+    pub fn set_params(&mut self, params: &TransportParameters) {
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni;
         self.increase_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
-            let id = StreamId::new(!side, Dir::Bi, i as u64);
+            let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.send_mut(id).unwrap().max_data = params.initial_max_stream_data_bidi_local as u64;
         }
     }
@@ -110,13 +112,13 @@ impl Streams {
         self.send_streams
     }
 
-    pub fn alloc_remote_stream(&mut self, params: &TransportParameters, side: Side, dir: Dir) {
+    pub fn alloc_remote_stream(&mut self, params: &TransportParameters, dir: Dir) {
         self.max_remote[dir as usize] += 1;
-        let id = StreamId::new(!side, dir, self.max_remote[dir as usize] - 1);
+        let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] - 1);
         self.insert(Some(params), true, id);
     }
 
-    pub fn accept(&mut self, side: Side, dir: Dir) -> Option<StreamId> {
+    pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
         if self.next_remote[dir as usize] == self.next_reported_remote[dir as usize] {
             return None;
         }
@@ -125,16 +127,16 @@ impl Streams {
         if dir == Dir::Bi {
             self.send_streams += 1;
         }
-        Some(StreamId::new(!side, dir, x))
+        Some(StreamId::new(!self.side, dir, x))
     }
 
-    pub fn zero_rtt_rejected(&mut self, side: Side) {
+    pub fn zero_rtt_rejected(&mut self) {
         // Revert to initial state for outgoing streams
         for dir in Dir::iter() {
             for i in 0..self.next[dir as usize] {
-                self.send.remove(&StreamId::new(side, dir, i)).unwrap();
+                self.send.remove(&StreamId::new(self.side, dir, i)).unwrap();
                 if let Dir::Bi = dir {
-                    self.recv.remove(&StreamId::new(side, dir, i)).unwrap();
+                    self.recv.remove(&StreamId::new(self.side, dir, i)).unwrap();
                 }
             }
             self.next[dir as usize] = 0;
@@ -375,9 +377,8 @@ impl Streams {
         &mut self,
         id: StreamId,
         offset: u64,
-        side: Side,
     ) -> Result<(), TransportError> {
-        if id.initiator() != side && id.dir() == Dir::Uni {
+        if id.initiator() != self.side && id.dir() == Dir::Uni {
             debug!("got MAX_STREAM_DATA on recv-only {}", id);
             return Err(TransportError::STREAM_STATE_ERROR(
                 "MAX_STREAM_DATA on recv-only stream",
@@ -389,7 +390,7 @@ impl Streams {
                 self.events.push_back(StreamEvent::Writable { id });
             }
             Ok(())
-        } else if id.initiator() == side && self.is_local_unopened(id) {
+        } else if id.initiator() == self.side && self.is_local_unopened(id) {
             debug!("got MAX_STREAM_DATA on unopened {}", id);
             Err(TransportError::STREAM_STATE_ERROR(
                 "MAX_STREAM_DATA on unopened stream",
@@ -442,12 +443,8 @@ impl Streams {
     ///
     /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
     /// misbehavior.
-    pub fn recv_stream(
-        &mut self,
-        side: Side,
-        id: StreamId,
-    ) -> Result<Option<&mut Recv>, TransportError> {
-        if side == id.initiator() {
+    pub fn recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Recv>, TransportError> {
+        if self.side == id.initiator() {
             match id.dir() {
                 Dir::Uni => {
                     return Err(TransportError::STREAM_STATE_ERROR(
