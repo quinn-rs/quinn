@@ -29,7 +29,7 @@ pub(crate) struct Streams {
     pub next_remote: [u64; 2],
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
     /// per directionality
-    pub opened: [bool; 2],
+    opened: [bool; 2],
     // Next to report to the application, once opened
     next_reported_remote: [u64; 2],
     /// Number of outbound streams
@@ -314,6 +314,24 @@ impl Streams {
         }
 
         stream_frames
+    }
+
+    /// Notify the application that new streams were opened or a stream became readable.
+    pub fn on_stream_frame(&mut self, notify_readable: bool, stream: StreamId) {
+        if stream.initiator() == self.side {
+            // Notifying about the opening of locally-initiated streams would be redundant.
+            if notify_readable {
+                self.events.push_back(StreamEvent::Readable { id: stream });
+            }
+            return;
+        }
+        let next = &mut self.next_remote[stream.dir() as usize];
+        if stream.index() >= *next {
+            *next = stream.index() + 1;
+            self.opened[stream.dir() as usize] = true;
+        } else if notify_readable {
+            self.events.push_back(StreamEvent::Readable { id: stream });
+        }
     }
 
     /// Returns whether the stream was finished
