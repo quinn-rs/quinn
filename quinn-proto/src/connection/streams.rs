@@ -4,11 +4,10 @@ use bytes::{BufMut, Bytes};
 use err_derive::Error;
 use tracing::{debug, trace};
 
+use super::{assembler::Assembler, send_buffer::SendBuffer};
 use crate::{
-    assembler::Assembler,
     frame::{self, FrameStruct},
     range_set::RangeSet,
-    send_buffer::SendBuffer,
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt,
 };

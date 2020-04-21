@@ -24,14 +24,24 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointConfig,
         EndpointEvent, EndpointEventInner, IssuedCid, ServerConfig, TransportConfig,
     },
-    spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket},
-    streams::{self, FinishError, ReadError, Streams, UnknownStream, WriteError},
-    timer::{Timer, TimerTable},
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY,
 };
+
+mod assembler;
+mod send_buffer;
+
+mod spaces;
+use spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
+
+mod streams;
+use streams::Streams;
+pub use streams::{FinishError, ReadError, UnknownStream, WriteError};
+
+mod timer;
+use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///

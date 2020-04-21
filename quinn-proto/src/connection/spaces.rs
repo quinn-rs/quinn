@@ -5,9 +5,8 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    assembler::Assembler, crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
-};
+use super::assembler::Assembler;
+use crate::{crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt};
 
 pub(crate) struct PacketSpace<K>
 where

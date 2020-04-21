@@ -20,18 +20,14 @@
 
 use std::{fmt, net::SocketAddr, ops, time::Duration};
 
-mod assembler;
 mod cid_queue;
 #[doc(hidden)]
 pub mod coding;
 mod constant_time;
 mod packet;
 mod range_set;
-mod send_buffer;
-mod spaces;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
-mod timer;
 pub mod transport_parameters;
 mod varint;
 
@@ -39,6 +35,7 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
 pub use crate::connection::{ConnectionError, Event, SendDatagramError};
+pub use crate::connection::{FinishError, ReadError, UnknownStream, WriteError};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]
@@ -55,9 +52,6 @@ mod shared;
 pub use crate::shared::{
     ConfigError, ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, TransportConfig,
 };
-
-mod streams;
-pub use crate::streams::{FinishError, ReadError, UnknownStream, WriteError};
 
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
