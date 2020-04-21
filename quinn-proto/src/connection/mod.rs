@@ -2059,31 +2059,14 @@ where
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
-                    let stream = frame.id;
-                    let rs = match self.streams.recv_stream(stream) {
-                        Err(e) => {
-                            debug!("received illegal stream frame");
-                            return Err(e);
-                        }
-                        Ok(None) => {
-                            trace!("dropping frame for closed stream");
-                            continue;
-                        }
-                        Ok(Some(rs)) => rs,
-                    };
-                    if rs.is_finished() {
-                        trace!("dropping frame for finished stream");
-                        continue;
-                    }
-
-                    self.data_recvd += rs.ingest(
+                    if let Some(received) = self.streams.received(
                         frame,
                         self.data_recvd,
                         self.local_max_data,
                         self.config.stream_receive_window,
-                    )?;
-                    self.streams.on_stream_frame(true, stream);
+                    )? {
+                        self.data_recvd += received;
+                    }
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
