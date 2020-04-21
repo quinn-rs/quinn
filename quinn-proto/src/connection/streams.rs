@@ -12,7 +12,7 @@ use crate::{
     frame::{self, FrameStruct},
     range_set::RangeSet,
     transport_parameters::TransportParameters,
-    Dir, Side, StreamId, TransportError, VarInt,
+    Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
 pub(crate) struct Streams {
@@ -40,7 +40,7 @@ pub(crate) struct Streams {
     /// Streams with outgoing data queued
     pending: Vec<StreamId>,
 
-    pub events: VecDeque<StreamEvent>,
+    events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
     ///
     /// Streams are only added to this list when a write fails.
@@ -471,6 +471,22 @@ impl Streams {
                 stream.pending.retransmit_all_for_0rtt();
             }
         }
+    }
+
+    pub fn received_max_streams(&mut self, dir: Dir, count: u64) -> Result<(), TransportError> {
+        if count > MAX_STREAM_COUNT {
+            return Err(TransportError::STREAM_LIMIT_ERROR(
+                "unrepresentable stream limit",
+            ));
+        }
+
+        let current = &mut self.max[dir as usize];
+        if count > *current {
+            *current = count;
+            self.events.push_back(StreamEvent::Available { dir });
+        }
+
+        Ok(())
     }
 
     /// Handle increase to connection-level flow control limit

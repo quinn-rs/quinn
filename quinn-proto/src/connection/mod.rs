@@ -2107,18 +2107,7 @@ where
                     self.streams.received_max_stream_data(id, offset)?;
                 }
                 Frame::MaxStreams { dir, count } => {
-                    if count > MAX_STREAM_COUNT {
-                        return Err(TransportError::STREAM_LIMIT_ERROR(
-                            "unrepresentable stream limit",
-                        ));
-                    }
-                    let current = &mut self.streams.max[dir as usize];
-                    if count > *current {
-                        *current = count;
-                        self.streams
-                            .events
-                            .push_back(StreamEvent::Available { dir });
-                    }
+                    self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
                     if let Some((received, data)) = self.streams.received_reset(frame)? {
