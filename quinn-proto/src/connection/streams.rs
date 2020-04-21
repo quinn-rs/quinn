@@ -327,6 +327,11 @@ impl Streams {
         if let Some(event) = stream.reset(id, stop_reason) {
             self.events.push_back(event);
         }
+
+        // Don't reopen an already-closed stream we haven't forgotten yet
+        if stop_reason.is_some() && !stream.is_closed() {
+            self.on_stream_frame(false, id);
+        }
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
@@ -399,7 +404,7 @@ impl Streams {
     }
 
     /// Notify the application that new streams were opened or a stream became readable.
-    pub fn on_stream_frame(&mut self, notify_readable: bool, stream: StreamId) {
+    fn on_stream_frame(&mut self, notify_readable: bool, stream: StreamId) {
         if stream.initiator() == self.side {
             // Notifying about the opening of locally-initiated streams would be redundant.
             if notify_readable {

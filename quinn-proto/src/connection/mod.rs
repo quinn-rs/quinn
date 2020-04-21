@@ -2162,13 +2162,6 @@ where
                         ));
                     }
                     self.reset_inner(id, error_code, true);
-                    // We might have already closed this stream
-                    if let Some(ss) = self.streams.send_mut(id) {
-                        // Don't reopen an already-closed stream we haven't forgotten yet
-                        if !ss.is_closed() {
-                            self.streams.on_stream_frame(false, id);
-                        }
-                    }
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {
