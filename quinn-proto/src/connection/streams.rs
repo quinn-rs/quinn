@@ -249,6 +249,56 @@ impl Streams {
         Ok(Some(ingested))
     }
 
+    /// Process incoming RESET_STREAM frame
+    pub fn received_reset(
+        &mut self,
+        frame: frame::ResetStream,
+    ) -> Result<Option<(u64, u64)>, TransportError> {
+        let frame::ResetStream {
+            id,
+            error_code,
+            final_offset,
+        } = frame;
+        let rs = match self.recv_stream(id) {
+            Err(e) => {
+                debug!("received illegal RESET_STREAM");
+                return Err(e);
+            }
+            Ok(None) => {
+                trace!("received RESET_STREAM on closed stream");
+                return Ok(None);
+            }
+            Ok(Some(stream)) => stream,
+        };
+        let limit = rs.limit();
+
+        // Validate final_offset
+        if let Some(offset) = rs.final_offset() {
+            if offset != final_offset {
+                return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
+            }
+        } else if limit > final_offset {
+            return Err(TransportError::FINAL_SIZE_ERROR(
+                "lower than high water mark",
+            ));
+        }
+
+        // State transition
+        rs.reset(error_code, final_offset);
+
+        // Update flow control
+        let res = if rs.bytes_read != final_offset {
+            // bytes_read is always <= limit, so this won't underflow.
+            Some((final_offset - limit, final_offset - rs.bytes_read))
+        } else {
+            None
+        };
+
+        // Notify application
+        self.on_stream_frame(true, id);
+        Ok(res)
+    }
+
     /// Set the FIN bit in the next stream frame, generating an empty one if necessary
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let stream = self.send.get_mut(&id).ok_or(FinishError::UnknownStream)?;
