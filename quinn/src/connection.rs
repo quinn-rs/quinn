@@ -16,7 +16,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, Dir, StreamId};
+use proto::{ConnectionError, ConnectionHandle, Dir, StreamEvent, StreamId};
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -703,17 +703,17 @@ where
                 ConnectionLost { reason } => {
                     self.terminate(reason);
                 }
-                StreamWritable { stream } => {
-                    if let Some(writer) = self.blocked_writers.remove(&stream) {
+                Stream(StreamEvent::Writable { id }) => {
+                    if let Some(writer) = self.blocked_writers.remove(&id) {
                         writer.wake();
                     }
                 }
-                StreamOpened { dir: Dir::Uni } => {
+                Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     if let Some(x) = self.incoming_uni_streams_reader.take() {
                         x.wake();
                     }
                 }
-                StreamOpened { dir: Dir::Bi } => {
+                Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
                     if let Some(x) = self.incoming_bi_streams_reader.take() {
                         x.wake();
                     }
@@ -723,23 +723,20 @@ where
                         x.wake();
                     }
                 }
-                StreamReadable { stream } => {
-                    if let Some(reader) = self.blocked_readers.remove(&stream) {
+                Stream(StreamEvent::Readable { id }) => {
+                    if let Some(reader) = self.blocked_readers.remove(&id) {
                         reader.wake();
                     }
                 }
-                StreamAvailable { dir } => {
+                Stream(StreamEvent::Available { dir }) => {
                     let tasks = match dir {
                         Dir::Uni => &mut self.uni_opening,
                         Dir::Bi => &mut self.bi_opening,
                     };
                     tasks.wake();
                 }
-                StreamFinished {
-                    stream,
-                    stop_reason,
-                } => {
-                    if let Some(finishing) = self.finishing.remove(&stream) {
+                Stream(StreamEvent::Finished { id, stop_reason }) => {
+                    if let Some(finishing) = self.finishing.remove(&id) {
                         // If the finishing stream was already dropped, there's nothing more to do.
                         let _ = finishing.send(stop_reason.map(WriteError::Stopped));
                     }
