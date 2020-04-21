@@ -309,22 +309,24 @@ impl Streams {
     }
 
     /// Returns whether the stream was finished
-    pub fn ack(&mut self, frame: frame::StreamMeta) -> bool {
+    pub fn ack(&mut self, frame: frame::StreamMeta) {
         let stream = match self.send.get_mut(&frame.id) {
             // ACK for a closed stream is a noop
-            None => return false,
+            None => return,
             Some(x) => x,
         };
         let id = frame.id;
         self.unacked_data -= frame.offsets.end - frame.offsets.start;
         stream.ack(frame);
-        if stream.state == SendState::DataRecvd {
-            // Guaranteed to succeed on the send side
-            self.maybe_cleanup(id);
-            true
-        } else {
-            false
+        if stream.state != SendState::DataRecvd {
+            return;
         }
+
+        self.maybe_cleanup(id); // Guaranteed to succeed on the send side
+        self.events.push_back(StreamEvent::Finished {
+            id,
+            stop_reason: None,
+        });
     }
 
     pub fn retransmit(&mut self, frame: frame::StreamMeta) {
