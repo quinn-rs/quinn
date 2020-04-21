@@ -2120,48 +2120,12 @@ where
                             .push_back(StreamEvent::Available { dir });
                     }
                 }
-                Frame::ResetStream(frame::ResetStream {
-                    id,
-                    error_code,
-                    final_offset,
-                }) => {
-                    let rs = match self.streams.recv_stream(id) {
-                        Err(e) => {
-                            debug!("received illegal RESET_STREAM");
-                            return Err(e);
-                        }
-                        Ok(None) => {
-                            trace!("received RESET_STREAM on closed stream");
-                            continue;
-                        }
-                        Ok(Some(stream)) => stream,
-                    };
-                    let limit = rs.limit();
-
-                    // Validate final_offset
-                    if let Some(offset) = rs.final_offset() {
-                        if offset != final_offset {
-                            return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
-                        }
-                    } else if limit > final_offset {
-                        return Err(TransportError::FINAL_SIZE_ERROR(
-                            "lower than high water mark",
-                        ));
-                    }
-
-                    // State transition
-                    rs.reset(error_code, final_offset);
-
-                    // Update flow control
-                    if rs.bytes_read != final_offset {
-                        self.data_recvd += final_offset - limit;
-                        // bytes_read is always <= limit, so this won't underflow.
-                        self.local_max_data += final_offset - rs.bytes_read;
+                Frame::ResetStream(frame) => {
+                    if let Some((received, data)) = self.streams.received_reset(frame)? {
+                        self.data_recvd += received;
+                        self.local_max_data += data;
                         self.space_mut(SpaceId::Data).pending.max_data = true;
                     }
-
-                    // Notify application
-                    self.streams.on_stream_frame(true, id);
                 }
                 Frame::DataBlocked { offset } => {
                     debug!(offset, "peer claims to be blocked at connection level");
