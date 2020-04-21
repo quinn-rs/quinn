@@ -2802,14 +2802,7 @@ where
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.streams.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
-        self.streams.max[Dir::Uni as usize] = params.initial_max_streams_uni;
-        self.streams.increase_max_data(params.initial_max_data);
-        for i in 0..self.streams.max_remote[Dir::Bi as usize] {
-            let id = StreamId::new(!self.side, Dir::Bi, i as u64);
-            self.streams.send_mut(id).unwrap().max_data =
-                params.initial_max_stream_data_bidi_local as u64;
-        }
+        self.streams.set_params(&params, self.side);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, 0) => None,
             (None, x) => Some(Duration::from_millis(x)),
