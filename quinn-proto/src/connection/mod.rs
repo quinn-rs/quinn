@@ -670,7 +670,7 @@ where
             return None;
         }
         // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(&self.params, self.side, dir)?;
+        let id = self.streams.open(&self.params, dir)?;
         Some(id)
     }
 
@@ -678,7 +678,7 @@ where
     ///
     /// Returns `None` if there are no new incoming streams for this connection.
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
-        let id = self.streams.accept(self.side, dir)?;
+        let id = self.streams.accept(dir)?;
         self.alloc_remote_stream(id.dir());
         Some(id)
     }
@@ -2061,7 +2061,7 @@ where
                 Frame::Stream(frame) => {
                     trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
                     let stream = frame.id;
-                    let rs = match self.streams.recv_stream(self.side, stream) {
+                    let rs = match self.streams.recv_stream(stream) {
                         Err(e) => {
                             debug!("received illegal stream frame");
                             return Err(e);
@@ -2121,8 +2121,7 @@ where
                     self.streams.increase_max_data(bytes);
                 }
                 Frame::MaxStreamData { id, offset } => {
-                    self.streams
-                        .received_max_stream_data(id, offset, self.side)?;
+                    self.streams.received_max_stream_data(id, offset)?;
                     self.on_stream_frame(false, id);
                 }
                 Frame::MaxStreams { dir, count } => {
@@ -2144,7 +2143,7 @@ where
                     error_code,
                     final_offset,
                 }) => {
-                    let rs = match self.streams.recv_stream(self.side, id) {
+                    let rs = match self.streams.recv_stream(id) {
                         Err(e) => {
                             debug!("received illegal RESET_STREAM");
                             return Err(e);
@@ -2763,7 +2762,7 @@ where
     }
 
     fn set_params(&mut self, params: TransportParameters) {
-        self.streams.set_params(&params, self.side);
+        self.streams.set_params(&params);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, 0) => None,
             (None, x) => Some(Duration::from_millis(x)),
@@ -2784,8 +2783,7 @@ where
                 space.pending.max_uni_stream_id = true;
             }
         }
-        self.streams
-            .alloc_remote_stream(&self.params, self.side, dir);
+        self.streams.alloc_remote_stream(&self.params, dir);
     }
 
     fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
@@ -2968,7 +2966,7 @@ where
         debug_assert!(self.side.is_client());
         debug!("0-RTT rejected");
         self.accepted_0rtt = false;
-        self.streams.zero_rtt_rejected(self.side);
+        self.streams.zero_rtt_rejected();
         // Discard already-queued frames
         self.space_mut(SpaceId::Data).pending = Retransmits::default();
         // Discard 0-RTT packets
