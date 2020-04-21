@@ -16,13 +16,13 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     coding::BufMutExt,
+    config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{initial_close, Connection, ConnectionError},
     crypto::{self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig},
     packet::{Header, Packet, PacketDecodeError, PartialDecode},
     shared::{
-        ClientConfig, ConfigError, ConnectionEvent, ConnectionEventInner, ConnectionId,
-        EcnCodepoint, EndpointConfig, EndpointEvent, EndpointEventInner, IssuedCid, ResetToken,
-        ServerConfig,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
+        EndpointEventInner, IssuedCid, ResetToken,
     },
     transport_parameters::TransportParameters,
     Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,

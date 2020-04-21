@@ -2,9 +2,10 @@ use bytes::{buf::ext::BufMutExt, BufMut, BytesMut};
 use ring::{aead, hkdf, hmac};
 
 use crate::{
+    config::ConfigError,
     crypto,
     packet::{PacketNumber, LONG_HEADER_FORM},
-    shared::{ConfigError, ConnectionId},
+    shared::ConnectionId,
     Side,
 };
 

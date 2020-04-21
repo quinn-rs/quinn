@@ -13,8 +13,7 @@ use std::str;
 use bytes::BytesMut;
 
 use crate::{
-    shared::{ConfigError, ConnectionId},
-    transport_parameters::TransportParameters,
+    config::ConfigError, shared::ConnectionId, transport_parameters::TransportParameters,
     ConnectError, Side, TransportError,
 };
 
