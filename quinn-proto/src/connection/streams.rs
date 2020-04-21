@@ -1,4 +1,7 @@
-use std::collections::{hash_map, HashMap};
+use std::{
+    collections::{hash_map, HashMap, VecDeque},
+    mem,
+};
 
 use bytes::{BufMut, Bytes};
 use err_derive::Error;
@@ -36,6 +39,7 @@ pub(crate) struct Streams {
     /// Streams with outgoing data queued
     pending: Vec<StreamId>,
 
+    pub events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
     ///
     /// Streams are only added to this list when a write fails.
@@ -63,6 +67,7 @@ impl Streams {
             next_reported_remote: [0, 0],
             send_streams: 0,
             pending: Vec::new(),
+            events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
             data_sent: 0,
@@ -358,9 +363,23 @@ impl Streams {
         self.max_data = self.max_data.max(n);
     }
 
+    /// Yield stream events
+    pub fn poll(&mut self) -> Option<StreamEvent> {
+        if let Some(dir) = Dir::iter().find(|&i| mem::replace(&mut self.opened[i as usize], false))
+        {
+            return Some(StreamEvent::Opened { dir });
+        }
+
+        if let Some(id) = self.poll_unblocked() {
+            return Some(StreamEvent::Writable { id });
+        }
+
+        self.events.pop_front()
+    }
+
     /// Fetch a stream for which a write previously failed due to *connection-level* flow control or
     /// send window limits which no longer apply.
-    pub fn poll_unblocked(&mut self) -> Option<StreamId> {
+    fn poll_unblocked(&mut self) -> Option<StreamId> {
         if self.flow_blocked() {
             // Everything's still blocked
             return None;
