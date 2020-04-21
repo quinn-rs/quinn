@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BinaryHeap, mem};
 use bytes::{Buf, Bytes, BytesMut};
 
 /// Helper to assemble unordered stream frames into an ordered stream
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Assembler {
     offset: u64,
     data: BinaryHeap<Chunk>,
@@ -12,11 +12,7 @@ pub(crate) struct Assembler {
 
 impl Assembler {
     pub fn new() -> Self {
-        Self {
-            offset: 0,
-            data: BinaryHeap::new(),
-            defragmented: 0,
-        }
+        Self::default()
     }
 
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
