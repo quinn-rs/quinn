@@ -2083,7 +2083,7 @@ where
                         self.local_max_data,
                         self.config.stream_receive_window,
                     )?;
-                    self.on_stream_frame(true, stream);
+                    self.streams.on_stream_frame(true, stream);
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
@@ -2122,7 +2122,7 @@ where
                 }
                 Frame::MaxStreamData { id, offset } => {
                     self.streams.received_max_stream_data(id, offset)?;
-                    self.on_stream_frame(false, id);
+                    self.streams.on_stream_frame(false, id);
                 }
                 Frame::MaxStreams { dir, count } => {
                     if count > MAX_STREAM_COUNT {
@@ -2179,7 +2179,7 @@ where
                     }
 
                     // Notify application
-                    self.on_stream_frame(true, id);
+                    self.streams.on_stream_frame(true, id);
                 }
                 Frame::DataBlocked { offset } => {
                     debug!(offset, "peer claims to be blocked at connection level");
@@ -2220,7 +2220,7 @@ where
                     if let Some(ss) = self.streams.send_mut(id) {
                         // Don't reopen an already-closed stream we haven't forgotten yet
                         if !ss.is_closed() {
-                            self.on_stream_frame(false, id);
+                            self.streams.on_stream_frame(false, id);
                         }
                     }
                 }
@@ -2366,28 +2366,6 @@ where
         }
 
         Ok(())
-    }
-
-    /// Notify the application that new streams were opened or a stream became readable.
-    fn on_stream_frame(&mut self, notify_readable: bool, stream: StreamId) {
-        if stream.initiator() == self.side {
-            // Notifying about the opening of locally-initiated streams would be redundant.
-            if notify_readable {
-                self.streams
-                    .events
-                    .push_back(StreamEvent::Readable { id: stream });
-            }
-            return;
-        }
-        let next = &mut self.streams.next_remote[stream.dir() as usize];
-        if stream.index() >= *next {
-            *next = stream.index() + 1;
-            self.streams.opened[stream.dir() as usize] = true;
-        } else if notify_readable {
-            self.streams
-                .events
-                .push_back(StreamEvent::Readable { id: stream });
-        }
     }
 
     /// Whether a migration has been initiated and the new path has not yet been validated
