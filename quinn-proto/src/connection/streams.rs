@@ -87,6 +87,16 @@ impl Streams {
         Some(id)
     }
 
+    pub fn set_params(&mut self, params: &TransportParameters, side: Side) {
+        self.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
+        self.max[Dir::Uni as usize] = params.initial_max_streams_uni;
+        self.increase_max_data(params.initial_max_data);
+        for i in 0..self.max_remote[Dir::Bi as usize] {
+            let id = StreamId::new(!side, Dir::Bi, i as u64);
+            self.send_mut(id).unwrap().max_data = params.initial_max_stream_data_bidi_local as u64;
+        }
+    }
+
     pub fn send_streams(&self) -> usize {
         self.send_streams
     }
