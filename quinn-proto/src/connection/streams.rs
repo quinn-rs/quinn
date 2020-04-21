@@ -2,7 +2,7 @@ use std::collections::{hash_map, HashMap};
 
 use bytes::{BufMut, Bytes};
 use err_derive::Error;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use super::{assembler::Assembler, send_buffer::SendBuffer};
 use crate::{
@@ -220,6 +220,23 @@ impl Streams {
         stream.reset(stop_reason)
     }
 
+    pub fn reset_acked(&mut self, id: StreamId) {
+        let send = match self.send_mut(id) {
+            Some(ss) => ss,
+            None => {
+                info!("no send stream found for acked reset: {:?}", id);
+                return;
+            }
+        };
+
+        if let SendState::ResetSent { stop_reason } = send.state {
+            send.state = SendState::ResetRecvd { stop_reason };
+            if stop_reason.is_none() {
+                self.maybe_cleanup(id);
+            }
+        }
+    }
+
     pub fn can_send(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -387,7 +404,7 @@ impl Streams {
     /// Discard state for a stream if it's fully closed.
     ///
     /// Called when one side of a stream transitions to a closed state
-    pub fn maybe_cleanup(&mut self, id: StreamId) {
+    fn maybe_cleanup(&mut self, id: StreamId) {
         match self.send.entry(id) {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
