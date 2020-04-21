@@ -303,9 +303,565 @@ where
         self.endpoint_events.pop_front().map(EndpointEvent)
     }
 
+    /// Returns packets to transmit
+    ///
+    /// Connections should be polled for transmit after:
+    /// - the application performed some I/O on the connection
+    /// - a call was made to `handle_event`
+    /// - a call was made to `handle_timeout`
+    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        if self.state.is_handshake()
+            && !self.remote_validated
+            && self.side.is_server()
+            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
+        {
+            trace!("blocked by anti-amplification");
+            return None;
+        }
+
+        // If we need to send a probe, make sure we have something to send.
+        for space in SpaceId::iter() {
+            if self.space(space).loss_probes != 0 {
+                self.ensure_probe_queued(space);
+            }
+        }
+
+        // Select the set of spaces that have data to send so we can try to coalesce them
+        let (spaces, close) = match self.state {
+            State::Drained => {
+                return None;
+            }
+            State::Draining | State::Closed(_) => {
+                if mem::replace(&mut self.close, false) {
+                    (vec![self.highest_space], true)
+                } else {
+                    return None;
+                }
+            }
+            _ => (
+                SpaceId::iter()
+                    .filter(|&x| {
+                        (self.space(x).crypto.is_some() && self.space(x).can_send())
+                            || (x == SpaceId::Data
+                                && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
+                                    || (self.zero_rtt_crypto.is_some()
+                                        && self.side.is_client()
+                                        && (self.space(x).can_send() || self.can_send_1rtt()))))
+                    })
+                    .collect(),
+                false,
+            ),
+        };
+
+        let mut buf = Vec::with_capacity(self.mtu as usize);
+        let mut coalesce = spaces.len() > 1;
+        let pad_space = if self.side.is_client() && spaces.first() == Some(&SpaceId::Initial) {
+            spaces.last().cloned()
+        } else {
+            None
+        };
+
+        for space_id in spaces {
+            let buf_start = buf.len();
+            let mut ack_eliciting =
+                !self.space(space_id).pending.is_empty() || self.space(space_id).ping_pending;
+            if space_id == SpaceId::Data {
+                ack_eliciting |= self.can_send_1rtt();
+                // Tail loss probes must not be blocked by congestion, or a deadlock could arise
+                if ack_eliciting
+                    && self.space(space_id).loss_probes == 0
+                    && self.congestion_blocked()
+                {
+                    continue;
+                }
+            }
+
+            //
+            // From here on, we've determined that a packet will definitely be sent.
+            //
+
+            if self.spaces[SpaceId::Initial as usize].crypto.is_some()
+                && space_id == SpaceId::Handshake
+                && self.side.is_client()
+            {
+                // A client stops both sending and processing Initial packets when it
+                // sends its first Handshake packet.
+                self.discard_space(SpaceId::Initial);
+            }
+            if let Some(ref mut prev) = self.prev_crypto {
+                prev.update_unacked = false;
+            }
+
+            let space = &mut self.spaces[space_id as usize];
+            space.loss_probes = space.loss_probes.saturating_sub(1);
+            let exact_number = space.get_tx_number();
+            let span = trace_span!("send", space = ?space_id, pn = exact_number);
+            let _guard = span.enter();
+            let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
+            let header = match space_id {
+                SpaceId::Data if space.crypto.is_some() => Header::Short {
+                    dst_cid: self.rem_cid,
+                    number,
+                    spin: if self.spin_enabled {
+                        self.spin
+                    } else {
+                        self.rng.gen()
+                    },
+                    key_phase: self.key_phase,
+                },
+                SpaceId::Data => Header::Long {
+                    ty: LongType::ZeroRtt,
+                    src_cid: self.handshake_cid,
+                    dst_cid: self.rem_cid,
+                    number,
+                },
+                SpaceId::Handshake => Header::Long {
+                    ty: LongType::Handshake,
+                    src_cid: self.handshake_cid,
+                    dst_cid: self.rem_cid,
+                    number,
+                },
+                SpaceId::Initial => Header::Initial {
+                    src_cid: self.handshake_cid,
+                    dst_cid: self.rem_cid,
+                    token: match self.state {
+                        State::Handshake(ref state) => {
+                            state.token.clone().unwrap_or_else(Bytes::new)
+                        }
+                        _ => Bytes::new(),
+                    },
+                    number,
+                },
+            };
+            let partial_encode = header.encode(&mut buf);
+            coalesce = coalesce && !header.is_short();
+
+            let sent = if close {
+                trace!("sending CONNECTION_CLOSE");
+                let max_len = buf.capacity()
+                    - partial_encode.start
+                    - partial_encode.header_len
+                    - space.crypto.as_ref().unwrap().packet.tag_len();
+                match self.state {
+                    State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
+                    State::Draining => frame::ConnectionClose {
+                        error_code: TransportErrorCode::NO_ERROR,
+                        frame_type: None,
+                        reason: Bytes::new(),
+                    }
+                    .encode(&mut buf, max_len),
+                    _ => unreachable!(
+                        "tried to make a close packet when the connection wasn't closed"
+                    ),
+                }
+                coalesce = false;
+                None
+            } else {
+                Some(self.populate_packet(space_id, &mut buf))
+            };
+
+            let space = &mut self.spaces[space_id as usize];
+            let crypto = if let Some(ref crypto) = space.crypto {
+                crypto
+            } else if space_id == SpaceId::Data {
+                self.zero_rtt_crypto.as_ref().unwrap()
+            } else {
+                unreachable!("tried to send {:?} packet without keys", space_id);
+            };
+
+            let mut padded = if pad_space == Some(space_id)
+                && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
+            {
+                // Initial-bearing packets MUST be padded
+                buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
+                true
+            } else {
+                false
+            };
+
+            let pn_len = number.len();
+            // To ensure that sufficient data is available for sampling, packets are padded so that the
+            // combined lengths of the encoded packet number and protected payload is at least 4 bytes
+            // longer than the sample required for header protection.
+            let protected_payload_len = (buf.len() + crypto.packet.tag_len())
+                - partial_encode.start
+                - partial_encode.header_len;
+            if let Some(padding_minus_one) =
+                (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
+            {
+                let padding = padding_minus_one + 1;
+                padded = true;
+                trace!("PADDING * {}", padding);
+                buf.resize(buf.len() + padding, 0);
+            }
+
+            buf.resize(buf.len() + crypto.packet.tag_len(), 0);
+            debug_assert!(buf.len() < self.mtu as usize);
+            let packet_buf = &mut buf[partial_encode.start..];
+            partial_encode.finish(
+                packet_buf,
+                &crypto.header,
+                Some((exact_number, &crypto.packet)),
+            );
+
+            if let Some((sent, acks, stream_frames)) = sent {
+                // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
+                // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
+                // the need for subtler logic to avoid double-transmitting acks all the time.
+                space.permit_ack_only &= acks.is_empty();
+
+                self.on_packet_sent(
+                    now,
+                    space_id,
+                    exact_number,
+                    SentPacket {
+                        acks,
+                        time_sent: now,
+                        size: if padded || ack_eliciting {
+                            (buf.len() - buf_start) as u16
+                        } else {
+                            0
+                        },
+                        ack_eliciting,
+                        retransmits: sent,
+                        stream_frames,
+                    },
+                );
+            }
+
+            if !coalesce || buf.capacity() - buf.len() < MIN_PACKET_SPACE {
+                break;
+            }
+        }
+
+        if buf.is_empty() {
+            return None;
+        }
+
+        trace!("sending {} byte datagram", buf.len());
+        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
+
+        Some(Transmit {
+            destination: self.path.remote,
+            contents: buf.into(),
+            ecn: if self.path.sending_ecn {
+                Some(EcnCodepoint::ECT0)
+            } else {
+                None
+            },
+        })
+    }
+
+    /// Process `ConnectionEvent`s generated by the associated `Endpoint`
+    ///
+    /// Will execute protocol logic upon receipt of a connection event, in turn preparing signals
+    /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
+    /// extracted through the relevant methods.
+    pub fn handle_event(&mut self, event: ConnectionEvent) {
+        use self::ConnectionEventInner::*;
+        match event.0 {
+            Datagram {
+                now,
+                remote,
+                ecn,
+                first_decode,
+                remaining,
+            } => {
+                // If this packet could initiate a migration and we're a client or a server that
+                // forbids migration, drop the datagram. This could be relaxed to heuristically
+                // permit NAT-rebinding-like migration.
+                if remote != self.path.remote
+                    && self.server_config.as_ref().map_or(true, |x| !x.migration)
+                {
+                    trace!("discarding packet from unrecognized peer {}", remote);
+                    return;
+                }
+
+                self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
+
+                self.handle_decode(now, remote, ecn, first_decode);
+                if let Some(data) = remaining {
+                    self.handle_coalesced(now, remote, ecn, data);
+                }
+            }
+            NewIdentifiers(ids) => {
+                ids.into_iter().rev().for_each(|frame| {
+                    self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
+                });
+            }
+        }
+    }
+
+    /// Process timer expirations
+    ///
+    /// Executes protocol logic, potentially preparing signals (including application `Event`s,
+    /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
+    /// methods.
+    pub fn handle_timeout(&mut self, now: Instant) {
+        for &timer in &Timer::VALUES {
+            if !self.timers.is_expired(timer, now) {
+                continue;
+            }
+            self.timers.stop(timer);
+            trace!(timer = ?timer, "timeout");
+            match timer {
+                Timer::Close => {
+                    self.state = State::Drained;
+                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                }
+                Timer::Idle => {
+                    self.close_common();
+                    self.events.push_back(ConnectionError::TimedOut.into());
+                    self.state = State::Drained;
+                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                }
+                Timer::KeepAlive => {
+                    trace!("sending keep-alive");
+                    self.ping();
+                }
+                Timer::LossDetection => {
+                    self.on_loss_detection_timeout(now);
+                }
+                Timer::KeyDiscard => {
+                    self.zero_rtt_crypto = None;
+                    self.prev_crypto = None;
+                }
+                Timer::PathValidation => {
+                    debug!("path validation failed");
+                    self.path_challenge = None;
+                    self.path_challenge_pending = false;
+                    if let Some(prev) = self.prev_path.take() {
+                        self.path = prev;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Close a connection immediately
+    ///
+    /// This does not ensure delivery of outstanding data. It is the application's responsibility to
+    /// call this only when all important communications have been completed, e.g. by calling
+    /// [`Connection::finish`] on outstanding streams and waiting for the corresponding
+    /// [`StreamFinished`] event.
+    ///
+    /// If [`Connection::send_streams`] returns 0, all outstanding stream data has been
+    /// delivered. There may still be data from the peer that has not been received.
+    ///
+    /// [`StreamFinished`]: Event::StreamFinished
+    pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
+        let was_closed = self.state.is_closed();
+        if !was_closed {
+            self.close_common();
+            self.set_close_timer(now);
+            self.close = true;
+            self.state = State::Closed(state::Closed {
+                reason: Close::Application(frame::ApplicationClose { error_code, reason }),
+            });
+        }
+    }
+
+    /// Open a single stream if possible
+    ///
+    /// Returns `None` if the streams in the given direction are currently exhausted.
+    pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
+        if self.state.is_closed() {
+            return None;
+        }
+        // TODO: Queue STREAM_ID_BLOCKED if this fails
+        let id = self.streams.open(&self.params, self.side, dir)?;
+        Some(id)
+    }
+
+    /// Accept a remotely initiated stream of a certain directionality, if possible
+    ///
+    /// Returns `None` if there are no new incoming streams for this connection.
+    pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
+        let id = self.streams.accept(self.side, dir)?;
+        self.alloc_remote_stream(id.dir());
+        Some(id)
+    }
+
+    /// Read from the given recv stream, in undefined order
+    ///
+    /// While stream data is usually returned to the application in order, for some applications
+    /// it can make sense to leverage the reduced latency of unordered reads. For ordered reads,
+    /// the sibling `read()` method can be used.
+    ///
+    /// The return value if `Ok` contains the bytes and their offset in the stream.
+    pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
+        Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
+            self.add_read_credits(id, buf.len() as u64, more);
+            (buf, offset)
+        }))
+    }
+
+    /// Read from the given recv stream
+    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+        Ok(self.streams.read(id, buf)?.map(|(len, more)| {
+            self.add_read_credits(id, len as u64, more);
+            len
+        }))
+    }
+
+    /// Send data on the given stream
+    ///
+    /// Returns the number of bytes successfully written.
+    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
+        if self.state.is_closed() {
+            trace!(%stream, "write blocked; connection draining");
+            return Err(WriteError::Blocked);
+        }
+        self.streams.write(stream, data)
+    }
+
+    /// Signal to the peer that it should stop sending on the given recv stream
+    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
+        assert!(
+            id.dir() == Dir::Bi || id.initiator() != self.side,
+            "only streams supporting incoming data may be stopped"
+        );
+        let stream = self
+            .streams
+            .recv_mut(id)
+            .ok_or(UnknownStream { _private: () })?;
+        // Only bother if there's data we haven't received yet
+        if !stream.is_finished() {
+            let space = &mut self.spaces[SpaceId::Data as usize];
+            space
+                .pending
+                .stop_sending
+                .push(frame::StopSending { id, error_code });
+        }
+        Ok(())
+    }
+
+    /// Finish a send stream, signalling that no more data will be sent.
+    ///
+    /// If this fails, no [`Event::StreamFinished`] will be generated.
+    pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
+        self.streams.finish(id)?;
+        Ok(())
+    }
+
+    /// Prepare to transmit an unreliable, unordered datagram
+    ///
+    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
+    /// caller to defer materializing a datagram until one can be sent immediately without redundant
+    /// checks
+    ///
+    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
+    pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
+        if self.config.datagram_receive_buffer_size.is_none() {
+            return Err(SendDatagramError::Disabled);
+        }
+        let max = self
+            .max_datagram_size()
+            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+        while self.datagrams.outgoing_total > self.config.datagram_send_buffer_size {
+            let prev = self
+                .datagrams
+                .outgoing
+                .pop_front()
+                .expect("datagrams.outgoing_total desynchronized");
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+            self.datagrams.outgoing_total -= prev.data.len();
+        }
+        if data.len() > max {
+            return Err(SendDatagramError::TooLarge);
+        }
+        self.datagrams.outgoing_total += data.len();
+        self.datagrams.outgoing.push_back(Datagram { data });
+        Ok(())
+    }
+
+    /// Receive an unreliable, unordered datagram
+    pub fn recv_datagram(&mut self) -> Option<Bytes> {
+        let x = self.datagrams.incoming.pop_front()?.data;
+        self.datagrams.recv_buffered -= x.len();
+        Some(x)
+    }
+
+    /// Compute the maximum size of datagrams that may passed to `send_datagram`
+    ///
+    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
+    ///
+    /// This may change over the lifetime of a connection according to variation in the path MTU
+    /// estimate. The peer can also enforce an arbitrarily small fixed limit, but if the peer's
+    /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
+    ///
+    /// Not necessarily the maximum size of received datagrams.
+    pub fn max_datagram_size(&self) -> Option<usize> {
+        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
+        let max_size = self.mtu as usize
+            - 1                 // flags byte
+            - self.rem_cid.len()
+            - 4                 // worst-case packet number size
+            - self.space(SpaceId::Data).crypto.as_ref().or_else(|| self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
+            - Datagram::SIZE_BOUND;
+        self.config.datagram_receive_buffer_size?;
+        let limit = self.params.max_datagram_frame_size?.into_inner();
+        Some(limit.min(max_size as u64) as usize)
+    }
+
+    /// Ping the remote endpoint
+    ///
+    /// Causes an ACK-eliciting packet to be transmitted.
+    pub fn ping(&mut self) {
+        self.spaces[self.highest_space as usize].ping_pending = true;
+    }
+
+    #[doc(hidden)]
+    pub fn initiate_key_update(&mut self) {
+        self.update_keys(None, false);
+    }
+
     /// Get a session reference
     pub fn crypto_session(&self) -> &S {
         &self.tls
+    }
+
+    /// The number of streams that may have unacknowledged data.
+    pub fn send_streams(&self) -> usize {
+        self.streams.send_streams()
+    }
+
+    /// If the connection is currently handshaking
+    pub fn is_handshaking(&self) -> bool {
+        self.state.is_handshake()
+    }
+
+    /// If the connection is closed
+    pub fn is_closed(&self) -> bool {
+        self.state.is_closed()
+    }
+
+    /// If the connection is drained
+    pub fn is_drained(&self) -> bool {
+        self.state.is_drained()
+    }
+
+    /// For clients, if the peer accepted the 0-RTT data packets
+    ///
+    /// The value is meaningless until after the handshake completes.
+    pub fn accepted_0rtt(&self) -> bool {
+        self.accepted_0rtt
+    }
+
+    /// Whether 0-RTT is/was possible during the handshake
+    pub fn has_0rtt(&self) -> bool {
+        self.zero_rtt_enabled
+    }
+
+    /// Look up whether we're the client or server of this Connection
+    pub fn side(&self) -> Side {
+        self.side
+    }
+
+    /// The latest socket address for this connection's peer
+    pub fn remote_address(&self) -> SocketAddr {
+        self.path.remote
     }
 
     fn on_packet_sent(
@@ -495,52 +1051,6 @@ where
                     stream: id,
                     stop_reason: None,
                 });
-            }
-        }
-    }
-
-    /// Process timer expirations
-    ///
-    /// Executes protocol logic, potentially preparing signals (including application `Event`s,
-    /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
-    /// methods.
-    pub fn handle_timeout(&mut self, now: Instant) {
-        for &timer in &Timer::VALUES {
-            if !self.timers.is_expired(timer, now) {
-                continue;
-            }
-            self.timers.stop(timer);
-            trace!(timer = ?timer, "timeout");
-            match timer {
-                Timer::Close => {
-                    self.state = State::Drained;
-                    self.endpoint_events.push_back(EndpointEventInner::Drained);
-                }
-                Timer::Idle => {
-                    self.close_common();
-                    self.events.push_back(ConnectionError::TimedOut.into());
-                    self.state = State::Drained;
-                    self.endpoint_events.push_back(EndpointEventInner::Drained);
-                }
-                Timer::KeepAlive => {
-                    trace!("sending keep-alive");
-                    self.ping();
-                }
-                Timer::LossDetection => {
-                    self.on_loss_detection_timeout(now);
-                }
-                Timer::KeyDiscard => {
-                    self.zero_rtt_crypto = None;
-                    self.prev_crypto = None;
-                }
-                Timer::PathValidation => {
-                    debug!("path validation failed");
-                    self.path_challenge = None;
-                    self.path_challenge_pending = false;
-                    if let Some(prev) = self.prev_path.take() {
-                        self.path = prev;
-                    }
-                }
             }
         }
     }
@@ -1054,46 +1564,6 @@ where
             self.in_flight.remove(&packet);
         }
         self.set_loss_detection_timer()
-    }
-
-    /// Process `ConnectionEvent`s generated by the associated `Endpoint`
-    ///
-    /// Will execute protocol logic upon receipt of a connection event, in turn preparing signals
-    /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
-    /// extracted through the relevant methods.
-    pub fn handle_event(&mut self, event: ConnectionEvent) {
-        use self::ConnectionEventInner::*;
-        match event.0 {
-            Datagram {
-                now,
-                remote,
-                ecn,
-                first_decode,
-                remaining,
-            } => {
-                // If this packet could initiate a migration and we're a client or a server that
-                // forbids migration, drop the datagram. This could be relaxed to heuristically
-                // permit NAT-rebinding-like migration.
-                if remote != self.path.remote
-                    && self.server_config.as_ref().map_or(true, |x| !x.migration)
-                {
-                    trace!("discarding packet from unrecognized peer {}", remote);
-                    return;
-                }
-
-                self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
-
-                self.handle_decode(now, remote, ecn, first_decode);
-                if let Some(data) = remaining {
-                    self.handle_coalesced(now, remote, ecn, data);
-                }
-            }
-            NewIdentifiers(ids) => {
-                ids.into_iter().rev().for_each(|frame| {
-                    self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
-                });
-            }
-        }
     }
 
     fn handle_coalesced(
@@ -2045,255 +2515,6 @@ where
         self.cids_issued += n;
     }
 
-    /// Returns packets to transmit
-    ///
-    /// Connections should be polled for transmit after:
-    /// - the application performed some I/O on the connection
-    /// - a call was made to `handle_event`
-    /// - a call was made to `handle_timeout`
-    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
-        if self.state.is_handshake()
-            && !self.remote_validated
-            && self.side.is_server()
-            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
-        {
-            trace!("blocked by anti-amplification");
-            return None;
-        }
-
-        // If we need to send a probe, make sure we have something to send.
-        for space in SpaceId::iter() {
-            if self.space(space).loss_probes != 0 {
-                self.ensure_probe_queued(space);
-            }
-        }
-
-        // Select the set of spaces that have data to send so we can try to coalesce them
-        let (spaces, close) = match self.state {
-            State::Drained => {
-                return None;
-            }
-            State::Draining | State::Closed(_) => {
-                if mem::replace(&mut self.close, false) {
-                    (vec![self.highest_space], true)
-                } else {
-                    return None;
-                }
-            }
-            _ => (
-                SpaceId::iter()
-                    .filter(|&x| {
-                        (self.space(x).crypto.is_some() && self.space(x).can_send())
-                            || (x == SpaceId::Data
-                                && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
-                                    || (self.zero_rtt_crypto.is_some()
-                                        && self.side.is_client()
-                                        && (self.space(x).can_send() || self.can_send_1rtt()))))
-                    })
-                    .collect(),
-                false,
-            ),
-        };
-
-        let mut buf = Vec::with_capacity(self.mtu as usize);
-        let mut coalesce = spaces.len() > 1;
-        let pad_space = if self.side.is_client() && spaces.first() == Some(&SpaceId::Initial) {
-            spaces.last().cloned()
-        } else {
-            None
-        };
-
-        for space_id in spaces {
-            let buf_start = buf.len();
-            let mut ack_eliciting =
-                !self.space(space_id).pending.is_empty() || self.space(space_id).ping_pending;
-            if space_id == SpaceId::Data {
-                ack_eliciting |= self.can_send_1rtt();
-                // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if ack_eliciting
-                    && self.space(space_id).loss_probes == 0
-                    && self.congestion_blocked()
-                {
-                    continue;
-                }
-            }
-
-            //
-            // From here on, we've determined that a packet will definitely be sent.
-            //
-
-            if self.spaces[SpaceId::Initial as usize].crypto.is_some()
-                && space_id == SpaceId::Handshake
-                && self.side.is_client()
-            {
-                // A client stops both sending and processing Initial packets when it
-                // sends its first Handshake packet.
-                self.discard_space(SpaceId::Initial);
-            }
-            if let Some(ref mut prev) = self.prev_crypto {
-                prev.update_unacked = false;
-            }
-
-            let space = &mut self.spaces[space_id as usize];
-            space.loss_probes = space.loss_probes.saturating_sub(1);
-            let exact_number = space.get_tx_number();
-            let span = trace_span!("send", space = ?space_id, pn = exact_number);
-            let _guard = span.enter();
-            let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
-            let header = match space_id {
-                SpaceId::Data if space.crypto.is_some() => Header::Short {
-                    dst_cid: self.rem_cid,
-                    number,
-                    spin: if self.spin_enabled {
-                        self.spin
-                    } else {
-                        self.rng.gen()
-                    },
-                    key_phase: self.key_phase,
-                },
-                SpaceId::Data => Header::Long {
-                    ty: LongType::ZeroRtt,
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    number,
-                },
-                SpaceId::Handshake => Header::Long {
-                    ty: LongType::Handshake,
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    number,
-                },
-                SpaceId::Initial => Header::Initial {
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    token: match self.state {
-                        State::Handshake(ref state) => {
-                            state.token.clone().unwrap_or_else(Bytes::new)
-                        }
-                        _ => Bytes::new(),
-                    },
-                    number,
-                },
-            };
-            let partial_encode = header.encode(&mut buf);
-            coalesce = coalesce && !header.is_short();
-
-            let sent = if close {
-                trace!("sending CONNECTION_CLOSE");
-                let max_len = buf.capacity()
-                    - partial_encode.start
-                    - partial_encode.header_len
-                    - space.crypto.as_ref().unwrap().packet.tag_len();
-                match self.state {
-                    State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
-                    State::Draining => frame::ConnectionClose {
-                        error_code: TransportErrorCode::NO_ERROR,
-                        frame_type: None,
-                        reason: Bytes::new(),
-                    }
-                    .encode(&mut buf, max_len),
-                    _ => unreachable!(
-                        "tried to make a close packet when the connection wasn't closed"
-                    ),
-                }
-                coalesce = false;
-                None
-            } else {
-                Some(self.populate_packet(space_id, &mut buf))
-            };
-
-            let space = &mut self.spaces[space_id as usize];
-            let crypto = if let Some(ref crypto) = space.crypto {
-                crypto
-            } else if space_id == SpaceId::Data {
-                self.zero_rtt_crypto.as_ref().unwrap()
-            } else {
-                unreachable!("tried to send {:?} packet without keys", space_id);
-            };
-
-            let mut padded = if pad_space == Some(space_id)
-                && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
-            {
-                // Initial-bearing packets MUST be padded
-                buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
-                true
-            } else {
-                false
-            };
-
-            let pn_len = number.len();
-            // To ensure that sufficient data is available for sampling, packets are padded so that the
-            // combined lengths of the encoded packet number and protected payload is at least 4 bytes
-            // longer than the sample required for header protection.
-            let protected_payload_len = (buf.len() + crypto.packet.tag_len())
-                - partial_encode.start
-                - partial_encode.header_len;
-            if let Some(padding_minus_one) =
-                (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
-            {
-                let padding = padding_minus_one + 1;
-                padded = true;
-                trace!("PADDING * {}", padding);
-                buf.resize(buf.len() + padding, 0);
-            }
-
-            buf.resize(buf.len() + crypto.packet.tag_len(), 0);
-            debug_assert!(buf.len() < self.mtu as usize);
-            let packet_buf = &mut buf[partial_encode.start..];
-            partial_encode.finish(
-                packet_buf,
-                &crypto.header,
-                Some((exact_number, &crypto.packet)),
-            );
-
-            if let Some((sent, acks, stream_frames)) = sent {
-                // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-                // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-                // the need for subtler logic to avoid double-transmitting acks all the time.
-                space.permit_ack_only &= acks.is_empty();
-
-                self.on_packet_sent(
-                    now,
-                    space_id,
-                    exact_number,
-                    SentPacket {
-                        acks,
-                        time_sent: now,
-                        size: if padded || ack_eliciting {
-                            (buf.len() - buf_start) as u16
-                        } else {
-                            0
-                        },
-                        ack_eliciting,
-                        retransmits: sent,
-                        stream_frames,
-                    },
-                );
-            }
-
-            if !coalesce || buf.capacity() - buf.len() < MIN_PACKET_SPACE {
-                break;
-            }
-        }
-
-        if buf.is_empty() {
-            return None;
-        }
-
-        trace!("sending {} byte datagram", buf.len());
-        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
-
-        Some(Transmit {
-            destination: self.path.remote,
-            contents: buf.into(),
-            ecn: if self.path.sending_ecn {
-                Some(EcnCodepoint::ECT0)
-            } else {
-                None
-            },
-        })
-    }
-
     fn populate_packet(
         &mut self,
         space_id: SpaceId,
@@ -2548,29 +2769,6 @@ where
         (sent, acks, stream_frames)
     }
 
-    /// Close a connection immediately
-    ///
-    /// This does not ensure delivery of outstanding data. It is the application's responsibility to
-    /// call this only when all important communications have been completed, e.g. by calling
-    /// [`Connection::finish`] on outstanding streams and waiting for the corresponding
-    /// [`StreamFinished`] event.
-    ///
-    /// If [`Connection::send_streams`] returns 0, all outstanding stream data has been
-    /// delivered. There may still be data from the peer that has not been received.
-    ///
-    /// [`StreamFinished`]: Event::StreamFinished
-    pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
-        let was_closed = self.state.is_closed();
-        if !was_closed {
-            self.close_common();
-            self.set_close_timer(now);
-            self.close = true;
-            self.state = State::Closed(state::Closed {
-                reason: Close::Application(frame::ApplicationClose { error_code, reason }),
-            });
-        }
-    }
-
     fn close_common(&mut self) {
         trace!("connection closed");
         for &timer in &Timer::VALUES {
@@ -2622,25 +2820,6 @@ where
         self.params = params;
     }
 
-    /// Open a single stream if possible
-    ///
-    /// Returns `None` if the streams in the given direction are currently exhausted.
-    pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
-        if self.state.is_closed() {
-            return None;
-        }
-        // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(&self.params, self.side, dir)?;
-        Some(id)
-    }
-
-    /// Ping the remote endpoint
-    ///
-    /// Causes an ACK-eliciting packet to be transmitted.
-    pub fn ping(&mut self) {
-        self.spaces[self.highest_space as usize].ping_pending = true;
-    }
-
     /// Permit an additional remote `ty` stream.
     fn alloc_remote_stream(&mut self, dir: Dir) {
         let space = &mut self.spaces[SpaceId::Data as usize];
@@ -2656,50 +2835,6 @@ where
             .alloc_remote_stream(&self.params, self.side, dir);
     }
 
-    /// Accept a remotely initiated stream of a certain directionality, if possible
-    ///
-    /// Returns `None` if there are no new incoming streams for this connection.
-    pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
-        let id = self.streams.accept(self.side, dir)?;
-        self.alloc_remote_stream(id.dir());
-        Some(id)
-    }
-
-    /// The number of streams that may have unacknowledged data.
-    pub fn send_streams(&self) -> usize {
-        self.streams.send_streams()
-    }
-
-    /// Finish a send stream, signalling that no more data will be sent.
-    ///
-    /// If this fails, no [`Event::StreamFinished`] will be generated.
-    pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
-        self.streams.finish(id)?;
-        Ok(())
-    }
-
-    /// Read from the given recv stream, in undefined order
-    ///
-    /// While stream data is usually returned to the application in order, for some applications
-    /// it can make sense to leverage the reduced latency of unordered reads. For ordered reads,
-    /// the sibling `read()` method can be used.
-    ///
-    /// The return value if `Ok` contains the bytes and their offset in the stream.
-    pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
-            self.add_read_credits(id, buf.len() as u64, more);
-            (buf, offset)
-        }))
-    }
-
-    /// Read from the given recv stream
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self.streams.read(id, buf)?.map(|(len, more)| {
-            self.add_read_credits(id, len as u64, more);
-            len
-        }))
-    }
-
     fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
         self.local_max_data += len;
         let space = &mut self.spaces[SpaceId::Data as usize];
@@ -2708,27 +2843,6 @@ where
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
-    }
-
-    /// Signal to the peer that it should stop sending on the given recv stream
-    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
-        assert!(
-            id.dir() == Dir::Bi || id.initiator() != self.side,
-            "only streams supporting incoming data may be stopped"
-        );
-        let stream = self
-            .streams
-            .recv_mut(id)
-            .ok_or(UnknownStream { _private: () })?;
-        // Only bother if there's data we haven't received yet
-        if !stream.is_finished() {
-            let space = &mut self.spaces[SpaceId::Data as usize];
-            space
-                .pending
-                .stop_sending
-                .push(frame::StopSending { id, error_code });
-        }
-        Ok(())
     }
 
     /// Whether UDP transmits are currently blocked by link congestion
@@ -2815,83 +2929,6 @@ where
         Ok(Some(number))
     }
 
-    #[doc(hidden)]
-    pub fn initiate_key_update(&mut self) {
-        self.update_keys(None, false);
-    }
-
-    /// Send data on the given stream
-    ///
-    /// Returns the number of bytes successfully written.
-    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
-        assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
-        if self.state.is_closed() {
-            trace!(%stream, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
-        }
-        self.streams.write(stream, data)
-    }
-
-    /// Prepare to transmit an unreliable, unordered datagram
-    ///
-    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
-    /// caller to defer materializing a datagram until one can be sent immediately without redundant
-    /// checks
-    ///
-    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
-        if self.config.datagram_receive_buffer_size.is_none() {
-            return Err(SendDatagramError::Disabled);
-        }
-        let max = self
-            .max_datagram_size()
-            .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        while self.datagrams.outgoing_total > self.config.datagram_send_buffer_size {
-            let prev = self
-                .datagrams
-                .outgoing
-                .pop_front()
-                .expect("datagrams.outgoing_total desynchronized");
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-            self.datagrams.outgoing_total -= prev.data.len();
-        }
-        if data.len() > max {
-            return Err(SendDatagramError::TooLarge);
-        }
-        self.datagrams.outgoing_total += data.len();
-        self.datagrams.outgoing.push_back(Datagram { data });
-        Ok(())
-    }
-
-    /// Receive an unreliable, unordered datagram
-    pub fn recv_datagram(&mut self) -> Option<Bytes> {
-        let x = self.datagrams.incoming.pop_front()?.data;
-        self.datagrams.recv_buffered -= x.len();
-        Some(x)
-    }
-
-    /// Compute the maximum size of datagrams that may passed to `send_datagram`
-    ///
-    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
-    ///
-    /// This may change over the lifetime of a connection according to variation in the path MTU
-    /// estimate. The peer can also enforce an arbitrarily small fixed limit, but if the peer's
-    /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
-    ///
-    /// Not necessarily the maximum size of received datagrams.
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
-        let max_size = self.mtu as usize
-            - 1                 // flags byte
-            - self.rem_cid.len()
-            - 4                 // worst-case packet number size
-            - self.space(SpaceId::Data).crypto.as_ref().or_else(|| self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
-            - Datagram::SIZE_BOUND;
-        self.config.datagram_receive_buffer_size?;
-        let limit = self.params.max_datagram_frame_size?.into_inner();
-        Some(limit.min(max_size as u64) as usize)
-    }
-
     fn update_keys(&mut self, end_packet: Option<(u64, Instant)>, remote: bool) {
         // Generate keys for the key phase after the one we're switching to, store them in
         // `next_crypto`, make the contents of `next_crypto` current, and move the current keys into
@@ -2911,43 +2948,6 @@ where
             update_unacked: remote,
         });
         self.key_phase = !self.key_phase;
-    }
-
-    /// If the connection is currently handshaking
-    pub fn is_handshaking(&self) -> bool {
-        self.state.is_handshake()
-    }
-
-    /// If the connection is closed
-    pub fn is_closed(&self) -> bool {
-        self.state.is_closed()
-    }
-
-    /// If the connection is drained
-    pub fn is_drained(&self) -> bool {
-        self.state.is_drained()
-    }
-
-    /// For clients, if the peer accepted the 0-RTT data packets
-    ///
-    /// The value is meaningless until after the handshake completes.
-    pub fn accepted_0rtt(&self) -> bool {
-        self.accepted_0rtt
-    }
-
-    /// Whether 0-RTT is/was possible during the handshake
-    pub fn has_0rtt(&self) -> bool {
-        self.zero_rtt_enabled
-    }
-
-    /// Look up whether we're the client or server of this Connection
-    pub fn side(&self) -> Side {
-        self.side
-    }
-
-    /// The latest socket address for this connection's peer
-    pub fn remote_address(&self) -> SocketAddr {
-        self.path.remote
     }
 
     /// The number of bytes of packets containing retransmittable frames that have not been
