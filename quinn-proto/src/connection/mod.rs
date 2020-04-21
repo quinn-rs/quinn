@@ -39,7 +39,7 @@ use spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
 
 mod streams;
 use streams::Streams;
-pub use streams::{FinishError, ReadError, UnknownStream, WriteError};
+pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
 mod timer;
 use timer::{Timer, TimerTable};
@@ -291,11 +291,11 @@ where
         if let Some(dir) =
             Dir::iter().find(|&i| mem::replace(&mut self.streams.opened[i as usize], false))
         {
-            return Some(Event::StreamOpened { dir });
+            return Some(Event::Stream(StreamEvent::Opened { dir }));
         }
 
-        if let Some(stream) = self.streams.poll_unblocked() {
-            return Some(Event::StreamWritable { stream });
+        if let Some(id) = self.streams.poll_unblocked() {
+            return Some(Event::Stream(StreamEvent::Writable { id }));
         }
 
         if let Some(x) = self.events.pop_front() {
@@ -1042,10 +1042,10 @@ where
         for frame in info.stream_frames {
             let id = frame.id;
             if self.streams.ack(frame) {
-                self.events.push_back(Event::StreamFinished {
-                    stream: id,
+                self.events.push_back(Event::Stream(StreamEvent::Finished {
+                    id,
                     stop_reason: None,
-                });
+                }));
             }
         }
     }
@@ -1366,12 +1366,14 @@ where
                 // The application is waiting for an event on this stream that will never come; notify it.
                 self.events.push_back(match status {
                     // Finish operation should fail due to stopping
-                    streams::ResetStatus::WasFinishing => Event::StreamFinished {
-                        stream: stream_id,
+                    streams::ResetStatus::WasFinishing => Event::Stream(StreamEvent::Finished {
+                        id: stream_id,
                         stop_reason,
-                    },
+                    }),
                     // Stop will be observed on a future write/finish call.
-                    streams::ResetStatus::WasBlocked => Event::StreamWritable { stream: stream_id },
+                    streams::ResetStatus::WasBlocked => {
+                        Event::Stream(StreamEvent::Writable { id: stream_id })
+                    }
                 });
             }
         }
@@ -2156,7 +2158,8 @@ where
                     if let Some(ss) = self.streams.send_mut(id) {
                         if ss.increase_max_data(offset) {
                             // Unblocked
-                            self.events.push_back(Event::StreamWritable { stream: id });
+                            self.events
+                                .push_back(Event::Stream(StreamEvent::Writable { id }));
                         }
                     } else if id.initiator() == self.side() && self.streams.is_local_unopened(id) {
                         debug!("got MAX_STREAM_DATA on unopened {}", id);
@@ -2175,7 +2178,8 @@ where
                     let current = &mut self.streams.max[dir as usize];
                     if count > *current {
                         *current = count;
-                        self.events.push_back(Event::StreamAvailable { dir });
+                        self.events
+                            .push_back(Event::Stream(StreamEvent::Available { dir }));
                     }
                 }
                 Frame::ResetStream(frame::ResetStream {
@@ -2413,7 +2417,8 @@ where
         if stream.initiator() == self.side {
             // Notifying about the opening of locally-initiated streams would be redundant.
             if notify_readable {
-                self.events.push_back(Event::StreamReadable { stream });
+                self.events
+                    .push_back(Event::Stream(StreamEvent::Readable { id: stream }));
             }
             return;
         }
@@ -2422,7 +2427,8 @@ where
             *next = stream.index() + 1;
             self.streams.opened[stream.dir() as usize] = true;
         } else if notify_readable {
-            self.events.push_back(Event::StreamReadable { stream });
+            self.events
+                .push_back(Event::Stream(StreamEvent::Readable { id: stream }));
         }
     }
 
@@ -3303,35 +3309,8 @@ pub enum Event {
         /// Reason that the connection was closed
         reason: ConnectionError,
     },
-    /// One or more new streams has been opened
-    StreamOpened {
-        /// Directionality for which streams have been opened
-        dir: Dir,
-    },
-    /// A currently open stream has data or errors waiting to be read
-    StreamReadable {
-        /// Which stream is now readable
-        stream: StreamId,
-    },
-    /// A formerly write-blocked stream might be ready for a write or have been stopped
-    ///
-    /// Only generated for streams that are currently open.
-    StreamWritable {
-        /// Which stream is now writable
-        stream: StreamId,
-    },
-    /// A finished stream has been fully acknowledged or stopped
-    StreamFinished {
-        /// Which stream has been finished
-        stream: StreamId,
-        /// Error code supplied by the peer if the stream was stopped
-        stop_reason: Option<VarInt>,
-    },
-    /// At least one new stream of a certain directionality may be opened
-    StreamAvailable {
-        /// Directionality for which streams are newly available
-        dir: Dir,
-    },
+    /// Stream events
+    Stream(StreamEvent),
     /// One or more application datagrams have been received
     DatagramReceived,
 }

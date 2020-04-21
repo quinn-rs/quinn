@@ -884,6 +884,40 @@ pub enum FinishError {
     UnknownStream,
 }
 
+/// Application events about streams
+#[derive(Debug)]
+pub enum StreamEvent {
+    /// One or more new streams has been opened
+    Opened {
+        /// Directionality for which streams have been opened
+        dir: Dir,
+    },
+    /// A currently open stream has data or errors waiting to be read
+    Readable {
+        /// Which stream is now readable
+        id: StreamId,
+    },
+    /// A formerly write-blocked stream might be ready for a write or have been stopped
+    ///
+    /// Only generated for streams that are currently open.
+    Writable {
+        /// Which stream is now writable
+        id: StreamId,
+    },
+    /// A finished stream has been fully acknowledged or stopped
+    Finished {
+        /// Which stream has been finished
+        id: StreamId,
+        /// Error code supplied by the peer if the stream was stopped
+        stop_reason: Option<VarInt>,
+    },
+    /// At least one new stream of a certain directionality may be opened
+    Available {
+        /// Directionality for which streams are newly available
+        dir: Dir,
+    },
+}
+
 /// Unknown stream ID
 #[derive(Debug)]
 pub struct UnknownStream {
