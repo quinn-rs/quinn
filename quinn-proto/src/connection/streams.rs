@@ -49,6 +49,8 @@ pub(crate) struct Streams {
     max_data: u64,
     /// Sum of current offsets of all send streams.
     data_sent: u64,
+    /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
+    data_recvd: u64,
     /// Total quantity of unacknowledged outgoing data
     unacked_data: u64,
     /// Configured upper bound for `unacked_data`
@@ -73,6 +75,7 @@ impl Streams {
             connection_blocked: Vec::new(),
             max_data: 0,
             data_sent: 0,
+            data_recvd: 0,
             unacked_data: 0,
             send_window,
         };
@@ -221,12 +224,12 @@ impl Streams {
     pub fn received(
         &mut self,
         frame: frame::Stream,
-        received: u64,
         max_data: u64,
         receive_window: u64,
-    ) -> Result<Option<u64>, TransportError> {
+    ) -> Result<(), TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
+        let data_recvd = self.data_recvd;
         let rs = match self.recv_stream(stream) {
             Err(e) => {
                 debug!("received illegal stream frame");
@@ -234,26 +237,26 @@ impl Streams {
             }
             Ok(None) => {
                 trace!("dropping frame for closed stream");
-                return Ok(None);
+                return Ok(());
             }
             Ok(Some(rs)) => rs,
         };
 
         if rs.is_finished() {
             trace!("dropping frame for finished stream");
-            return Ok(None);
+            return Ok(());
         }
 
-        let ingested = rs.ingest(frame, received, max_data, receive_window)?;
+        self.data_recvd += rs.ingest(frame, data_recvd, max_data, receive_window)?;
         self.on_stream_frame(true, stream);
-        Ok(Some(ingested))
+        Ok(())
     }
 
     /// Process incoming RESET_STREAM frame
     pub fn received_reset(
         &mut self,
         frame: frame::ResetStream,
-    ) -> Result<Option<(u64, u64)>, TransportError> {
+    ) -> Result<Option<u64>, TransportError> {
         let frame::ResetStream {
             id,
             error_code,
@@ -285,11 +288,13 @@ impl Streams {
 
         // State transition
         rs.reset(error_code, final_offset);
+        let bytes_read = rs.bytes_read;
 
         // Update flow control
-        let res = if rs.bytes_read != final_offset {
+        let res = if bytes_read != final_offset {
             // bytes_read is always <= limit, so this won't underflow.
-            Some((final_offset - limit, final_offset - rs.bytes_read))
+            self.data_recvd += final_offset - limit;
+            Some(final_offset - bytes_read)
         } else {
             None
         };
