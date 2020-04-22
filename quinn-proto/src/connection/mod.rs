@@ -84,8 +84,6 @@ where
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
-    /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
-    data_recvd: u64,
     /// Limit on incoming data
     local_max_data: u64,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
@@ -218,7 +216,6 @@ where
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
-            data_recvd: 0,
             local_max_data: config.receive_window as u64,
             orig_rem_cid: None,
             lost_packets: 0,
@@ -2059,14 +2056,11 @@ where
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    if let Some(received) = self.streams.received(
+                    self.streams.received(
                         frame,
-                        self.data_recvd,
                         self.local_max_data,
                         self.config.stream_receive_window,
-                    )? {
-                        self.data_recvd += received;
-                    }
+                    )?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
@@ -2110,8 +2104,7 @@ where
                     self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
-                    if let Some((received, data)) = self.streams.received_reset(frame)? {
-                        self.data_recvd += received;
+                    if let Some(data) = self.streams.received_reset(frame)? {
                         self.local_max_data += data;
                         self.space_mut(SpaceId::Data).pending.max_data = true;
                     }
