@@ -331,6 +331,12 @@ impl Streams {
         Ok(())
     }
 
+    /// Check if the peer has finished sending data
+    pub fn is_peer_finished(&self, id: StreamId) -> Result<bool, UnknownStream> {
+        let stream = self.recv.get(&id).ok_or(UnknownStream { _private: () })?;
+        Ok(stream.is_finished())
+    }
+
     /// Abandon pending and future transmits
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
@@ -733,7 +739,7 @@ impl Streams {
         }
     }
 
-    pub fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
+    fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
         self.recv.get_mut(&id)
     }
 
@@ -772,7 +778,7 @@ impl Streams {
 }
 
 #[derive(Debug)]
-pub(crate) struct Send {
+struct Send {
     max_data: u64,
     state: SendState,
     pending: SendBuffer,
@@ -936,7 +942,7 @@ pub enum WriteError {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Recv {
+struct Recv {
     state: RecvState,
     recvd: RangeSet,
     /// Whether any unordered reads have been performed, making this stream unusable for ordered

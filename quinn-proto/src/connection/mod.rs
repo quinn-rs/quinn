@@ -719,12 +719,8 @@ where
             id.dir() == Dir::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
-        let stream = self
-            .streams
-            .recv_mut(id)
-            .ok_or(UnknownStream { _private: () })?;
         // Only bother if there's data we haven't received yet
-        if !stream.is_finished() {
+        if !self.streams.is_peer_finished(id)? {
             let space = &mut self.spaces[SpaceId::Data as usize];
             space
                 .pending
