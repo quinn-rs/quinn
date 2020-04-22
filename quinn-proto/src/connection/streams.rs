@@ -47,6 +47,8 @@ pub(crate) struct Streams {
     connection_blocked: Vec<StreamId>,
     /// Connection-level flow control budget dictated by the peer
     max_data: u64,
+    /// Limit on incoming data
+    pub local_max_data: u64,
     /// Sum of current offsets of all send streams.
     data_sent: u64,
     /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
@@ -58,7 +60,13 @@ pub(crate) struct Streams {
 }
 
 impl Streams {
-    pub fn new(side: Side, max_remote_uni: u64, max_remote_bi: u64, send_window: u64) -> Self {
+    pub fn new(
+        side: Side,
+        max_remote_uni: u64,
+        max_remote_bi: u64,
+        send_window: u64,
+        receive_window: u64,
+    ) -> Self {
         let mut this = Self {
             side,
             send: HashMap::default(),
@@ -74,6 +82,7 @@ impl Streams {
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
+            local_max_data: receive_window,
             data_sent: 0,
             data_recvd: 0,
             unacked_data: 0,
@@ -156,7 +165,11 @@ impl Streams {
     ) -> Result<Option<(usize, bool)>, ReadError> {
         let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read(buf) {
-            Ok(Some(len)) => Ok(Some((len, rs.receiving_unknown_size()))),
+            Ok(Some(len)) => {
+                let more = rs.receiving_unknown_size();
+                self.local_max_data += len as u64;
+                Ok(Some((len, more)))
+            }
             Ok(None) => {
                 self.maybe_cleanup(id);
                 Ok(None)
@@ -175,7 +188,11 @@ impl Streams {
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
         let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
         match rs.read_unordered() {
-            Ok(Some((buf, offset))) => Ok(Some((buf, offset, rs.receiving_unknown_size()))),
+            Ok(Some((buf, offset))) => {
+                let more = rs.receiving_unknown_size();
+                self.local_max_data += buf.len() as u64;
+                Ok(Some((buf, offset, more)))
+            }
             Ok(None) => {
                 self.maybe_cleanup(id);
                 Ok(None)
@@ -224,12 +241,11 @@ impl Streams {
     pub fn received(
         &mut self,
         frame: frame::Stream,
-        max_data: u64,
         receive_window: u64,
     ) -> Result<(), TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
-        let data_recvd = self.data_recvd;
+        let (data_recvd, local_max_data) = (self.data_recvd, self.local_max_data);
         let rs = match self.recv_stream(stream) {
             Err(e) => {
                 debug!("received illegal stream frame");
@@ -247,16 +263,13 @@ impl Streams {
             return Ok(());
         }
 
-        self.data_recvd += rs.ingest(frame, data_recvd, max_data, receive_window)?;
+        self.data_recvd += rs.ingest(frame, data_recvd, local_max_data, receive_window)?;
         self.on_stream_frame(true, stream);
         Ok(())
     }
 
     /// Process incoming RESET_STREAM frame
-    pub fn received_reset(
-        &mut self,
-        frame: frame::ResetStream,
-    ) -> Result<Option<u64>, TransportError> {
+    pub fn received_reset(&mut self, frame: frame::ResetStream) -> Result<bool, TransportError> {
         let frame::ResetStream {
             id,
             error_code,
@@ -269,7 +282,7 @@ impl Streams {
             }
             Ok(None) => {
                 trace!("received RESET_STREAM on closed stream");
-                return Ok(None);
+                return Ok(false);
             }
             Ok(Some(stream)) => stream,
         };
@@ -289,19 +302,17 @@ impl Streams {
         // State transition
         rs.reset(error_code, final_offset);
         let bytes_read = rs.bytes_read;
+        self.on_stream_frame(true, id);
 
         // Update flow control
-        let res = if bytes_read != final_offset {
+        Ok(if bytes_read != final_offset {
             // bytes_read is always <= limit, so this won't underflow.
             self.data_recvd += final_offset - limit;
-            Some(final_offset - bytes_read)
+            self.local_max_data += final_offset - bytes_read;
+            true
         } else {
-            None
-        };
-
-        // Notify application
-        self.on_stream_frame(true, id);
-        Ok(res)
+            false
+        })
     }
 
     /// Set the FIN bit in the next stream frame, generating an empty one if necessary
