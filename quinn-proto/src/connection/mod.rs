@@ -252,6 +252,7 @@ where
                 config.stream_window_bidi,
                 config.send_window,
                 config.receive_window as u64,
+                config.stream_receive_window as u64,
             ),
             datagrams: DatagramState::new(),
             config,
@@ -2054,8 +2055,7 @@ where
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    self.streams
-                        .received(frame, self.config.stream_receive_window)?;
+                    self.streams.received(frame)?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;

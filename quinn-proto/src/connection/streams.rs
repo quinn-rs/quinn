@@ -57,6 +57,8 @@ pub(crate) struct Streams {
     unacked_data: u64,
     /// Configured upper bound for `unacked_data`
     send_window: u64,
+    /// Configured upper bound for how much unacked data the peer can send us per stream
+    stream_receive_window: u64,
 }
 
 impl Streams {
@@ -66,6 +68,7 @@ impl Streams {
         max_remote_bi: u64,
         send_window: u64,
         receive_window: u64,
+        stream_receive_window: u64,
     ) -> Self {
         let mut this = Self {
             side,
@@ -87,6 +90,7 @@ impl Streams {
             data_recvd: 0,
             unacked_data: 0,
             send_window,
+            stream_receive_window,
         };
 
         for dir in Dir::iter() {
@@ -238,14 +242,14 @@ impl Streams {
     }
 
     /// Process incoming stream frame
-    pub fn received(
-        &mut self,
-        frame: frame::Stream,
-        receive_window: u64,
-    ) -> Result<(), TransportError> {
+    pub fn received(&mut self, frame: frame::Stream) -> Result<(), TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
-        let (data_recvd, local_max_data) = (self.data_recvd, self.local_max_data);
+        let (data_recvd, local_max_data, stream_receive_window) = (
+            self.data_recvd,
+            self.local_max_data,
+            self.stream_receive_window,
+        );
         let rs = match self.recv_stream(stream) {
             Err(e) => {
                 debug!("received illegal stream frame");
@@ -263,7 +267,7 @@ impl Streams {
             return Ok(());
         }
 
-        self.data_recvd += rs.ingest(frame, data_recvd, local_max_data, receive_window)?;
+        self.data_recvd += rs.ingest(frame, data_recvd, local_max_data, stream_receive_window)?;
         self.on_stream_frame(true, stream);
         Ok(())
     }
