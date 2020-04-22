@@ -7,8 +7,9 @@ use bytes::{BufMut, Bytes};
 use err_derive::Error;
 use tracing::{debug, info, trace};
 
-use super::{assembler::Assembler, send_buffer::SendBuffer};
+use super::{assembler::Assembler, send_buffer::SendBuffer, spaces::Retransmits};
 use crate::{
+    coding::BufMutExt,
     frame::{self, FrameStruct},
     range_set::RangeSet,
     transport_parameters::TransportParameters,
@@ -24,7 +25,7 @@ pub(crate) struct Streams {
     // Locally initiated
     max: [u64; 2],
     // Maximum that can be remotely initiated
-    pub max_remote: [u64; 2],
+    max_remote: [u64; 2],
     // Lowest that hasn't actually been opened
     next_remote: [u64; 2],
     /// Whether the remote endpoint has opened any streams the application doesn't know about yet,
@@ -48,7 +49,7 @@ pub(crate) struct Streams {
     /// Connection-level flow control budget dictated by the peer
     max_data: u64,
     /// Limit on incoming data
-    pub local_max_data: u64,
+    local_max_data: u64,
     /// Sum of current offsets of all send streams.
     data_sent: u64,
     /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
@@ -375,6 +376,107 @@ impl Streams {
         !self.pending.is_empty()
     }
 
+    pub fn write_control_frames(
+        &mut self,
+        buf: &mut Vec<u8>,
+        pending: &mut Retransmits,
+        sent: &mut Retransmits,
+        max_size: usize,
+    ) {
+        // RESET_STREAM
+        while buf.len() + frame::ResetStream::SIZE_BOUND < max_size {
+            let (id, error_code) = match pending.reset_stream.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            let stream = match self.send_mut(id) {
+                Some(x) => x,
+                None => continue,
+            };
+            trace!(stream = %id, "RESET_STREAM");
+            sent.reset_stream.push((id, error_code));
+            frame::ResetStream {
+                id,
+                error_code,
+                final_offset: stream.offset(),
+            }
+            .encode(buf);
+        }
+
+        // STOP_SENDING
+        while buf.len() + frame::StopSending::SIZE_BOUND < max_size {
+            let frame = match pending.stop_sending.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            let stream = match self.recv_mut(frame.id) {
+                Some(x) => x,
+                None => continue,
+            };
+            if stream.is_finished() {
+                continue;
+            }
+            trace!(stream = %frame.id, "STOP_SENDING");
+            frame.encode(buf);
+            sent.stop_sending.push(frame);
+        }
+
+        // MAX_DATA
+        if pending.max_data && buf.len() + 9 < max_size {
+            trace!(value = self.local_max_data, "MAX_DATA");
+            pending.max_data = false;
+            sent.max_data = true;
+            buf.write(frame::Type::MAX_DATA);
+            buf.write_var(self.local_max_data);
+        }
+
+        // MAX_STREAM_DATA
+        while buf.len() + 17 < max_size {
+            let id = match pending.max_stream_data.iter().next() {
+                Some(x) => *x,
+                None => break,
+            };
+            pending.max_stream_data.remove(&id);
+            let rs = match self.recv_mut(id) {
+                Some(x) => x,
+                None => continue,
+            };
+            if rs.is_finished() {
+                continue;
+            }
+            sent.max_stream_data.insert(id);
+            let max = rs.bytes_read + self.stream_receive_window;
+            trace!(stream = %id, max = max, "MAX_STREAM_DATA");
+            buf.write(frame::Type::MAX_STREAM_DATA);
+            buf.write(id);
+            buf.write_var(max);
+        }
+
+        // MAX_STREAMS_UNI
+        if pending.max_uni_stream_id && buf.len() + 9 < max_size {
+            pending.max_uni_stream_id = false;
+            sent.max_uni_stream_id = true;
+            trace!(
+                value = self.max_remote[Dir::Uni as usize],
+                "MAX_STREAMS (unidirectional)"
+            );
+            buf.write(frame::Type::MAX_STREAMS_UNI);
+            buf.write_var(self.max_remote[Dir::Uni as usize]);
+        }
+
+        // MAX_STREAMS_BIDI
+        if pending.max_bi_stream_id && buf.len() + 9 < max_size {
+            pending.max_bi_stream_id = false;
+            sent.max_bi_stream_id = true;
+            trace!(
+                value = self.max_remote[Dir::Bi as usize],
+                "MAX_STREAMS (bidirectional)"
+            );
+            buf.write(frame::Type::MAX_STREAMS_BIDI);
+            buf.write_var(self.max_remote[Dir::Bi as usize]);
+        }
+    }
+
     pub fn write_stream_frames(
         &mut self,
         buf: &mut Vec<u8>,
@@ -635,7 +737,7 @@ impl Streams {
         self.recv.get_mut(&id)
     }
 
-    pub fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
+    fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
         self.send.get_mut(&id)
     }
 
@@ -843,7 +945,7 @@ pub(crate) struct Recv {
     assembler: Assembler,
     /// Number of bytes read by the application. Equal to assembler.offset when `unordered` is
     /// false.
-    pub bytes_read: u64,
+    bytes_read: u64,
 }
 
 impl Recv {
