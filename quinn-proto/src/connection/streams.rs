@@ -121,7 +121,8 @@ impl Streams {
         self.increase_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i as u64);
-            self.send_mut(id).unwrap().max_data = params.initial_max_stream_data_bidi_local as u64;
+            self.send.get_mut(&id).unwrap().max_data =
+                params.initial_max_stream_data_bidi_local as u64;
         }
     }
 
@@ -168,12 +169,11 @@ impl Streams {
         id: StreamId,
         buf: &mut [u8],
     ) -> Result<Option<(usize, bool)>, ReadError> {
-        let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let rs = self.recv.get_mut(&id).ok_or(ReadError::UnknownStream)?;
         match rs.read(buf) {
             Ok(Some(len)) => {
-                let more = rs.receiving_unknown_size();
                 self.local_max_data += len as u64;
-                Ok(Some((len, more)))
+                Ok(Some((len, rs.receiving_unknown_size())))
             }
             Ok(None) => {
                 self.maybe_cleanup(id);
@@ -191,12 +191,11 @@ impl Streams {
         &mut self,
         id: StreamId,
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
-        let rs = self.recv_mut(id).ok_or(ReadError::UnknownStream)?;
+        let rs = self.recv.get_mut(&id).ok_or(ReadError::UnknownStream)?;
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
-                let more = rs.receiving_unknown_size();
                 self.local_max_data += buf.len() as u64;
-                Ok(Some((buf, offset, more)))
+                Ok(Some((buf, offset, rs.receiving_unknown_size())))
             }
             Ok(None) => {
                 self.maybe_cleanup(id);
@@ -364,7 +363,7 @@ impl Streams {
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
-        let send = match self.send_mut(id) {
+        let send = match self.send.get_mut(&id) {
             Some(ss) => ss,
             None => {
                 info!("no send stream found for acked reset: {:?}", id);
@@ -397,7 +396,7 @@ impl Streams {
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.send_mut(id) {
+            let stream = match self.send.get_mut(&id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -417,7 +416,7 @@ impl Streams {
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.recv_mut(frame.id) {
+            let stream = match self.recv.get_mut(&frame.id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -445,7 +444,7 @@ impl Streams {
                 None => break,
             };
             pending.max_stream_data.remove(&id);
-            let rs = match self.recv_mut(id) {
+            let rs = match self.recv.get_mut(&id) {
                 Some(x) => x,
                 None => continue,
             };
@@ -636,7 +635,7 @@ impl Streams {
             ));
         }
 
-        if let Some(ss) = self.send_mut(id) {
+        if let Some(ss) = self.send.get_mut(&id) {
             if ss.increase_max_data(offset) {
                 self.events.push_back(StreamEvent::Writable { id });
             }
@@ -736,14 +735,6 @@ impl Streams {
                 }
             }
         }
-    }
-
-    fn recv_mut(&mut self, id: StreamId) -> Option<&mut Recv> {
-        self.recv.get_mut(&id)
-    }
-
-    fn send_mut(&mut self, id: StreamId) -> Option<&mut Send> {
-        self.send.get_mut(&id)
     }
 
     /// Whether a locally initiated stream has never been open
