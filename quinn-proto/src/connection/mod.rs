@@ -84,8 +84,6 @@ where
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
-    /// Limit on incoming data
-    local_max_data: u64,
     /// ConnectionId sent by this client on the first Initial, if a Retry was received.
     orig_rem_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
@@ -216,7 +214,6 @@ where
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
-            local_max_data: config.receive_window as u64,
             orig_rem_cid: None,
             lost_packets: 0,
             events: VecDeque::new(),
@@ -254,6 +251,7 @@ where
                 config.stream_window_uni,
                 config.stream_window_bidi,
                 config.send_window,
+                config.receive_window as u64,
             ),
             datagrams: DatagramState::new(),
             config,
@@ -689,7 +687,7 @@ where
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
         Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
-            self.add_read_credits(id, buf.len() as u64, more);
+            self.add_read_credits(id, more);
             (buf, offset)
         }))
     }
@@ -697,7 +695,7 @@ where
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         Ok(self.streams.read(id, buf)?.map(|(len, more)| {
-            self.add_read_credits(id, len as u64, more);
+            self.add_read_credits(id, more);
             len
         }))
     }
@@ -2056,11 +2054,8 @@ where
                     self.read_tls(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    self.streams.received(
-                        frame,
-                        self.local_max_data,
-                        self.config.stream_receive_window,
-                    )?;
+                    self.streams
+                        .received(frame, self.config.stream_receive_window)?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
@@ -2104,8 +2099,7 @@ where
                     self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
-                    if let Some(data) = self.streams.received_reset(frame)? {
-                        self.local_max_data += data;
+                    if self.streams.received_reset(frame)? {
                         self.space_mut(SpaceId::Data).pending.max_data = true;
                     }
                 }
@@ -2515,11 +2509,11 @@ where
 
         // MAX_DATA
         if space.pending.max_data && buf.len() + 9 < max_size {
-            trace!(value = self.local_max_data, "MAX_DATA");
+            trace!(value = self.streams.local_max_data, "MAX_DATA");
             space.pending.max_data = false;
             sent.max_data = true;
             buf.write(frame::Type::MAX_DATA);
-            buf.write_var(self.local_max_data);
+            buf.write_var(self.streams.local_max_data);
         }
 
         // MAX_STREAM_DATA
@@ -2685,8 +2679,7 @@ where
         self.streams.alloc_remote_stream(&self.params, dir);
     }
 
-    fn add_read_credits(&mut self, id: StreamId, len: u64, more: bool) {
-        self.local_max_data += len;
+    fn add_read_credits(&mut self, id: StreamId, more: bool) {
         let space = &mut self.spaces[SpaceId::Data as usize];
         space.pending.max_data = true;
         if more {
