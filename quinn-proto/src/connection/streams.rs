@@ -246,21 +246,17 @@ impl Streams {
     pub fn received(&mut self, frame: frame::Stream) -> Result<(), TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
-        let (data_recvd, local_max_data, stream_receive_window) = (
-            self.data_recvd,
-            self.local_max_data,
-            self.stream_receive_window,
-        );
-        let rs = match self.recv_stream(stream) {
-            Err(e) => {
-                debug!("received illegal stream frame");
-                return Err(e);
-            }
-            Ok(None) => {
+        self.validate_receive_id(stream).map_err(|e| {
+            debug!("received illegal STREAM frame");
+            e
+        })?;
+
+        let rs = match self.recv.get_mut(&stream) {
+            Some(rs) => rs,
+            None => {
                 trace!("dropping frame for closed stream");
                 return Ok(());
             }
-            Ok(Some(rs)) => rs,
         };
 
         if rs.is_finished() {
@@ -268,7 +264,12 @@ impl Streams {
             return Ok(());
         }
 
-        self.data_recvd += rs.ingest(frame, data_recvd, local_max_data, stream_receive_window)?;
+        self.data_recvd += rs.ingest(
+            frame,
+            self.data_recvd,
+            self.local_max_data,
+            self.stream_receive_window,
+        )?;
         self.on_stream_frame(true, stream);
         Ok(())
     }
@@ -280,16 +281,17 @@ impl Streams {
             error_code,
             final_offset,
         } = frame;
-        let rs = match self.recv_stream(id) {
-            Err(e) => {
-                debug!("received illegal RESET_STREAM");
-                return Err(e);
-            }
-            Ok(None) => {
+        self.validate_receive_id(id).map_err(|e| {
+            debug!("received illegal RESET_STREAM frame");
+            e
+        })?;
+
+        let rs = match self.recv.get_mut(&id) {
+            Some(stream) => stream,
+            None => {
                 trace!("received RESET_STREAM on closed stream");
                 return Ok(false);
             }
-            Ok(Some(stream)) => stream,
         };
         let limit = rs.limit();
 
@@ -688,11 +690,8 @@ impl Streams {
         None
     }
 
-    /// Access a receive stream due to a message from the peer
-    ///
-    /// Similar to `recv_mut`, but with additional sanity-checks are performed to detect peer
-    /// misbehavior.
-    fn recv_stream(&mut self, id: StreamId) -> Result<Option<&mut Recv>, TransportError> {
+    /// Check for errors entailed by the peer's use of `id` as a send stream
+    fn validate_receive_id(&mut self, id: StreamId) -> Result<(), TransportError> {
         if self.side == id.initiator() {
             match id.dir() {
                 Dir::Uni => {
@@ -713,7 +712,7 @@ impl Streams {
                 return Err(TransportError::STREAM_LIMIT_ERROR(""));
             }
         }
-        Ok(self.recv.get_mut(&id))
+        Ok(())
     }
 
     /// Discard state for a stream if it's fully closed.
