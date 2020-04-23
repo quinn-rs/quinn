@@ -50,7 +50,7 @@ impl Future for DecodeHeaders {
     }
 }
 
-pub(crate) struct SendHeaders(WriteFrame);
+pub(crate) struct SendHeaders(WriteFrame<HeadersFrame>);
 
 impl SendHeaders {
     pub fn new(

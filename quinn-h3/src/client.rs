@@ -513,10 +513,10 @@ impl Connection {
         let recv = RecvResponse::new(FrameDecoder::stream(recv), self.0.clone(), stream_id);
         match body.into() {
             Body::Buf(payload) => {
-                let send = WriteFrame::new(send, DataFrame { payload }).await?;
+                let send: WriteFrame<DataFrame<_>> = WriteFrame::new(send, DataFrame { payload });
                 Ok((
                     recv,
-                    BodyWriter::new(send, self.0.clone(), stream_id, false),
+                    BodyWriter::new(send.await?, self.0.clone(), stream_id, false),
                 ))
             }
             Body::None => Ok((

@@ -26,7 +26,7 @@ pub enum Error {
 
 #[derive(Debug, PartialEq)]
 pub enum HttpFrame {
-    Data(DataFrame),
+    Data(DataFrame<Bytes>),
     Headers(HeadersFrame),
     CancelPush(u64),
     Settings(SettingsFrame),
@@ -161,31 +161,40 @@ pub(crate) trait FrameHeader {
 }
 
 pub(crate) trait IntoPayload {
-    fn into_payload(self) -> Bytes;
+    fn into_payload(&mut self) -> &mut dyn Buf;
 }
 
 #[derive(Debug, PartialEq)]
-pub struct DataFrame {
-    pub payload: Bytes,
+pub struct DataFrame<P> {
+    pub payload: P,
 }
 
-impl DataFrame {
+impl<P> DataFrame<P>
+where
+    P: Buf,
+{
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
-        buf.put(self.payload.clone());
+        buf.put(self.payload.bytes());
     }
 }
 
-impl FrameHeader for DataFrame {
+impl<P> FrameHeader for DataFrame<P>
+where
+    P: Buf,
+{
     const TYPE: Type = Type::DATA;
     fn len(&self) -> usize {
-        self.payload.as_ref().len()
+        self.payload.remaining()
     }
 }
 
-impl IntoPayload for DataFrame {
-    fn into_payload(self) -> Bytes {
-        self.payload
+impl<P> IntoPayload for DataFrame<P>
+where
+    P: Buf,
+{
+    fn into_payload(&mut self) -> &mut dyn Buf {
+        &mut self.payload
     }
 }
 
@@ -194,7 +203,7 @@ pub struct PartialData {
 }
 
 impl PartialData {
-    pub fn decode<B: Buf>(buf: &mut B) -> Result<(Self, DataFrame), Error> {
+    pub fn decode<B: Buf>(buf: &mut B) -> Result<(Self, DataFrame<Bytes>), Error> {
         if Type::DATA != Type::decode(buf)? {
             panic!("can only decode Data frames");
         }
@@ -210,7 +219,7 @@ impl PartialData {
         ))
     }
 
-    pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame {
+    pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame<Bytes> {
         let payload = buf.take(self.remaining).to_bytes();
         self.remaining -= payload.len();
         DataFrame { payload }
@@ -247,8 +256,8 @@ impl HeadersFrame {
 }
 
 impl IntoPayload for HeadersFrame {
-    fn into_payload(self) -> Bytes {
-        self.encoded
+    fn into_payload(&mut self) -> &mut dyn Buf {
+        &mut self.encoded
     }
 }
 
