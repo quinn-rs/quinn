@@ -10,16 +10,12 @@ pub enum ParseError {
 
 impl From<prefix_int::Error> for ParseError {
     fn from(e: prefix_int::Error) -> Self {
-        match e {
-            e => ParseError::InvalidInteger(e),
-        }
+        ParseError::InvalidInteger(e)
     }
 }
 
 impl From<prefix_string::Error> for ParseError {
     fn from(e: prefix_string::Error) -> Self {
-        match e {
-            e => ParseError::InvalidString(e),
-        }
+        ParseError::InvalidString(e)
     }
 }
