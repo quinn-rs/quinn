@@ -5,7 +5,6 @@ use std::{
 };
 
 use futures::ready;
-use mio;
 
 use tokio::io::PollEvented;
 

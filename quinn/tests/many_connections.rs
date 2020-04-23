@@ -76,11 +76,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                 match e {
                     WriteError::ConnectionClosed(ApplicationClosed { .. })
                     | WriteError::ConnectionClosed(Reset) => {}
-                    WriteError::ConnectionClosed(e) => match e {
-                        _ => {
-                            shared.lock().unwrap().errors.push(e);
-                        }
-                    },
+                    WriteError::ConnectionClosed(e) => shared.lock().unwrap().errors.push(e),
                     _ => panic!("unexpected write error"),
                 }
             });

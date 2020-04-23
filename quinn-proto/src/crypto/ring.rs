@@ -283,7 +283,6 @@ mod test {
         MAX_CID_SIZE,
     };
     use hex_literal::hex;
-    use rand;
 
     #[test]
     fn handshake_crypto_roundtrip() {
