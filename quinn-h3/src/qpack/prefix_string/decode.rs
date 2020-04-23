@@ -173,6 +173,7 @@ macro_rules! bits_decode {
     };
 }
 
+#[rustfmt::skip]
 bits_decode![
     HPACK_STRING => (
         lookup: 5, [ '0', '1', '2', 'a', 'c', 'e', 'i', 'o', 's', 't',
