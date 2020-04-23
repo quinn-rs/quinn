@@ -1,11 +1,11 @@
 use std::{
     future::Future,
-    io, mem,
+    io,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use futures::{ready, FutureExt};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio::io::AsyncRead;
@@ -13,7 +13,6 @@ use tokio_util::codec::{Decoder, FramedRead};
 
 use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
 use crate::{proto::ErrorCode, streams::Reset};
-
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
 impl Reset for FrameStream {
@@ -104,22 +103,23 @@ impl Decoder for FrameDecoder {
     }
 }
 
-pub struct WriteFrame {
+pub(crate) struct WriteFrame<F> {
     state: WriteFrameState,
-    payload: Option<Bytes>,
+    send: Option<SendStream>,
+    frame: F,
 }
 
 enum WriteFrameState {
-    Header(SendStream, [u8; VarInt::MAX_SIZE * 2], usize, usize),
-    Payload(SendStream, Bytes),
+    Header([u8; VarInt::MAX_SIZE * 2], usize, usize),
+    Payload,
     Finished,
 }
 
-impl WriteFrame {
-    pub(crate) fn new<T>(send: SendStream, frame: T) -> Self
-    where
-        T: FrameHeader + IntoPayload,
-    {
+impl<F> WriteFrame<F>
+where
+    F: FrameHeader + IntoPayload,
+{
+    pub(crate) fn new(send: SendStream, frame: F) -> Self {
         let mut buf = [0u8; VarInt::MAX_SIZE * 2];
         let remaining = {
             let mut cur = &mut buf[..];
@@ -128,49 +128,64 @@ impl WriteFrame {
         };
 
         Self {
-            payload: Some(frame.into_payload()),
-            state: WriteFrameState::Header(send, buf, 0, buf.len() - remaining),
+            frame,
+            send: Some(send),
+            state: WriteFrameState::Header(buf, 0, buf.len() - remaining),
         }
     }
 
     pub fn reset(self, err_code: ErrorCode) {
-        if let WriteFrameState::Header(mut s, ..) | WriteFrameState::Payload(mut s, _) = self.state
-        {
+        if let Some(mut s) = self.send {
             s.reset(err_code.into());
         }
     }
 }
 
-impl Future for WriteFrame {
+impl<F> Future for WriteFrame<F>
+where
+    F: FrameHeader + IntoPayload + Unpin,
+{
     type Output = Result<SendStream, quinn::WriteError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match self.state {
-                WriteFrameState::Finished => panic!("polled after finished"),
-                WriteFrameState::Header(ref mut send, ref h, ref mut start, len) => {
-                    let wrote = ready!(send.write(&h[*start..len]).poll_unpin(cx))?;
-                    *start += wrote;
-                    if *start < len {
+                WriteFrameState::Finished => panic!("polled after finish"),
+                WriteFrameState::Header(h, mut start, len) => {
+                    let wrote = ready!(self
+                        .send
+                        .as_mut()
+                        .unwrap()
+                        .write(&h[start..len])
+                        .poll_unpin(cx))?;
+                    start += wrote;
+
+                    self.state = WriteFrameState::Header(h, start, len);
+
+                    if start < len {
                         continue;
                     }
-                    self.state = match mem::replace(&mut self.state, WriteFrameState::Finished) {
-                        WriteFrameState::Header(s, ..) => {
-                            WriteFrameState::Payload(s, self.payload.take().unwrap())
-                        }
-                        _ => unreachable!(),
-                    }
+                    self.state = WriteFrameState::Payload;
                 }
-                WriteFrameState::Payload(ref mut send, ref mut p) => {
-                    let wrote = ready!(send.write(p).poll_unpin(cx))?;
-                    p.advance(wrote);
-                    if !p.is_empty() {
-                        continue;
+                WriteFrameState::Payload => {
+                    let mut send = self.send.take().unwrap();
+                    let p = self.frame.into_payload();
+
+                    match send.write(p.bytes()).poll_unpin(cx) {
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            self.send = Some(send);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(wrote)) => {
+                            p.advance(wrote);
+                            if p.has_remaining() {
+                                self.send = Some(send);
+                                continue;
+                            }
+                        }
                     }
-                    let send = match mem::replace(&mut self.state, WriteFrameState::Finished) {
-                        WriteFrameState::Payload(s, _) => s,
-                        _ => unreachable!(),
-                    };
+
                     self.state = WriteFrameState::Finished;
                     return Poll::Ready(Ok(send));
                 }

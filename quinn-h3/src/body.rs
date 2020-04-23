@@ -421,7 +421,7 @@ impl BodyWriter {
 
 enum BodyWriterState {
     Idle(SendStream),
-    Writing(WriteFrame),
+    Writing(WriteFrame<DataFrame<Bytes>>),
     Finished,
 }
 
