@@ -1,7 +1,7 @@
 use std::{fs, io, net::SocketAddr, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
-use futures::{AsyncWriteExt, StreamExt};
+use futures::StreamExt;
 use http::{Response, StatusCode};
 use quinn::{CertificateChain, PrivateKey};
 use structopt::{self, StructOpt};
@@ -11,6 +11,7 @@ use tracing_subscriber::filter::LevelFilter;
 use quinn_h3::{
     self,
     server::{self, RecvRequest},
+    Body,
 };
 
 #[derive(StructOpt, Debug, Clone)]
@@ -86,12 +87,9 @@ async fn handle_request(recv_request: RecvRequest) -> Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
         .header("response", "header")
-        .body(())?;
+        .body(Body::from("Greetings over HTTP/3"))?;
 
-    // Send the response's headers
-    let mut body_writer = sender.send_response(response).await?;
-    // Use AsyncWrite to send the response's body
-    body_writer.write_all(b"Greetings over HTTP/3").await?;
+    sender.send_response(response).await?;
 
     Ok(())
 }

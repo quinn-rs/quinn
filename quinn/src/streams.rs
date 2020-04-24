@@ -94,7 +94,8 @@ where
         Finish { stream: self }
     }
 
-    fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
+    #[doc(hidden)]
+    pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
             conn.check_0rtt()

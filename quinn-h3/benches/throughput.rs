@@ -5,10 +5,10 @@ use tokio::select;
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
-use quinn_h3::{self, client, server::IncomingConnection};
+use quinn_h3::{self, client, server::IncomingConnection, Body};
 
 mod helpers;
-use helpers::{send_body, Bench};
+use helpers::{send_body, Bench, BenchBody};
 
 benchmark_group!(
     benches_download,
@@ -95,11 +95,6 @@ async fn download_server(
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
                 let (request, _, sender) = recv_req.await.expect("recv_req");
-                let body_writer = sender
-                    .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
-                    .await
-                    .expect("send_response");
-
                 let frame_size = request
                     .headers()
                     .get("frame_size")
@@ -110,7 +105,16 @@ async fn download_server(
                     .get("total_size")
                     .map(|x| x.to_str().unwrap().parse().expect("parse total size"))
                     .expect("no total size");
-                send_body(body_writer, frame_size, total_size).await;
+
+                sender
+                    .send_response(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .body(BenchBody::new(frame_size, total_size))
+                            .unwrap(),
+                    )
+                    .await
+                    .expect("send_response");
             },
         }
     }
@@ -174,7 +178,7 @@ async fn upload_server(
                 let (_, mut body_reader, sender) = recv_req.await.expect("recv_req");
                 while let Some(_) = body_reader.data().await {}
                 sender
-                    .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+                    .send_response(Response::builder().status(StatusCode::OK).body(Body::from(())).unwrap())
                     .await
                     .expect("send_response");
             }

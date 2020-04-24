@@ -3,7 +3,7 @@ use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use http::{Response, StatusCode};
 use tokio::time::{delay_for, Duration};
 
-use crate::{proto::frame::DataFrame, server::IncomingConnection, Error, HttpError};
+use crate::{proto::frame::DataFrame, server::IncomingConnection, Body, Error, HttpError};
 
 mod helpers;
 use helpers::{get, post, timeout_join, Helper};
@@ -12,18 +12,15 @@ async fn serve_one(mut incoming: IncomingConnection) -> Result<(), crate::Error>
     let mut incoming_req = incoming.next().await.expect("no accept").await?;
     while let Some(recv_req) = incoming_req.next().await {
         let (_, _, sender) = recv_req.await?;
-        let body_writer = sender
-            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+        sender
+            .send_response(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(()))
+                    .unwrap(),
+            )
             .await
             .expect("send_response");
-        match body_writer.close().await {
-            Ok(()) => {}
-            // Only accept application close errors
-            Err(Error::Write(quinn::WriteError::ConnectionClosed(
-                quinn::ConnectionError::ApplicationClosed(_),
-            ))) => {}
-            Err(e) => panic!("response stream close: {}", e),
-        }
     }
     Ok(())
 }
@@ -69,7 +66,12 @@ async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> Stri
         .await
         .expect("server read body");
     sender
-        .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+        .send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from(()))
+                .unwrap(),
+        )
         .await
         .expect("send_response");
     body
@@ -129,7 +131,12 @@ async fn client_cancel_response() {
         delay_for(Duration::from_millis(25)).await;
         let (_, _, sender) = recv_req.await.expect("recv_req");
         sender
-            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            .send_response(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(()))
+                    .unwrap(),
+            )
             .await
             .map(|_| ())
     });
@@ -161,7 +168,12 @@ async fn go_away() {
         incoming_req.go_away();
         let (_, _, sender) = recv_req.await.expect("recv_req");
         sender
-            .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            .send_response(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(()))
+                    .unwrap(),
+            )
             .await
             .map(|_| ())
     });
@@ -191,16 +203,14 @@ async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), 
             .expect("0rtt failed");
         while let Some(recv_req) = incoming_req.next().await {
             let (_, _, sender) = recv_req.await?;
-            let body_writer = sender
-                .send_response(Response::builder().status(StatusCode::OK).body(()).unwrap())
+            sender
+                .send_response(
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .body(Body::from(()))
+                        .unwrap(),
+                )
                 .await?;
-            match body_writer.close().await {
-                Ok(()) => {}
-                Err(Error::Write(quinn::WriteError::ConnectionClosed(
-                    quinn::ConnectionError::ApplicationClosed(_),
-                ))) => {}
-                Err(e) => return Err(e),
-            }
         }
     }
     Ok(())

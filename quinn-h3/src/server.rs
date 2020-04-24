@@ -27,7 +27,7 @@
 //! use futures::{StreamExt, AsyncWriteExt};
 //! use http::{Response, StatusCode};
 //! use quinn::{Certificate, CertificateChain, PrivateKey};
-//! use quinn_h3::server;
+//! use quinn_h3::{server, Body};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -60,7 +60,7 @@
 //!
 //!                     let response = Response::builder()
 //!                         .status(StatusCode::OK)
-//!                         .body("Greetings over datagram ways")
+//!                         .body(Body::from("Greetings over datagram ways"))
 //!                         .unwrap();
 //!
 //!                     // Send the response
@@ -106,6 +106,7 @@
 #![allow(clippy::needless_doctest_main)]
 
 use std::{
+    error::Error as StdError,
     future::Future,
     mem,
     net::{Ipv6Addr, SocketAddr, SocketAddrV6, UdpSocket},
@@ -115,6 +116,7 @@ use std::{
 
 use futures::{ready, Stream};
 use http::{response, Request, Response};
+use http_body::Body as HttpBody;
 use quinn::{
     CertificateChain, EndpointBuilder, PrivateKey, RecvStream, SendStream, ZeroRttAccepted,
 };
@@ -122,15 +124,12 @@ use quinn_proto::{Side, StreamId};
 use rustls::TLSError;
 
 use crate::{
-    body::{Body, BodyReader, BodyWriter},
+    body::BodyReader,
     connection::{ConnectionDriver, ConnectionRef},
-    frame::{FrameDecoder, FrameStream, WriteFrame},
-    headers::{DecodeHeaders, SendHeaders},
-    proto::{
-        frame::{DataFrame, HttpFrame},
-        headers::Header,
-        ErrorCode,
-    },
+    data::SendData,
+    frame::{FrameDecoder, FrameStream},
+    headers::DecodeHeaders,
+    proto::{frame::HttpFrame, headers::Header, ErrorCode},
     streams::Reset,
     Error, Settings,
 };
@@ -545,7 +544,7 @@ impl Stream for IncomingRequest {
 /// use futures::{AsyncReadExt};
 /// use http::{Method, Request, Response, StatusCode};
 ///
-/// use quinn_h3::server::RecvRequest;
+/// use quinn_h3::{server::RecvRequest, Body};
 ///
 /// async fn handle_resquest(recv_request: RecvRequest) -> Result<()> {
 ///     let (request, mut body_reader, mut sender) = recv_request.await?;
@@ -557,7 +556,7 @@ impl Stream for IncomingRequest {
 ///         println!("received body: {}", body);
 ///     }
 ///
-///     let response = Response::builder().status(StatusCode::OK).body(())?;
+///     let response = Response::builder().status(StatusCode::OK).body(Body::from(()))?;
 ///     sender.send_response(response).await?;
 ///
 ///     Ok(())
@@ -677,7 +676,6 @@ impl Future for RecvRequest {
                         BodyReader::new(recv, self.conn.clone(), self.stream_id, false),
                         Sender {
                             send,
-                            stream_id: self.stream_id,
                             conn: self.conn.clone(),
                         },
                     )));
@@ -708,7 +706,6 @@ impl Future for RecvRequest {
 pub struct Sender {
     send: SendStream,
     conn: ConnectionRef,
-    stream_id: StreamId,
 }
 
 impl Sender {
@@ -728,37 +725,14 @@ impl Sender {
     /// ```
     /// use anyhow::Result;
     /// use http::{Response, StatusCode};
-    /// use quinn_h3::server::Sender;
+    /// use quinn_h3::{server::Sender, Body};
     ///
     /// async fn simple_response(sender: Sender) -> Result<()> {
     ///    let response = Response::builder()
     ///        .status(StatusCode::OK)
-    ///        .body("the response body")?;
+    ///        .body(Body::from("the response body"))?;
     ///
     ///    sender.send_response(response).await?;
-    ///
-    ///    Ok(())
-    /// }
-    /// ```
-    ///
-    /// # Example: streamed body
-    ///
-    /// Use [`BodyWriter`]'s [`AsyncWrite`] impl to stream the body from a file:
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use http::{Response, StatusCode};
-    /// use quinn_h3::server::Sender;
-    ///
-    /// async fn stramed_response(sender: Sender) -> Result<()> {
-    ///    let response = Response::builder()
-    ///        .status(StatusCode::OK)
-    ///        .body(())?;
-    ///
-    ///    let mut body = sender.send_response(response).await?;
-    ///
-    ///    let mut file = tokio::fs::File::open("foo.txt").await?;
-    ///    tokio::io::copy(&mut file, &mut body).await?;
     ///
     ///    Ok(())
     /// }
@@ -768,27 +742,20 @@ impl Sender {
     /// [`Body`]: ../enum.Body.html
     /// [`BodyWriter`]: ../struct.BodyWriter.html
     /// [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
-    pub async fn send_response<T: Into<Body>>(
-        self,
-        response: Response<T>,
-    ) -> Result<BodyWriter, Error> {
+    pub fn send_response<B>(self, response: Response<B>) -> SendData<B, B::Data>
+    where
+        B: HttpBody + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
+    {
         let (response, body) = response.into_parts();
+
         let response::Parts {
             status, headers, ..
         } = response;
+        let header = Header::response(status, headers);
 
-        let send = SendHeaders::new(
-            Header::response(status, headers),
-            &self.conn,
-            self.send,
-            self.stream_id,
-        )?
-        .await?;
-        let send = match body.into() {
-            Body(None) => send,
-            Body(Some(payload)) => WriteFrame::new(send, DataFrame { payload }).await?,
-        };
-        Ok(BodyWriter::new(send, self.conn, self.stream_id, true))
+        SendData::new(self.send, self.conn, header, body)
     }
 
     /// Cancel request processing

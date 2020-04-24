@@ -54,12 +54,15 @@ fn bench_google_body(bench: &mut Bencher) {
 
 // Empty header values
 
-pub fn empty_request() -> Request<()> {
-    Request::get("https://localhost").body(()).unwrap()
+pub fn empty_request() -> Request<Body> {
+    Request::get("https://localhost").body(().into()).unwrap()
 }
 
-pub fn empty_response() -> Response<()> {
-    Response::builder().status(StatusCode::OK).body(()).unwrap()
+pub fn empty_response() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(().into())
+        .unwrap()
 }
 
 pub async fn empty_server(incoming: IncomingConnection, stop: oneshot::Receiver<()>) {
@@ -79,7 +82,7 @@ pub async fn empty_server_body(incoming: IncomingConnection, stop: oneshot::Rece
 
 // Google header values
 
-pub fn google_request() -> Request<()> {
+pub fn google_request() -> Request<Body> {
     Request::get("https://www.google.com/search?client=ubuntu&channel=fs&q=sfqfd&ie=utf-8&oe=utf-8")
         .header("Host", "www.google.com")
         .header(
@@ -97,7 +100,7 @@ pub fn google_request() -> Request<()> {
         .header("Upgrade-Insecure-Requests", "1")
         .header("Cache-Control", "max-age=0")
         .header("TE", "Trailers")
-        .body(())
+        .body(().into())
         .unwrap()
 }
 
@@ -149,13 +152,12 @@ pub async fn google_server_body(incoming: IncomingConnection, stop: oneshot::Rec
 
 // Runner
 
-fn request<T, Fut>(
+fn request<Fut>(
     bench: &mut Bencher,
-    make_request: fn() -> Request<T>,
+    make_request: fn() -> Request<Body>,
     service: fn(incoming_conn: IncomingConnection, stop_recv: oneshot::Receiver<()>) -> Fut,
     settings: Settings,
 ) where
-    T: Into<Body>,
     Fut: Future<Output = ()> + 'static,
 {
     let _ = tracing_subscriber::fmt::try_init();
@@ -177,18 +179,16 @@ fn request<T, Fut>(
     server.join().expect("server");
 }
 
-async fn request_client<T: Into<Body>>(client: &client::Connection, request: Request<T>) {
+async fn request_client(client: &client::Connection, request: Request<Body>) {
     let (recv_resp, _) = client.send_request(request).await.expect("request");
     let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
     while let Some(Ok(_)) = body_reader.data().await {}
 }
-async fn request_server<T>(
+async fn request_server(
     mut incoming_conn: IncomingConnection,
     mut stop_recv: oneshot::Receiver<()>,
-    make_response: fn() -> Response<T>,
-) where
-    T: Into<Body>,
-{
+    make_response: fn() -> Response<Body>,
+) {
     let mut incoming_req = incoming_conn
         .next()
         .await
@@ -200,7 +200,7 @@ async fn request_server<T>(
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
                 let (_, _, sender) = recv_req.await.expect("recv_req");
-                let _ = sender
+                sender
                     .send_response(make_response())
                     .await
                     .expect("send_response");

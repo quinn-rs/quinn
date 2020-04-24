@@ -32,6 +32,7 @@ futures-util = { version = "0.3", default-features = false }
 http = "0.2"
 http-body = "0.3"
 lazy_static = "1"
+pin-project = "0.4"
 quinn-proto = { path = "../quinn-proto", version = "0.6.0" }
 quinn = { path = "../quinn", version = "0.6.0", features = ["tls-rustls"] }
 rustls = { version = "0.17", features = ["quic"] }
