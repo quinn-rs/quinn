@@ -14,6 +14,7 @@ use futures::{
     FutureExt,
 };
 use http::HeaderMap;
+use http_body::Body as HttpBody;
 use quinn::SendStream;
 use quinn_proto::StreamId;
 use std::future::Future;
@@ -56,6 +57,26 @@ impl From<Bytes> for Body {
 impl From<&str> for Body {
     fn from(buf: &str) -> Self {
         Body(Some(Bytes::copy_from_slice(buf.as_ref())))
+    }
+}
+
+impl HttpBody for Body {
+    type Data = Bytes;
+    type Error = Error;
+    fn poll_data(
+        mut self: Pin<&mut Self>,
+        _: &mut Context,
+    ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+        match self.0.take() {
+            Some(b) => Poll::Ready(Some(Ok(b))),
+            None => Poll::Ready(None),
+        }
+    }
+    fn poll_trailers(
+        self: Pin<&mut Self>,
+        _: &mut Context,
+    ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+        Poll::Ready(Ok(None))
     }
 }
 
