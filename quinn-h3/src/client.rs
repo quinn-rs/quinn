@@ -614,7 +614,7 @@ impl RecvResponse {
     /// Server will receive a request error with `REQUEST_CANCELLED` code. Any call on any
     /// object related with this request will fail.
     pub fn cancel(mut self) {
-        let recv = match mem::replace(&mut self.state, RecvResponseState::Finished) {
+        let mut recv = match mem::replace(&mut self.state, RecvResponseState::Finished) {
             RecvResponseState::Receiving(recv) => recv,
             RecvResponseState::Decoding(_) => self.recv.take().expect("cancel recv"),
             _ => return,
@@ -657,7 +657,7 @@ impl Future for RecvResponse {
                             }
                             _ => {
                                 match mem::replace(&mut self.state, RecvResponseState::Finished) {
-                                    RecvResponseState::Receiving(recv) => {
+                                    RecvResponseState::Receiving(mut recv) => {
                                         recv.reset(ErrorCode::FRAME_UNEXPECTED);
                                     }
                                     _ => unreachable!(),

@@ -170,5 +170,5 @@ impl Future for SendUni {
 }
 
 pub trait Reset {
-    fn reset(self, code: ErrorCode);
+    fn reset(&mut self, code: ErrorCode);
 }
