@@ -586,7 +586,7 @@ impl RecvRequest {
     /// Reject this request with `REQUEST_REJECTED` code.
     pub fn reject(mut self) {
         let state = mem::replace(&mut self.state, RecvRequestState::Finished);
-        if let RecvRequestState::Receiving(recv, mut send) = state {
+        if let RecvRequestState::Receiving(mut recv, mut send) = state {
             recv.reset(ErrorCode::REQUEST_REJECTED);
             send.reset(ErrorCode::REQUEST_REJECTED.into());
         }
@@ -650,7 +650,7 @@ impl Future for RecvRequest {
                                 ),
                             };
                             match mem::replace(&mut self.state, RecvRequestState::Finished) {
-                                RecvRequestState::Receiving(recv, _) => recv.reset(code),
+                                RecvRequestState::Receiving(ref mut recv, _) => recv.reset(code),
                                 _ => unreachable!(),
                             }
                             return Poll::Ready(Err(error));
@@ -660,7 +660,7 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
                     self.state = RecvRequestState::Finished;
-                    let (recv, mut send) = self
+                    let (mut recv, mut send) = self
                         .streams
                         .take()
                         .ok_or_else(|| Error::internal("Recv request invalid state"))?;

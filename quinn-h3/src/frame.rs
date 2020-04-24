@@ -16,8 +16,8 @@ use crate::{proto::ErrorCode, streams::Reset};
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
 impl Reset for FrameStream {
-    fn reset(self, error_code: ErrorCode) {
-        let _ = self.into_inner().stop(error_code.0.into());
+    fn reset(&mut self, error_code: ErrorCode) {
+        let _ = self.get_mut().stop(error_code.0.into());
     }
 }
 
@@ -134,8 +134,8 @@ where
         }
     }
 
-    pub fn reset(self, err_code: ErrorCode) {
-        if let Some(mut s) = self.send {
+    pub fn reset(&mut self, err_code: ErrorCode) {
+        if let Some(ref mut s) = self.send {
             s.reset(err_code.into());
         }
     }
