@@ -86,6 +86,7 @@ extern crate assert_matches;
 mod tests;
 
 pub use body::{Body, BodyReader, BodyWriter};
+pub use data::SendData;
 pub use proto::settings::Settings;
 
 pub mod client;
@@ -93,6 +94,7 @@ pub mod server;
 
 mod body;
 mod connection;
+mod data;
 mod frame;
 mod headers;
 mod proto;
@@ -175,6 +177,10 @@ impl Error {
                 .and_then(|e| e.downcast_ref::<quinn_proto::ConnectionError>()),
             _ => None,
         }
+    }
+
+    pub(crate) fn body(e: Box<dyn StdError + Send + Sync>) -> Self {
+        Self::Body(e)
     }
 }
 
