@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
 
 async fn handle_request(recv_request: RecvRequest) -> Result<()> {
     // Receive the request's headers
-    let (request, _body_reader, sender) = recv_request.await?;
+    let (request, sender) = recv_request.await?;
     info!("received request: {:?}", request);
 
     let response = Response::builder()

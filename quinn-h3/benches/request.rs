@@ -182,8 +182,8 @@ fn request<Fut>(
 async fn request_client(client: &client::Connection, request: Request<Body>) {
     let (req, recv_resp) = client.send_request(request);
     req.await.expect("request");
-    let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
-    while let Some(Ok(_)) = body_reader.data().await {}
+    let mut resp = recv_resp.await.expect("recv_resp");
+    resp.body_mut().read_to_end().await.expect("read body");
 }
 
 async fn request_server(
@@ -201,7 +201,7 @@ async fn request_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (_, _, sender) = recv_req.await.expect("recv_req");
+                let (_, sender) = recv_req.await.expect("recv_req");
                 sender.send_response(make_response())
                     .await
                     .expect("send_response");

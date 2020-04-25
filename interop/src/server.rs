@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use futures::{ready, AsyncReadExt, Future, StreamExt, TryFutureExt};
+use futures::{ready, Future, StreamExt, TryFutureExt};
 use http::{Response, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
 use structopt::{self, StructOpt};
@@ -140,17 +140,13 @@ async fn h3_handle_connection(connecting: quinn::Connecting) -> Result<()> {
 }
 
 async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
-    let (request, mut recv_body, sender) = recv_request.await?;
+    let (mut request, sender) = recv_request.await?;
     println!("received request: {:?}", request);
 
-    let mut body = Vec::with_capacity(1024);
-    recv_body
-        .read_to_end(&mut body)
-        .await
-        .map_err(|e| anyhow!("failed to send response headers: {:?}", e))?;
-
+    let body = request.body_mut().read_to_end().await?;
     println!("received body: {}", String::from_utf8_lossy(&body));
-    if let Some(trailers) = recv_body.trailers().await {
+
+    if let Some(trailers) = request.body_mut().trailers().await? {
         println!("received trailers: {:?}", trailers);
     }
 
