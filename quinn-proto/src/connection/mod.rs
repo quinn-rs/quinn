@@ -58,7 +58,7 @@ where
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
-    tls: S,
+    crypto: S,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
     /// The destination CID we're currently sending to
@@ -170,7 +170,7 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
-        tls: S,
+        crypto: S,
         now: Instant,
     ) -> Self {
         let side = if server_config.is_some() {
@@ -194,7 +194,7 @@ where
         let mut this = Self {
             endpoint_config,
             server_config,
-            tls,
+            crypto,
             handshake_cid: loc_cid,
             rem_cid,
             rem_handshake_cid: rem_cid,
@@ -261,7 +261,7 @@ where
         };
         if side.is_client() {
             // Kick off the connection
-            this.write_tls();
+            this.write_crypto();
             this.init_0rtt();
         }
         this
@@ -812,7 +812,7 @@ where
 
     /// Get a session reference
     pub fn crypto_session(&self) -> &S {
-        &self.tls
+        &self.crypto
     }
 
     /// The number of streams that may have unacknowledged data.
@@ -1383,15 +1383,15 @@ where
     }
 
     fn init_0rtt(&mut self) {
-        let packet = match self.tls.early_crypto() {
+        let packet = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
         };
         if self.side.is_client() {
-            match self.tls.transport_parameters() {
+            match self.crypto.transport_parameters() {
                 Ok(params) => {
-                    let params =
-                        params.expect("rustls didn't supply transport parameters with ticket");
+                    let params = params
+                        .expect("crypto layer didn't supply transport parameters with ticket");
                     // Certain values must not be cached
                     let params = TransportParameters {
                         original_connection_id: None,
@@ -1417,7 +1417,11 @@ where
         });
     }
 
-    fn read_tls(&mut self, space: SpaceId, crypto: &frame::Crypto) -> Result<(), TransportError> {
+    fn read_crypto(
+        &mut self,
+        space: SpaceId,
+        crypto: &frame::Crypto,
+    ) -> Result<(), TransportError> {
         let expected = if !self.state.is_handshake() {
             SpaceId::Data
         } else if self.highest_space == SpaceId::Initial {
@@ -1450,16 +1454,16 @@ where
             if n == 0 {
                 return Ok(());
             }
-            trace!("read {} TLS bytes", n);
-            self.tls.read_handshake(&buf[..n])?;
+            trace!("read {} CRYPTO bytes", n);
+            self.crypto.read_handshake(&buf[..n])?;
         }
     }
 
-    fn write_tls(&mut self) {
+    fn write_crypto(&mut self) {
         loop {
             let space = self.highest_space;
             let mut outgoing = Vec::new();
-            if let Some(crypto) = self.tls.write_handshake(&mut outgoing) {
+            if let Some(crypto) = self.crypto.write_handshake(&mut outgoing) {
                 match space {
                     SpaceId::Initial => {
                         self.upgrade_crypto(SpaceId::Handshake, crypto);
@@ -1481,7 +1485,7 @@ where
                 }
             }
             self.space_mut(space).crypto_offset += outgoing.len() as u64;
-            trace!("wrote {} {:?} TLS bytes", outgoing.len(), space);
+            trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
             self.space_mut(space)
                 .pending
                 .crypto
@@ -1502,7 +1506,7 @@ where
         trace!("{:?} keys ready", space);
         if space == SpaceId::Data {
             // Precompute the first key update
-            self.next_crypto = Some(self.tls.update_keys(&crypto));
+            self.next_crypto = Some(self.crypto.update_keys(&crypto));
         }
         self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
         debug_assert!(space as usize > self.highest_space as usize);
@@ -1811,7 +1815,7 @@ where
                             return Ok(());
                         }
 
-                        if self.tls.is_handshaking() {
+                        if self.crypto.is_handshaking() {
                             trace!("handshake ongoing");
                             self.state = State::Handshake(state::Handshake {
                                 token: None,
@@ -1822,17 +1826,16 @@ where
 
                         if self.side.is_client() {
                             // Client-only beceause server params were set from the client's Initial
-                            let params =
-                                self.tls
-                                    .transport_parameters()?
-                                    .ok_or_else(|| TransportError {
-                                        code: TransportErrorCode::crypto(0x6d),
-                                        frame: None,
-                                        reason: "transport parameters missing".into(),
-                                    })?;
+                            let params = self.crypto.transport_parameters()?.ok_or_else(|| {
+                                TransportError {
+                                    code: TransportErrorCode::crypto(0x6d),
+                                    frame: None,
+                                    reason: "transport parameters missing".into(),
+                                }
+                            })?;
 
                             if self.has_0rtt() {
-                                if !self.tls.early_data_accepted().unwrap() {
+                                if !self.crypto.early_data_accepted().unwrap() {
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
@@ -1885,14 +1888,13 @@ where
                             && starting_space == SpaceId::Initial
                             && self.highest_space != SpaceId::Initial
                         {
-                            let params =
-                                self.tls
-                                    .transport_parameters()?
-                                    .ok_or_else(|| TransportError {
-                                        code: TransportErrorCode::crypto(0x6d),
-                                        frame: None,
-                                        reason: "transport parameters missing".into(),
-                                    })?;
+                            let params = self.crypto.transport_parameters()?.ok_or_else(|| {
+                                TransportError {
+                                    code: TransportErrorCode::crypto(0x6d),
+                                    frame: None,
+                                    reason: "transport parameters missing".into(),
+                                }
+                            })?;
                             self.validate_params(&params)?;
                             self.set_params(params);
                             self.issue_cids();
@@ -1968,7 +1970,7 @@ where
             match frame {
                 Frame::Padding | Frame::Ping => {}
                 Frame::Crypto(frame) => {
-                    self.read_tls(packet.header.space(), &frame)?;
+                    self.read_crypto(packet.header.space(), &frame)?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), ack)?;
@@ -1992,7 +1994,7 @@ where
             }
         }
 
-        self.write_tls();
+        self.write_crypto();
         Ok(())
     }
 
@@ -2048,7 +2050,7 @@ where
                     return Err(err);
                 }
                 Frame::Crypto(frame) => {
-                    self.read_tls(SpaceId::Data, &frame)?;
+                    self.read_crypto(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
                     self.streams.received(frame)?;
@@ -2684,7 +2686,7 @@ where
         // Generate keys for the key phase after the one we're switching to, store them in
         // `next_crypto`, make the contents of `next_crypto` current, and move the current keys into
         // `prev_crypto`.
-        let new = self.tls.update_keys(self.next_crypto.as_ref().unwrap());
+        let new = self.crypto.update_keys(self.next_crypto.as_ref().unwrap());
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data as usize]
                 .crypto
