@@ -21,6 +21,7 @@ use crate::{
         self,
         connection::{Connection, DecodeResult, Error as ConnectionError, PendingStreamType},
         frame::{HeadersFrame, HttpFrame},
+        headers::Header,
         settings::Error as SettingsError,
         ErrorCode, StreamType,
     },
@@ -181,32 +182,35 @@ impl ConnectionInner {
         }
     }
 
-    pub fn decode_header(
+    pub fn poll_decode(
         &mut self,
         cx: &mut Context,
         stream_id: StreamId,
         header: &HeadersFrame,
-    ) -> Result<DecodeResult, Error> {
+    ) -> Poll<Result<Header, Error>> {
         if self.closed {
-            return Err(Error::Aborted);
+            return Poll::Ready(Err(Error::Aborted));
         }
-        self.inner
+        let res = self
+            .inner
             .decode_header(stream_id, header)
-            .map_err(|e| Error::peer(format!("decoding header failed: {:?}", e)))
-            .map(|r| {
-                match &r {
-                    DecodeResult::Decoded(_, true) => self.wake(), // send header acknowledgement
-                    DecodeResult::Decoded(_, _) => (),
-                    DecodeResult::MissingRefs(required_ref) => {
-                        self.blocked_streams
-                            .entry(*required_ref)
-                            .or_insert_with(HashMap::new)
-                            .entry(stream_id)
-                            .or_insert_with(|| cx.waker().clone());
-                    }
-                };
-                r
-            })
+            .map_err(|e| Error::peer(format!("decoding header failed: {:?}", e)))?;
+        match res {
+            DecodeResult::Decoded(h, had_refs) => {
+                if had_refs {
+                    self.wake(); // send header acknowledgement
+                }
+                Poll::Ready(Ok(h))
+            }
+            DecodeResult::MissingRefs(required_ref) => {
+                self.blocked_streams
+                    .entry(required_ref)
+                    .or_insert_with(HashMap::new)
+                    .entry(stream_id)
+                    .or_insert_with(|| cx.waker().clone());
+                Poll::Pending
+            }
+        }
     }
 
     fn poll_incoming_bi(&mut self, cx: &mut Context) -> Result<(), DriverError> {
