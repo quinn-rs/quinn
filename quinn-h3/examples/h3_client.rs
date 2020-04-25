@@ -7,7 +7,7 @@ use http::{Request, Uri};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 
-use quinn_h3::client;
+use quinn_h3::{client, Body};
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "h3_client")]
@@ -50,10 +50,11 @@ async fn main() -> Result<()> {
 
     let request = Request::get(uri)
         .header("client", "quinn-h3:0.0.1")
-        .body(())?;
+        .body(Body::from(()))?;
 
     // Send the request
-    let (recv_response, _) = conn.send_request(request).await?;
+    let (send_data, recv_response) = conn.send_request(request);
+    send_data.await?;
     // Wait for the response
     let (response, mut recv_body) = recv_response.await?;
 

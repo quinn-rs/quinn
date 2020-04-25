@@ -9,10 +9,7 @@ use std::{
 };
 
 use futures::{channel::oneshot, Future};
-use tokio::{
-    io::AsyncWriteExt as _,
-    runtime::{Builder, Runtime},
-};
+use tokio::runtime::{Builder, Runtime};
 use tracing::{error_span, span, Level};
 use tracing_futures::Instrument as _;
 
@@ -23,7 +20,7 @@ use quinn::{ClientConfigBuilder, ServerConfigBuilder};
 use quinn_h3::{
     self, client,
     server::{self, IncomingConnection},
-    BodyWriter, Error, Settings,
+    Error, Settings,
 };
 
 pub struct Bench {
@@ -116,18 +113,6 @@ impl Bench {
                 .expect("connecting")
         });
         (connection, runtime)
-    }
-}
-
-pub async fn send_body(mut body_writer: BodyWriter, frame_size: usize, mut total_size: usize) {
-    let data = "a".repeat(frame_size);
-    while total_size > 0 {
-        let size = std::cmp::min(frame_size, total_size);
-        body_writer
-            .write_all(&data.as_bytes()[..size])
-            .await
-            .expect("body write");
-        total_size -= size;
     }
 }
 
