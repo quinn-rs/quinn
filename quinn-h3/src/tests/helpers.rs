@@ -23,9 +23,9 @@ use crate::{
     ZeroRttAccepted,
 };
 
-pub fn get(path: &str) -> Request<()> {
+pub fn get(path: &str) -> Request<Body> {
     Request::get(format!("https://localhost{}", path))
-        .body(())
+        .body(Body::from(()))
         .expect("request")
 }
 
@@ -105,14 +105,9 @@ impl Helper {
     pub async fn make_0rtt(&mut self) -> (client::Connection, ZeroRttAccepted) {
         if !self.got_0rtt {
             let conn = self.make_connection().await;
-            let resp = conn
-                .send_request(get("/"))
-                .await
-                .expect("request")
-                .0
-                .await
-                .expect("response");
-            println!("got response {:?}", resp.0);
+            let (req, resp) = conn.send_request(get("/"));
+            req.await.expect("request");
+            resp.await.expect("response");
             conn.close();
             self.got_0rtt = true;
         }

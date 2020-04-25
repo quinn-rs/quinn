@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
+use futures::{AsyncReadExt, StreamExt};
 use http::{Response, StatusCode};
 use tokio::time::{delay_for, Duration};
 
@@ -85,10 +85,8 @@ async fn client_send_body() {
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, _) = conn
-        .send_request(post("/", "the body"))
-        .await
-        .expect("request");
+    let (req, resp) = conn.send_request(post("/", "the body"));
+    req.await.expect("request");
     resp.await.expect("recv response");
     drop(conn);
 
@@ -103,12 +101,8 @@ async fn client_send_stream_body() {
     let server_handle = tokio::spawn(async move { serve_one_request_client_body(incoming).await });
 
     let conn = helper.make_connection().await;
-    let (resp, mut body_writer) = conn.send_request(post("/", ())).await.expect("request");
-    body_writer
-        .write_all(&b"the body"[..])
-        .await
-        .expect("write body");
-    body_writer.close().await.expect("body close");
+    let (req, resp) = conn.send_request(post("/", "the body"));
+    req.await.expect("request");
     let _ = resp.await.unwrap();
     drop(conn);
 
@@ -143,7 +137,8 @@ async fn client_cancel_response() {
 
     let conn = helper.make_connection().await;
     delay_for(Duration::from_millis(50)).await;
-    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.unwrap();
     resp.cancel();
 
     assert_matches!(
@@ -179,11 +174,13 @@ async fn go_away() {
     });
 
     let conn = helper.make_connection().await;
-    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.unwrap();
     assert!(resp.await.is_ok());
 
     delay_for(Duration::from_millis(50)).await;
-    let (resp, _) = conn.send_request(get("/")).await.unwrap();
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.unwrap();
     assert_matches!(
         resp.await.map(|_| ()),
         Err(Error::Http(HttpError::RequestRejected, None))
@@ -223,8 +220,9 @@ async fn zero_rtt_success() {
     let server_handle = tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, zerortt_accepted) = helper.make_0rtt().await;
-    let resp = conn.send_request(get("/")).await.expect("request").0.await;
-    assert!(resp.is_ok());
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.expect("request");
+    assert!(resp.await.is_ok());
     assert!(zerortt_accepted.await);
     conn.close();
 
@@ -239,8 +237,9 @@ async fn zero_rtt_success_after_handshake() {
 
     let (conn, zerortt_accepted) = helper.make_0rtt().await;
     assert!(zerortt_accepted.await);
-    let resp = conn.send_request(get("/")).await.expect("request").0.await;
-    assert!(resp.is_ok());
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.expect("request");
+    assert!(resp.await.is_ok());
     conn.close();
 
     assert!(timeout_join(server_handle).await.is_ok());
@@ -261,13 +260,9 @@ async fn zero_rtt_fails_request_success() {
         Err(c) => c.await.expect("connecting"),
         Ok(_) => panic!("0-RTT shall fail"),
     };
-    let resp = conn
-        .send_request(post("/", ()))
-        .await
-        .expect("request")
-        .0
-        .await;
-    assert!(resp.is_ok());
+    let (req, resp) = conn.send_request(post("/", ()));
+    req.await.expect("request");
+    assert!(resp.await.is_ok());
     conn.close();
 
     assert!(timeout_join(server_handle).await.is_ok());
@@ -280,7 +275,7 @@ async fn zero_rtt_client_forbids_non_idempotent() {
     tokio::spawn(async move { serve_n_0rtt(incoming, 2).await });
 
     let (conn, _) = helper.make_0rtt().await;
-    assert!(conn.send_request(post("/", ())).await.is_err());
+    assert!(conn.send_request(post("/", ())).0.await.is_err());
 }
 
 #[tokio::test]
@@ -291,7 +286,7 @@ async fn zero_rtt_client_accepts_non_idempotent_after_handshake() {
 
     let (conn, zero_rtt_accepted) = helper.make_0rtt().await;
     assert!(zero_rtt_accepted.await);
-    assert!(conn.send_request(post("/", ())).await.is_ok());
+    assert!(conn.send_request(post("/", ())).0.await.is_ok());
 }
 
 #[tokio::test]

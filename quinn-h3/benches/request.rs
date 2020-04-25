@@ -72,7 +72,7 @@ pub async fn empty_server(incoming: IncomingConnection, stop: oneshot::Receiver<
 pub fn empty_response_body() -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
-        .body("a".repeat(64 * 1024).as_str().into())
+        .body(Body::from("a".repeat(64 * 1024).as_str()))
         .unwrap()
 }
 
@@ -120,7 +120,7 @@ pub fn google_response() -> Response<Body> {
             .header("set-cookie", "SIDCC=1111111111111111111111111111111111111111111111111111111111111111111111111111; expires=Mon, 19-Apr-2021 09:11:37 GMT; path=/; domain=.google.com; priority=high")
             .header("alt-svc", "quic=\":443\"; ma=2592000; v=\"46,43\",h3-Q050=\":443\"; ma=2592000,h3-Q049=\":443\"; ma=2592000,h3-Q048=\":443\"; ma=2592000,h3-Q046=\":443\"; ma=2592000,h3-Q043=\":443\"; ma=2592000,h3-T050=\":443\"; ma=2592000")
             .header("X-Firefox-Spdy", "h2")
-            .body(().into()).unwrap()
+            .body(Body::from(())).unwrap()
 }
 
 pub async fn google_server(incoming: IncomingConnection, stop: oneshot::Receiver<()>) {
@@ -143,7 +143,7 @@ pub fn google_response_body() -> Response<Body> {
             .header("set-cookie", "SIDCC=1111111111111111111111111111111111111111111111111111111111111111111111111111; expires=Mon, 19-Apr-2021 09:11:37 GMT; path=/; domain=.google.com; priority=high")
             .header("alt-svc", "quic=\":443\"; ma=2592000; v=\"46,43\",h3-Q050=\":443\"; ma=2592000,h3-Q049=\":443\"; ma=2592000,h3-Q048=\":443\"; ma=2592000,h3-Q046=\":443\"; ma=2592000,h3-Q043=\":443\"; ma=2592000,h3-T050=\":443\"; ma=2592000")
             .header("X-Firefox-Spdy", "h2")
-            .body("a".repeat(64 * 1024).as_str().into()).unwrap()
+            .body(Body::from("a".repeat(64 * 1024).as_str())).unwrap()
 }
 
 pub async fn google_server_body(incoming: IncomingConnection, stop: oneshot::Receiver<()>) {
@@ -180,10 +180,12 @@ fn request<Fut>(
 }
 
 async fn request_client(client: &client::Connection, request: Request<Body>) {
-    let (recv_resp, _) = client.send_request(request).await.expect("request");
+    let (req, recv_resp) = client.send_request(request);
+    req.await.expect("request");
     let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
     while let Some(Ok(_)) = body_reader.data().await {}
 }
+
 async fn request_server(
     mut incoming_conn: IncomingConnection,
     mut stop_recv: oneshot::Receiver<()>,
@@ -200,8 +202,7 @@ async fn request_server(
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
                 let (_, _, sender) = recv_req.await.expect("recv_req");
-                sender
-                    .send_response(make_response())
+                sender.send_response(make_response())
                     .await
                     .expect("send_response");
             },

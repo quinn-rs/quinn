@@ -8,7 +8,7 @@ use tracing_futures::Instrument as _;
 use quinn_h3::{self, client, server::IncomingConnection, Body};
 
 mod helpers;
-use helpers::{send_body, Bench, BenchBody};
+use helpers::{Bench, BenchBody};
 
 benchmark_group!(
     benches_download,
@@ -67,19 +67,18 @@ fn download(bench: &mut Bencher, frame_size: usize) {
 }
 
 async fn download_client(client: &client::Connection, frame_size: usize, total_size: usize) {
-    let (recv_resp, _) = client
-        .send_request(
-            Request::get("https://localhost/")
-                .header("frame_size", format!("{}", frame_size))
-                .header("total_size", format!("{}", total_size))
-                .body(())
-                .unwrap(),
-        )
-        .await
-        .expect("request");
+    let (req, recv_resp) = client.send_request(
+        Request::get("https://localhost/")
+            .header("frame_size", format!("{}", frame_size))
+            .header("total_size", format!("{}", total_size))
+            .body(Body::from(()))
+            .unwrap(),
+    );
+    req.await.expect("request");
     let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
     while let Some(Ok(_)) = body_reader.data().await {}
 }
+
 async fn download_server(
     mut incoming_conn: IncomingConnection,
     mut stop_recv: oneshot::Receiver<()>,
@@ -152,11 +151,12 @@ fn upload(bench: &mut Bencher, frame_size: usize) {
 }
 
 async fn upload_client(client: &client::Connection, frame_size: usize, total_size: usize) {
-    let (recv_resp, body_writer) = client
-        .send_request(Request::get("https://localhost/").body(()).unwrap())
-        .await
-        .expect("request");
-    send_body(body_writer, frame_size, total_size).await;
+    let (req, recv_resp) = client.send_request(
+        Request::get("https://localhost/")
+            .body(BenchBody::new(frame_size, total_size))
+            .unwrap(),
+    );
+    req.await.expect("request");
     let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
     while let Some(Ok(_)) = body_reader.data().await {}
 }
@@ -177,8 +177,12 @@ async fn upload_server(
             Some(recv_req) = incoming_req.next() => {
                 let (_, mut body_reader, sender) = recv_req.await.expect("recv_req");
                 while let Some(_) = body_reader.data().await {}
+                let response = Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::from(()))
+                    .unwrap();
                 sender
-                    .send_response(Response::builder().status(StatusCode::OK).body(Body::from(())).unwrap())
+                    .send_response(response)
                     .await
                     .expect("send_response");
             }

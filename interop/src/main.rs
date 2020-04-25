@@ -16,6 +16,8 @@ use structopt::StructOpt;
 use tracing::{debug, error, info, info_span, warn};
 use tracing_futures::Instrument as _;
 
+use quinn_h3::Body;
+
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
 struct Opt {
@@ -902,7 +904,8 @@ fn build_result(
 }
 
 async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<usize> {
-    let (response, _) = conn.send_request(http::Request::get(uri).body(())?).await?;
+    let (request, response) = conn.send_request(http::Request::get(uri).body(Body::from(()))?);
+    request.await?;
 
     let (resp, mut recv_body) = response.await?;
     debug!("resp: {:?}", resp);
