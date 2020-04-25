@@ -85,7 +85,7 @@ use quinn_proto::{Side, StreamId};
 use tracing::trace;
 
 use crate::{
-    body::BodyReader,
+    body::RecvBody,
     connection::{ConnectionDriver, ConnectionRef},
     frame::{FrameDecoder, FrameStream},
     headers::DecodeHeaders,
@@ -592,7 +592,7 @@ where
                                 .map_err(|_| Error::internal("SendRequest chan cancelled"))?;
 
                             let header = Header::request(method, uri, headers);
-                            let send = SendData::new(send, me.conn.clone(), header, body);
+                            let send = SendData::new(send, me.conn.clone(), header, body, false);
                             me.state.set(SendRequestState::Sending(send));
                         }
                     }
@@ -691,10 +691,29 @@ impl RecvResponse {
             .cancel_request(self.stream_id.unwrap());
         recv.reset(ErrorCode::REQUEST_CANCELLED);
     }
+
+    fn build_response(
+        &self,
+        header: Header,
+        recv: FrameStream,
+    ) -> Result<Response<RecvBody>, Error> {
+        let (status, headers) = header.into_response_parts()?;
+        let mut response = Response::builder()
+            .status(status)
+            .version(http::version::Version::HTTP_3)
+            .body(RecvBody::new(
+                self.conn.clone(),
+                self.stream_id.unwrap(),
+                recv,
+            ))
+            .unwrap();
+        *response.headers_mut() = headers;
+        Ok(response)
+    }
 }
 
 impl Future for RecvResponse {
-    type Output = Result<(Response<()>, BodyReader), crate::Error>;
+    type Output = Result<Response<RecvBody>, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
@@ -747,37 +766,13 @@ impl Future for RecvResponse {
                 }
                 RecvResponseState::Decoding(ref mut decode) => {
                     let headers = ready!(Pin::new(decode).poll(cx))?;
-                    let response = build_response(headers);
-                    match response {
-                        Err(e) => return Poll::Ready(Err(e)),
-                        Ok(r) => {
-                            self.state = RecvResponseState::Finished;
-                            return Poll::Ready(Ok((
-                                r,
-                                BodyReader::new(
-                                    self.recv.take().unwrap(),
-                                    self.conn.clone(),
-                                    self.stream_id.unwrap(),
-                                    true,
-                                ),
-                            )));
-                        }
-                    }
+                    let recv = self.recv.take().unwrap();
+                    let response = self.build_response(headers, recv)?;
+                    return Poll::Ready(Ok(response));
                 }
             }
         }
     }
-}
-
-fn build_response(header: Header) -> Result<Response<()>, Error> {
-    let (status, headers) = header.into_response_parts()?;
-    let mut response = Response::builder()
-        .status(status)
-        .version(http::version::Version::HTTP_3)
-        .body(())
-        .unwrap();
-    *response.headers_mut() = headers;
-    Ok(response)
 }
 
 #[cfg(test)]

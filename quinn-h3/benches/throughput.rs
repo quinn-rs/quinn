@@ -75,8 +75,8 @@ async fn download_client(client: &client::Connection, frame_size: usize, total_s
             .unwrap(),
     );
     req.await.expect("request");
-    let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
-    while let Some(Ok(_)) = body_reader.data().await {}
+    let mut resp = recv_resp.await.expect("recv_resp");
+    while let Some(Ok(_)) = resp.body_mut().data().await {}
 }
 
 async fn download_server(
@@ -93,7 +93,7 @@ async fn download_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (request, _, sender) = recv_req.await.expect("recv_req");
+                let (request, sender) = recv_req.await.expect("recv_req");
                 let frame_size = request
                     .headers()
                     .get("frame_size")
@@ -157,8 +157,8 @@ async fn upload_client(client: &client::Connection, frame_size: usize, total_siz
             .unwrap(),
     );
     req.await.expect("request");
-    let (_, mut body_reader) = recv_resp.await.expect("recv_resp");
-    while let Some(Ok(_)) = body_reader.data().await {}
+    let mut resp = recv_resp.await.expect("recv_resp");
+    while let Some(Ok(_)) = resp.body_mut().data().await {}
 }
 
 async fn upload_server(
@@ -175,8 +175,8 @@ async fn upload_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (_, mut body_reader, sender) = recv_req.await.expect("recv_req");
-                while let Some(_) = body_reader.data().await {}
+                let (mut req, sender) = recv_req.await.expect("recv_req");
+                while let Some(Ok(_)) = req.body_mut().data().await {}
                 let response = Response::builder()
                     .status(StatusCode::OK)
                     .body(Body::from(()))

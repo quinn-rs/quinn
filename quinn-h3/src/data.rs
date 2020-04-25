@@ -34,6 +34,7 @@ pub struct SendData<B, P> {
     conn: ConnectionRef,
     send: Option<SendStream>,
     stream_id: StreamId,
+    finish: bool,
 }
 
 #[pin_project]
@@ -53,14 +54,21 @@ where
     B: HttpBody + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
 {
-    pub(crate) fn new(send: SendStream, conn: ConnectionRef, headers: Header, body: B) -> Self {
+    pub(crate) fn new(
+        send: SendStream,
+        conn: ConnectionRef,
+        headers: Header,
+        body: B,
+        finish: bool,
+    ) -> Self {
         Self {
             conn,
+            body,
+            finish,
             headers: Some(headers),
             stream_id: send.id(),
             send: Some(send),
             state: SendDataState::Initial,
-            body,
         }
     }
 
@@ -151,6 +159,10 @@ where
                 }
                 SendDataState::Closing => {
                     ready!(Pin::new(me.send.as_mut().unwrap()).poll_finish(cx))?;
+                    if *me.finish {
+                        let mut conn = me.conn.h3.lock().unwrap();
+                        conn.inner.request_finished(*me.stream_id);
+                    }
                     return Poll::Ready(Ok(()));
                 }
                 SendDataState::Finished => return Poll::Ready(Ok(())),

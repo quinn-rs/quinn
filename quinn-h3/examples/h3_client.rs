@@ -2,7 +2,6 @@ use std::{fs, io, net::ToSocketAddrs, path::PathBuf};
 use structopt::{self, StructOpt};
 
 use anyhow::Result;
-use futures::AsyncReadExt;
 use http::{Request, Uri};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
@@ -56,18 +55,16 @@ async fn main() -> Result<()> {
     let (send_data, recv_response) = conn.send_request(request);
     send_data.await?;
     // Wait for the response
-    let (response, mut recv_body) = recv_response.await?;
+    let mut response = recv_response.await?;
 
     info!("received response: {:?}", response);
 
     // Stream the response body into a vec
-    let mut body = Vec::with_capacity(1024);
-    recv_body.read_to_end(&mut body).await?;
-
+    let body = response.body_mut().read_to_end().await?;
     info!("received body: {}", String::from_utf8_lossy(&body));
 
     // Get the trailers if any
-    if let Some(trailers) = recv_body.trailers().await {
+    if let Some(trailers) = response.body_mut().trailers().await? {
         info!("received trailers: {:?}", trailers);
     }
 

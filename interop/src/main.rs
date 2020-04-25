@@ -907,14 +907,11 @@ async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<
     let (request, response) = conn.send_request(http::Request::get(uri).body(Body::from(()))?);
     request.await?;
 
-    let (resp, mut recv_body) = response.await?;
+    let mut resp = response.await?;
     debug!("resp: {:?}", resp);
-    let mut total_len = 0usize;
-    while let Some(d) = recv_body.data().await {
-        total_len += d?.len()
-    }
+    let body = resp.body_mut().read_to_end().await?;
 
-    Ok(total_len)
+    Ok(body.len())
 }
 
 async fn hq_get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {

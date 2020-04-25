@@ -124,7 +124,7 @@ use quinn_proto::{Side, StreamId};
 use rustls::TLSError;
 
 use crate::{
-    body::BodyReader,
+    body::RecvBody,
     connection::{ConnectionDriver, ConnectionRef},
     data::SendData,
     frame::{FrameDecoder, FrameStream},
@@ -601,21 +601,31 @@ impl RecvRequest {
         }
     }
 
-    fn build_request(&self, headers: Header) -> Result<Request<()>, Error> {
-        let (method, uri, headers) = headers.into_request_parts()?;
+    fn build_request(
+        &self,
+        headers: Header,
+        recv: FrameStream,
+    ) -> Result<Request<RecvBody>, (Error, FrameStream)> {
+        let (method, uri, headers) = match headers.into_request_parts() {
+            Ok(p) => p,
+            Err(e) => return Err((e.into(), recv)),
+        };
+        if self.is_0rtt && !method.is_idempotent() {
+            return Err((
+                Error::peer(format!(
+                    "Tried an non indempotent method in 0-RTT: {}",
+                    method,
+                )),
+                recv,
+            ));
+        }
+
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
             .version(http::version::Version::HTTP_3)
-            .body(())
+            .body(RecvBody::new(self.conn.clone(), self.stream_id, recv))
             .unwrap();
-
-        if self.is_0rtt && !request.method().is_idempotent() {
-            return Err(Error::peer(format!(
-                "Tried an non indempotent method in 0-RTT: {}",
-                request.method()
-            )));
-        }
 
         *request.headers_mut() = headers;
         Ok(request)
@@ -623,7 +633,7 @@ impl RecvRequest {
 }
 
 impl Future for RecvRequest {
-    type Output = Result<(Request<()>, BodyReader, Sender), Error>;
+    type Output = Result<(Request<RecvBody>, Sender), Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
@@ -659,21 +669,20 @@ impl Future for RecvRequest {
                 RecvRequestState::Decoding(ref mut decode) => {
                     let header = ready!(Pin::new(decode).poll(cx))?;
                     self.state = RecvRequestState::Finished;
-                    let (mut recv, mut send) = self
+                    let (recv, mut send) = self
                         .streams
                         .take()
                         .ok_or_else(|| Error::internal("Recv request invalid state"))?;
-                    let request = match self.build_request(header) {
+                    let request = match self.build_request(header, recv) {
                         Ok(r) => r,
-                        Err(e) => {
+                        Err((e, mut r)) => {
                             send.reset(ErrorCode::REQUEST_REJECTED.into());
-                            recv.reset(ErrorCode::REQUEST_REJECTED);
+                            r.reset(ErrorCode::REQUEST_REJECTED);
                             return Poll::Ready(Err(e));
                         }
                     };
                     return Poll::Ready(Ok((
                         request,
-                        BodyReader::new(recv, self.conn.clone(), self.stream_id, false),
                         Sender {
                             send,
                             conn: self.conn.clone(),
@@ -755,7 +764,7 @@ impl Sender {
         } = response;
         let header = Header::response(status, headers);
 
-        SendData::new(self.send, self.conn, header, body)
+        SendData::new(self.send, self.conn, header, body, true)
     }
 
     /// Cancel request processing
