@@ -5,17 +5,16 @@ use std::{
     sync::Arc,
 };
 
-use ring::{aead, hkdf, hmac};
+use ring::{aead, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
-    internal::msgs::enums::HashAlgorithm,
-    quic::{ClientQuicExt, Secrets, ServerQuicExt},
+    quic::{ClientQuicExt, ServerQuicExt},
     Session,
 };
 use webpki::DNSNameRef;
 
-use super::ring::{hkdf_expand, Crypto};
+use super::ring::Crypto;
 use crate::{
     crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError,
     ConnectionId, Side, TransportError, TransportErrorCode,
@@ -126,11 +125,7 @@ impl crypto::Session for TlsSession {
             Side::Server => (&keys.remote_secret, &keys.local_secret),
         };
 
-        let hash_alg = self
-            .get_negotiated_ciphersuite()
-            .expect("should not get secrets without cipher suite")
-            .hash;
-        let secrets = update_secrets(hash_alg, client_secret, server_secret);
+        let secrets = self.update_secrets(&client_secret, &server_secret);
         let suite = self.get_negotiated_ciphersuite().unwrap();
         Crypto::new(
             self.side(),
@@ -272,20 +267,6 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
 
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession::Server(rustls::ServerSession::new_quic(self, to_vec(params)))
-    }
-}
-
-fn update_secrets(hash_alg: HashAlgorithm, client: &hkdf::Prk, server: &hkdf::Prk) -> Secrets {
-    let hkdf_alg = match hash_alg {
-        HashAlgorithm::SHA256 => hkdf::HKDF_SHA256,
-        HashAlgorithm::SHA384 => hkdf::HKDF_SHA384,
-        HashAlgorithm::SHA512 => hkdf::HKDF_SHA512,
-        _ => panic!("unknown HKDF algorithm for hash algorithm {:?}", hash_alg),
-    };
-
-    Secrets {
-        client: hkdf_expand(client, b"quic ku", hkdf_alg),
-        server: hkdf_expand(server, b"quic ku", hkdf_alg),
     }
 }
 
