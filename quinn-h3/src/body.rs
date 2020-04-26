@@ -126,6 +126,13 @@ impl RecvBody {
         let mut me = self;
         Ok(future::poll_fn(|cx| Pin::new(&mut me).poll_trailers(cx)).await?)
     }
+
+    /// Cancel a request or response
+    ///
+    /// The peer will receive a request error with `REQUEST_CANCELLED` code.
+    pub fn cancel(&mut self) {
+        self.recv.reset(ErrorCode::REQUEST_CANCELLED);
+    }
 }
 
 impl HttpBody for RecvBody {

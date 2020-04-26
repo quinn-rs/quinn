@@ -549,6 +549,15 @@ where
             state: SendRequestState::Opening,
         }
     }
+
+    /// Cancel the request
+    ///
+    /// The peer will receive a request error with `REQUEST_CANCELLED` code.
+    pub fn cancel(&mut self) {
+        if let SendRequestState::Sending(send) = &mut self.state {
+            send.cancel();
+        }
+    }
 }
 
 impl<B> Future for SendRequest<B, B::Data>
