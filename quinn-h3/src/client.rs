@@ -70,13 +70,12 @@
 use std::{
     error::Error as StdError,
     future::Future,
-    mem,
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use futures::{channel::oneshot, ready, FutureExt, Stream};
+use futures::{channel::oneshot, ready, FutureExt};
 use http::{request, Request, Response};
 use http_body::Body as HttpBody;
 use pin_project::{pin_project, project};
@@ -87,10 +86,9 @@ use tracing::trace;
 use crate::{
     body::RecvBody,
     connection::{ConnectionDriver, ConnectionRef},
-    frame::{FrameDecoder, FrameStream},
-    headers::DecodeHeaders,
-    proto::{frame::HttpFrame, headers::Header, settings::Settings, ErrorCode},
-    streams::Reset,
+    data::RecvData,
+    frame::FrameDecoder,
+    proto::{headers::Header, settings::Settings, ErrorCode},
     Error, SendData, ZeroRttAccepted,
 };
 
@@ -660,13 +658,12 @@ pub struct RecvResponse {
     state: RecvResponseState,
     conn: ConnectionRef,
     stream_id: Option<StreamId>,
-    recv: Option<FrameStream>,
+    recv: Option<RecvData>,
 }
 
 enum RecvResponseState {
     Opening(oneshot::Receiver<(RecvStream, StreamId)>),
-    Receiving(FrameStream),
-    Decoding(DecodeHeaders),
+    Receiving,
     Finished,
 }
 
@@ -687,37 +684,15 @@ impl RecvResponse {
     ///
     /// Server will receive a request error with `REQUEST_CANCELLED` code. Any call on any
     /// object related with this request will fail.
-    pub fn cancel(mut self) {
-        let mut recv = match mem::replace(&mut self.state, RecvResponseState::Finished) {
-            RecvResponseState::Receiving(recv) => recv,
-            RecvResponseState::Decoding(_) => self.recv.take().expect("cancel recv"),
-            _ => return,
-        };
-        self.conn
-            .h3
-            .lock()
-            .unwrap()
-            .cancel_request(self.stream_id.unwrap());
-        recv.reset(ErrorCode::REQUEST_CANCELLED);
-    }
-
-    fn build_response(
-        &self,
-        header: Header,
-        recv: FrameStream,
-    ) -> Result<Response<RecvBody>, Error> {
-        let (status, headers) = header.into_response_parts()?;
-        let mut response = Response::builder()
-            .status(status)
-            .version(http::version::Version::HTTP_3)
-            .body(RecvBody::new(
-                self.conn.clone(),
-                self.stream_id.unwrap(),
-                recv,
-            ))
-            .unwrap();
-        *response.headers_mut() = headers;
-        Ok(response)
+    pub fn cancel(&mut self) {
+        if let Some(recv) = self.recv.as_mut() {
+            self.conn
+                .h3
+                .lock()
+                .unwrap()
+                .cancel_request(self.stream_id.unwrap());
+            recv.reset(ErrorCode::REQUEST_CANCELLED);
+        }
     }
 }
 
@@ -736,47 +711,25 @@ impl Future for RecvResponse {
                     let (recv, id) = ready!(open.poll_unpin(cx))
                         .map_err(|_| Error::internal("RecvResponse channel cancelled"))?;
                     self.stream_id = Some(id);
-                    self.state = RecvResponseState::Receiving(FrameDecoder::stream(recv));
+                    self.recv = Some(RecvData::new(
+                        FrameDecoder::stream(recv),
+                        self.conn.clone(),
+                        self.stream_id.unwrap(),
+                    ));
+                    self.state = RecvResponseState::Receiving;
                 }
-                RecvResponseState::Receiving(ref mut recv) => {
-                    let frame = ready!(Pin::new(recv).poll_next(cx));
+                RecvResponseState::Receiving => {
+                    let (headers, body) = ready!(self.recv.as_mut().unwrap().poll_unpin(cx))?;
 
-                    trace!("client got {:?}", frame);
-                    match frame {
-                        None => return Poll::Ready(Err(Error::peer("received an empty response"))),
-                        Some(Err(e)) => return Poll::Ready(Err(e.into())),
-                        Some(Ok(f)) => match f {
-                            HttpFrame::Reserved => (),
-                            HttpFrame::Headers(h) => {
-                                let decode = DecodeHeaders::new(
-                                    h,
-                                    self.conn.clone(),
-                                    self.stream_id.unwrap(),
-                                );
-                                match mem::replace(
-                                    &mut self.state,
-                                    RecvResponseState::Decoding(decode),
-                                ) {
-                                    RecvResponseState::Receiving(r) => self.recv = Some(r),
-                                    _ => unreachable!(),
-                                };
-                            }
-                            _ => {
-                                match mem::replace(&mut self.state, RecvResponseState::Finished) {
-                                    RecvResponseState::Receiving(mut recv) => {
-                                        recv.reset(ErrorCode::FRAME_UNEXPECTED);
-                                    }
-                                    _ => unreachable!(),
-                                }
-                                return Poll::Ready(Err(Error::peer("first frame is not headers")));
-                            }
-                        },
-                    }
-                }
-                RecvResponseState::Decoding(ref mut decode) => {
-                    let headers = ready!(Pin::new(decode).poll(cx))?;
-                    let recv = self.recv.take().unwrap();
-                    let response = self.build_response(headers, recv)?;
+                    let (status, headers) = headers.into_response_parts()?;
+                    let mut response = Response::builder()
+                        .status(status)
+                        .version(http::version::Version::HTTP_3)
+                        .body(body)
+                        .unwrap();
+                    *response.headers_mut() = headers;
+
+                    self.state = RecvResponseState::Finished;
                     return Poll::Ready(Ok(response));
                 }
             }

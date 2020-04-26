@@ -5,17 +5,23 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::ready;
+use futures::{ready, Stream as _};
 use http_body::Body as HttpBody;
 use pin_project::{pin_project, project};
 use quinn::SendStream;
 use quinn_proto::StreamId;
 
 use crate::{
+    body::RecvBody,
     connection::ConnectionRef,
-    frame::WriteFrame,
-    headers::SendHeaders,
-    proto::{frame::DataFrame, headers::Header, ErrorCode},
+    frame::{FrameStream, WriteFrame},
+    headers::{DecodeHeaders, SendHeaders},
+    proto::{
+        frame::{DataFrame, HttpFrame},
+        headers::Header,
+        ErrorCode,
+    },
+    streams::Reset,
     Error,
 };
 
@@ -167,6 +173,83 @@ where
                 }
                 SendDataState::Finished => return Poll::Ready(Ok(())),
             };
+        }
+    }
+}
+
+pub struct RecvData {
+    state: RecvDataState,
+    conn: ConnectionRef,
+    recv: Option<FrameStream>,
+    stream_id: StreamId,
+}
+
+enum RecvDataState {
+    Receiving,
+    Decoding(DecodeHeaders),
+    Finished,
+}
+
+impl RecvData {
+    pub(crate) fn new(recv: FrameStream, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        Self {
+            conn,
+            stream_id,
+            recv: Some(recv),
+            state: RecvDataState::Receiving,
+        }
+    }
+
+    pub fn reset(&mut self, err_code: ErrorCode) {
+        if let Some(ref mut r) = self.recv {
+            r.reset(err_code);
+        }
+    }
+}
+
+impl Future for RecvData {
+    type Output = Result<(Header, RecvBody), Error>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            match &mut self.state {
+                RecvDataState::Receiving => {
+                    match ready!(Pin::new(self.recv.as_mut().unwrap()).poll_next(cx)) {
+                        Some(Ok(HttpFrame::Reserved)) => continue,
+                        Some(Ok(HttpFrame::Headers(h))) => {
+                            self.state = RecvDataState::Decoding(DecodeHeaders::new(
+                                h,
+                                self.conn.clone(),
+                                self.stream_id,
+                            ));
+                        }
+                        Some(Err(e)) => {
+                            self.recv.as_mut().unwrap().reset(e.code());
+                            return Poll::Ready(Err(e.into()));
+                        }
+                        Some(Ok(f)) => {
+                            self.recv
+                                .as_mut()
+                                .unwrap()
+                                .reset(ErrorCode::FRAME_UNEXPECTED);
+                            return Poll::Ready(Err(Error::Peer(format!(
+                                "First frame is not headers: {:?}",
+                                f
+                            ))));
+                        }
+                        None => {
+                            return Poll::Ready(Err(Error::peer("Stream end unexpected")));
+                        }
+                    };
+                }
+                RecvDataState::Decoding(ref mut decode) => {
+                    let headers = ready!(Pin::new(decode).poll(cx))?;
+                    let recv =
+                        RecvBody::new(self.conn.clone(), self.stream_id, self.recv.take().unwrap());
+                    self.state = RecvDataState::Finished;
+                    return Poll::Ready(Ok((headers, recv)));
+                }
+                RecvDataState::Finished => panic!("polled after finished"),
+            }
         }
     }
 }

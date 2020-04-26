@@ -134,7 +134,7 @@ async fn client_cancel_response() {
 
     let conn = helper.make_connection().await;
     delay_for(Duration::from_millis(50)).await;
-    let (req, resp) = conn.send_request(get("/"));
+    let (req, mut resp) = conn.send_request(get("/"));
     req.await.unwrap();
     resp.cancel();
 
