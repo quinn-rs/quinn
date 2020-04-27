@@ -118,7 +118,7 @@ impl Streams {
     pub fn set_params(&mut self, params: &TransportParameters) {
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni;
-        self.increase_max_data(params.initial_max_data);
+        self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.send.get_mut(&id).unwrap().max_data =
@@ -619,7 +619,7 @@ impl Streams {
     }
 
     /// Handle increase to connection-level flow control limit
-    pub fn increase_max_data(&mut self, n: u64) {
+    pub fn received_max_data(&mut self, n: u64) {
         self.max_data = self.max_data.max(n);
     }
 
