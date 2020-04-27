@@ -2086,7 +2086,7 @@ where
                     self.path_challenge = None;
                 }
                 Frame::MaxData(bytes) => {
-                    self.streams.increase_max_data(bytes);
+                    self.streams.received_max_data(bytes);
                 }
                 Frame::MaxStreamData { id, offset } => {
                     self.streams.received_max_stream_data(id, offset)?;
