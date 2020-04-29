@@ -1427,7 +1427,7 @@ where
             SpaceId::Handshake
         };
         let end = crypto.offset + crypto.data.len() as u64;
-        if space < expected && end > self.space(space).crypto_stream.offset() {
+        if space < expected && end > self.space(space).crypto_stream.bytes_read() {
             warn!(
                 "received new {:?} CRYPTO data when expecting {:?}",
                 space, expected
@@ -1438,7 +1438,7 @@ where
         }
 
         let space = &mut self.spaces[space as usize];
-        let max = space.crypto_stream.offset() + self.config.crypto_buffer_size as u64;
+        let max = space.crypto_stream.bytes_read() + self.config.crypto_buffer_size as u64;
         if end > max {
             return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
         }
