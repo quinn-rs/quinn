@@ -8,7 +8,7 @@ use tracing_futures::Instrument as _;
 use quinn_h3::{self, client, server::IncomingConnection, Body, Settings};
 
 mod helpers;
-use helpers::Context;
+use helpers::Bench;
 
 benchmark_group!(
     benches_request,
@@ -160,7 +160,7 @@ fn request<T, Fut>(
 {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let mut ctx = Context::with_settings(settings);
+    let mut ctx = Bench::with_settings(settings);
 
     let (addr, server) = ctx.spawn_server(service);
     let (client, mut runtime) = ctx.make_client(addr);

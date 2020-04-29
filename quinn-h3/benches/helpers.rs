@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 use std::{
+    cmp,
     net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     thread,
 };
 
@@ -13,26 +16,29 @@ use tokio::{
 use tracing::{error_span, span, Level};
 use tracing_futures::Instrument as _;
 
+use bytes::Bytes;
+use http::HeaderMap;
+use http_body::Body as HttpBody;
 use quinn::{ClientConfigBuilder, ServerConfigBuilder};
 use quinn_h3::{
     self, client,
     server::{self, IncomingConnection},
-    BodyWriter, Settings,
+    BodyWriter, Error, Settings,
 };
 
-pub struct Context {
+pub struct Bench {
     server_config: server::Builder,
     client_config: client::Builder,
     stop_server: Option<oneshot::Sender<()>>,
 }
 
-impl Default for Context {
+impl Default for Bench {
     fn default() -> Self {
         Self::with_settings(Settings::new())
     }
 }
 
-impl Context {
+impl Bench {
     pub fn with_settings(settings: Settings) -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
@@ -131,4 +137,44 @@ pub fn rt() -> Runtime {
         .enable_all()
         .build()
         .unwrap()
+}
+
+pub struct BenchBody {
+    frame_len: usize,
+    total_len: usize,
+    buf: Bytes,
+}
+
+impl BenchBody {
+    pub fn new(frame_len: usize, total_len: usize) -> Self {
+        Self {
+            total_len,
+            frame_len,
+            buf: "b".repeat(frame_len).into(),
+        }
+    }
+}
+
+impl HttpBody for BenchBody {
+    type Data = Bytes;
+    type Error = Error;
+    fn poll_data(
+        mut self: Pin<&mut Self>,
+        _: &mut Context,
+    ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+        if self.total_len == 0 {
+            return Poll::Ready(None);
+        }
+
+        let size = cmp::min(self.total_len, self.frame_len);
+        self.total_len -= size;
+
+        Poll::Ready(Some(Ok(self.buf.slice(..size))))
+    }
+    fn poll_trailers(
+        self: Pin<&mut Self>,
+        _: &mut Context,
+    ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+        Poll::Ready(Ok(None))
+    }
 }

@@ -8,7 +8,7 @@ use tracing_futures::Instrument as _;
 use quinn_h3::{self, client, server::IncomingConnection};
 
 mod helpers;
-use helpers::{send_body, Context};
+use helpers::{send_body, Bench};
 
 benchmark_group!(
     benches_download,
@@ -46,7 +46,7 @@ pub fn download_1m(bench: &mut Bencher) {
 fn download(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let mut ctx = Context::default();
+    let mut ctx = Bench::default();
 
     let (addr, server) = ctx.spawn_server(download_server);
     let (client, mut runtime) = ctx.make_client(addr);
@@ -127,7 +127,7 @@ pub fn upload_1m(bench: &mut Bencher) {
 fn upload(bench: &mut Bencher, frame_size: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let mut ctx = Context::default();
+    let mut ctx = Bench::default();
 
     let (addr, server) = ctx.spawn_server(upload_server);
     let (client, mut runtime) = ctx.make_client(addr);
