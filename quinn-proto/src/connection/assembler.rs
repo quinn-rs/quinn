@@ -5,12 +5,17 @@ use bytes::{Buf, Bytes, BytesMut};
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
 pub(crate) struct Assembler {
+    /// Stream offset of the first byte unread by the application. Meaningless if `unordered` is
+    /// true.
     offset: u64,
     data: BinaryHeap<Chunk>,
     defragmented: usize,
     /// Whether any unordered reads have been performed, making this assembler unusable for ordered
     /// reads
     unordered: bool,
+    /// Number of bytes read. Equal to offset when `unordered` is false, may or may not be
+    /// otherwise.
+    bytes_read: u64,
 }
 
 impl Assembler {
@@ -35,12 +40,15 @@ impl Assembler {
                 break;
             }
         }
+        self.bytes_read += read as u64;
         read
     }
 
     pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
         self.unordered = true;
-        self.pop()
+        let (n, data) = self.pop()?;
+        self.bytes_read += n;
+        Some((n, data))
     }
 
     // Read as much from the first chunk in the heap as fits in the buffer.
@@ -145,8 +153,8 @@ impl Assembler {
     }
 
     /// Current position in the stream
-    pub(crate) fn offset(&self) -> u64 {
-        self.offset
+    pub(crate) fn bytes_read(&self) -> u64 {
+        self.bytes_read
     }
 
     /// Discard all buffered data

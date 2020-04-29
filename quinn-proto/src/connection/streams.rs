@@ -307,7 +307,7 @@ impl Streams {
 
         // State transition
         rs.reset(error_code, final_offset);
-        let bytes_read = rs.bytes_read;
+        let bytes_read = rs.assembler.bytes_read();
         self.on_stream_frame(true, id);
 
         // Update flow control
@@ -452,7 +452,7 @@ impl Streams {
                 continue;
             }
             sent.max_stream_data.insert(id);
-            let max = rs.bytes_read + self.stream_receive_window;
+            let max = rs.assembler.bytes_read() + self.stream_receive_window;
             trace!(stream = %id, max = max, "MAX_STREAM_DATA");
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
@@ -936,9 +936,6 @@ struct Recv {
     state: RecvState,
     recvd: RangeSet,
     assembler: Assembler,
-    /// Number of bytes read by the application. Equal to assembler.offset when unordered reads are
-    /// not in use.
-    bytes_read: u64,
 }
 
 impl Recv {
@@ -969,7 +966,7 @@ impl Recv {
 
         let prev_end = self.limit();
         let new_bytes = end.saturating_sub(prev_end);
-        let stream_max_data = self.bytes_read + receive_window;
+        let stream_max_data = self.assembler.bytes_read() + receive_window;
         if end > stream_max_data || received + new_bytes > max_data {
             debug!(stream = %frame.id, received, new_bytes, max_data, end, stream_max_data, "flow control error");
             return Err(TransportError::FLOW_CONTROL_ERROR(""));
@@ -998,7 +995,6 @@ impl Recv {
     fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         let read = self.assembler.read(buf);
         if read > 0 {
-            self.bytes_read += read as u64;
             Ok(Some(read))
         } else {
             self.read_blocked().map(|()| None)
@@ -1008,7 +1004,6 @@ impl Recv {
     fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
         // Return data we already have buffered, regardless of state
         if let Some((offset, bytes)) = self.assembler.read_unordered() {
-            self.bytes_read += bytes.len() as u64;
             Ok(Some((bytes, offset)))
         } else {
             self.read_blocked().map(|()| None)
