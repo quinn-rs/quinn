@@ -11,7 +11,6 @@ use super::{assembler::Assembler, send_buffer::SendBuffer, spaces::Retransmits};
 use crate::{
     coding::BufMutExt,
     frame::{self, FrameStruct},
-    range_set::RangeSet,
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
@@ -292,7 +291,7 @@ impl Streams {
                 return Ok(false);
             }
         };
-        let limit = rs.limit();
+        let limit = rs.assembler.limit();
 
         // Validate final_offset
         if let Some(offset) = rs.final_offset() {
@@ -934,7 +933,6 @@ pub enum WriteError {
 #[derive(Debug, Default)]
 struct Recv {
     state: RecvState,
-    recvd: RangeSet,
     assembler: Assembler,
 }
 
@@ -964,7 +962,7 @@ impl Recv {
             }
         }
 
-        let prev_end = self.limit();
+        let prev_end = self.assembler.limit();
         let new_bytes = end.saturating_sub(prev_end);
         let stream_max_data = self.assembler.bytes_read() + receive_window;
         if end > stream_max_data || received + new_bytes > max_data {
@@ -978,13 +976,12 @@ impl Recv {
             }
         }
 
-        self.recvd.insert(frame.offset..end);
         if !frame.data.is_empty() {
             self.assembler.insert(frame.offset, frame.data);
         }
 
         if let RecvState::Recv { size: Some(size) } = self.state {
-            if self.recvd.len() == 1 && self.recvd.iter().next().unwrap() == (0..size) {
+            if self.assembler.is_complete_at(size) {
                 self.state = RecvState::DataRecvd { size };
             }
         }
@@ -1043,11 +1040,6 @@ impl Recv {
     /// All data read by application
     fn is_closed(&self) -> bool {
         self.state == self::RecvState::Closed
-    }
-
-    /// Offset after the largest byte received
-    fn limit(&self) -> u64 {
-        self.recvd.max().map_or(0, |x| x + 1)
     }
 
     fn final_offset(&self) -> Option<u64> {

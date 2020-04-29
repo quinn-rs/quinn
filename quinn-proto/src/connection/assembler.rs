@@ -2,6 +2,8 @@ use std::{cmp::Ordering, collections::BinaryHeap, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 
+use crate::range_set::RangeSet;
+
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
 pub(crate) struct Assembler {
@@ -16,6 +18,8 @@ pub(crate) struct Assembler {
     /// Number of bytes read. Equal to offset when `unordered` is false, may or may not be
     /// otherwise.
     bytes_read: u64,
+    /// Offsets received so far
+    recvd: RangeSet,
 }
 
 impl Assembler {
@@ -139,6 +143,7 @@ impl Assembler {
     }
 
     pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
+        self.recvd.insert(offset..(offset + bytes.len() as u64));
         self.data.push(Chunk { offset, bytes });
         // Why 32: on the one hand, we want to defragment rarely, ideally never
         // in non-pathological scenarios. However, a pathological or malicious
@@ -155,6 +160,20 @@ impl Assembler {
     /// Current position in the stream
     pub(crate) fn bytes_read(&self) -> u64 {
         self.bytes_read
+    }
+
+    /// Offset after the largest byte received
+    pub(crate) fn limit(&self) -> u64 {
+        self.recvd.max().map_or(0, |x| x + 1)
+    }
+
+    /// Whether we've received all data below `final_offset`
+    ///
+    /// `final_offset` must be greater than the offset of any received data.
+    pub(crate) fn is_complete_at(&self, final_offset: u64) -> bool {
+        debug_assert!(final_offset >= self.limit());
+        (self.recvd.len() == 1 && self.recvd.iter().next().unwrap() == (0..final_offset))
+            || final_offset == 0
     }
 
     /// Discard all buffered data
