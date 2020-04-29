@@ -895,7 +895,7 @@ impl Send {
         was_blocked
     }
 
-    pub fn offset(&self) -> u64 {
+    fn offset(&self) -> u64 {
         self.pending.offset()
     }
 
@@ -1048,7 +1048,7 @@ impl Recv {
     }
 
     /// No more data expected from peer
-    pub fn is_finished(&self) -> bool {
+    fn is_finished(&self) -> bool {
         match self.state {
             RecvState::Recv { .. } => false,
             _ => true,
@@ -1115,7 +1115,7 @@ pub enum ReadError {
 /// `stop_reason` below should be set iff the stream was stopped and application has not yet been
 /// notified, as we never discard resources for a stream that has it set.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SendState {
+enum SendState {
     /// Sending new data
     Ready,
     /// Stream was finished; now sending retransmits only
@@ -1147,7 +1147,7 @@ impl SendState {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum RecvState {
+enum RecvState {
     Recv { size: Option<u64> },
     DataRecvd { size: u64 },
     ResetRecvd { size: u64, error_code: VarInt },
@@ -1211,5 +1211,5 @@ pub enum StreamEvent {
 /// Unknown stream ID
 #[derive(Debug)]
 pub struct UnknownStream {
-    pub(crate) _private: (),
+    _private: (),
 }
