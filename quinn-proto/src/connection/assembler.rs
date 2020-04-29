@@ -8,6 +8,9 @@ pub(crate) struct Assembler {
     offset: u64,
     data: BinaryHeap<Chunk>,
     defragmented: usize,
+    /// Whether any unordered reads have been performed, making this assembler unusable for ordered
+    /// reads
+    unordered: bool,
 }
 
 impl Assembler {
@@ -16,6 +19,11 @@ impl Assembler {
     }
 
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
+        assert!(
+            !self.unordered,
+            "cannot perform ordered reads following unordered reads on a stream"
+        );
+
         let mut read = 0;
         loop {
             if self.consume(buf, &mut read) {
@@ -28,6 +36,11 @@ impl Assembler {
             }
         }
         read
+    }
+
+    pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
+        self.unordered = true;
+        self.pop()
     }
 
     // Read as much from the first chunk in the heap as fits in the buffer.
@@ -112,7 +125,7 @@ impl Assembler {
         }
     }
 
-    pub(crate) fn pop(&mut self) -> Option<(u64, Bytes)> {
+    fn pop(&mut self) -> Option<(u64, Bytes)> {
         self.defragmented = self.defragmented.saturating_sub(1);
         self.data.pop().map(|x| (x.offset, x.bytes))
     }

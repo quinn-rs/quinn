@@ -935,12 +935,9 @@ pub enum WriteError {
 struct Recv {
     state: RecvState,
     recvd: RangeSet,
-    /// Whether any unordered reads have been performed, making this stream unusable for ordered
-    /// reads
-    unordered: bool,
     assembler: Assembler,
-    /// Number of bytes read by the application. Equal to assembler.offset when `unordered` is
-    /// false.
+    /// Number of bytes read by the application. Equal to assembler.offset when unordered reads are
+    /// not in use.
     bytes_read: u64,
 }
 
@@ -999,11 +996,6 @@ impl Recv {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        assert!(
-            !self.unordered,
-            "cannot perform ordered reads following unordered reads on a stream"
-        );
-
         let read = self.assembler.read(buf);
         if read > 0 {
             self.bytes_read += read as u64;
@@ -1014,10 +1006,8 @@ impl Recv {
     }
 
     fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
-        self.unordered = true;
-
         // Return data we already have buffered, regardless of state
-        if let Some((offset, bytes)) = self.assembler.pop() {
+        if let Some((offset, bytes)) = self.assembler.read_unordered() {
             self.bytes_read += bytes.len() as u64;
             Ok(Some((bytes, offset)))
         } else {
