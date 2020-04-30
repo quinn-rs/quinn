@@ -103,17 +103,16 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
     println!("server listening on {}", addr);
     while let Some(connecting) = incoming.next().await {
         tokio::spawn(async move {
-            let protos = connecting.authentication_data().protocol.unwrap();
+            let proto = connecting.authentication_data().protocol.unwrap();
             println!("server received connection");
 
-            if protos == b"h3-27" {
-                if let Err(e) = h3_handle_connection(connecting).await {
-                    error!("handling connection failed: {:?}", e)
-                }
-            } else if protos == b"hq-27" {
-                if let Err(e) = hq_handle_connection(connecting).await {
-                    error!("handling connection failed: {:?}", e)
-                }
+            let result = match &proto[..] {
+                quinn_h3::ALPN => h3_handle_connection(connecting).await,
+                b"hq-27" => hq_handle_connection(connecting).await,
+                _ => unreachable!("unsupported protocol"),
+            };
+            if let Err(e) = result {
+                error!("handling connection failed: {:?}", e);
             }
         });
     }
