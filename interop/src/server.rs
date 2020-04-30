@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
 
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.certificate(cert_chain, key)?;
-    server_config.protocols(&[quinn_h3::ALPN, b"hq-27"]);
+    server_config.protocols(&[quinn_h3::ALPN, b"hq-27", b"siduck-00"]);
 
     let main = server(server_config.clone(), SocketAddr::new(opt.listen, 4433));
     let default = server(server_config.clone(), SocketAddr::new(opt.listen, 443));
@@ -109,6 +109,7 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
             let result = match &proto[..] {
                 quinn_h3::ALPN => h3_handle_connection(connecting).await,
                 b"hq-27" => hq_handle_connection(connecting).await,
+                b"siduck-00" => siduck_handle_connection(connecting).await,
                 _ => unreachable!("unsupported protocol"),
             };
             if let Err(e) = result {
@@ -450,3 +451,33 @@ const HOME: &str = r##"
 "##;
 
 const VERSION: &str = "quinn-h3:0.0.1";
+
+/// https://tools.ietf.org/html/draft-pardue-quic-siduck-00
+async fn siduck_handle_connection(conn: quinn::Connecting) -> Result<()> {
+    let quinn::NewConnection {
+        connection,
+        mut datagrams,
+        ..
+    } = conn.await?;
+    while let Some(datagram) = datagrams.next().await {
+        match datagram {
+            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                info!("connection closed");
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+            Ok(data) => {
+                if &data[..] == b"quack" {
+                    connection.send_datagram(b"quack-ack"[..].into())?;
+                } else {
+                    const SIDUCK_ONLY_QUACKS_ECHO: quinn::VarInt = quinn::VarInt::from_u32(0x101);
+                    connection.close(SIDUCK_ONLY_QUACKS_ECHO, b"quack quack quack");
+                    bail!("got non-quack datagram");
+                }
+            }
+        }
+    }
+    Ok(())
+}
