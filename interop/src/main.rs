@@ -7,8 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
-use futures::future;
+use anyhow::{anyhow, bail, Context, Result};
+use futures::{future, StreamExt};
 use hyper::body::HttpBody as _;
 use lazy_static::lazy_static;
 use quinn_h3::Settings;
@@ -32,9 +32,23 @@ struct Opt {
     hq: bool,
     #[structopt(long)]
     seq: bool,
+    #[structopt(long)]
+    siduck: bool,
     /// Enable key logging
     #[structopt(long = "keylog")]
     keylog: bool,
+}
+
+impl Opt {
+    fn alpn(&self) -> Option<Alpn> {
+        match (self.h3, self.hq, self.siduck) {
+            (false, false, false) => None,
+            (true, false, false) => Some(Alpn::H3),
+            (false, true, false) => Some(Alpn::Hq),
+            (false, false, true) => Some(Alpn::SiDuck),
+            _ => panic!("conflicting protocol options"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -42,6 +56,7 @@ enum Alpn {
     Hq,
     H3,
     HqH3,
+    SiDuck,
 }
 
 impl From<&Alpn> for Vec<Vec<u8>> {
@@ -49,6 +64,7 @@ impl From<&Alpn> for Vec<Vec<u8>> {
         match alpn {
             Alpn::H3 => vec![quinn_h3::ALPN.into()],
             Alpn::Hq => vec![b"hq-27"[..].into()],
+            Alpn::SiDuck => vec![b"siduck-00"[..].into()],
             Alpn::HqH3 => vec![b"hq-27"[..].into(), quinn_h3::ALPN.into()],
         }
     }
@@ -158,18 +174,14 @@ async fn main() {
             .finish(),
     )
     .unwrap();
-    let peers = if let Some(host) = opt.host {
+    let peers = if let Some(ref host) = opt.host {
         vec![Peer {
             name: host.clone(),
-            host,
+            host: host.clone(),
             port: opt.port.unwrap_or(4433),
             retry_port: opt.retry_port.unwrap_or(4434),
             sequential: opt.seq,
-            alpn: match (opt.h3, opt.hq) {
-                (false, true) => Alpn::Hq,
-                (true, false) => Alpn::H3,
-                _ => Alpn::HqH3,
-            },
+            alpn: opt.alpn().unwrap_or(Alpn::HqH3),
         }]
     } else if opt.name.is_some() {
         let name = opt.name.as_ref().unwrap();
@@ -180,10 +192,8 @@ async fn main() {
             .collect();
 
         peers.iter_mut().for_each(|mut x| {
-            match (opt.h3, opt.hq) {
-                (false, true) => x.alpn = Alpn::Hq,
-                (true, false) => x.alpn = Alpn::H3,
-                _ => (),
+            if let Some(alpn) = opt.alpn() {
+                x.alpn = alpn;
             }
             if let Some(port) = opt.port {
                 x.port = port;
@@ -219,10 +229,11 @@ async fn main() {
 async fn run(peer: &Peer, keylog: bool) -> Result<String> {
     let state = State::try_new(&peer, keylog)?;
     let result = match peer.alpn {
-        Alpn::Hq => state.run_hq().instrument(info_span!("hq")).await?,
-        _ => state.run_h3().instrument(info_span!("h3")).await?,
+        Alpn::Hq => state.run_hq().instrument(info_span!("hq")).await?.format(),
+        Alpn::SiDuck => state.run_siduck().instrument(info_span!("siduck")).await?,
+        Alpn::H3 | Alpn::HqH3 => state.run_h3().instrument(info_span!("h3")).await?.format(),
     };
-    Ok(result.format())
+    Ok(result)
 }
 
 struct State {
@@ -306,6 +317,32 @@ impl State {
                 Some(dynamic_encoding),
             ))
         }
+    }
+
+    async fn run_siduck(self) -> Result<String> {
+        let mut new_conn = self
+            .endpoint
+            .connect(&self.remote, &self.host)?
+            .await
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
+        for _ in 0..3 {
+            new_conn
+                .connection
+                .send_datagram(b"quack"[..].into())
+                .context("datagram send failed")?;
+        }
+        match new_conn.datagrams.next().await.unwrap() {
+            Ok(bytes) if &bytes[..] == b"quack-ack" => {}
+            Ok(_) => {
+                bail!("incorrect response");
+            }
+            Err(e) => {
+                bail!("unexpected error: {}", e);
+            }
+        }
+        new_conn.connection.close(0u32.into(), [][..].into());
+        self.endpoint.wait_idle().await;
+        Ok("🦆".into())
     }
 
     fn try_new(peer: &Peer, keylog: bool) -> Result<Self> {
