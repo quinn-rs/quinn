@@ -100,12 +100,12 @@ macro_rules! errors {
 
         impl fmt::Display for Code {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                let x = match self.0 {
-                    $($val => $desc,)*
-                    _ if self.0 >= 0x100 && self.0 < 0x200 => "the cryptographic handshake failed", // FIXME: Describe specific alert
-                    _ => "unknown error",
-                };
-                f.write_str(x)
+                match self.0 {
+                    $($val => f.write_str($desc),)*
+                    // We're trying to be abstract over the crypto protocol, so human-readable descriptions here is tricky.
+                    _ if self.0 >= 0x100 && self.0 < 0x200 => write!(f, "the cryptographic handshake failed: error {}", self.0 & 0xFF),
+                    _ => f.write_str("unknown error"),
+                }
             }
         }
     }
