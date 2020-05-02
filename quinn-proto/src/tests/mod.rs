@@ -537,7 +537,7 @@ fn stream_id_backpressure() {
 }
 
 #[test]
-fn key_update() {
+fn key_update_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
@@ -564,6 +564,7 @@ fn key_update() {
         Ok(Some((ref data, 0))) if data == MSG1
     );
 
+    info!("initiating key update");
     pair.client_conn_mut(client_ch).initiate_key_update();
 
     const MSG2: &[u8] = b"hello2";
