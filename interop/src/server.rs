@@ -122,7 +122,10 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
 
 async fn h3_handle_connection(connecting: quinn::Connecting) -> Result<()> {
     let connecting = quinn_h3::server::Connecting::from(connecting);
-    let mut incoming = connecting.await.context("accept failed")?;
+    let mut incoming = match connecting.into_0rtt() {
+        Ok((c, _)) => c,
+        Err(c) => c.await.context("accept failed")?,
+    };
     tokio::spawn(async move {
         while let Some(request) = incoming.next().await {
             tokio::spawn(async move {
@@ -208,7 +211,10 @@ async fn hq_handle_connection(conn: quinn::Connecting) -> Result<()> {
         connection,
         mut bi_streams,
         ..
-    } = conn.await?;
+    } = match conn.into_0rtt() {
+        Ok((c, _)) => c,
+        Err(c) => c.await?,
+    };
     let span = info_span!(
         "connection",
         remote = %connection.remote_address(),
@@ -458,7 +464,10 @@ async fn siduck_handle_connection(conn: quinn::Connecting) -> Result<()> {
         connection,
         mut datagrams,
         ..
-    } = conn.await?;
+    } = match conn.into_0rtt() {
+        Ok((c, _)) => c,
+        Err(c) => c.await?,
+    };
     while let Some(datagram) = datagrams.next().await {
         match datagram {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
