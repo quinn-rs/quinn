@@ -5,16 +5,16 @@ use std::{
     sync::Arc,
 };
 
-use ring::{aead, hkdf, hmac};
+use bytes::BytesMut;
+use ring::{aead, aead::quic::HeaderProtectionKey, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
-    quic::{ClientQuicExt, Secrets, ServerQuicExt},
+    quic::{ClientQuicExt, PacketKey, ServerQuicExt},
     Session,
 };
 use webpki::DNSNameRef;
 
-use super::ring::{generate_key_pairs, generate_keys, initial_keys, PacketKey};
 use crate::{
     crypto,
     crypto::{KeyPair, Keys},
@@ -24,8 +24,6 @@ use crate::{
 
 /// A rustls TLS session
 pub struct TlsSession {
-    /// Most recently computed secrets, if any
-    secrets: Option<Secrets>,
     inner: SessionKind,
 }
 
@@ -47,14 +45,28 @@ impl crypto::Session for TlsSession {
     type AuthenticationData = AuthenticationData;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
-    type HeaderKey = aead::quic::HeaderProtectionKey;
     type PacketKey = PacketKey;
+    type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
-    /// Create the initial set of keys given the initial ConnectionId
-    fn initial_keys(id: &ConnectionId, side: Side) -> Keys<Self> {
-        let (header, packet) = initial_keys(id, side);
-        Keys { header, packet }
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self> {
+        const INITIAL_SALT: [u8; 20] = [
+            0xc3, 0xee, 0xf7, 0x12, 0xc7, 0x2e, 0xbb, 0x5a, 0x11, 0xa7, 0xd2, 0x43, 0x2b, 0xb4,
+            0x63, 0x65, 0xbe, 0xf9, 0xf5, 0x02,
+        ];
+
+        let salt = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &INITIAL_SALT);
+        let keys = rustls::quic::Keys::initial(&salt, dst_cid, side.is_client());
+        Keys {
+            header: KeyPair {
+                local: keys.local.header,
+                remote: keys.remote.header,
+            },
+            packet: KeyPair {
+                local: keys.local.packet,
+                remote: keys.remote.packet,
+            },
+        }
     }
 
     fn authentication_data(&self) -> AuthenticationData {
@@ -69,12 +81,8 @@ impl crypto::Session for TlsSession {
     }
 
     fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
-        let secret = self.get_early_secret()?;
-        // If an early secret is known, TLS guarantees it's associated with a resumption
-        // ciphersuite,
-        let suite = self.get_negotiated_ciphersuite().unwrap();
-        let aead = suite.get_aead_alg();
-        Some(generate_keys(aead, &secret))
+        let keys = self.get_0rtt_keys()?;
+        Some((keys.header, keys.packet))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
@@ -116,29 +124,25 @@ impl crypto::Session for TlsSession {
     }
 
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>> {
-        let secrets = self.write_hs(buf)?;
-        let (local, remote) = select_secrets(&secrets, self.side());
-        let suite = self
-            .get_negotiated_ciphersuite()
-            .expect("should not get secrets without cipher suite");
-        let aead = suite.get_aead_alg();
-        let (header, packet) = generate_key_pairs(aead, local, remote);
-        let result = Keys { header, packet };
-        self.secrets = Some(secrets);
-        Some(result)
+        let keys = self.write_hs(buf)?;
+        Some(Keys {
+            header: KeyPair {
+                local: keys.local.header,
+                remote: keys.remote.header,
+            },
+            packet: KeyPair {
+                local: keys.local.packet,
+                remote: keys.remote.packet,
+            },
+        })
     }
 
     fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey> {
-        let secrets = self.secrets.as_ref().expect("not in 1rtt");
-        let next = self.update_secrets(&secrets.client, &secrets.server);
-        let (local, remote) = select_secrets(&next, self.side());
-        let suite = self.get_negotiated_ciphersuite().unwrap();
-        let keys = KeyPair {
-            local: PacketKey::new(suite.get_aead_alg(), local),
-            remote: PacketKey::new(suite.get_aead_alg(), remote),
-        };
-        self.secrets = Some(next);
-        keys
+        let keys = (**self).next_1rtt_keys();
+        KeyPair {
+            local: keys.local,
+            remote: keys.remote,
+        }
     }
 
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
@@ -203,12 +207,12 @@ impl DerefMut for TlsSession {
     }
 }
 
-fn select_secrets(secrets: &rustls::quic::Secrets, side: Side) -> (&hkdf::Prk, &hkdf::Prk) {
-    match side {
-        Side::Client => (&secrets.client, &secrets.server),
-        Side::Server => (&secrets.server, &secrets.client),
-    }
-}
+const RETRY_INTEGRITY_KEY: [u8; 16] = [
+    0x4d, 0x32, 0xec, 0xdb, 0x2a, 0x21, 0x33, 0xc8, 0x41, 0xe4, 0x04, 0x3d, 0xf2, 0x7d, 0x44, 0x30,
+];
+const RETRY_INTEGRITY_NONCE: [u8; 12] = [
+    0x4d, 0x16, 0x11, 0xd0, 0x55, 0x13, 0xa5, 0x52, 0xc5, 0x87, 0xd5, 0x75,
+];
 
 /// Authentication data for (rustls) TLS session
 pub struct AuthenticationData {
@@ -263,7 +267,6 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
         Ok(TlsSession {
-            secrets: None,
             inner: SessionKind::Client(rustls::ClientSession::new_quic(
                 self,
                 pki_server_name,
@@ -283,7 +286,6 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
 
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession {
-            secrets: None,
             inner: SessionKind::Server(rustls::ServerSession::new_quic(self, to_vec(params))),
         }
     }
@@ -295,9 +297,36 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
     bytes
 }
 
-const RETRY_INTEGRITY_KEY: [u8; 16] = [
-    0x4d, 0x32, 0xec, 0xdb, 0x2a, 0x21, 0x33, 0xc8, 0x41, 0xe4, 0x04, 0x3d, 0xf2, 0x7d, 0x44, 0x30,
-];
-const RETRY_INTEGRITY_NONCE: [u8; 12] = [
-    0x4d, 0x16, 0x11, 0xd0, 0x55, 0x13, 0xa5, 0x52, 0xc5, 0x87, 0xd5, 0x75,
-];
+impl crypto::PacketKey for PacketKey {
+    fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
+        let (header, payload) = buf.split_at_mut(header_len);
+        let (payload, tag_storage) =
+            payload.split_at_mut(payload.len() - self.key.algorithm().tag_len());
+        let aad = aead::Aad::from(header);
+        let nonce = self.iv.nonce_for(packet);
+        let tag = self
+            .key
+            .seal_in_place_separate_tag(nonce, aad, payload)
+            .unwrap();
+        tag_storage.copy_from_slice(tag.as_ref());
+    }
+
+    fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
+        if payload.len() < self.key.algorithm().tag_len() {
+            return Err(());
+        }
+
+        let payload_len = payload.len();
+        let aad = aead::Aad::from(header);
+        let nonce = self.iv.nonce_for(packet);
+        self.key
+            .open_in_place(nonce, aad, payload.as_mut())
+            .map_err(|_| ())?;
+        payload.truncate(payload_len - self.key.algorithm().tag_len());
+        Ok(())
+    }
+
+    fn tag_len(&self) -> usize {
+        self.key.algorithm().tag_len()
+    }
+}
