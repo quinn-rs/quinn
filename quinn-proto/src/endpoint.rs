@@ -19,7 +19,7 @@ use crate::{
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{initial_close, Connection, ConnectionError},
     crypto::{
-        self, ClientConfig as ClientCryptoConfig, KeyPair, PacketKey,
+        self, ClientConfig as ClientCryptoConfig, Keys, PacketKey,
         ServerConfig as ServerCryptoConfig,
     },
     packet::{Header, Packet, PacketDecodeError, PartialDecode},
@@ -258,15 +258,7 @@ where
             let crypto = S::initial_keys(&dst_cid, Side::Server);
             return match first_decode.finish(Some(&crypto.header.remote)) {
                 Ok(packet) => self
-                    .handle_first_packet(
-                        now,
-                        remote,
-                        ecn,
-                        packet,
-                        remaining,
-                        &crypto.packet,
-                        &crypto.header,
-                    )
+                    .handle_first_packet(now, remote, ecn, packet, remaining, &crypto)
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -457,8 +449,7 @@ where
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
-        crypto: &KeyPair<S::PacketKey>,
-        header_crypto: &KeyPair<S::HeaderKey>,
+        crypto: &Keys<S>,
     ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
@@ -472,6 +463,7 @@ where
         let packet_number = packet_number.expand(0);
 
         if crypto
+            .packet
             .remote
             .decrypt(
                 packet_number as u64,
@@ -502,8 +494,7 @@ where
                 destination: remote,
                 ecn: None,
                 contents: initial_close(
-                    &crypto.local,
-                    &header_crypto.local,
+                    crypto,
                     &src_cid,
                     &temp_loc_cid,
                     0,
@@ -524,8 +515,7 @@ where
                 destination: remote,
                 ecn: None,
                 contents: initial_close(
-                    &crypto.local,
-                    &header_crypto.local,
+                    crypto,
                     &src_cid,
                     &temp_loc_cid,
                     0,
@@ -552,7 +542,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::PacketKey, S::HeaderKey>(&mut buf, &header_crypto.local, None);
+                encode.finish::<S::PacketKey, S::HeaderKey>(&mut buf, &crypto.header.local, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -578,8 +568,7 @@ where
                         destination: remote,
                         ecn: None,
                         contents: initial_close(
-                            &crypto.local,
-                            &header_crypto.local,
+                            crypto,
                             &src_cid,
                             &temp_loc_cid,
                             0,
@@ -620,14 +609,7 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: initial_close(
-                            &crypto.local,
-                            &header_crypto.local,
-                            &src_cid,
-                            &temp_loc_cid,
-                            0,
-                            e,
-                        ),
+                        contents: initial_close(crypto, &src_cid, &temp_loc_cid, 0, e),
                     });
                 }
                 None

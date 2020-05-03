@@ -2796,17 +2796,15 @@ where
     }
 }
 
-pub fn initial_close<K, H, R>(
-    crypto: &K,
-    header_crypto: &H,
+pub fn initial_close<S, R>(
+    crypto: &Keys<S>,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
 ) -> Box<[u8]>
 where
-    K: crypto::PacketKey,
-    H: crypto::HeaderKey,
+    S: crypto::Session,
     R: Into<Close>,
 {
     let number = PacketNumber::U8(packet_number);
@@ -2819,13 +2817,13 @@ where
 
     let mut buf = Vec::<u8>::new();
     let partial_encode = header.encode(&mut buf);
-    let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.tag_len();
+    let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
     reason.into().encode(&mut buf, max_len);
-    buf.resize(buf.len() + crypto.tag_len(), 0);
+    buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
     partial_encode.finish(
         &mut buf,
-        header_crypto,
-        Some((u64::from(packet_number), crypto)),
+        &crypto.header.local,
+        Some((u64::from(packet_number), &crypto.packet.local)),
     );
     buf.into()
 }
