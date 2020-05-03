@@ -40,6 +40,9 @@ pub trait Session: Send + Sized {
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
+    /// Create the initial set of keys given the client's initial destination ConnectionId
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Self::Keys;
+
     /// Get the data agreed upon during the cryptographic handshake
     ///
     /// For TLS, this includes the peer's certificates, the negotiated protocol and the hostname
@@ -127,8 +130,6 @@ pub trait Keys: Send {
     /// Type used for header protection keys
     type HeaderKeys: HeaderKeys;
 
-    /// Create the initial set of keys given the initial ConnectionId
-    fn new_initial(id: &ConnectionId, side: Side) -> Self;
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
