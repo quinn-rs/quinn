@@ -1,4 +1,4 @@
-//! Client implementation for the HTTP/3 protocol.
+//! Client implementation for the HTTP/3 protocol
 //!
 //! # Overview
 //!
@@ -8,20 +8,18 @@
 //! the handshake succeeds, using the [`0-RTT`] feature.
 //!
 //! Once a [`Connection`] is up and running, you can start sending [`Request`]s via
-//! [`Connection::send_request()`]. After this, a [`RecvResponse`] and a [`BodyWriter`] future are
-//! made available for, respectively, receiving the response, and sending the request's body, if any.
+//! [`Connection::send_request()`]. Which will return [`SendRequest`] and [`RecvResponse`] futures.
+//! Both of them resolve when the respective headers have been recieved and decoded.
 //!
-//! [`RecvResponse`] represents the response's header reception and decoding. It will yield
-//! headers values as a [`Response`] struct. Along with a [`BodyReader`], enabling to stream
-//! the response body via its [`AsyncRead`] implementation, then possibly receive the trailers.
+//! Body and trailers are handled through the wrapped [`http_body::Body`] implementation in [`Request<B>`]
+//! and [`Response<RecvBody>`]. You can access them using their respective [`body_mut()`] method.
 //!
 //! # Example
 //!
 //! ```
 //! use std::{fs, net::SocketAddr};
-//! use futures::AsyncReadExt;
-//! use http::{Request};
-//! use quinn_h3::client::Client;
+//! use http::Request;
+//! use quinn_h3::{client::Client, Body, RecvBody};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -36,17 +34,19 @@
 //!     let connection = connecting.await.unwrap();
 //!
 //!     // Send a request
-//!     let request = Request::get("https://example.com").body(()).unwrap();
-//!     let (recv_response, _body_writer) = connection.send_request(request).await.unwrap();
+//!     let request = Request::get("https://example.com")
+//!         .body(Body::from(()))
+//!         .unwrap();
+//!     let (send_request, recv_response) = connection.send_request(request);
+//!     send_request.await.unwrap();
 //!
 //!     // Receive the response
-//!     let (response, body_reader) = recv_response.await.unwrap();
+//!     let mut response = recv_response.await.unwrap();
 //!
 //!     // Stream the response body into a string
-//!     let mut body = String::new();
-//!     body_reader.read_to_string(&mut body).await.unwrap();
+//!     let mut body = response.body_mut().read_to_end().await.unwrap();
 //!
-//!     println!("response: {:?}, body: \n'{}'", response, body);
+//!     println!("response: {:?}, body: \n'{:?}'", response, body);
 //! }
 //! ```
 //!
@@ -56,14 +56,14 @@
 //! [`Connecting`]: struct.Connecting.html
 //! [`0-RTT`]: struct.Connecting.html#method.into_0rtt
 //! [`Connection`]: struct.Connection.html
+//! [`Request<B>`]: https://docs.rs/http/*/http/request/index.html
 //! [`Request`]: https://docs.rs/http/*/http/request/index.html
 //! [`Connection::send_request()`]: struct.Connection.html#method.send_request
-//! [`BodyWriter`]: ../struct.BodyWriter.html
-//! [`BodyReader`]: ../struct.BodyReader.html
 //! [`SendRequest`]: struct.SendRequest.html
 //! [`RecvResponse`]: struct.RecvResponse.html
-//! [`Response`]: https://docs.rs/http/*/http/request/index.html
-//! [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
+//! [`Response<RecvBody>`]: https://docs.rs/http/*/http/request/index.html
+//! [`http_body::Body`]: https://docs.rs/http_body/*/http_body/trait.Body.html
+//! [`body_mut()`]: https://docs.rs/http/*/http/request/struct.Request.html
 
 #![allow(clippy::needless_doctest_main)]
 
@@ -324,17 +324,23 @@ impl Connecting {
     /// ```
     /// # use anyhow::Result;
     /// use http::Request;
-    /// use quinn_h3::client::{Connecting, RecvResponse};
+    /// use quinn_h3::{
+    ///     client::{Connecting, RecvResponse},
+    ///     Body,
+    /// };
     ///
     /// async fn send_0rtt_request(connecting: Connecting) -> Result<RecvResponse> {
-    ///     let request = Request::get("https://example.com").body(()).unwrap();
+    ///     let request = Request::get("https://example.com")
+    ///         .body(Body::from(()))
+    ///         .unwrap();
     ///
     ///     let mut connection = match connecting.into_0rtt() {
     ///         Ok((connection, _)) => connection,
     ///         Err(connecting) => connecting.await?,
     ///     };
     ///
-    ///     let (recv_response, _) = connection.send_request(request).await.unwrap();
+    ///     let (send_response, recv_response) = connection.send_request(request);
+    ///     send_response.await.unwrap();
     ///
     ///     Ok(recv_response)
     /// }
@@ -400,18 +406,18 @@ impl Future for Connecting {
 ///
 /// ```
 /// # use anyhow::Result;
-/// use futures::AsyncWriteExt;
 /// use http::Request;
-/// use quinn_h3::client::{Connection};
+/// use quinn_h3::{client::Connection, Body};
 ///
 /// async fn post_things(connection: &mut Connection, body: &[u8]) -> Result<()> {
-///     let request = Request::post("https://example.com").body(())?;
+///     let request = Request::post("https://example.com")
+///         .body(Body::from(()))?;
 ///
 ///     // Send the request
-///     let (recv_response, mut body_writer) = connection.send_request(request).await?;
-///     body_writer.write_all(body).await?;
+///     let (send_request, recv_response) = connection.send_request(request);
+///     send_request.await?;
 ///
-///     let (response, _) = recv_response.await?;
+///     let response = recv_response.await?;
 ///     Ok(())
 /// }
 ///
@@ -423,63 +429,38 @@ pub struct Connection(ConnectionRef);
 impl Connection {
     /// Send a HTTP/3 request
     ///
-    /// This accepts a [`http::Request<B>`] and emits a [`RecvRequest`] future along with a
-    /// [`BodyWriter`]. The former will resolve when the response headers are received. You can
-    /// optionally stream the request body with the latter through its [`AsyncWrite`] implementation.
-    /// Note that you can also use the parameter type of [`http::Request<B>`], if the body is small
-    /// enough and implements [`Into<Body>`].
+    /// This accepts a [`http::Request<B>`] and emits [`SendRequest<B, B::Data>`], that will resolve
+    /// when transmission is complete, and [`RecvResponse`], that will resolve when response headers
+    /// have been received and decoded.
+    ///
+    /// Note that both of those futures can be polled concurrently, but the reception will hang
+    /// indefinitely if transmission is not polled.
     ///
     /// # Example: GET request
     /// ```
     /// # use anyhow::Result;
-    /// use futures::AsyncReadExt;
     /// use http::Request;
-    /// use quinn_h3::client::Connection;
+    /// use quinn_h3::{client::Connection, Body};
     ///
     /// async fn get_things(connection: &mut Connection) -> Result<()> {
-    ///     let request = Request::get("https://example.com/things").body(())?;
+    ///     let request = Request::get("https://example.com/things")
+    ///         .body(Body::from(()))?;
     ///
     ///     // Send the request
-    ///     let (recv_response, _) = connection.send_request(request).await?;
+    ///     let (send_request, recv_response) = connection.send_request(request);
+    ///     send_request.await?;
     ///
     ///     // Receive the response
-    ///     let (response, mut body_reader) = recv_response.await?;
-    ///     let mut body = String::new();
-    ///     body_reader.read_to_string(&mut body).await?;
+    ///     let mut response = recv_response.await?;
+    ///     let body = response.body_mut().read_to_end().await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     ///
-    /// # Example: upload a file with POST
-    /// ```
-    /// # use anyhow::Result;
-    /// use futures::AsyncReadExt;
-    /// use http::Request;
-    /// use quinn_h3::client::Connection;
-    ///
-    /// async fn post_thing(connection: &mut Connection, path: &str) -> Result<()> {
-    ///     let request = Request::post("https://example.com/new_thing").body(())?;
-    ///     let mut file = tokio::fs::File::open(path).await?;
-    ///
-    ///     // Send the request's headers
-    ///     let (recv_response, mut body_writer) = connection.send_request(request).await?;
-    ///     // Stream the request's body from a file to the server
-    ///     tokio::io::copy(&mut file, &mut body_writer).await?;
-    ///
-    ///     // Stream the response into body a string
-    ///     let (response, mut body_reader) = recv_response.await?;
-    ///     let mut body = String::new();
-    ///     body_reader.read_to_string(&mut body).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
     /// [`http::Request<B>`]: https://docs.rs/http/*/http/request/index.html
-    /// [`RecvRequest`]: struct.RecvRequest.html
-    /// [`BodyWriter`]: ../struct.BodyWriter.html
-    /// [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
-    /// [`Into<Body>`]: ../struct.Body.html
+    /// [`SendRequest<B, B::Data>`]: struct.SendRequest.html
+    /// [`RecvResponse`]: struct.RecvResponse.html
     pub fn send_request<B>(&self, request: Request<B>) -> (SendRequest<B, B::Data>, RecvResponse)
     where
         B: HttpBody + 'static,
@@ -624,27 +605,30 @@ enum SendRequestState<B, D> {
 /// This future is emitted by [`Connection::send_request()`] and will resolve once the response
 /// headers are received and decoded.
 ///
-/// Upon success, it will yield a [`Response`] struct containing the headers, and a
-/// [`BodyWriter`] enabling to stream the response body via its [`AsyncRead`] implementation.
+/// Upon success, it will yield a [`Response`], containing an instance of [`RecvBody`] enabling
+/// to stream data in.
 ///
-/// # Example: download into a file
+/// # Example
 /// ```
 /// # use anyhow::Result;
 /// use http::{Request, StatusCode};
-/// use quinn_h3::client::Connection;
+/// use quinn_h3::{client::Connection, Body};
 ///
 /// async fn download_file(connection: &mut Connection, path: &str) -> Result<()> {
-///     let request = Request::post("https://example.com/new_thing").body(())?;
-///     let (recv_response, mut body_writer) = connection.send_request(request).await?;
+///     let request = Request::post("https://example.com/new_thing")
+///         .body(Body::from(()))?;
+///     let (send_request, recv_response) = connection.send_request(request);
+///
+///     // Transmit request
+///     send_request.await?;
 ///
 ///     // Receive the response's headers
-///     let (response, mut body_reader) = recv_response.await?;
+///     let mut response = recv_response.await?;
 ///
 ///     // Check the headers
 ///     if response.status() == StatusCode::OK {
-///         // Stream the response's body into a file
-///         let mut file = tokio::fs::File::open(path).await?;
-///         tokio::io::copy(&mut body_reader, &mut file).await?;
+///        // Get the body as well
+///        let body = response.body_mut().read_to_end().await?;
 ///     }
 ///
 ///     Ok(())
@@ -652,8 +636,7 @@ enum SendRequestState<B, D> {
 /// ```
 /// [`Connection::send_request()`]: struct.Connection.htm#method.send_request
 /// [`Response`]: https://docs.rs/http/*/http/response/index.html
-/// [`BodyWriter`]: ../struct.BodyWriter.html
-/// [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
+/// [`RecvBody`]: ../struct.RecvBody.html
 pub struct RecvResponse {
     state: RecvResponseState,
     conn: ConnectionRef,

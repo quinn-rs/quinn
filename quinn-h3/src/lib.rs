@@ -23,12 +23,15 @@
 //!
 //! # Crate overview
 //!
-//! This crate is split into two main [`client`] and [`server`] modules. Body handling is done
-//! through [`BodyReader`] and [`BodyWriter`] which respectively implement [`AsyncRead`] and
-//! [`AsyncWrite`].
+//! This crate is split into two main [`client`] and [`server`] modules.
 //!
-//! This crate makes extensive use of hyperium's [`http`] crate, which helps constructing
-//! [`Request`]s and [`Response`]s compatible with all the HTTP versions out there.
+//! It makes extensive use of hyperium's [`http`] crate, which helps constructing [`Request`]s and
+//! [`Response`]s,  compatible with all the HTTP versions out there. As well as [`http_body`] that
+//! enables to stream bodies and handle trailers.
+//!
+//! On the sending side, the crate provides a convenience [`SimpleBody`] that is very limited,
+//! you'll have to implement your own if you want more power. For the receive side, body can be
+//! handled using [`RecvBody`].
 //!
 //! # Crate status
 //!
@@ -60,13 +63,12 @@
 //! [Server Push]: https://en.wikipedia.org/wiki/HTTP/2_Server_Push
 //! [`client`]: client/index.html
 //! [`server`]: server/index.html
-//! [`BodyReader`]: struct.BodyReader.html
-//! [`BodyWriter`]: struct.BodyWriter.html
-//! [`AsyncRead`]: https://docs.rs/futures/*/futures/io/trait.AsyncRead.html
-//! [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
 //! [`http`]: https://docs.rs/http/*/http/index.html
 //! [`Request`]: https://docs.rs/http/*/http/request/index.html
 //! [`Response`]: https://docs.rs/http/*/http/response/index.html
+//! [`http_body`]: https://docs.rs/http-body/*/http_body/index.html
+//! [`SimpleBody`]: struct.SimpleBody.html
+//! [`RecvBody`]: struct.RecvBody.html
 
 #![warn(missing_docs)]
 #![allow(clippy::identity_op)]
@@ -104,6 +106,7 @@ mod streams;
 mod qpack;
 #[cfg(feature = "interop-test-accessors")]
 #[allow(missing_docs)]
+#[doc(hidden)]
 pub mod qpack;
 
 use err_derive::Error;
