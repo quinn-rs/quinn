@@ -308,7 +308,7 @@ pub struct CryptoSpace<S>
 where
     S: crypto::Session,
 {
-    pub packet: KeyPair<S::Key>,
+    pub packet: KeyPair<S::PacketKey>,
     pub header: KeyPair<S::HeaderKey>,
 }
 

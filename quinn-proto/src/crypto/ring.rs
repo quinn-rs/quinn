@@ -61,7 +61,7 @@ impl From<hkdf::Okm<'_, IvLen>> for Iv {
     }
 }
 
-impl crypto::Key for PacketKey {
+impl crypto::PacketKey for PacketKey {
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let mut nonce_buf = [0u8; aead::NONCE_LEN];
         let nonce = &mut nonce_buf[..self.key.algorithm().nonce_len()];
@@ -259,7 +259,7 @@ pub(crate) fn generate_keys(
 mod test {
     use super::*;
     use crate::{
-        crypto::{HeaderKey, Key},
+        crypto::{HeaderKey, PacketKey as _},
         MAX_CID_SIZE,
     };
     use hex_literal::hex;
