@@ -12,19 +12,13 @@
 //!
 //! A connection is essentially a [`Stream`] of [`IncomingRequest`]s. Polling it will yield futures
 //! representing the header reception: [`RecvRequest`] will resolve into the request's header values,
-//! along with [`BodyReader`] and [`Sender`] to manage the rest of this request processing.
-//! The former is used to receive the body and its optional trailer, the latter to send a response.
-//!
-//! You can write to the response body once the headers are sent, using [`Sender::send_response()`].
-//! [`BodyWriter`] implements [`AsyncWrite`] for
-//! that purpose. Trailers can optionally be appended then. Note that the body can also be passed
-//! directly to [`http::Response<B>`], where `B` is convertible from some simple [`types`].
+//! along with a [`Sender`] to manage the response.
 //!
 //! # Example: simple server
 //!
 //! ```
 //! use std::fs;
-//! use futures::{StreamExt, AsyncWriteExt};
+//! use futures::StreamExt;
 //! use http::{Response, StatusCode};
 //! use quinn::{Certificate, CertificateChain, PrivateKey};
 //! use quinn_h3::{server, Body};
@@ -55,7 +49,7 @@
 //!                 // Each request also gets its own task
 //!                 tokio::spawn(async move {
 //!                     // Receive request
-//!                     let (request, _recv_body, mut sender) = recv_request.await.unwrap();
+//!                     let (request, mut sender) = recv_request.await.unwrap();
 //!                     println!("received request: {:?}", request);
 //!
 //!                     let response = Response::builder()
@@ -495,7 +489,7 @@ impl From<quinn::Connecting> for Connecting {
 ///     let mut incoming_request = connecting.await?;
 ///
 ///     while let Some(recv_request) = incoming_request.next().await {
-///         let (request, _, _) = recv_request.await?;
+///         let (request, _) = recv_request.await?;
 ///         println!("Received request: {:?}", request);
 ///     }
 ///
@@ -531,26 +525,26 @@ impl Stream for IncomingRequest {
 /// Receive request's headers future.
 ///
 /// Will resolve once headers have been received and decoded, returning a tuple with the
-/// actual [`Request`], a [`BodyReader`] and a [`Sender`] that enables sending back a response.
+/// actual [`Request`], and a [`Sender`] that enables sending back a response. The request
+/// object contains an [`http_body::Body`] implementation, [`RecvBody`], that can be used
+/// to stream the incoming body.
 ///
 /// Using the elements of this tuple, you can send a response, stream the request's body while
 /// starting to send a response and its body concurrently, or [`reject`] the request.
 ///
 /// ```
 /// use anyhow::Result;
-/// use futures::{AsyncReadExt};
 /// use http::{Method, Request, Response, StatusCode};
 ///
 /// use quinn_h3::{server::RecvRequest, Body};
 ///
 /// async fn handle_resquest(recv_request: RecvRequest) -> Result<()> {
-///     let (request, mut body_reader, mut sender) = recv_request.await?;
+///     let (mut request, mut sender) = recv_request.await?;
 ///     println!("received request: {:?}", request);
 ///
 ///     if request.method() == Method::POST {
-///         let mut body = String::new();
-///         body_reader.read_to_string(&mut body);
-///         println!("received body: {}", body);
+///         let body = request.body_mut().read_to_end().await?;
+///         println!("received body: {:?}", body);
 ///     }
 ///
 ///     let response = Response::builder().status(StatusCode::OK).body(Body::from(()))?;
@@ -561,8 +555,9 @@ impl Stream for IncomingRequest {
 /// ```
 ///
 /// [`Request`]: https://docs.rs/http/*/http/request/struct.Request.html
-/// [`BodyReader`]: ../body/struct.BodyReader.html
 /// [`Sender`]: ../struct.Sender.html
+/// [`http_body::Body`]: https://docs.rs/http-body/*/http_body/trait.Body.html
+/// [`RecvBody`]: ../struct.RecvBody.html
 /// [`reject`]: #method.reject
 pub struct RecvRequest {
     conn: ConnectionRef,
@@ -666,14 +661,14 @@ pub struct Sender {
 impl Sender {
     /// Start sending a response.
     ///
-    /// Use this with an [`http::Response<B>`], where B parameter type lets you choose how the body
-    /// should be transmitted:
+    /// Use this with an [`http::Response<B>`], where B is an implementation of
+    /// [`http_body::Body`].
     ///
-    /// - `T: Into<Body>`: when data is convertible to [`Body`], which includes simple types
-    ///    such as `&str` or `&[u8]`.
-    /// - `()`: when there won't be any body transmitted, or it will be streamed via [`BodyWriter`].
+    /// The returned [`SendData`] future will resolve on transmission completion.
     ///
-    /// Note that both methods can be combined toghether if applicable.
+    /// This crate provides [`SimpleBody`] and [`IntoBody`] as conveninece implemetation
+    /// for simple data. If you want to go further, you'll have to implement your own
+    /// [`http_body::Body`].
     ///
     /// # Example: simple body
     ///
@@ -682,7 +677,7 @@ impl Sender {
     /// use http::{Response, StatusCode};
     /// use quinn_h3::{server::Sender, Body};
     ///
-    /// async fn simple_response(sender: Sender) -> Result<()> {
+    /// async fn simple_response(mut sender: Sender) -> Result<()> {
     ///    let response = Response::builder()
     ///        .status(StatusCode::OK)
     ///        .body(Body::from("the response body"))?;
@@ -694,9 +689,10 @@ impl Sender {
     /// ```
     ///
     /// [`http::Response<B>`]: https://docs.rs/http/*/http/response/struct.Response.html
-    /// [`Body`]: ../enum.Body.html
-    /// [`BodyWriter`]: ../struct.BodyWriter.html
-    /// [`AsyncWrite`]: https://docs.rs/futures/*/futures/io/trait.AsyncWrite.html
+    /// [`http_body::Body`]: https://docs.rs/http-body/*/http_body/trait.Body.html
+    /// [`SendData`]: ../struct.SendData.html
+    /// [`SimpleBody`]: ../struct.SimpleBody.html
+    /// [`IntoBody`]: ../trait.IntoBody.html
     pub fn send_response<B>(&mut self, response: Response<B>) -> SendData<B, B::Data>
     where
         B: HttpBody + Send + 'static,
