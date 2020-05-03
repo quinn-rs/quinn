@@ -80,8 +80,8 @@ pub trait Session: Send + Sized {
     /// keys to encrypt data with.
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Keys>;
 
-    /// Update the given set of keys
-    fn update_keys(&self, keys: &Self::Keys) -> Self::Keys;
+    /// Compute keys for the next key update
+    fn next_1rtt_keys(&mut self) -> Self::Keys;
 
     /// Generate the integrity tag for a retry packet
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
